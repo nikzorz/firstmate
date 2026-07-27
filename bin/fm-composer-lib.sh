@@ -50,6 +50,55 @@
 # below. Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
 
+# fm_composer_ws_normalize: the ONE fleet-wide owner of "which characters count
+# as blank" on a captured composer row. It rewrites every invisible space a
+# terminal UI plausibly draws into a plain ASCII space, so the [:space:] trims
+# and blank tests in this file and in the adapters' structural checks see it as
+# whitespace.
+#
+# WHY (task composer-nbsp): bash's [:space:] class is ASCII-only, so a row whose
+# only remaining content was a Unicode space survived every trim as residual
+# bytes and classified `pending`. claude Code renders its idle, empty composer as
+# the prompt glyph `❯` followed by U+00A0 NO-BREAK SPACE, so an idle claude
+# captain pane read as "holding typed input" and the away-mode injector
+# (bin/fm-supervise-daemon.sh) deferred every escalation forever against a pane
+# that was in fact ready.
+#
+# THE SET is the invisible space characters a TUI plausibly emits for padding:
+# U+00A0, U+2000-U+200A, U+202F, U+205F, U+3000, plus the zero-width U+200B and
+# U+FEFF. The joiners U+200C/U+200D are deliberately NOT included: they carry
+# meaning inside real typed text (emoji and script sequences), and a row is not
+# blank because a human typed one.
+#
+# Each character is matched as its exact UTF-8 byte sequence rather than through
+# a bracket expression, so the result never depends on the caller's locale: in a
+# bracket class under LC_ALL=C the same characters would degrade into their
+# individual bytes and match stray continuation bytes of unrelated glyphs.
+#
+# This only ever widens what reads BLANK, never what reads like an agent
+# composer: the bordered-composer requirement in fm_composer_classify_content is
+# what authorizes injection, and a bare shell prompt glyph still classifies
+# `unknown` whatever whitespace pads it.
+fm_composer_ws_normalize() {  # <text> -> <text> with unicode spaces as ASCII spaces
+  local text=$1 ws
+  local -a unicode_spaces=(
+    $'\xc2\xa0'                                     # U+00A0 no-break space
+    $'\xe2\x80\x80' $'\xe2\x80\x81' $'\xe2\x80\x82' # U+2000 U+2001 U+2002
+    $'\xe2\x80\x83' $'\xe2\x80\x84' $'\xe2\x80\x85' # U+2003 U+2004 U+2005
+    $'\xe2\x80\x86' $'\xe2\x80\x87' $'\xe2\x80\x88' # U+2006 U+2007 U+2008
+    $'\xe2\x80\x89' $'\xe2\x80\x8a'                 # U+2009 U+200A
+    $'\xe2\x80\x8b'                                 # U+200B zero width space
+    $'\xe2\x80\xaf'                                 # U+202F narrow no-break space
+    $'\xe2\x81\x9f'                                 # U+205F medium math space
+    $'\xe3\x80\x80'                                 # U+3000 ideographic space
+    $'\xef\xbb\xbf'                                 # U+FEFF zero width no-break space
+  )
+  for ws in "${unicode_spaces[@]}"; do
+    text=${text//"$ws"/ }
+  done
+  printf '%s' "$text"
+}
+
 # fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
 # Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the
 # composer box border or bare prompt glyph is still visible; content extraction
@@ -183,6 +232,16 @@ fm_composer_idle_matches() {
 fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [plain_content]
   local bordered=$1 content=$2 idle_re=${3:-} idle_case=${4:-sensitive} plain_content
   plain_content=${5:-$content}
+  # Callers trim with the ASCII-only [:space:] class, so a Unicode space can
+  # still be sitting on either end (or padding the whole row); normalize both
+  # inputs once here so every blank test below, including the exact-glyph cases,
+  # sees it as whitespace.
+  content=$(fm_composer_ws_normalize "$content")
+  content="${content#"${content%%[![:space:]]*}"}"
+  content="${content%"${content##*[![:space:]]}"}"
+  plain_content=$(fm_composer_ws_normalize "$plain_content")
+  plain_content="${plain_content#"${plain_content%%[![:space:]]*}"}"
+  plain_content="${plain_content%"${plain_content##*[![:space:]]}"}"
   if [ "$bordered" != 1 ] && [ -z "$content" ] && [ -n "$plain_content" ]; then
     case "$plain_content" in
       '❯'|'›') printf 'empty'; return 0 ;;
