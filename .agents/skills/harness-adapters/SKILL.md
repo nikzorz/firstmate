@@ -184,6 +184,8 @@ Its broader dark-TRUECOLOR placeholder handling and dark-theme tradeoff are docu
 That styled capture is internal to the boolean detector only.
 `fm-peek` and every other human or LLM-facing capture path stays plain `tmux capture-pane` with no escape codes.
 
+Claude's idle, empty composer draws the prompt glyph followed by U+00A0, and the shared `fm_composer_ws_normalize` owner (`bin/fm-composer-lib.sh`) decides which characters count as blank on a composer row for every backend; regression coverage is `tests/fm-composer-ghost.test.sh` (`test_nbsp_padded_composer_is_empty`, `test_nbsp_padded_bare_shell_prompt_is_unknown`) and `tests/fm-composer-lib.test.sh` (`test_handled_unicode_space_set_reads_blank`, `test_zero_width_joiners_are_not_blank`).
+
 **Primary-session guard fact (verified 2026-07-04, Claude Code 2.1.201; preserved 2026-07-08, Claude Code 2.1.204; Stop-owned auto-arm revalidated 2026-07-24, Claude Code 2.1.219).**
 This is separate from the per-task crewmate turn-end hook above (that one just `touch`es a marker file in a task's own `.claude/settings.local.json`).
 The firstmate PRIMARY's own `.claude/settings.json` registers two Stop hooks: `bin/fm-turnend-guard.sh --claude` and the Stop-owned auto-arm `bin/fm-claude-stop-autoarm.sh` (`asyncRewake: true`, `timeout: 28800`), and exiting the guard with status 2 plus stderr reliably forces the model to continue.
