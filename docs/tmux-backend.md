@@ -54,7 +54,7 @@ An existing Pi pane is therefore reported as ambiguous rather than auto-healed, 
 This is the active tmux liveness limitation.
 
 Agent liveness and composer safety are separate checks.
-For a bordered composer, the tmux reader locates the complete box structurally and classifies every content row through the shared ANSI and ghost handling in `bin/fm-composer-lib.sh`.
+For a bordered composer, the tmux reader locates the complete box structurally and classifies every content row through the shared ANSI and ghost handling in `bin/fm-composer-lib.sh`, which also owns which characters count as blank for both that classification and the box-geometry proof.
 Real text on any content row is pending, while only an unambiguous box with every row empty is proven empty.
 Unreadable, incomplete, or structurally ambiguous boxes fail closed, and panes without a bordered composer retain the compatible cursor-row classification.
 The shared classifier accepts a shell glyph as an empty agent composer only inside a verified bordered composer.
