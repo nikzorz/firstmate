@@ -580,6 +580,13 @@ test_non_bordered_interior_edges_are_pending() {
 # shared content verdict, and the box-geometry check that proves an all-blank
 # content row reduces to the same run of spaces as its own borders.
 
+# fm_utf8_width: the number of characters in a single-width UTF-8 string, counted
+# as its non-continuation bytes so the answer is the same under a UTF-8 locale and
+# under LC_ALL=C (where ${#var} would count bytes instead).
+fm_utf8_width() {  # <text> -> character count
+  printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | LC_ALL=C wc -c | tr -d ' \n'
+}
+
 # nbsp_composer_fixture: a claude-shaped box whose single content row is the
 # reported idle render - `❯` immediately followed by U+00A0, then space padding
 # out to the border. <inner-text> replaces the glyph row's content when given.
@@ -587,7 +594,7 @@ nbsp_composer_fixture() {  # <file> [inner-text]
   local file=$1 inner=${2:-} border row pad
   border=$(printf '─%.0s' $(seq 1 24))
   [ -n "$inner" ] || inner=$(printf '\xe2\x9d\xaf\xc2\xa0')
-  pad=$((24 - ${#inner} - 1))
+  pad=$((24 - $(fm_utf8_width "$inner") - 1))
   row=$(printf '%s%*s' "$inner" "$pad" '')
   printf '╭%s╮\n│ %s│\n╰%s╯\n' "$border" "$row" "$border" > "$file"
 }
