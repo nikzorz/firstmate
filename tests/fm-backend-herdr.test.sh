@@ -1797,6 +1797,51 @@ test_composer_state_popup_placeholder_fill_is_pending() {
   pass "fm_backend_herdr_composer_state: a slash-command popup's argument-hint placeholder still reads pending (the incident fix)"
 }
 
+# claude Code pads its idle, empty composer with U+00A0 NO-BREAK SPACE, which
+# bash's ASCII-only [:space:] class never trimmed - the row read as typed input
+# and away-mode escalation deferred against a ready pane (task composer-nbsp).
+# Every backend inherits the fix through the shared classifier, so pin it here
+# too, including the direction that must NOT change: padding never turns a row
+# without a composer container into an injectable one.
+test_composer_state_nbsp_padded_prompt_is_empty() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-nbsp"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ ❯\xc2\xa0                     │\n  ╰──────── Composer ─────╯\n\n  Shift+Tab:mode\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "a '❯'+U+00A0 idle composer row should read empty, got '$out'"
+  pass "fm_backend_herdr_composer_state: claude's '❯'+U+00A0 idle composer row reads empty"
+}
+
+test_composer_state_nbsp_in_real_text_is_pending() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-nbsp-text"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ ❯ hello\xc2\xa0captain       │\n  ╰──────── Composer ─────╯\n\n  Enter:send\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = pending ] || fail "typed text containing U+00A0 should read pending, got '$out'"
+  pass "fm_backend_herdr_composer_state: typed text containing U+00A0 stays pending"
+}
+
+test_composer_state_nbsp_padded_shell_prompt_is_unknown() {
+  local dir log resp fb out glyph idx=1
+  dir="$TMP_ROOT/composer-nbsp-shell"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  for glyph in '>' '$' '%' '#'; do
+    printf '%s\xc2\xa0\n' "$glyph" > "$resp/$idx.out"
+    idx=$((idx + 1))
+  done
+  fb=$(make_herdr_fakebin "$dir")
+  for glyph in '>' '$' '%' '#'; do
+    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+    [ "$out" = unknown ] \
+      || fail "a U+00A0-padded bare shell prompt '$glyph' must stay unknown, got '$out'"
+  done
+  pass "fm_backend_herdr_composer_state: a U+00A0-padded bare shell prompt stays unknown"
+}
+
 test_composer_state_unknown_on_capture_failure() {
   local dir log resp fb out status
   dir="$TMP_ROOT/composer-capture-fail"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3051,6 +3096,9 @@ test_composer_state_bare_prompt_is_empty
 test_composer_state_ghost_placeholder_is_empty
 test_composer_state_real_text_is_pending
 test_composer_state_popup_placeholder_fill_is_pending
+test_composer_state_nbsp_padded_prompt_is_empty
+test_composer_state_nbsp_in_real_text_is_pending
+test_composer_state_nbsp_padded_shell_prompt_is_unknown
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found
 test_composer_state_pi_separator_idle_is_empty

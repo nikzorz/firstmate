@@ -158,8 +158,15 @@ fm_tmux_row_has_composer_edge() {  # <plain-row>
   return 1
 }
 
+# A content row that is blank apart from the prompt glyph must reduce to exactly
+# the same run of spaces as the box's own border rows, or the box geometry reads
+# ambiguous. Unicode padding is blank for that comparison too (claude Code pads
+# its idle composer with U+00A0), so normalize through the shared owner first -
+# each such character becomes one ASCII space, matching the one-space-per-border-
+# character reduction the caller applies to the top and bottom rows.
 fm_tmux_composer_geometry_spaces() {  # <content-inner> -> spaces
-  local content=$1 probe
+  local content probe
+  content=$(fm_composer_ws_normalize "$1")
   probe="${content#"${content%%[![:space:]]*}"}"
   case "$probe" in
     '>'*) content=${content/>/ } ;;

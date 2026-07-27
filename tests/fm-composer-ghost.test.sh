@@ -570,6 +570,101 @@ test_non_bordered_interior_edges_are_pending() {
   pass "fm_tmux_composer_state: interior edge glyphs retain non-bordered fallback"
 }
 
+# --- Unicode-space padding is blank (task composer-nbsp) --------------------
+#
+# claude Code renders its idle, empty composer as the prompt glyph `❯` followed
+# by U+00A0 NO-BREAK SPACE. Bash's [:space:] class is ASCII-only, so the row
+# survived every trim carrying residual bytes and read as typed input, and the
+# away-mode injector deferred every escalation against a genuinely idle pane
+# (observed live: 2776s undelivered). Two places had to see U+00A0 as blank: the
+# shared content verdict, and the box-geometry check that proves an all-blank
+# content row reduces to the same run of spaces as its own borders.
+
+# fm_utf8_width: the number of characters in a single-width UTF-8 string, counted
+# as its non-continuation bytes so the answer is the same under a UTF-8 locale and
+# under LC_ALL=C (where ${#var} would count bytes instead).
+fm_utf8_width() {  # <text> -> character count
+  printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | LC_ALL=C wc -c | tr -d ' \n'
+}
+
+# nbsp_composer_fixture: a claude-shaped box whose single content row is the
+# reported idle render - `❯` immediately followed by U+00A0, then space padding
+# out to the border. <inner-text> replaces the glyph row's content when given.
+nbsp_composer_fixture() {  # <file> [inner-text]
+  local file=$1 inner=${2:-} border row pad
+  border=$(printf '─%.0s' $(seq 1 24))
+  [ -n "$inner" ] || inner=$(printf '\xe2\x9d\xaf\xc2\xa0')
+  pad=$((24 - $(fm_utf8_width "$inner") - 1))
+  row=$(printf '%s%*s' "$inner" "$pad" '')
+  printf '╭%s╮\n│ %s│\n╰%s╯\n' "$border" "$row" "$border" > "$file"
+}
+
+test_nbsp_padded_composer_is_empty() {
+  local dir fb capture out cy
+  dir="$TMP_ROOT/nbsp-idle"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  nbsp_composer_fixture "$capture"
+  # The cursor sits on the content row, and (Grok's quirk, also seen on claude
+  # after a resize) on the bottom border. Both must prove the box empty.
+  for cy in 1 2; do
+    out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY="$cy" \
+      fm_tmux_composer_state "fakepane")
+    [ "$out" = empty ] \
+      || fail "claude's idle '❯'+U+00A0 composer (cursor row $cy) should read empty, got '$out'"
+  done
+  if PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=1 \
+     fm_pane_input_pending "fakepane"; then
+    fail "claude's idle '❯'+U+00A0 composer falsely read as pending (the away-mode wedge)"
+  fi
+  pass "fm_tmux_composer_state: claude's idle '❯'+U+00A0 composer reads empty, not pending"
+}
+
+test_nbsp_padded_bare_shell_prompt_is_unknown() {
+  local dir fb capture out prompt
+  dir="$TMP_ROOT/nbsp-shell"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  # The safety direction: a dead shell padded with U+00A0 has no composer box
+  # and must still refuse injection.
+  for prompt in '>' '$' '%' '#'; do
+    printf '%s\xc2\xa0\n' "$prompt" > "$capture"
+    out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
+      fm_tmux_composer_state "fakepane")
+    [ "$out" = unknown ] \
+      || fail "a bare shell prompt '$prompt' padded with U+00A0 must read unknown, got '$out'"
+    # The same prompt drawn in a dark/muted foreground: ghost stripping empties
+    # the content, so the verdict comes from the plain row, which the padding
+    # must not turn into an agent glyph either.
+    printf '\033[38;2;50;47;70m%s\xc2\xa0\033[0m\n' "$prompt" > "$capture"
+    out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
+      fm_tmux_composer_state "fakepane")
+    [ "$out" = unknown ] \
+      || fail "a dark-rendered shell prompt '$prompt' padded with U+00A0 must read unknown, got '$out'"
+  done
+  # A full shell prompt line reads as text (pending) on the non-bordered
+  # fallback, as it does without the padding - never as an injectable empty.
+  printf 'user@host $\xc2\xa0\n' > "$capture"
+  out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
+    fm_tmux_composer_state "fakepane")
+  [ "$out" != empty ] \
+    || fail "a U+00A0-padded shell prompt line must never read empty, got '$out'"
+  pass "fm_tmux_composer_state: a U+00A0-padded bare shell prompt still reads unknown"
+}
+
+test_nbsp_inside_real_text_is_pending() {
+  local dir fb capture out
+  dir="$TMP_ROOT/nbsp-text"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  nbsp_composer_fixture "$capture" "$(printf '\xe2\x9d\xaf deploy\xc2\xa0now')"
+  out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=1 \
+    fm_tmux_composer_state "fakepane")
+  [ "$out" = pending ] \
+    || fail "typed text containing U+00A0 must still read pending, got '$out'"
+  pass "fm_tmux_composer_state: typed text containing U+00A0 is still pending"
+}
+
 # --- fm-peek.sh stays escape-free (LLM-facing path) -------------------------
 
 test_peek_output_is_escape_free() {
@@ -625,4 +720,7 @@ test_fallback_capture_race_with_edge_is_unknown
 test_legitimate_empty_routes_remain_empty
 test_non_bordered_composer_uses_compatibility_fallback
 test_non_bordered_interior_edges_are_pending
+test_nbsp_padded_composer_is_empty
+test_nbsp_padded_bare_shell_prompt_is_unknown
+test_nbsp_inside_real_text_is_pending
 test_peek_output_is_escape_free
