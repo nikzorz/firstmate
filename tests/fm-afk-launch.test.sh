@@ -22,6 +22,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH="$ROOT/bin/fm-afk-launch.sh"
 START="$ROOT/bin/fm-afk-start.sh"
+KEEP_AWAKE="$ROOT/bin/fm-keep-awake.sh"
 
 FAILED=0
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
@@ -31,11 +32,17 @@ SLEEPER=$(mktemp "${TMPDIR:-/tmp}/fm-afk-sleeper.XXXXXX")
 printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$SLEEPER"
 chmod +x "$SLEEPER"
 TRACK_TMUX_SESSIONS=""
+TRACK_KEEP_AWAKE_HOMES=""
 GLOBAL_CLEANUP() {
   rm -f "$SLEEPER" 2>/dev/null || true
   local s
   for s in $TRACK_TMUX_SESSIONS; do
     tmux kill-session -t "$s" 2>/dev/null || true
+  done
+  for s in $TRACK_KEEP_AWAKE_HOMES; do
+    FM_HOME="$s" FM_STATE_OVERRIDE="$s/state" FM_CONFIG_OVERRIDE="$s/config" \
+      "$KEEP_AWAKE" stop >/dev/null 2>&1 || true
+    rm -rf "$s" 2>/dev/null || true
   done
 }
 trap GLOBAL_CLEANUP EXIT
@@ -764,6 +771,285 @@ unit_flag_write_failure_aborts() {
 }
 
 # ---------------------------------------------------------------------------
+# KEEP-AWAKE (bin/fm-keep-awake.sh): the optional, opt-in system-awake request
+# held for exactly as long as away mode is armed.
+#
+# Every case here runs on a FAKE Windows shell (FM_KEEP_AWAKE_PWSH) behind a
+# forced interop probe (FM_KEEP_AWAKE_INTEROP), so the whole lifecycle is
+# exercised identically on macOS, plain Linux, and WSL, and nothing ever
+# touches real power state.
+# ---------------------------------------------------------------------------
+
+# A home with the opt-in file, a live fake away-mode daemon, and state/.afk set.
+keep_awake_home() {  # [enabled-value] -> prints the home path
+  local home
+  home=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake.XXXXXX")
+  mkdir -p "$home/state" "$home/config"
+  printf '%s' "${1-}" > "$home/config/keep-awake"
+  date '+%s' > "$home/state/.afk"
+  TRACK_KEEP_AWAKE_HOMES="$TRACK_KEEP_AWAKE_HOMES $home"
+  printf '%s' "$home"
+}
+
+# Point the daemon lock at a real live process so daemon_lock_held_by_live_daemon
+# agrees, exactly as the other units here do.
+keep_awake_fake_daemon() {  # <home> -> prints the daemon pid
+  local home=$1 pid
+  # Detach its stdout: this runs under command substitution, which would
+  # otherwise wait on the sleeper for the capture pipe to close.
+  sleep 600 >/dev/null 2>&1 &
+  pid=$!
+  mkdir -p "$home/state/.supervise-daemon.lock"
+  printf '%s' "$pid" > "$home/state/.supervise-daemon.lock/pid"
+  bash -c '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$pid" \
+    > "$home/state/.supervise-daemon.lock/pid-identity" 2>/dev/null || true
+  printf '%s' "$pid"
+}
+
+# Stands in for powershell.exe: announces the same readiness marker the real
+# script prints once Windows accepts the request, then idles like it does.
+keep_awake_fake_pwsh() {  # <home> -> prints the fake path
+  local home=$1
+  printf '#!/usr/bin/env bash\nprintf "FM_AWAKE_HELD\\n"\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  printf '%s' "$home/pwsh"
+}
+
+keep_awake_env() {  # <home>
+  FM_HOME="$1"
+  FM_STATE_OVERRIDE="$1/state"
+  FM_CONFIG_OVERRIDE="$1/config"
+  export FM_HOME FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
+}
+
+keep_awake_wait_released() {  # <home> <seconds>
+  local home=$1 limit=$2 waited=0
+  while [ "$waited" -lt "$limit" ]; do
+    [ -e "$home/state/.afk-keep-awake" ] || return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# The requirement most likely to regress: with the opt-in file ABSENT, away
+# mode must behave exactly as it did before keep-awake existed. Proven by
+# running the same lifecycle twice - once with the keep-awake hook stubbed out
+# (the "before" behavior) and once for real - and requiring identical output
+# and identical resulting state.
+# ---------------------------------------------------------------------------
+unit_keep_awake_absent_is_inert() {
+  local base live out_base out_live files_base files_live
+  base=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake-base.XXXXXX")
+  live=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake-live.XXXXXX")
+  keep_awake_cycle() {  # <home> <stub>
+    FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" FM_CONFIG_OVERRIDE="$1/config" \
+      STUB="$2" bash -c '
+        . "$1"
+        if [ "$STUB" = 1 ]; then fm_afk_launch_keep_awake() { :; }; fi
+        fm_afk_launch_start_native
+        printf "start-native rc=%s\n" "$?"
+        fm_afk_launch_stop
+        printf "stop rc=%s\n" "$?"
+      ' _ "$LAUNCH" 2>&1
+  }
+  out_base=$(keep_awake_cycle "$base" 1)
+  out_live=$(keep_awake_cycle "$live" 0)
+  files_base=$(find "$base/state" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)
+  files_live=$(find "$live/state" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)
+  if [ "$out_base" = "$out_live" ] && [ "$files_base" = "$files_live" ]; then
+    pass "keep-awake absent: away-mode entry and exit are unchanged, byte for byte"
+  else
+    fail "keep-awake absent: away mode diverged from its pre-keep-awake behavior"
+  fi
+  case "$out_live" in
+    *keep-awake*) fail "keep-awake absent: away mode mentioned keep-awake anyway" ;;
+    *) pass "keep-awake absent: nothing is reported to the operator" ;;
+  esac
+  unset -f keep_awake_cycle
+  rm -rf "$base" "$live"
+}
+
+# ---------------------------------------------------------------------------
+# Opt-in but unusable (no interop here, no Windows shell): exactly one line,
+# and away mode still arms. This is the fail-open contract.
+# ---------------------------------------------------------------------------
+unit_keep_awake_unavailable_fails_open() {
+  local home out lines
+  home=$(keep_awake_home)
+  if ( keep_awake_env "$home"
+       out=$(FM_KEEP_AWAKE_INTEROP=/nonexistent/fm-keep-awake-probe "$KEEP_AWAKE" start 2>&1)
+       lines=$(printf '%s\n' "$out" | grep -c .)
+       [ "$lines" = 1 ] || exit 1
+       case "$out" in *unavailable*) : ;; *) exit 1 ;; esac
+       [ ! -e "$home/state/.afk-keep-awake" ] || exit 1
+     ); then
+    pass "keep-awake unavailable: reports exactly one line and arms nothing"
+  else
+    fail "keep-awake unavailable: wrong report or left lifecycle state behind"
+  fi
+
+  rm -f "$home/state/.afk"
+  ( keep_awake_env "$home"
+    FM_KEEP_AWAKE_INTEROP=/nonexistent/fm-keep-awake-probe "$LAUNCH" start-native >/dev/null 2>&1
+  )
+  if [ -e "$home/state/.afk" ]; then
+    pass "keep-awake unavailable: away mode still arms"
+  else
+    fail "keep-awake unavailable: away mode failed to arm"
+  fi
+}
+
+# A keep-awake that cannot confirm must not stop away mode from arming either.
+unit_keep_awake_failure_never_blocks_arming() {
+  local home
+  home=$(keep_awake_home)
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  rm -f "$home/state/.afk"
+  ( keep_awake_env "$home"
+    FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh" \
+      FM_KEEP_AWAKE_READY_SECS=1 "$LAUNCH" start-native >/dev/null 2>&1
+  )
+  if [ -e "$home/state/.afk" ] && [ ! -e "$home/state/.afk-keep-awake" ]; then
+    pass "keep-awake failure: away mode arms anyway and no request is claimed"
+  else
+    fail "keep-awake failure: arming was blocked or a phantom request was recorded"
+  fi
+}
+
+unit_keep_awake_config_gate() {
+  local home
+  home=$(keep_awake_home off)
+  ( keep_awake_env "$home"
+    FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$(keep_awake_fake_pwsh "$home")" \
+      "$KEEP_AWAKE" start >/dev/null 2>&1
+  )
+  if [ ! -e "$home/state/.afk-keep-awake" ]; then
+    pass "keep-awake config: an explicit off value keeps it disabled"
+  else
+    fail "keep-awake config: off value still armed a request"
+  fi
+
+  home=$(keep_awake_home)
+  rm -f "$home/config/keep-awake"
+  if ( keep_awake_env "$home"
+       FM_KEEP_AWAKE_INTEROP=/nonexistent/fm-keep-awake-probe "$KEEP_AWAKE" start 2>&1
+     ) | grep -q .; then
+    fail "keep-awake config: absent opt-in still reported something"
+  else
+    pass "keep-awake config: absent opt-in is silent even without interop"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Full lifecycle on the fake Windows shell: arm, idempotent re-arm, release.
+# ---------------------------------------------------------------------------
+unit_keep_awake_lifecycle() {
+  local home daemon pwsh first second child fields
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  pwsh=$(keep_awake_fake_pwsh "$home")
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$pwsh"
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  first=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  fields=$(awk -F '\t' 'NR==1 { print NF }' "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  if [ -n "$first" ] && kill -0 "$first" 2>/dev/null && [ "$fields" = 4 ]; then
+    pass "keep-awake lifecycle: arming records a live holder and its exact Windows process"
+  else
+    fail "keep-awake lifecycle: arming left no usable record"
+  fi
+
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  second=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  if [ "$first" = "$second" ]; then
+    pass "keep-awake lifecycle: arming twice reuses the one holder"
+  else
+    fail "keep-awake lifecycle: a second arm started another holder ($first -> $second)"
+  fi
+
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" stop >/dev/null 2>&1 )
+  if [ ! -e "$home/state/.afk-keep-awake" ] \
+    && ! kill -0 "$first" 2>/dev/null && ! kill -0 "$child" 2>/dev/null; then
+    pass "keep-awake lifecycle: stand-down releases the request and both processes"
+  else
+    fail "keep-awake lifecycle: stand-down left the request held"
+  fi
+
+  if ( keep_awake_env "$home"; "$KEEP_AWAKE" stop >/dev/null 2>&1 ); then
+    pass "keep-awake lifecycle: releasing an already-released request succeeds"
+  else
+    fail "keep-awake lifecycle: releasing an already-released request failed"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH
+}
+
+# ---------------------------------------------------------------------------
+# Self-release: the request cannot outlive its reason even when nothing ever
+# asks it to stop.
+# ---------------------------------------------------------------------------
+unit_keep_awake_self_releases() {
+  local home daemon pwsh holder child
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  pwsh=$(keep_awake_fake_pwsh "$home")
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$pwsh" \
+    FM_KEEP_AWAKE_POLL_SECS=1 FM_KEEP_AWAKE_GRACE_SECS=1
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  kill -KILL "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  if keep_awake_wait_released "$home" 30 \
+    && ! kill -0 "$holder" 2>/dev/null && ! kill -0 "$child" 2>/dev/null; then
+    pass "keep-awake self-release: losing the away-mode daemon releases the request unprompted"
+  else
+    fail "keep-awake self-release: the request outlived the away-mode daemon"
+  fi
+
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  pwsh=$(keep_awake_fake_pwsh "$home")
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$pwsh"
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  rm -f "$home/state/.afk"
+  if keep_awake_wait_released "$home" 30 && ! kill -0 "$holder" 2>/dev/null; then
+    pass "keep-awake self-release: standing down away mode releases the request unprompted"
+  else
+    fail "keep-awake self-release: the request outlived away mode itself"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH FM_KEEP_AWAKE_POLL_SECS FM_KEEP_AWAKE_GRACE_SECS
+}
+
+# ---------------------------------------------------------------------------
+# The captain's hard constraint: the screen must still be allowed to sleep.
+# ES_CONTINUOUS|ES_SYSTEM_REQUIRED is 0x80000001; adding ES_DISPLAY_REQUIRED
+# (0x2) would make it 0x80000003 and keep the display on.
+# ---------------------------------------------------------------------------
+unit_keep_awake_never_touches_display() {
+  local script
+  script=$(bash -c '. "$1"; fm_keepawake_ps_script' _ "$KEEP_AWAKE" 2>/dev/null)
+  if printf '%s' "$script" | grep -q '\[uint32\]2147483649' \
+    && ! printf '%s' "$script" | grep -qi 'display'; then
+    pass "keep-awake scope: the request is system-only and never mentions the display"
+  else
+    fail "keep-awake scope: the request is not the exact system-only flag pair"
+  fi
+  if printf '%s' "$script" | grep -qi 'powercfg'; then
+    fail "keep-awake scope: the request tries to change a persistent power setting"
+  else
+    pass "keep-awake scope: no persistent power setting is changed"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # E2E herdr: topology invariant.
 # ---------------------------------------------------------------------------
 e2e_herdr() {
@@ -891,6 +1177,13 @@ unit_clear_failure_aborts_entry
 unit_confirmed_absence_succeeds
 unit_incomplete_restore_retains_backup
 unit_flag_write_failure_aborts
+unit_keep_awake_absent_is_inert
+unit_keep_awake_unavailable_fails_open
+unit_keep_awake_failure_never_blocks_arming
+unit_keep_awake_config_gate
+unit_keep_awake_lifecycle
+unit_keep_awake_self_releases
+unit_keep_awake_never_touches_display
 e2e_herdr
 e2e_tmux
 

@@ -161,3 +161,53 @@ Observed output:
 ```
 
 The safe command-channel contract is covered without a notification by `tests/fm-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.
+
+## Away-mode keep-awake
+
+This record supports the mechanism choice in `bin/fm-keep-awake.sh`.
+It was measured on 2026-07-28 on Windows 11 under WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2) with PowerToys installed at `/mnt/c/Users/<user>/AppData/Local/PowerToys/PowerToys.Awake.exe`.
+
+PowerToys Awake cannot be driven as a standalone process on a machine whose PowerToys runner already owns the Awake module.
+The running module reports:
+
+```
+PowerToys.Awake.exe --use-pt-config --pid 18952
+```
+
+A second standalone launch, from any working directory, exits immediately:
+
+```sh
+./PowerToys.Awake.exe --time-limit 6; echo "rc=$?"
+```
+
+Observed output: no stdout, `rc=1`.
+
+Its `--pid` binding is also not usable from here: it takes a Windows process id, while the away-mode daemon has a Linux one, and the two namespaces are unrelated.
+`--use-parent-pid` binds to the shared per-VM interop host rather than to anything away-mode-scoped, so it would outlive away mode:
+
+```sh
+powershell.exe -NoProfile -Command '(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId'
+```
+
+Observed output: the same parent (`wslhost.exe`) for every separately launched Windows process.
+
+The mechanism actually used is `kernel32!SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` held by a `powershell.exe` process:
+
+```sh
+powershell.exe -NoProfile -NonInteractive -Command '<the script in bin/fm-keep-awake.sh>'
+```
+
+Observed output: `FM_AWAKE_HELD prev=2147483648`.
+A non-zero return is the documented success signal; `powercfg /requests` cannot corroborate it here because it requires an elevated prompt.
+
+Self-release rests on WSL propagating termination to the Windows process.
+Killing the Linux-side process of a Windows program and then querying the Windows side:
+
+```sh
+kill -TERM "$linux_side_pid"
+powershell.exe -NoProfile -Command "if (Get-Process -Id $windows_pid -ErrorAction SilentlyContinue) { 'WINDOWS_STILL_ALIVE' } else { 'WINDOWS_GONE' }"
+```
+
+Observed output: `WINDOWS_GONE`.
+
+The opt-in gate, fail-open behavior, idempotence, release on stand-down, and release after the away-mode daemon dies are covered without any real power state by `tests/fm-afk-launch.test.sh`, which runs the whole lifecycle against a fake Windows shell.
