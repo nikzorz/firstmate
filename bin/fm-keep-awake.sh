@@ -74,6 +74,12 @@
 # by that exact recorded id, so a leak is always reaped by the next lifecycle
 # step rather than surviving until a reboot.
 #
+# Releasing a leak is deliberately NOT gated by the opt-in, while arming still
+# is. Turning keep-awake off is exactly when a leftover would otherwise be
+# stranded, because it is also when nobody is looking for one. That release is a
+# purely local operation on a recorded pid: it needs no interop and no
+# powershell.exe, and with no record it does nothing and says nothing.
+#
 # Env knobs and test seams:
 #   FM_KEEP_AWAKE_PWSH        override the resolved powershell.exe path
 #   FM_KEEP_AWAKE_INTEROP     override the WSL-interop probe path
@@ -111,7 +117,7 @@ set +e
 fm_keepawake_log() { printf 'fm-keep-awake: %s\n' "$*" >&2; }
 
 fm_keepawake_usage() {
-  sed -n '2,84p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,90p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Opt-in gate. Absent file means off. A present file may be empty or hold "auto";
@@ -270,7 +276,16 @@ fm_keepawake_signal_child() {  # <pid> <identity> <birth> <signal>
 # can try again instead of losing the leak.
 fm_keepawake_release_child() {  # <pid> <identity> <birth> <term-deciseconds>
   local pid=$1 identity=$2 birth=$3 budget=$4 waited=0
-  fm_keepawake_child_present "$pid" "$identity" "$birth" || return 0
+  if ! fm_keepawake_child_present "$pid" "$identity" "$birth"; then
+    # Nothing of ours is there - unless no guard was ever captured for a pid
+    # that is still alive. Signalling that would break the anti-reuse rule and
+    # reporting success would strand it, so say plainly that it is unreleased
+    # and let the record keep pointing at it.
+    if [ -n "$pid" ] && [ -z "$identity" ] && [ -z "$birth" ] && fm_pid_alive "$pid"; then
+      return 1
+    fi
+    return 0
+  fi
   fm_keepawake_signal_child "$pid" "$identity" "$birth" TERM
   while [ "$waited" -lt "$budget" ]; do
     fm_keepawake_child_present "$pid" "$identity" "$birth" || return 0
@@ -304,22 +319,40 @@ fm_keepawake_marker_seen() {
   grep -q "$FM_KEEP_AWAKE_MARKER" "$FM_KEEP_AWAKE_OUT" 2>/dev/null
 }
 
-# Record the Windows-holder identity once it is stable, upgrading the record
-# written at spawn time. It cannot be captured at spawn: the interop shim
-# rewrites its own command line when it execs the Windows binary, so an earlier
-# capture would never match afterwards and the trap below would refuse to reap
-# the very process it owns. The readiness marker is printed by the Windows side,
-# so seeing it proves that exec is done and the identity is now stable.
-fm_keepawake_confirm_child() {
-  local child_identity
+# Fill in the birth stamp while it is still missing. Kept retryable rather than
+# captured once: a holder with neither a birth stamp nor an identity cannot
+# prove what it owns, so it could neither release its own Windows process nor
+# leave one anybody else is allowed to touch.
+fm_keepawake_capture_child_birth() {
+  local birth
+  [ -z "$FM_KEEP_AWAKE_CHILD_BIRTH" ] || return 0
   [ -n "$FM_KEEP_AWAKE_CHILD_PID" ] || return 1
-  [ -z "$FM_KEEP_AWAKE_CHILD_IDENT" ] || return 0
-  fm_keepawake_marker_seen || return 1
-  child_identity=$(fm_pid_identity "$FM_KEEP_AWAKE_CHILD_PID" 2>/dev/null) || return 1
-  [ -n "$child_identity" ] || return 1
+  birth=$(fm_keepawake_pid_birth "$FM_KEEP_AWAKE_CHILD_PID") || return 1
+  [ -n "$birth" ] || return 1
+  FM_KEEP_AWAKE_CHILD_BIRTH=$birth
+}
+
+# Upgrade the record written at spawn time with whatever ownership proof has
+# become available since. The identity cannot be captured at spawn: the interop
+# shim rewrites its own command line when it execs the Windows binary, so an
+# earlier capture would never match afterwards and the trap below would refuse
+# to reap the very process it owns. The readiness marker is printed by the
+# Windows side, so seeing it proves that exec is done and the identity is stable.
+fm_keepawake_confirm_child() {
+  local child_identity="" birth_before=$FM_KEEP_AWAKE_CHILD_BIRTH changed=0
+  [ -n "$FM_KEEP_AWAKE_CHILD_PID" ] || return 1
+  fm_keepawake_capture_child_birth || true
+  [ "$FM_KEEP_AWAKE_CHILD_BIRTH" = "$birth_before" ] || changed=1
+  if [ -z "$FM_KEEP_AWAKE_CHILD_IDENT" ] && fm_keepawake_marker_seen; then
+    child_identity=$(fm_pid_identity "$FM_KEEP_AWAKE_CHILD_PID" 2>/dev/null) || child_identity=""
+    if [ -n "$child_identity" ]; then
+      FM_KEEP_AWAKE_CHILD_IDENT=$child_identity
+      changed=1
+    fi
+  fi
+  [ "$changed" -eq 1 ] || return 1
   fm_keepawake_record_write "$$" "$FM_KEEP_AWAKE_HOLD_IDENT" \
-    "$FM_KEEP_AWAKE_CHILD_PID" "$child_identity" "$FM_KEEP_AWAKE_CHILD_BIRTH" || return 1
-  FM_KEEP_AWAKE_CHILD_IDENT=$child_identity
+    "$FM_KEEP_AWAKE_CHILD_PID" "$FM_KEEP_AWAKE_CHILD_IDENT" "$FM_KEEP_AWAKE_CHILD_BIRTH"
 }
 
 fm_keepawake_holder_alive() {
@@ -360,7 +393,7 @@ fm_keepawake_hold() {
   # readiness wait, so a holder killed outright still leaves behind an id that
   # anyone can safely reap. The full identity is not stable yet and is filled in
   # by fm_keepawake_confirm_child once readiness proves the interop exec is done.
-  FM_KEEP_AWAKE_CHILD_BIRTH=$(fm_keepawake_pid_birth "$FM_KEEP_AWAKE_CHILD_PID") || true
+  fm_keepawake_capture_child_birth || true
   fm_keepawake_record_write "$$" "$identity" "$FM_KEEP_AWAKE_CHILD_PID" "" \
     "$FM_KEEP_AWAKE_CHILD_BIRTH" || return 1
 
@@ -402,6 +435,9 @@ fm_keepawake_hold() {
 }
 
 fm_keepawake_hold_cleanup() {
+  # Last chance to learn what this holder owns, for the window between spawning
+  # the Windows process and the first poll that would have retried the capture.
+  fm_keepawake_capture_child_birth || true
   # A short release budget on purpose: `stop` gives this holder 5s to die before
   # escalating, and being SIGKILLed mid-cleanup is exactly what orphans a child.
   fm_keepawake_release_child "$FM_KEEP_AWAKE_CHILD_PID" "$FM_KEEP_AWAKE_CHILD_IDENT" \
@@ -418,8 +454,19 @@ fm_keepawake_hold_cleanup() {
 # ---------------------------------------------------------------------------
 # Lifecycle entry points used by bin/fm-afk-launch.sh.
 # ---------------------------------------------------------------------------
+# Release a recorded Windows process whose holder is gone. Reaping is cleanup of
+# something this feature itself created, so it runs ahead of the opt-in gate and
+# without touching the Windows side at all: with no record it does nothing, says
+# nothing, and cannot fail in a way that reaches away mode.
+fm_keepawake_reap_leak() {
+  [ -f "$FM_KEEP_AWAKE_RECORD" ] || return 0
+  fm_keepawake_holder_alive && return 0
+  fm_keepawake_stop_quiet
+}
+
 fm_keepawake_start() {
   local pwsh waited ready
+  fm_keepawake_reap_leak
   fm_keepawake_enabled || return 0
   if ! fm_keepawake_interop_ready; then
     fm_keepawake_log "keep-awake is unavailable here (no Windows/WSL interop); away mode continues without it"

@@ -1222,6 +1222,64 @@ unit_keep_awake_killed_holder_leak_is_reaped() {
 }
 
 # ---------------------------------------------------------------------------
+# Turning keep-awake off is exactly when a leaked Windows process would be
+# stranded, because it is also when nobody is looking for one. So the reap must
+# not be gated by the opt-in, and it must not need the Windows side either: it
+# is a local operation on a recorded pid. Both documented ways out are covered,
+# the `off` kill switch and removing the file outright.
+# ---------------------------------------------------------------------------
+unit_keep_awake_leak_is_reaped_after_opting_out() {
+  local home daemon holder child out
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh" \
+    FM_KEEP_AWAKE_READY_SECS=1 FM_KEEP_AWAKE_POLL_SECS=1
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  kill -KILL "$holder" 2>/dev/null || true
+  keep_awake_wait_gone "$holder" 10 || true
+  printf 'off' > "$home/config/keep-awake"
+  out=$( keep_awake_env "$home"; "$KEEP_AWAKE" start 2>&1 )
+  if keep_awake_wait_gone "$child" 10 && [ ! -e "$home/state/.afk-keep-awake" ] \
+    && [ -z "$out" ]; then
+    pass "keep-awake leak: switching the opt-in off and re-arming still reaps the leak"
+  else
+    fail "keep-awake leak: an opted-out re-arm stranded the leaked Windows process"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh"
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  kill -KILL "$holder" 2>/dev/null || true
+  keep_awake_wait_gone "$holder" 10 || true
+  rm -f "$home/config/keep-awake"
+  unset FM_KEEP_AWAKE_PWSH
+  # No opt-in, no interop probe, and no resolvable Windows shell: the reap has
+  # to stand entirely on the recorded pid.
+  out=$( keep_awake_env "$home"
+         FM_KEEP_AWAKE_INTEROP=/nonexistent/fm-keep-awake-probe "$KEEP_AWAKE" start 2>&1 )
+  if keep_awake_wait_gone "$child" 10 && [ ! -e "$home/state/.afk-keep-awake" ] \
+    && [ -z "$out" ]; then
+    pass "keep-awake leak: the reap needs neither the opt-in nor any Windows side"
+  else
+    fail "keep-awake leak: removing the opt-in stranded the leaked Windows process"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_READY_SECS FM_KEEP_AWAKE_POLL_SECS
+}
+
+# ---------------------------------------------------------------------------
 # This file's own safety net, which is trusted to stop stray holders when a run
 # fails or is interrupted. A home is created inside a command substitution, so
 # the tracking has to survive that subshell; the reaping is then proven by
@@ -1413,6 +1471,7 @@ unit_keep_awake_self_releases
 unit_keep_awake_slow_start_is_not_killed
 unit_keep_awake_marker_then_death_is_not_a_hold
 unit_keep_awake_killed_holder_leak_is_reaped
+unit_keep_awake_leak_is_reaped_after_opting_out
 unit_keep_awake_cleanup_net_fires
 unit_keep_awake_never_touches_display
 e2e_herdr
