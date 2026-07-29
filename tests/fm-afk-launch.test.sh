@@ -32,18 +32,32 @@ SLEEPER=$(mktemp "${TMPDIR:-/tmp}/fm-afk-sleeper.XXXXXX")
 printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$SLEEPER"
 chmod +x "$SLEEPER"
 TRACK_TMUX_SESSIONS=""
-TRACK_KEEP_AWAKE_HOMES=""
+# Keep-awake homes are tracked in a FILE, not a variable: keep_awake_home is
+# called as `home=$(keep_awake_home)`, and a variable appended inside that
+# command-substitution subshell would be discarded, leaving the safety net dead.
+TRACK_KEEP_AWAKE_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-keep-awake-homes.XXXXXX")
+
+# Release every tracked keep-awake home: stop its holder (which takes the fake
+# Windows process with it) and remove the home itself.
+keep_awake_cleanup_homes() {  # <tracking-file>
+  local file=$1 s
+  [ -f "$file" ] || return 0
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    FM_HOME="$s" FM_STATE_OVERRIDE="$s/state" FM_CONFIG_OVERRIDE="$s/config" \
+      "$KEEP_AWAKE" stop >/dev/null 2>&1 || true
+    rm -rf "$s" 2>/dev/null || true
+  done < "$file"
+  rm -f "$file" 2>/dev/null || true
+}
+
 GLOBAL_CLEANUP() {
   rm -f "$SLEEPER" 2>/dev/null || true
   local s
   for s in $TRACK_TMUX_SESSIONS; do
     tmux kill-session -t "$s" 2>/dev/null || true
   done
-  for s in $TRACK_KEEP_AWAKE_HOMES; do
-    FM_HOME="$s" FM_STATE_OVERRIDE="$s/state" FM_CONFIG_OVERRIDE="$s/config" \
-      "$KEEP_AWAKE" stop >/dev/null 2>&1 || true
-    rm -rf "$s" 2>/dev/null || true
-  done
+  keep_awake_cleanup_homes "$TRACK_KEEP_AWAKE_FILE"
 }
 trap GLOBAL_CLEANUP EXIT
 
@@ -787,7 +801,7 @@ keep_awake_home() {  # [enabled-value] -> prints the home path
   mkdir -p "$home/state" "$home/config"
   printf '%s' "${1-}" > "$home/config/keep-awake"
   date '+%s' > "$home/state/.afk"
-  TRACK_KEEP_AWAKE_HOMES="$TRACK_KEEP_AWAKE_HOMES $home"
+  printf '%s\n' "$home" >> "$TRACK_KEEP_AWAKE_FILE"
   printf '%s' "$home"
 }
 
@@ -820,6 +834,17 @@ keep_awake_env() {  # <home>
   FM_STATE_OVERRIDE="$1/state"
   FM_CONFIG_OVERRIDE="$1/config"
   export FM_HOME FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
+}
+
+keep_awake_wait_gone() {  # <pid> <seconds>
+  local pid=$1 limit=$2 waited=0
+  [ -n "$pid" ] || return 1
+  while [ "$waited" -lt "$limit" ]; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
 }
 
 keep_awake_wait_released() {  # <home> <seconds>
@@ -1029,6 +1054,99 @@ unit_keep_awake_self_releases() {
 }
 
 # ---------------------------------------------------------------------------
+# A cold or loaded Windows side can take longer than the readiness budget: WSL
+# interop spawn, .NET startup, and the in-box C# compiler all run before the
+# marker appears. A timeout there means UNCONFIRMED, never FAILED, because the
+# request may already have been accepted. The holder must survive it, be
+# reported in exactly one line, and be allowed to confirm late.
+# ---------------------------------------------------------------------------
+unit_keep_awake_slow_start_is_not_killed() {
+  local home daemon out lines holder child waited status
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  # Announces readiness only well AFTER the configured budget has elapsed.
+  printf '#!/usr/bin/env bash\nsleep 3\nprintf "FM_AWAKE_HELD\\n"\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh" \
+    FM_KEEP_AWAKE_READY_SECS=1 FM_KEEP_AWAKE_POLL_SECS=1
+  out=$( keep_awake_env "$home"; "$KEEP_AWAKE" start 2>&1 )
+  lines=$(printf '%s\n' "$out" | grep -c .)
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  if [ "$lines" = 1 ] && [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null \
+    && [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
+    pass "keep-awake slow start: an unconfirmed holder is reported once and left running"
+  else
+    fail "keep-awake slow start: the holder was killed, or the report was not one line"
+  fi
+
+  waited=0
+  while [ "$waited" -lt 20 ]; do
+    if grep -q FM_AWAKE_HELD "$home/state/.afk-keep-awake.out" 2>/dev/null \
+      && [ -n "$(cut -f4 "$home/state/.afk-keep-awake" 2>/dev/null || true)" ]; then
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  status=$( keep_awake_env "$home"; "$KEEP_AWAKE" status 2>/dev/null )
+  case "$status" in
+    "held pid=$holder child=$child")
+      if kill -0 "$holder" 2>/dev/null && kill -0 "$child" 2>/dev/null; then
+        pass "keep-awake slow start: a late but genuine success is allowed to stand"
+      else
+        fail "keep-awake slow start: the late request did not survive"
+      fi
+      ;;
+    *) fail "keep-awake slow start: the late request never took hold ($status)" ;;
+  esac
+
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" stop >/dev/null 2>&1 )
+  if keep_awake_wait_gone "$holder" 10 && keep_awake_wait_gone "$child" 10; then
+    pass "keep-awake slow start: the late request is still released on stand-down"
+  else
+    fail "keep-awake slow start: the late request outlived stand-down"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH FM_KEEP_AWAKE_READY_SECS FM_KEEP_AWAKE_POLL_SECS
+}
+
+# ---------------------------------------------------------------------------
+# This file's own safety net, which is trusted to stop stray holders when a run
+# fails or is interrupted. A home is created inside a command substitution, so
+# the tracking has to survive that subshell; the reaping is then proven by
+# running the very routine GLOBAL_CLEANUP runs against a private tracking file.
+# ---------------------------------------------------------------------------
+unit_keep_awake_cleanup_net_fires() {
+  local probe home daemon holder child tracked pwsh
+  probe=$(mktemp "${TMPDIR:-/tmp}/fm-keep-awake-net.XXXXXX")
+  home=$( TRACK_KEEP_AWAKE_FILE="$probe" keep_awake_home )
+  tracked=$(cat "$probe" 2>/dev/null || true)
+  if [ "$tracked" = "$home" ]; then
+    pass "keep-awake cleanup net: a home created in a command substitution is still tracked"
+  else
+    fail "keep-awake cleanup net: tracking was discarded with the command-substitution subshell"
+  fi
+  daemon=$(keep_awake_fake_daemon "$home")
+  pwsh=$(keep_awake_fake_pwsh "$home")
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$pwsh"
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  keep_awake_cleanup_homes "$probe"
+  if keep_awake_wait_gone "$holder" 10 && keep_awake_wait_gone "$child" 10 \
+    && [ ! -d "$home" ] && [ ! -e "$probe" ]; then
+    pass "keep-awake cleanup net: cleanup reaps the holder, its Windows process, and the home"
+  else
+    fail "keep-awake cleanup net: cleanup left a holder, a Windows process, or a home behind"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH
+}
+
+# ---------------------------------------------------------------------------
 # The captain's hard constraint: the screen must still be allowed to sleep.
 # ES_CONTINUOUS|ES_SYSTEM_REQUIRED is 0x80000001; adding ES_DISPLAY_REQUIRED
 # (0x2) would make it 0x80000003 and keep the display on.
@@ -1183,6 +1301,8 @@ unit_keep_awake_failure_never_blocks_arming
 unit_keep_awake_config_gate
 unit_keep_awake_lifecycle
 unit_keep_awake_self_releases
+unit_keep_awake_slow_start_is_not_killed
+unit_keep_awake_cleanup_net_fires
 unit_keep_awake_never_touches_display
 e2e_herdr
 e2e_tmux

@@ -42,7 +42,12 @@
 #                            opt-in file is absent. Bounded: it waits at most
 #                            FM_KEEP_AWAKE_READY_SECS for the holder to confirm
 #                            Windows accepted the request, then returns either
-#                            way.
+#                            way. That bound is a REPORTING bound only. A holder
+#                            that has not confirmed yet is left running
+#                            untouched, because a slow cold start may already
+#                            have been accepted and the holder releases itself
+#                            either way; only a holder that never came up at all
+#                            is reported unavailable.
 #   fm-keep-awake.sh stop    Release the request. Tolerant of an already-gone
 #                            holder, a missing record, and a stale record.
 #   fm-keep-awake.sh status  Print "held pid=<holder> child=<windows-holder>",
@@ -60,7 +65,9 @@
 # Env knobs and test seams:
 #   FM_KEEP_AWAKE_PWSH        override the resolved powershell.exe path
 #   FM_KEEP_AWAKE_INTEROP     override the WSL-interop probe path
-#   FM_KEEP_AWAKE_READY_SECS  confirmation bound for `start` (default 5)
+#   FM_KEEP_AWAKE_READY_SECS  confirmation bound for `start` (default 5); a
+#                             timeout changes only what is reported, never
+#                             whether a live holder keeps holding
 #   FM_KEEP_AWAKE_POLL_SECS   holder poll interval (default 10)
 #   FM_KEEP_AWAKE_GRACE_SECS  daemon-absence tolerance (default 180)
 set -u
@@ -74,6 +81,13 @@ FM_KEEP_AWAKE_RECORD="$FM_KEEP_AWAKE_STATE/.afk-keep-awake"
 FM_KEEP_AWAKE_OUT="$FM_KEEP_AWAKE_STATE/.afk-keep-awake.out"
 FM_KEEP_AWAKE_MARKER=FM_AWAKE_HELD
 
+# The holder's own view of the Windows process it owns. Kept as state rather
+# than trap arguments so the EXIT trap always signals the identity that is
+# currently recorded, and never a bare pid once one is known.
+FM_KEEP_AWAKE_CHILD_PID=""
+FM_KEEP_AWAKE_CHILD_IDENT=""
+FM_KEEP_AWAKE_HOLD_IDENT=""
+
 # fm-afk-start.sh owns the identity-backed daemon-lock liveness helpers and is
 # sourceable (BASH_SOURCE guard). It sets `set -eu`; this script is best-effort
 # by design, so errexit goes back off immediately.
@@ -84,7 +98,7 @@ set +e
 fm_keepawake_log() { printf 'fm-keep-awake: %s\n' "$*" >&2; }
 
 fm_keepawake_usage() {
-  sed -n '2,65p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,72p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Opt-in gate. Absent file means off. A present file may be empty or hold "auto";
@@ -183,15 +197,39 @@ fm_keepawake_signal_recorded() {  # <pid> <identity> <signal>
   kill "-$signal" "$pid" 2>/dev/null
 }
 
-# Sleep in one-second slices. bash only runs a trap once the foreground command
-# returns, so a single long sleep would make the holder ignore TERM for a whole
-# poll interval and delay the release.
+# Sleep as a background child and `wait` for it. bash only runs a trap once the
+# foreground command returns, so a plain `sleep` would make the holder ignore
+# TERM for a whole poll interval and delay the release, while `wait` is
+# interrupted the moment a trapped signal arrives. The abandoned sleep child of
+# an interrupted wait exits by itself within the same interval.
 fm_keepawake_sleep() {  # <seconds>
-  local remaining=$1
-  while [ "$remaining" -gt 0 ]; do
-    sleep 1
-    remaining=$((remaining - 1))
-  done
+  local remaining=$1 sleeper
+  [ "$remaining" -gt 0 ] || return 0
+  sleep "$remaining" &
+  sleeper=$!
+  wait "$sleeper" 2>/dev/null
+}
+
+fm_keepawake_marker_seen() {
+  grep -q "$FM_KEEP_AWAKE_MARKER" "$FM_KEEP_AWAKE_OUT" 2>/dev/null
+}
+
+# Record the Windows-holder identity once it is stable, upgrading the record
+# written at spawn time. It cannot be captured at spawn: the interop shim
+# rewrites its own command line when it execs the Windows binary, so an earlier
+# capture would never match afterwards and the trap below would refuse to reap
+# the very process it owns. The readiness marker is printed by the Windows side,
+# so seeing it proves that exec is done and the identity is now stable.
+fm_keepawake_confirm_child() {
+  local child_identity
+  [ -n "$FM_KEEP_AWAKE_CHILD_PID" ] || return 1
+  [ -z "$FM_KEEP_AWAKE_CHILD_IDENT" ] || return 0
+  fm_keepawake_marker_seen || return 1
+  child_identity=$(fm_pid_identity "$FM_KEEP_AWAKE_CHILD_PID" 2>/dev/null) || return 1
+  [ -n "$child_identity" ] || return 1
+  fm_keepawake_record_write "$$" "$FM_KEEP_AWAKE_HOLD_IDENT" \
+    "$FM_KEEP_AWAKE_CHILD_PID" "$child_identity" || return 1
+  FM_KEEP_AWAKE_CHILD_IDENT=$child_identity
 }
 
 fm_keepawake_holder_alive() {
@@ -204,7 +242,7 @@ fm_keepawake_holder_alive() {
 # The holder: owns the Windows process for the whole armed window.
 # ---------------------------------------------------------------------------
 fm_keepawake_hold() {
-  local pwsh child child_identity identity waited last_seen now poll grace ready
+  local pwsh identity waited last_seen now poll grace ready
 
   fm_keepawake_enabled || return 1
   fm_keepawake_interop_ready || return 1
@@ -215,43 +253,53 @@ fm_keepawake_hold() {
   poll=${FM_KEEP_AWAKE_POLL_SECS:-10}
   grace=${FM_KEEP_AWAKE_GRACE_SECS:-180}
   ready=${FM_KEEP_AWAKE_READY_SECS:-5}
+  FM_KEEP_AWAKE_HOLD_IDENT=$identity
 
   : > "$FM_KEEP_AWAKE_OUT" || return 1
   "$pwsh" -NoProfile -NonInteractive -Command "$(fm_keepawake_ps_script)" \
     > "$FM_KEEP_AWAKE_OUT" 2>&1 < /dev/null &
-  child=$!
+  FM_KEEP_AWAKE_CHILD_PID=$!
 
   # Release on ANY exit path, including a signal, so the request never outlives
   # this process. The record is only removed when it is still ours.
-  # shellcheck disable=SC2064
-  trap "fm_keepawake_hold_cleanup $child" EXIT
+  trap fm_keepawake_hold_cleanup EXIT
   trap 'exit 143' TERM
   trap 'exit 130' INT
 
   # Record the exact Windows-holder pid immediately, before the readiness wait,
   # so even a killed holder leaves a reconcilable id behind. Its identity is
-  # still unknown here: the interop shim rewrites its own command line when it
-  # execs the Windows binary, so an identity captured now would never match
-  # afterwards. Until the handshake below replaces it, only this holder's own
-  # exit trap can reap the child.
-  fm_keepawake_record_write "$$" "$identity" "$child" "" || return 1
+  # still unknown here and is filled in by fm_keepawake_confirm_child; until it
+  # is, only this holder's own exit trap can reap the child.
+  fm_keepawake_record_write "$$" "$identity" "$FM_KEEP_AWAKE_CHILD_PID" "" || return 1
 
   waited=0
   while [ "$waited" -lt "$((ready * 10))" ]; do
-    grep -q "$FM_KEEP_AWAKE_MARKER" "$FM_KEEP_AWAKE_OUT" 2>/dev/null && break
-    fm_pid_alive "$child" || return 1
+    fm_keepawake_marker_seen && break
+    if ! fm_pid_alive "$FM_KEEP_AWAKE_CHILD_PID"; then
+      # The Windows process is gone, so nothing is held and nothing can be.
+      # Forgetting the pid keeps the exit trap from signalling a dead one.
+      fm_keepawake_marker_seen && break
+      FM_KEEP_AWAKE_CHILD_PID=""
+      return 1
+    fi
     sleep 0.1
     waited=$((waited + 1))
   done
-  grep -q "$FM_KEEP_AWAKE_MARKER" "$FM_KEEP_AWAKE_OUT" 2>/dev/null || return 1
-
-  child_identity=$(fm_pid_identity "$child" 2>/dev/null || true)
-  fm_keepawake_record_write "$$" "$identity" "$child" "$child_identity" || return 1
+  # A readiness timeout means UNCONFIRMED, never FAILED. WSL interop spawn plus
+  # .NET startup plus the in-box C# compiler can easily outrun any budget on a
+  # loaded machine - exactly the condition this feature exists for - and by then
+  # Windows may already have accepted the request. So the holder keeps running
+  # and confirms late; only the Windows process actually dying ends the hold.
+  fm_keepawake_confirm_child
 
   last_seen=$(date '+%s')
   while :; do
     fm_keepawake_sleep "$poll"
-    fm_pid_alive "$child" || return 0
+    if ! fm_pid_alive "$FM_KEEP_AWAKE_CHILD_PID"; then
+      FM_KEEP_AWAKE_CHILD_PID=""
+      return 0
+    fi
+    fm_keepawake_confirm_child
     [ -f "$FM_KEEP_AWAKE_STATE/.afk" ] || return 0
     if daemon_lock_held_by_live_daemon; then
       last_seen=$(date '+%s')
@@ -262,9 +310,19 @@ fm_keepawake_hold() {
   done
 }
 
-fm_keepawake_hold_cleanup() {  # <child-pid>
-  local child=$1
-  kill -TERM "$child" 2>/dev/null
+fm_keepawake_hold_cleanup() {
+  local child=$FM_KEEP_AWAKE_CHILD_PID
+  if [ -n "$child" ]; then
+    if [ -n "$FM_KEEP_AWAKE_CHILD_IDENT" ]; then
+      fm_keepawake_signal_recorded "$child" "$FM_KEEP_AWAKE_CHILD_IDENT" TERM
+    else
+      # Pre-handshake only, where no identity exists yet to check against. The
+      # pid is one this very process created and last observed alive, and it is
+      # dropped the moment the Windows process is seen gone, so a pid already
+      # free for reuse is never signalled here.
+      kill -TERM "$child" 2>/dev/null
+    fi
+  fi
   # Only clean up files this holder still owns; a later holder may already have
   # replaced the record, and its output file must survive.
   if fm_keepawake_record_read && [ "$FM_KEEP_AWAKE_REC_PID" = "$$" ]; then
@@ -302,17 +360,25 @@ fm_keepawake_start() {
   ready=${FM_KEEP_AWAKE_READY_SECS:-5}
   waited=0
   while [ "$waited" -lt "$(((ready + 1) * 10))" ]; do
-    # A complete record - including the post-exec child identity - is the
-    # holder's own signal that Windows accepted the request.
-    if fm_keepawake_holder_alive && [ -n "$FM_KEEP_AWAKE_REC_CHILD_IDENT" ] \
-      && grep -q "$FM_KEEP_AWAKE_MARKER" "$FM_KEEP_AWAKE_OUT" 2>/dev/null; then
+    # The marker the Windows process prints is its own report that Windows
+    # accepted the request; a live recorded holder is what still owns it.
+    if fm_keepawake_holder_alive && fm_keepawake_marker_seen; then
       fm_keepawake_log "holding a system-awake request while away mode is armed (display unaffected)"
       return 0
     fi
     sleep 0.1
     waited=$((waited + 1))
   done
-  fm_keepawake_log "could not confirm the system-awake request; away mode continues without it"
+  # Unconfirmed is not failed. Killing a holder that may already be holding, on
+  # nothing better than a stopwatch, would cost keep-awake for the whole
+  # unattended window with nothing left to re-arm it, so a live holder is left
+  # strictly alone: it either confirms late or releases itself when away mode
+  # ends, and the machine stays awake in the meantime.
+  if fm_keepawake_holder_alive; then
+    fm_keepawake_log "the system-awake request is not confirmed yet; leaving its holder running (it releases itself when away mode ends)"
+    return 0
+  fi
+  fm_keepawake_log "keep-awake is unavailable here (its holder did not come up); away mode continues without it"
   fm_keepawake_stop_quiet
   return 1
 }

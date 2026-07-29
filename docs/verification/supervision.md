@@ -191,14 +191,25 @@ powershell.exe -NoProfile -Command '(Get-CimInstance Win32_Process -Filter "Proc
 
 Observed output: the same parent (`wslhost.exe`) for every separately launched Windows process.
 
-The mechanism actually used is `kernel32!SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` held by a `powershell.exe` process:
+The mechanism actually used is `kernel32!SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` held by a `powershell.exe` process.
+Running the shipped script, which prints its readiness marker and then idles re-asserting the request:
 
 ```sh
-powershell.exe -NoProfile -NonInteractive -Command '<the script in bin/fm-keep-awake.sh>'
+powershell.exe -NoProfile -NonInteractive -Command "$(bash -c '. bin/fm-keep-awake.sh; fm_keepawake_ps_script')"
 ```
 
-Observed output: `FM_AWAKE_HELD prev=2147483648`.
-A non-zero return is the documented success signal; `powercfg /requests` cannot corroborate it here because it requires an elevated prompt.
+Observed output: `FM_AWAKE_HELD`.
+
+That the API returned a non-zero prior state, rather than the 0 that signals refusal, came from a SEPARATE ad-hoc probe run once by hand.
+The shipped script only tests that return value and never prints it, so this probe is evidence about the API and not about the mechanism:
+
+```sh
+powershell.exe -NoProfile -NonInteractive -Command 'Add-Type -TypeDefinition "using System;using System.Runtime.InteropServices;public static class FmProbe{[DllImport(\"kernel32.dll\",SetLastError=true)]public static extern uint SetThreadExecutionState(uint esFlags);}"; "prev={0}" -f [FmProbe]::SetThreadExecutionState([uint32]2147483649)'
+```
+
+Observed output: `prev=2147483648`.
+A non-zero return is the documented success signal, and `2147483648` is `ES_CONTINUOUS` alone, which is the expected prior state of a fresh thread.
+`powercfg /requests` cannot corroborate it here because it requires an elevated prompt.
 
 Self-release rests on WSL propagating termination to the Windows process.
 Killing the Linux-side process of a Windows program and then querying the Windows side:
