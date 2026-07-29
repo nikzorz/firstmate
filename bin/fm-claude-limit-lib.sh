@@ -72,8 +72,16 @@ FM_CLAUDE_LIMIT_QUOTA_TIMEOUT_DEFAULT=15
 
 # Pane tail (lines) a caller should capture for the match. Large enough to hold
 # the whole prompt plus the message above it, small enough to stay cheap.
-# shellcheck disable=SC2034 # Read by the capturing callers (fm-crew-state.sh, fm-limit-resume.sh), not this lib.
 FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT=40
+
+# fm_claude_limit_scan_lines: the pane tail every capturing caller should ask
+# for, with the operator override read and validated here rather than at each
+# call site, so the value's guard stays with the default it protects.
+fm_claude_limit_scan_lines() {  # -> positive integer
+  local n=${FM_CLAUDE_LIMIT_SCAN_LINES:-$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT}
+  case "$n" in ''|*[!0-9]*) n=$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT ;; esac
+  printf '%s' "$n"
+}
 
 # fm_claude_limit_dialog_match: 0 when the text on stdin is a pane parked on the
 # usage-limit prompt, 1 otherwise (including empty or unreadable input).

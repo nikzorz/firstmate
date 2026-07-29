@@ -30,8 +30,10 @@
 #   3. The quota authority must report the window reset. `quota-axi` owns how
 #      model and product windows relate to bounding account windows (AGENTS.md
 #      section 4), so the decision is its current output, never elapsed time.
-#   4. After Escape, the prompt must be GONE on a re-read before the steer is
-#      sent. A prompt still showing stops the run rather than escalating keys.
+#   4. After Escape, the prompt must be PROVABLY gone on a re-read before the
+#      steer is sent: a capture that succeeded, was non-empty, and did not match.
+#      A prompt still showing stops the run rather than escalating keys, and a
+#      pane that cannot be read proves nothing and stops it too.
 #
 # An unreadable pane, an uncertain match, or an unreadable quota window refuses
 # and reports, because sending keys into a live crewmate's pane speculatively is
@@ -99,18 +101,30 @@ if [ "$HARNESS" != claude ]; then
 fi
 [ -n "$TARGET" ] || { echo "refused: task '$ID' has no recorded backend target" >&2; exit 1; }
 
-SCAN_LINES=${FM_CLAUDE_LIMIT_SCAN_LINES:-$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT}
-case "$SCAN_LINES" in ''|*[!0-9]*) SCAN_LINES=$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT ;; esac
+SCAN_LINES=$(fm_claude_limit_scan_lines)
 
-# 0 when the live pane is parked on the usage-limit prompt right now.
-prompt_is_showing() {
+# What a FRESH read of the live pane proves, as three distinct outcomes:
+#   showing    - the pane is parked on the usage-limit prompt right now;
+#   absent     - the capture succeeded, was non-empty, and did not match, so the
+#                prompt is provably not there;
+#   unreadable - the capture failed or came back empty, which proves nothing.
+# The two callers need OPPOSITE proofs, and conflating them is what would let an
+# unreadable pane authorize a keystroke: the entry gate requires `showing`, and
+# the post-Escape dismissal proof requires `absent` specifically.
+prompt_state() {  # -> showing|absent|unreadable
   local pane
-  pane=$(fm_backend_capture "$BACKEND" "$TARGET" "$SCAN_LINES" "$EXPECTED_LABEL" 2>/dev/null) || return 1
-  [ -n "$pane" ] || return 1
-  printf '%s' "$pane" | fm_claude_limit_dialog_match
+  pane=$(fm_backend_capture "$BACKEND" "$TARGET" "$SCAN_LINES" "$EXPECTED_LABEL" 2>/dev/null) \
+    || { printf 'unreadable'; return 0; }
+  [ -n "$pane" ] || { printf 'unreadable'; return 0; }
+  if printf '%s' "$pane" | fm_claude_limit_dialog_match; then
+    printf 'showing'
+  else
+    printf 'absent'
+  fi
+  return 0
 }
 
-if ! prompt_is_showing; then
+if [ "$(prompt_state)" != showing ]; then
   echo "refused: $ID is not showing the claude usage-limit prompt (pane unreadable, or the crew has moved on)" >&2
   exit 1
 fi
@@ -157,16 +171,27 @@ if ! fm_backend_send_key "$BACKEND" "$TARGET" Escape "$EXPECTED_LABEL"; then
   exit 1
 fi
 
-# Settle, then require positive proof the prompt is gone before steering. A
+# Settle, then require positive proof the prompt is GONE before steering. A
 # prompt still showing means the dismissal did not take, and escalating more keys
-# blind is exactly what this script exists to avoid.
-SETTLE=${FM_LIMIT_RESUME_SETTLE:-1}
-case "$SETTLE" in ''|*[!0-9.]*) SETTLE=1 ;; esac
+# blind is exactly what this script exists to avoid. A malformed settle value
+# falls back to the default rather than reaching sleep: aborting here, after
+# Escape has already been sent, would leave the crew dismissed but unsteered with
+# none of the refusals below reported.
+SETTLE_DEFAULT=1
+SETTLE=${FM_LIMIT_RESUME_SETTLE:-$SETTLE_DEFAULT}
+[[ $SETTLE =~ ^[0-9]+(\.[0-9]+)?$ ]] || SETTLE=$SETTLE_DEFAULT
 [ "$SETTLE" = 0 ] || sleep "$SETTLE"
-if prompt_is_showing; then
-  echo "refused: $ID still shows the claude usage-limit prompt after Escape; left untouched for inspection" >&2
-  exit 1
-fi
+case "$(prompt_state)" in
+  absent) ;;
+  showing)
+    echo "refused: $ID still shows the claude usage-limit prompt after Escape; left untouched for inspection" >&2
+    exit 1
+    ;;
+  *)
+    echo "refused: $ID's pane could not be read after Escape, so the prompt's dismissal is unproven; left untouched for inspection" >&2
+    exit 1
+    ;;
+esac
 
 STEER=${FM_LIMIT_RESUME_STEER:-"The claude usage limit that stalled you has reset. Do not assume where you stopped: re-read your own current state first, including whether your validation run still exists and belongs to your current commit, then continue from what you actually find."}
 

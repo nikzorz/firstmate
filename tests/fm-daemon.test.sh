@@ -436,6 +436,38 @@ test_housekeeping_usage_limited_stale_is_named_not_a_wedge() {
   pass "away mode names a usage-limit stall instead of reporting it as a possible wedge"
 }
 
+# The detection is claude-specific, so housekeeping must not buy a current-state
+# call for a harness that can never present the prompt: a fleet with no claude
+# crew keeps this loop's property of making no current-state calls at all.
+test_housekeeping_stale_non_claude_makes_no_current_state_call() {
+  local dir state fakebin win pane key saved_bin
+  dir=$(make_supercase stale-non-claude)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  win="sess:fm-cdx-w8"
+  pane="$dir/pane.txt"
+  printf 'working: implementing\n' > "$state/cdx-w8.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/cdx-w8.meta" "window=$win" "kind=ship" "harness=codex" "backend=tmux"
+  key=$(printf '%s' "cdx-w8" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  : > "$dir/crew-state-calls.log"
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_CREW_STATE_LOG="$dir/crew-state-calls.log" \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ ! -s "$dir/crew-state-calls.log" ] \
+    || fail "a non-claude stale task still cost a current-state call"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "a non-claude persistent stale lost its possible-wedge wording"
+
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "a stale task on another harness is classified without any current-state call"
+}
+
 test_housekeeping_resumed_stale_cleared() {
   local dir state fakebin win pane key
   dir=$(make_supercase stale-resumed)
@@ -1836,6 +1868,7 @@ test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
 test_housekeeping_persistent_stale_escalates
 test_housekeeping_usage_limited_stale_is_named_not_a_wedge
+test_housekeeping_stale_non_claude_makes_no_current_state_call
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_paused_resumed_cleared

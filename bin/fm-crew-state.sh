@@ -218,8 +218,7 @@ crew_pane_is_busy() {  # <target>
 # match it also SAVES the no-mistakes calls below. The quota read is bounded and
 # read-only, and runs only on a match.
 if [ "$HARNESS" = claude ] && [ -n "$BACKEND_TARGET" ]; then
-  LIMIT_SCAN_LINES=${FM_CLAUDE_LIMIT_SCAN_LINES:-$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT}
-  case "$LIMIT_SCAN_LINES" in ''|*[!0-9]*) LIMIT_SCAN_LINES=$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT ;; esac
+  LIMIT_SCAN_LINES=$(fm_claude_limit_scan_lines)
   LIMIT_PANE=$(fm_backend_capture "$TASK_BACKEND" "$BACKEND_TARGET" "$LIMIT_SCAN_LINES" "$EXPECTED_LABEL" 2>/dev/null) || LIMIT_PANE=""
   if [ -n "$LIMIT_PANE" ] && printf '%s' "$LIMIT_PANE" | fm_claude_limit_dialog_match; then
     LIMIT_WINDOW=$(fm_claude_limit_window_state)

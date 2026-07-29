@@ -17,8 +17,9 @@
 #   (b) quota window: reset / exhausted / unknown, with every unreadable or
 #       unmarked input failing closed to unknown;
 #   (c) recovery: only a fresh live match plus a reset window sends Escape, the
-#       prompt must be gone before the resume instruction is sent, and the steer
-#       tells the crew to re-read its own state rather than asserting one;
+#       prompt must be PROVABLY gone before the resume instruction is sent (a
+#       pane that cannot be re-read refuses too), and the steer tells the crew to
+#       re-read its own state rather than asserting one;
 #   (d) a still-exhausted window records the bounded external wait with the
 #       fleet's `paused:` vocabulary, idempotently, and sends nothing.
 set -u
@@ -255,7 +256,9 @@ case "${1:-}" in
   send-keys)
     shift
     printf '%s\n' "$*" >> "${FM_FAKE_KEYLOG:?}"
-    if [ -n "${FM_FAKE_PANE_AFTER_KEY:-}" ] && [ -f "${FM_FAKE_PANE_AFTER_KEY:-}" ]; then
+    if [ "${FM_FAKE_PANE_UNREADABLE_AFTER_KEY:-0}" = 1 ]; then
+      rm -f "${FM_FAKE_PANE_FILE:-}"
+    elif [ -n "${FM_FAKE_PANE_AFTER_KEY:-}" ] && [ -f "${FM_FAKE_PANE_AFTER_KEY:-}" ]; then
       cat "$FM_FAKE_PANE_AFTER_KEY" > "$FM_FAKE_PANE_FILE"
     fi ;;
 esac
@@ -279,7 +282,7 @@ run_resume() {  # <case-dir> <args...>
   PATH="$d/fakebin:$PATH" \
   FM_HOME="$d" FM_STATE_OVERRIDE="$d/state" \
   FM_FAKE_KEYLOG="$d/keys.log" FM_FAKE_SENDLOG="$d/sent.log" \
-  FM_LIMIT_RESUME_SETTLE=0 \
+  FM_LIMIT_RESUME_SETTLE="${FM_LIMIT_RESUME_SETTLE:-0}" \
     "$d/bin/fm-limit-resume.sh" "$@"
 }
 
@@ -388,6 +391,37 @@ test_recovery_stops_when_the_prompt_survives_escape() {
   pass "a prompt that survives Escape stops the run instead of escalating keys"
 }
 
+# The dismissal proof must be POSITIVE. A pane that cannot be re-read after
+# Escape establishes nothing about the prompt, so it must refuse exactly like a
+# prompt that survived, rather than reading "did not match" as "gone".
+test_recovery_stops_when_the_pane_is_unreadable_after_escape() {
+  local d out; d=$(make_case escape-unreadable)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_UNREADABLE_AFTER_KEY=1 \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled 2>&1) \
+    && fail "recovery continued past a pane it could not re-read after Escape"
+  assert_contains "$out" "could not be read" "an unreadable re-read was not reported"
+  [ "$(grep -c . "$d/keys.log")" -eq 1 ] || fail "recovery escalated more keys after an unreadable re-read"
+  [ ! -s "$d/sent.log" ] || fail "a resume instruction was sent without proof the prompt was gone"
+  pass "an unreadable pane after Escape refuses instead of steering on unproven dismissal"
+}
+
+# A malformed operator knob must never abort the run between the Escape and the
+# steer: that would leave the crew dismissed, unsteered, and undiagnosed.
+test_malformed_settle_falls_back_to_the_default() {
+  local d; d=$(make_case settle-malformed)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_LIMIT_RESUME_SETTLE=1.2.3 \
+    run_resume "$d" stalled >/dev/null 2>&1 \
+    || fail "a malformed settle value aborted the run after Escape had been sent"
+  [ -s "$d/sent.log" ] || fail "the resume instruction did not land under a malformed settle value"
+  pass "a malformed settle value falls back to the default instead of aborting mid-recovery"
+}
+
 test_failed_steer_is_reported_not_swallowed() {
   local d; d=$(make_case steer-fails)
   setup_task "$d" stalled claude
@@ -431,6 +465,8 @@ test_recovery_refuses_on_unreadable_quota
 test_exhausted_window_records_a_bounded_wait
 test_reset_window_dismisses_and_resumes
 test_recovery_stops_when_the_prompt_survives_escape
+test_recovery_stops_when_the_pane_is_unreadable_after_escape
+test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
 test_check_only_never_sends
 

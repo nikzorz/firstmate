@@ -596,7 +596,7 @@ task_window_harness() {  # <window> <state>
   local win=$1 state=$2 task meta
   task=$(window_to_task "$win" "$state")
   meta="$state/$task.meta"
-  grep '^harness=' "$meta" | cut -d= -f2- || true
+  grep '^harness=' "$meta" 2>/dev/null | cut -d= -f2- || true
 }
 
 stale_window_is_busy() {  # <window> <state>
@@ -940,7 +940,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs limit_class
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1009,7 +1009,15 @@ housekeeping() {  # <state>
         # classification keeps making no current-state calls at all. Once
         # firstmate records the wait as `paused:`, this loop stops seeing the
         # task and the pause re-surface cadence below owns the recheck.
-        case "$(crew_usage_limit_class "$task")" in
+        # Cheap pre-filter only: the recorded harness is read straight from
+        # metadata, so a fleet with no claude crew keeps this loop's property of
+        # making no current-state calls at all. bin/fm-crew-state.sh remains the
+        # authoritative gate, so an absent or unreadable record still asks.
+        limit_class=none
+        case "$(task_window_harness "$win" "$state")" in
+          claude|'') limit_class=$(crew_usage_limit_class "$task") ;;
+        esac
+        case "$limit_class" in
           ready)
             escalate_add "$state" "claude usage limit prompt waiting, account window has reset - recoverable: $win" ;;
           waiting)
