@@ -165,7 +165,7 @@ The safe command-channel contract is covered without a notification by `tests/fm
 ## Away-mode keep-awake
 
 This record supports the mechanism choice in `bin/fm-keep-awake.sh`.
-It was measured on 2026-07-28 on Windows 11 under WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2) with PowerToys installed at `/mnt/c/Users/<user>/AppData/Local/PowerToys/PowerToys.Awake.exe`.
+It was measured on 2026-07-28 on Windows 11 under WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2) with PowerToys installed per user, so `PowerToys.Awake.exe` sits in the `AppData\Local\PowerToys` directory of the Windows user profile and is reached from WSL through the mounted Windows drive.
 
 PowerToys Awake cannot be driven as a standalone process on a machine whose PowerToys runner already owns the Awake module.
 The running module reports:
