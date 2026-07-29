@@ -222,3 +222,43 @@ powershell.exe -NoProfile -Command "if (Get-Process -Id $windows_pid -ErrorActio
 Observed output: `WINDOWS_GONE`.
 
 The opt-in gate, fail-open behavior, idempotence, release on stand-down, and release after the away-mode daemon dies are covered without any real power state by `tests/fm-afk-launch.test.sh`, which runs the whole lifecycle against a fake Windows shell.
+
+## Claude usage-limit recovery
+
+This record supports the quota half of the usage-limit stall detection in `bin/fm-claude-limit-lib.sh`.
+The prompt half is a stable text signature covered without a real stall by `tests/fm-limit-resume.test.sh` and `tests/fm-crew-state.test.sh`, in both directions: the observed prompt matches, and ordinary worker output discussing rate limits does not.
+
+Whether the account window has reset is read from the quota authority rather than inferred from elapsed time.
+Measured on 2026-07-29 with quota-axi 0.1.13 against a Claude Max account, alongside Claude Code 2.1.220.
+
+```sh
+quota-axi --provider claude --json \
+  | jq '{schemaVersion,
+         state: .providers[0].state | {status, stale},
+         semantics: .providers[0].quotaSemantics
+           | {status, all_models: (.effectiveAvailability[]
+                                   | select(.scope == "all_models")
+                                   | {status, effectivePercentRemaining, limitingWindowIds})}}'
+```
+
+Observed output:
+
+```json
+{
+  "schemaVersion": 2,
+  "state": { "status": "fresh", "stale": false },
+  "semantics": {
+    "status": "known",
+    "all_models": {
+      "status": "known",
+      "effectivePercentRemaining": 41,
+      "limitingWindowIds": ["five_hour"]
+    }
+  }
+}
+```
+
+Every field the reader depends on is present here: the provider's own freshness flag, its `known` semantics marker, and the bounded all-models headroom with the window that is currently limiting it.
+Reading `effectiveAvailability` rather than a chosen entry of `windows` is what keeps a model window sitting inside a shorter account window from being missed.
+`stale` is a real boolean here, which is why the reader compares it with `== false` instead of jq's `//` alternative operator: `//` treats a literal `false` the same as an absent field and would have discarded exactly the good case.
+Every unreadable, unparseable, provider-stale, or not-`known` input reports `unknown` instead, which authorizes neither recovery nor a settled wait; `tests/fm-limit-resume.test.sh` covers each of those inputs without touching a real account.

@@ -16,10 +16,19 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
+#   state: <working|parked|done|blocked|paused|usage-limited|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta.
+#   1b. For a recorded claude crew ONLY: does the pane show Claude Code's
+#      usage-limit prompt (bin/fm-claude-limit-lib.sh)? That prompt waits for a
+#      human forever, so the crew is not working no matter what any run says -
+#      hence this is checked BEFORE the run lookup below, not as a fallback, and
+#      reports the distinct `usage-limited` state. The detail carries a
+#      `limit-window: reset|exhausted|unknown` token from the quota authority so
+#      a consumer can tell a recoverable stall from a bounded external wait
+#      without reading the pane again. Unreadable pane or uncertain match: fall
+#      through unchanged, never a guess.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
@@ -62,6 +71,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-claude-limit-lib.sh
+. "$SCRIPT_DIR/fm-claude-limit-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -190,6 +201,32 @@ crew_pane_is_busy() {  # <target>
       ;;
   esac
 }
+
+# --- claude usage-limit prompt (checked BEFORE the run lookup) --------------
+#
+# Root cause of the 2026-07-29 incident: a crew that exhausts the account usage
+# limit mid-turn stops on Claude Code's interactive choice prompt. Its
+# no-mistakes run is still `running`, so the run-step path below reported
+# `working` and every consumer read the crew as healthy; the prompt itself never
+# self-resumes, so three crews idled ~8.7 hours after the window had reset. A
+# pane parked on that prompt is authoritative evidence the crew is NOT working,
+# which is exactly why this outranks the run-step rather than sitting in the
+# no-run fallback at the bottom of this file.
+#
+# Cost: one bounded pane capture, and only for a recorded claude crew - other
+# harnesses pay nothing and are never classified by a claude signature. On a
+# match it also SAVES the no-mistakes calls below. The quota read is bounded and
+# read-only, and runs only on a match.
+if [ "$HARNESS" = claude ] && [ -n "$BACKEND_TARGET" ]; then
+  LIMIT_SCAN_LINES=${FM_CLAUDE_LIMIT_SCAN_LINES:-$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT}
+  case "$LIMIT_SCAN_LINES" in ''|*[!0-9]*) LIMIT_SCAN_LINES=$FM_CLAUDE_LIMIT_SCAN_LINES_DEFAULT ;; esac
+  LIMIT_PANE=$(fm_backend_capture "$TASK_BACKEND" "$BACKEND_TARGET" "$LIMIT_SCAN_LINES" "$EXPECTED_LABEL" 2>/dev/null) || LIMIT_PANE=""
+  if [ -n "$LIMIT_PANE" ] && printf '%s' "$LIMIT_PANE" | fm_claude_limit_dialog_match; then
+    LIMIT_WINDOW=$(fm_claude_limit_window_state)
+    emit "$FM_CLASSIFY_USAGE_LIMITED_STATE" pane \
+      "claude usage-limit prompt is waiting for a human${SEP}${FM_CLASSIFY_LIMIT_WINDOW_PREFIX}${LIMIT_WINDOW}"
+  fi
+fi
 
 # --- no-mistakes run lookup (authoritative when a run matches this branch) --
 

@@ -25,6 +25,11 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (l) claude usage-limit prompt: its own state, ahead of an active run-step,
+#       with the quota window reported reset/exhausted/unknown - plus the
+#       safety direction, that ordinary worker output discussing limits (and the
+#       prompt's own text quoted in tool output) never triggers it. The
+#       regression pair for the 2026-07-29 incident.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -88,9 +93,22 @@ case "${1:-}" in
     printf '%%1\n' ;;
   capture-pane)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
-    if [ "${FM_FAKE_BUSY:-0}" = 1 ]; then printf 'work in progress\nesc to interrupt\n'
+    # FM_FAKE_PANE_FILE serves arbitrary pane text verbatim, for cases that need
+    # a realistic multi-line capture rather than the busy/idle two-liners.
+    if [ -n "${FM_FAKE_PANE_FILE:-}" ] && [ -f "${FM_FAKE_PANE_FILE:-}" ]; then cat "$FM_FAKE_PANE_FILE"
+    elif [ "${FM_FAKE_BUSY:-0}" = 1 ]; then printf 'work in progress\nesc to interrupt\n'
     else printf 'all quiet\n> \n'; fi ;;
 esac
+exit 0
+SH
+  # quota-axi is firstmate's quota authority; the claude usage-limit path reads
+  # it. Serving FM_FAKE_QUOTA_JSON verbatim keeps these cases hermetic and off
+  # the real account.
+  cat > "$fb/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${FM_FAKE_QUOTA_FAILS:-0}" = 1 ] && exit 1
+printf '%s\n' "${FM_FAKE_QUOTA_JSON:-}"
 exit 0
 SH
   cat > "$fb/herdr" <<'SH'
@@ -122,7 +140,7 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr"
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/quota-axi"
   printf '%s\n' "$fb"
 }
 
@@ -162,8 +180,90 @@ reset_fakes() {
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
+  FM_FAKE_PANE_FILE=""
+  FM_FAKE_QUOTA_JSON=""
+  FM_FAKE_QUOTA_FAILS=0
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
+  export FM_FAKE_PANE_FILE FM_FAKE_QUOTA_JSON FM_FAKE_QUOTA_FAILS
+}
+
+# --- claude usage-limit fixtures --------------------------------------------
+
+# The prompt exactly as Claude Code drew it in the 2026-07-29 incident, under a
+# few lines of ordinary turn output, with nothing below it (the prompt replaces
+# the composer).
+write_limit_prompt_pane() {  # <file>
+  cat > "$1" <<'EOF'
+● Pushed the branch and opened the pull request.
+
+Claude usage limit reached. Your limit will reset at 6:40pm.
+
+   What do you want to do?
+
+ ❯ 1. Stop and wait for limit to reset
+   2. Upgrade your plan
+
+   Enter to confirm · Esc to cancel
+EOF
+}
+
+# Realistic ORDINARY worker output that talks about limits in prose - including
+# the words "limit", "wait for limit to reset", and even the prompt's own
+# question - inside a healthy pane whose composer box is still drawn below it.
+write_limit_prose_pane() {  # <file>
+  cat > "$1" <<'EOF'
+● Bash(git commit -m "fix(api): back off when the provider rate limit is hit")
+  ⎿  [fm/api-retry 1a2b3c4] fix(api): back off when the provider rate limit is hit
+
+● The commit note says we now wait for limit to reset rather than hammering the
+  endpoint, and records that the limit resets on a five-hour window.
+  What do you want to do?
+
+╭────────────────────────────────────────────────────────╮
+│ >                                                      │
+╰────────────────────────────────────────────────────────╯
+  ? for shortcuts
+EOF
+}
+
+# The prompt's own text QUOTED inside tool output on a working pane - a crewmate
+# reading this repo's own fixtures. Every text anchor is present and in order;
+# only the composer box still drawn underneath separates it from the real thing.
+write_limit_quoted_pane() {  # <file>
+  cat > "$1" <<'EOF'
+● Read(tests/fm-crew-state.test.sh)
+  ⎿     What do you want to do?
+      ❯ 1. Stop and wait for limit to reset
+        2. Upgrade your plan
+        Enter to confirm · Esc to cancel
+
+╭────────────────────────────────────────────────────────╮
+│ >                                                      │
+╰────────────────────────────────────────────────────────╯
+  ? for shortcuts
+EOF
+}
+
+quota_json() {  # <percent-remaining>
+  cat <<EOF
+{
+  "schemaVersion": 2,
+  "providers": [
+    {
+      "provider": "claude",
+      "plan": "max",
+      "state": { "status": "fresh", "stale": false },
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          { "scope": "all_models", "status": "known", "effectivePercentRemaining": $1 }
+        ]
+      }
+    }
+  ]
+}
+EOF
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -332,6 +432,158 @@ run:
     push,completed,0,0
     ci,fixing,0,0
 EOF
+}
+
+# ---------------------------------------------------------------------------
+# (l) claude usage-limit prompt. The 2026-07-29 regression pair: the prompt is
+# its own state and OUTRANKS an active run, and ordinary worker output that
+# merely discusses limits never reaches it.
+test_usage_limit_prompt_outranks_active_run() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-active-run)
+  make_repo_on_branch "$d/wt" fm/feat-limit
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-limit.meta" \
+    "window=fm:fm-feat-limit" "worktree=$d/wt" "kind=ship" "harness=claude"
+  write_limit_prompt_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  # The exact false-healthy shape from the incident: the pipeline run is still
+  # `running`, so without the pane check this reported plain `working`.
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-limit)"
+  local out; out=$(run_crew_state "$d" feat-limit)
+  assert_contains "$out" "state: usage-limited" "usage-limit prompt did not report its own state"
+  assert_contains "$out" "source: pane" "usage-limit prompt did not report a pane source"
+  assert_contains "$out" "limit-window: reset" "a reset account window was not reported"
+  assert_not_contains "$out" "state: working" "an active run masked the usage-limit prompt"
+  pass "a crew on the claude usage-limit prompt outranks its own active run"
+}
+
+test_usage_limit_prompt_exhausted_window() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-exhausted)
+  make_repo_on_branch "$d/wt" fm/feat-exh
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-exh.meta" \
+    "window=fm:fm-feat-exh" "worktree=$d/wt" "kind=ship" "harness=claude"
+  write_limit_prompt_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_QUOTA_JSON="$(quota_json 0)"
+  local out; out=$(run_crew_state "$d" feat-exh)
+  assert_contains "$out" "state: usage-limited" "exhausted window lost the usage-limited state"
+  assert_contains "$out" "limit-window: exhausted" "an exhausted account window was not reported"
+  pass "a still-exhausted account window is reported as such, not as reset"
+}
+
+test_usage_limit_unreadable_quota_is_unknown() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-unknown-quota)
+  make_repo_on_branch "$d/wt" fm/feat-uq
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-uq.meta" \
+    "window=fm:fm-feat-uq" "worktree=$d/wt" "kind=ship" "harness=claude"
+  write_limit_prompt_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_QUOTA_FAILS=1
+  local out; out=$(run_crew_state "$d" feat-uq)
+  assert_contains "$out" "state: usage-limited" "an unreadable quota lost the usage-limited state"
+  assert_contains "$out" "limit-window: unknown" "an unreadable quota window was not reported unknown"
+  assert_not_contains "$out" "limit-window: reset" "an unreadable quota window was guessed as reset"
+  pass "an unreadable quota window reports unknown rather than guessing a reset"
+}
+
+# The safety property: detection must not fire on ordinary worker output.
+test_usage_limit_ignores_ordinary_limit_prose() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-prose)
+  make_repo_on_branch "$d/wt" fm/feat-prose
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-prose.meta" \
+    "window=fm:fm-feat-prose" "worktree=$d/wt" "kind=ship" "harness=claude"
+  write_limit_prose_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-prose)"
+  local out; out=$(run_crew_state "$d" feat-prose)
+  assert_not_contains "$out" "usage-limited" "prose about rate limits triggered usage-limit detection"
+  assert_contains "$out" "state: working" "a working crew discussing limits lost its run-step state"
+
+  # Same pane, but with the prompt's own text quoted verbatim in tool output.
+  write_limit_quoted_pane "$d/pane.txt"
+  out=$(run_crew_state "$d" feat-prose)
+  assert_not_contains "$out" "usage-limited" "quoted prompt text in tool output triggered detection"
+  assert_contains "$out" "state: working" "a working crew displaying the prompt text lost its run-step state"
+  pass "usage-limit detection ignores ordinary worker output, quoted prompt text included"
+}
+
+# Scope discipline: the signature is claude-specific and is never applied to a
+# harness where the shape has not been observed.
+test_usage_limit_only_for_recorded_claude() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-other-harness)
+  make_repo_on_branch "$d/wt" fm/feat-other
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-other.meta" \
+    "window=fm:fm-feat-other" "worktree=$d/wt" "kind=ship" "harness=codex"
+  write_limit_prompt_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  printf 'working: implementing\n' > "$d/state/feat-other.status"
+  local out; out=$(run_crew_state "$d" feat-other)
+  assert_not_contains "$out" "usage-limited" "a non-claude harness was classified by the claude signature"
+  pass "the claude usage-limit signature is never applied to another harness"
+}
+
+# An unreadable pane must fall through unchanged, never be guessed either way.
+test_usage_limit_unreadable_pane_falls_through() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-unreadable-pane)
+  make_repo_on_branch "$d/wt" fm/feat-blind
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-blind.meta" \
+    "window=fm:fm-feat-blind" "worktree=$d/wt" "kind=ship" "harness=claude"
+  FM_FAKE_TMUX_MISSING=1
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-blind)"
+  local out; out=$(run_crew_state "$d" feat-blind)
+  assert_not_contains "$out" "usage-limited" "an unreadable pane was classified usage-limited"
+  assert_contains "$out" "source: run-step" "an unreadable pane did not fall through to the run-step path"
+  pass "an unreadable pane falls through instead of being guessed"
+}
+
+# The shared triage reading both supervisors use, over the REAL helper.
+test_usage_limit_classifier_over_real_helper() {
+  reset_fakes
+  local d; d=$(new_case usage-limit-classifier)
+  make_repo_on_branch "$d/wt" fm/feat-cls
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cls.meta" \
+    "window=fm:fm-feat-cls" "worktree=$d/wt" "kind=ship" "harness=claude"
+  write_limit_prompt_pane "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-cls)"
+
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  [ "$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_usage_limit_class feat-cls)" = ready ] \
+    || fail "a reset window was not classed ready"
+  # A stalled crew must never read as provably working, or the watcher absorbs it.
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-cls \
+    && fail "a crew on the usage-limit prompt was treated as provably working"
+
+  FM_FAKE_QUOTA_JSON="$(quota_json 0)"
+  [ "$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_usage_limit_class feat-cls)" = waiting ] \
+    || fail "an exhausted window was not classed waiting"
+
+  FM_FAKE_QUOTA_FAILS=1
+  [ "$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_usage_limit_class feat-cls)" = unknown ] \
+    || fail "an unreadable quota window was not classed unknown"
+  FM_FAKE_QUOTA_FAILS=0
+
+  write_limit_prose_pane "$d/pane.txt"
+  FM_FAKE_QUOTA_JSON="$(quota_json 97)"
+  [ "$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_usage_limit_class feat-cls)" = none ] \
+    || fail "an ordinary working crew was classed as usage-limited"
+  pass "crew_usage_limit_class reads ready/waiting/unknown/none from the real current-state line"
 }
 
 # ---------------------------------------------------------------------------
@@ -1279,5 +1531,12 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_missing_run_head_falls_back_to_current_state
+test_usage_limit_prompt_outranks_active_run
+test_usage_limit_prompt_exhausted_window
+test_usage_limit_unreadable_quota_is_unknown
+test_usage_limit_ignores_ordinary_limit_prose
+test_usage_limit_only_for_recorded_claude
+test_usage_limit_unreadable_pane_falls_through
+test_usage_limit_classifier_over_real_helper
 
 echo "all fm-crew-state tests passed"

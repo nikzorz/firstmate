@@ -66,6 +66,18 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
+# The distinct current state bin/fm-crew-state.sh reports for a crew parked on
+# Claude Code's usage-limit prompt, and the token its detail carries for the
+# quota window. Both consumers of this library - the always-on watcher and the
+# away-mode daemon - read the state through crew_usage_limit_class below rather
+# than re-deriving it, so the vocabulary has one definition exactly like the
+# pause verb above. There is deliberately no per-home override: unlike the status
+# verbs a crew writes, this token is produced and consumed entirely inside
+# firstmate's own scripts, so a configurable spelling would only let the producer
+# and consumer drift.
+FM_CLASSIFY_USAGE_LIMITED_STATE='usage-limited'
+FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
+
 # The resolution verb and durable-backlog-transfer verb that CLOSE a keyed
 # status decision opened by needs-decision or blocked. See status_open_decisions
 # below for the status-fold contract. The transfer verb is written only after
@@ -324,7 +336,12 @@ signal_reason_is_actionable() {  # <file> ...
 #   paused  - the crew's authoritative current state is a declared external-wait
 #             pause (paused:), which is EXPECTED to idle;
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
-#             torn-down/unknown crew, or an unreadable verdict).
+#             torn-down/unknown crew, or an unreadable verdict). A crew parked on
+#             Claude Code's usage-limit prompt lands here too, deliberately: it is
+#             genuinely stopped, so it must reach firstmate once instead of being
+#             absorbed. crew_usage_limit_class below distinguishes it, and once
+#             firstmate records the wait as `paused:` the ordinary declared-pause
+#             cadence takes over and it is never aged as a wedge.
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
@@ -354,6 +371,34 @@ crew_absorb_class() {  # <id>
 # run. See crew_absorb_class for the exact working/paused/none decision.
 crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
+}
+
+# Classify a crew against Claude Code's usage-limit stall, from the SAME single
+# authoritative current-state line crew_absorb_class reads. Prints one token:
+#   none    - the crew is not parked on the usage-limit prompt (the common case);
+#   ready   - it is parked there AND the quota authority reports the account
+#             window has reset, so bin/fm-limit-resume.sh can recover it;
+#   waiting - it is parked there and the window is still exhausted, which is a
+#             bounded external wait that clears on its own, NOT a wedge;
+#   unknown - it is parked there but the quota window could not be read, so
+#             neither recovery nor a settled wait is justified; surface it.
+# Detection itself is owned by bin/fm-crew-state.sh (and the signature by
+# bin/fm-claude-limit-lib.sh); this is only the shared triage reading of that one
+# line, so the watcher and the away-mode daemon cannot drift on what the state
+# means. NOT a pure read, for the same reason crew_absorb_class is not: callers
+# run it at most once per distinct stale sighting.
+crew_usage_limit_class() {  # <id>
+  local id=$1 line state
+  [ -n "$id" ] || { printf 'none'; return; }
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = "$FM_CLASSIFY_USAGE_LIMITED_STATE" ] || { printf 'none'; return; }
+  case "$line" in
+    *"${FM_CLASSIFY_LIMIT_WINDOW_PREFIX}reset"*)     printf 'ready' ;;
+    *"${FM_CLASSIFY_LIMIT_WINDOW_PREFIX}exhausted"*) printf 'waiting' ;;
+    *)                                               printf 'unknown' ;;
+  esac
 }
 
 # 0 if crew <id>'s authoritative current state is a declared external-wait pause.
