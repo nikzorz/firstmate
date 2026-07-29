@@ -39,6 +39,11 @@
 # Supported backends: herdr, tmux. Others (zellij, orca, cmux) have no verified
 # non-visible-launch primitive here yet and refuse loudly.
 #
+# Optional keep-awake: every arm path also asks bin/fm-keep-awake.sh to hold a
+# system-awake request, and the stand-down and reconcile paths release it. That
+# script owns the whole mechanism, its local opt-in, and its platform gate; its
+# exit status is discarded here so it can never block or break away mode.
+#
 # Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
 # placeholder instead of a real daemon. FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND
@@ -66,6 +71,18 @@ FM_AFK_LAUNCH_WS_LABEL="firstmate-afk-daemon"
 set +e
 
 fm_afk_launch_log() { printf 'fm-afk-launch: %s\n' "$*" >&2; }
+
+# Optional keep-awake, owned end to end by bin/fm-keep-awake.sh: it is off
+# unless the local config/keep-awake opt-in exists, and its outcome NEVER
+# affects away-mode arming or stand-down. That is deliberate - a supervision
+# path that refuses to start is worse than one that lets the machine sleep - so
+# the exit status is discarded here on purpose.
+fm_afk_launch_keep_awake() {  # <start|stop>
+  local script="$FM_AFK_LAUNCH_DIR/fm-keep-awake.sh"
+  [ -x "$script" ] || return 0
+  "$script" "$1" || true
+  return 0
+}
 
 fm_afk_launch_lock_owned() {
   local pid expected actual
@@ -325,6 +342,9 @@ fm_afk_launch_reconcile() {
   if daemon_lock_held_by_live_daemon; then
     return 0
   fi
+  # No live daemon means no reason to keep the machine awake, so release before
+  # touching the leaked terminal. This is the crash-recovery release path.
+  fm_afk_launch_keep_awake stop
   fm_afk_launch_record_read
   read_result=$?
   if [ "$read_result" -eq 0 ]; then
@@ -458,6 +478,7 @@ fm_afk_launch_start() {
       fm_afk_launch_log "failed to refresh away-mode flag"
       return 1
     fi
+    fm_afk_launch_keep_awake start
     fm_afk_launch_log "daemon already running; refreshed away-mode flag (no new terminal)"
     return 0
   fi
@@ -503,6 +524,7 @@ fm_afk_launch_start() {
     fm_afk_launch_restore_backup "$backup" "$had_afk" || result=1
   else
     rm -rf "$backup" || result=1
+    fm_afk_launch_keep_awake start
   fi
   return "$result"
 }
@@ -517,6 +539,7 @@ fm_afk_launch_start_native() {
   if daemon_lock_held_by_live_daemon; then
     fm_afk_launch_record_validate_if_present || return 1
     fm_afk_launch_flag_write || return 1
+    fm_afk_launch_keep_awake start
     fm_afk_launch_log "daemon already running; refreshed away-mode flag"
     return 0
   fi
@@ -546,6 +569,7 @@ fm_afk_launch_start_native() {
     fm_afk_launch_restore_backup "$backup" "$had_afk" || result=1
   else
     rm -rf "$backup" || result=1
+    fm_afk_launch_keep_awake start
   fi
   return "$result"
 }
@@ -591,7 +615,11 @@ fm_afk_launch_stop() {
   if [ "$read_result" -eq 0 ]; then
     fm_afk_launch_close_recorded || result=1
   fi
-  # (3) Clear the away-mode flag LAST.
+  # (3) Release the optional keep-awake request. Reached only once stand-down is
+  # actually committed, so an earlier refusal above leaves the machine awake for
+  # a still-armed away mode.
+  fm_afk_launch_keep_awake stop
+  # (4) Clear the away-mode flag LAST.
   if ! rm -f "$FM_AFK_LAUNCH_STATE/.afk"; then
     fm_afk_launch_log "failed to clear away-mode flag"
     result=1

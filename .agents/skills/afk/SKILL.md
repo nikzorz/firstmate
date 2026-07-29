@@ -22,6 +22,7 @@ batched digest rather than per-wake injections.
    This owns the durable state write, session-scoped stale-artifact clearing,
    terminal record, and rollback.
    The flag survives a firstmate restart, so recovery re-enters afk when it is present.
+   On a home that opted in with `config/keep-awake`, entry also holds a system-awake request so unattended work keeps running on a machine that would otherwise sleep, and stand-down releases it; `bin/fm-keep-awake.sh` owns that entirely, including staying out of the way when it cannot run.
 
 2. **Ensure the sub-supervisor daemon is running as a tracked background process.**
    Its hosting differs by harness.

@@ -113,6 +113,22 @@ An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisel
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
 See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Away-mode keep-awake (config/keep-awake)
+
+On a Windows laptop using Modern Standby, going idle freezes the whole WSL VM, so unattended away-mode work stops until someone touches the machine.
+Creating local, gitignored `config/keep-awake` opts that home in: while away mode is armed, it asks Windows to keep the SYSTEM awake, and releases that request on stand-down.
+The file may be empty or contain `auto` or `on`; `off` is an explicit local kill switch, and any other value keeps the feature off with a warning.
+
+The request never includes the display, so the screen still sleeps on its normal timeout, and no persistent power setting is changed.
+It is also self-releasing: Windows resumes normal power management as soon as the holding process exits, so a crashed daemon cannot leave the machine awake.
+A holder killed outright never gets to release, so the Windows process it owned is recorded from the moment it is spawned and the next arm, stand-down, or crash reconcile releases it by that exact id.
+Releasing such a leftover is deliberately not gated by the opt-in, so switching the file to `off` or deleting it still reaps one instead of stranding it until a reboot.
+
+An absent file means off, which is the default everywhere.
+The feature refuses before launching anything when WSL interop or `powershell.exe` is unavailable, so macOS and non-WSL Linux homes are unaffected, and every unavailable condition reports one line and lets away mode arm exactly as it would otherwise.
+The file is not inherited by secondmate homes: one request covers the whole machine, so the home whose away mode is armed is the one that holds it.
+[`bin/fm-keep-awake.sh`](../bin/fm-keep-awake.sh)'s header and `--help` own the mechanism, env knobs, and exact release conditions, and [`verification/supervision.md`](verification/supervision.md#away-mode-keep-awake) holds the active evidence for the mechanism choice.
+
 ## Gate defaults (.no-mistakes.yaml)
 
 The tracked `.no-mistakes.yaml` keeps test evidence outside the repo and pins `commands.lint` to `bin/fm-lint.sh` so local lint matches CI.
