@@ -981,7 +981,7 @@ unit_keep_awake_lifecycle() {
   first=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
   child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
   fields=$(awk -F '\t' 'NR==1 { print NF }' "$home/state/.afk-keep-awake" 2>/dev/null || true)
-  if [ -n "$first" ] && kill -0 "$first" 2>/dev/null && [ "$fields" = 4 ]; then
+  if [ -n "$first" ] && kill -0 "$first" 2>/dev/null && [ "$fields" = 5 ]; then
     pass "keep-awake lifecycle: arming records a live holder and its exact Windows process"
   else
     fail "keep-awake lifecycle: arming left no usable record"
@@ -1107,6 +1107,115 @@ unit_keep_awake_slow_start_is_not_killed() {
   else
     fail "keep-awake slow start: the late request outlived stand-down"
   fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH FM_KEEP_AWAKE_READY_SECS FM_KEEP_AWAKE_POLL_SECS
+}
+
+# ---------------------------------------------------------------------------
+# A Windows process that announces readiness and then dies held nothing by the
+# time anyone looks. Reporting that as a hold would be a plain untruth, so this
+# has to take the same one-line fail-open exit as any other unusable start.
+# ---------------------------------------------------------------------------
+unit_keep_awake_marker_then_death_is_not_a_hold() {
+  local home daemon out lines
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  printf '#!/usr/bin/env bash\nprintf "FM_AWAKE_HELD\\n"\nexit 0\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh" \
+    FM_KEEP_AWAKE_READY_SECS=1 FM_KEEP_AWAKE_POLL_SECS=1
+  out=$( keep_awake_env "$home"; "$KEEP_AWAKE" start 2>&1 )
+  lines=$(printf '%s\n' "$out" | grep -c .)
+  case "$out" in
+    *"holding a system-awake request"*)
+      fail "keep-awake dead child: reported a hold for a Windows process that had already died" ;;
+    *)
+      if [ "$lines" = 1 ]; then
+        pass "keep-awake dead child: a marker printed on the way out is not reported as a hold"
+      else
+        fail "keep-awake dead child: expected exactly one line, got $lines"
+      fi
+      ;;
+  esac
+  if keep_awake_wait_released "$home" 10; then
+    pass "keep-awake dead child: nothing is left recorded as held"
+  else
+    fail "keep-awake dead child: a record survived a request that never existed"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+  unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH FM_KEEP_AWAKE_READY_SECS FM_KEEP_AWAKE_POLL_SECS
+}
+
+# ---------------------------------------------------------------------------
+# A holder killed outright never runs its release, so the Windows process it
+# owns is LEAKED: still holding the request, with nothing left to drop it. The
+# record is written before that can happen, so the leak must stay reapable by
+# the next stand-down and by the next arm alike.
+#
+# The fake Windows shell here execs immediately and never announces readiness,
+# which is precisely the hazard: the record carries no full identity, only the
+# birth stamp captured at spawn, and that stamp has to survive the exec for
+# either path to be able to reap anything.
+# ---------------------------------------------------------------------------
+unit_keep_awake_killed_holder_leak_is_reaped() {
+  local home daemon holder child ident birth status second
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake" FM_KEEP_AWAKE_PWSH="$home/pwsh" \
+    FM_KEEP_AWAKE_READY_SECS=1 FM_KEEP_AWAKE_POLL_SECS=1
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  ident=$(cut -f4 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  birth=$(cut -f5 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  kill -KILL "$holder" 2>/dev/null || true
+  keep_awake_wait_gone "$holder" 10 || true
+  if [ -z "$ident" ] && [ -n "$birth" ] && [ -n "$child" ] && kill -0 "$child" 2>/dev/null \
+    && [ -e "$home/state/.afk-keep-awake" ]; then
+    pass "keep-awake leak: a hard-killed holder leaves its live Windows process recorded"
+  else
+    fail "keep-awake leak: the hard-killed holder left nothing reapable behind"
+  fi
+
+  status=$( keep_awake_env "$home"; "$KEEP_AWAKE" status 2>/dev/null )
+  if [ "$status" = "leaked child=$child" ]; then
+    pass "keep-awake leak: status names the leaked Windows process instead of claiming a hold"
+  else
+    fail "keep-awake leak: status did not report the leak ($status)"
+  fi
+
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" stop >/dev/null 2>&1 )
+  if keep_awake_wait_gone "$child" 10 && [ ! -e "$home/state/.afk-keep-awake" ]; then
+    pass "keep-awake leak: stand-down reaps the leaked Windows process and clears the record"
+  else
+    fail "keep-awake leak: stand-down left the leaked Windows process holding"
+  fi
+  kill "$daemon" 2>/dev/null || true
+  wait "$daemon" 2>/dev/null || true
+
+  home=$(keep_awake_home)
+  daemon=$(keep_awake_fake_daemon "$home")
+  printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$home/pwsh"
+  chmod +x "$home/pwsh"
+  export FM_KEEP_AWAKE_PWSH="$home/pwsh" FM_KEEP_AWAKE_INTEROP="$home/config/keep-awake"
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  child=$(cut -f3 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  kill -KILL "$holder" 2>/dev/null || true
+  keep_awake_wait_gone "$holder" 10 || true
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
+  second=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
+  if keep_awake_wait_gone "$child" 10 && [ -n "$second" ] && [ "$second" != "$holder" ] \
+    && kill -0 "$second" 2>/dev/null; then
+    pass "keep-awake leak: the next arm reaps the leak before taking the request over"
+  else
+    fail "keep-awake leak: the next arm left the leaked Windows process behind"
+  fi
+  ( keep_awake_env "$home"; "$KEEP_AWAKE" stop >/dev/null 2>&1 )
   kill "$daemon" 2>/dev/null || true
   wait "$daemon" 2>/dev/null || true
   unset FM_KEEP_AWAKE_INTEROP FM_KEEP_AWAKE_PWSH FM_KEEP_AWAKE_READY_SECS FM_KEEP_AWAKE_POLL_SECS
@@ -1302,6 +1411,8 @@ unit_keep_awake_config_gate
 unit_keep_awake_lifecycle
 unit_keep_awake_self_releases
 unit_keep_awake_slow_start_is_not_killed
+unit_keep_awake_marker_then_death_is_not_a_hold
+unit_keep_awake_killed_holder_leak_is_reaped
 unit_keep_awake_cleanup_net_fires
 unit_keep_awake_never_touches_display
 e2e_herdr

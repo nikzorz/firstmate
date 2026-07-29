@@ -120,7 +120,8 @@ Creating local, gitignored `config/keep-awake` opts that home in: while away mod
 The file may be empty or contain `auto`; `off` is an explicit local kill switch, and any other value keeps the feature off with a warning.
 
 The request never includes the display, so the screen still sleeps on its normal timeout, and no persistent power setting is changed.
-It is also self-releasing: Windows resumes normal power management as soon as the holding process exits, so a crashed daemon or a killed holder cannot leave the machine awake.
+It is also self-releasing: Windows resumes normal power management as soon as the holding process exits, so a crashed daemon cannot leave the machine awake.
+A holder killed outright never gets to release, so the Windows process it owned is recorded from the moment it is spawned and the next arm, stand-down, or crash reconcile releases it by that exact id.
 
 An absent file means off, which is the default everywhere.
 The feature refuses before launching anything when WSL interop or `powershell.exe` is unavailable, so macOS and non-WSL Linux homes are unaffected, and every unavailable condition reports one line and lets away mode arm exactly as it would otherwise.
