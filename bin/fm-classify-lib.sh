@@ -66,6 +66,77 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
+# --- one-shot pause recheck deadline ----------------------------------------
+#
+# Some external waits announce when they end. The cadence above cannot use that:
+# it is a fixed window, so a wait that clears in forty minutes is still rechecked
+# an hour after it was declared. That is the observed cost - a crew parked on
+# Claude Code's usage-limit prompt was recovered correctly but up to an hour
+# after the account window had already rolled.
+#
+# So a pause may additionally carry ONE recheck epoch in `state/<id>.pause-recheck`,
+# and both supervisors recheck at whichever comes first. Three properties keep
+# this a scheduling refinement rather than a second cadence:
+#
+#   - It only ever fires EARLIER. It is OR-ed with the fixed window, never
+#     replaces it, so an absent, malformed, or far-future deadline leaves today's
+#     behaviour exactly as it was and a forgotten pause still cannot rot.
+#   - It is ONE-SHOT. The consumer clears it as it fires, so a deadline already
+#     in the past means recheck now, once, and then back to the fixed cadence -
+#     never a tight loop against a stale timestamp.
+#   - Only a FUTURE epoch is ever recorded (pause_deadline_set enforces it), so a
+#     writer that recomputes the same elapsed deadline on every recheck cannot
+#     schedule itself into a spin.
+#
+# The only writer today is the usage-limit pause in bin/fm-limit-resume.sh, which
+# gets the epoch from bin/fm-claude-limit-lib.sh's quota read. This lib owns the
+# file and the predicate because both supervisors already read the pause cadence
+# from here, and neither should learn a second place to look.
+FM_CLASSIFY_PAUSE_DEADLINE_SUFFIX='.pause-recheck'
+
+pause_deadline_file() {  # <state-dir> <id>
+  printf '%s/%s%s' "$1" "$2" "$FM_CLASSIFY_PAUSE_DEADLINE_SUFFIX"
+}
+
+# Record a scheduled recheck. A missing, malformed, or non-future epoch CLEARS
+# the deadline instead of recording it: a deadline that is already due at the
+# moment it is written carries no information the caller does not already have,
+# and recording one would re-fire on every poll until the writer stopped.
+pause_deadline_set() {  # <state-dir> <id> <epoch>
+  local f epoch=${3:-}
+  f=$(pause_deadline_file "$1" "$2")
+  case "$epoch" in ''|*[!0-9]*) rm -f "$f" 2>/dev/null || true; return 0 ;; esac
+  if [ "$epoch" -le "$(date +%s)" ]; then
+    rm -f "$f" 2>/dev/null || true
+    return 0
+  fi
+  printf '%s\n' "$epoch" > "$f" 2>/dev/null || true
+  return 0
+}
+
+pause_deadline_clear() {  # <state-dir> <id>
+  rm -f "$(pause_deadline_file "$1" "$2")" 2>/dev/null || true
+  return 0
+}
+
+# 0 when a recorded recheck deadline has arrived. An absent or malformed file is
+# simply "no deadline", which leaves the caller on its fixed cadence.
+# Called from the watcher's stale path, which runs on every poll for every paused
+# crew and is documented as cheap, so the overwhelmingly common no-deadline case
+# costs one file test and no subprocess at all.
+pause_deadline_reached() {  # <state-dir> <id>
+  local f epoch=
+  f="$1/$2$FM_CLASSIFY_PAUSE_DEADLINE_SUFFIX"
+  [ -f "$f" ] || return 1
+  # `|| true`: a final line with no newline still populates `epoch` while read
+  # reports failure, and an unreadable file simply leaves it empty for the
+  # validation below.
+  read -r epoch < "$f" 2>/dev/null || true
+  epoch=${epoch%%[!0-9]*}
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(date +%s)" -ge "$epoch" ]
+}
+
 # The distinct current state bin/fm-crew-state.sh reports for a crew parked on
 # Claude Code's usage-limit prompt, and the token its detail carries for the
 # quota window. Both consumers of this library - the always-on watcher and the

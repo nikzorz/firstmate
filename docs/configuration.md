@@ -416,6 +416,7 @@ FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usag
 FM_CLAUDE_LIMIT_FOOTER_TAIL_SLACK=2   # non-blank lines allowed below that prompt's confirm row before the match is rejected
 FM_CLAUDE_LIMIT_RESET_MIN_REMAINING=5   # effective percent of account headroom at or above which the usage-limit window counts as reset
 FM_CLAUDE_LIMIT_QUOTA_TIMEOUT=15   # seconds allowed for the bounded quota-axi read behind that decision
+FM_CLAUDE_LIMIT_RESET_GRACE_SECS=60   # seconds after a reported window reset before the paused crew's scheduled recheck fires
 FM_LIMIT_RESUME_SETTLE=1   # seconds fm-limit-resume.sh waits after Escape before re-reading the pane
 FM_LIMIT_RESUME_STEER=    # override for the resume instruction fm-limit-resume.sh sends after dismissing the prompt
 FM_CLAUDE_LIMIT_PROMPT_RE= FM_CLAUDE_LIMIT_OPTION_RE= FM_CLAUDE_LIMIT_FOOTER_RE=   # override the three prompt anchors if Claude Code changes their wording; bin/fm-claude-limit-lib.sh owns the defaults

@@ -23,13 +23,21 @@
 #   (d) a still-exhausted window records the bounded external wait with the
 #       fleet's `paused:` vocabulary, idempotently, and sends nothing - and once
 #       recovery lands, that wait is closed again, but only ever the one firstmate
-#       itself opened.
+#       itself opened;
+#   (e) that wait also carries WHEN it ends, so the recheck is scheduled from the
+#       window's reported reset instead of a blind hour. The 2026-07-29/30
+#       follow-on these pin: detection and recovery were both correct, but the
+#       window rolled about forty minutes into an hour-long recheck cadence, so
+#       three crews stayed parked until the cadence came due. Absent, malformed,
+#       or unreadable reset data must leave that cadence exactly as it was.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-claude-limit-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-classify-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-limit-resume)
 
@@ -121,6 +129,51 @@ quota_json() {  # <percent-remaining>
 EOF
 }
 
+# The provider's fuller shape, with the bounding windows that carry the reset
+# times: an account window array plus the availability block naming which of
+# them bound every model. Effective availability is the minimum across those.
+quota_json_windows() {  # <effective-remaining> <windows-json> <bounded-by-json>
+  cat <<EOF
+{
+  "schemaVersion": 2,
+  "providers": [
+    {
+      "provider": "claude",
+      "plan": "max",
+      "state": { "status": "fresh", "stale": false },
+      "windows": $2,
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          { "scope": "all_models", "status": "known",
+            "effectivePercentRemaining": $1, "boundedBy": $3 }
+        ]
+      }
+    }
+  ]
+}
+EOF
+}
+
+# One window object. A `-` reset time omits the field entirely, which is how the
+# provider reports a window whose reset it does not know.
+quota_window() {  # <id> <percent-remaining> <resetsAt|->
+  if [ "$3" = - ]; then
+    printf '{ "id": "%s", "percentRemaining": %s }' "$1" "$2"
+  else
+    printf '{ "id": "%s", "percentRemaining": %s, "resetsAt": "%s" }' "$1" "$2" "$3"
+  fi
+}
+
+# quota-axi's own timestamp shape: microseconds and a numeric UTC offset.
+iso_at() {  # <epoch>
+  if [ "$(uname)" = Darwin ]; then
+    date -u -r "$1" '+%Y-%m-%dT%H:%M:%S.000000+00:00'
+  else
+    date -u -d "@$1" '+%Y-%m-%dT%H:%M:%S.000000+00:00'
+  fi
+}
+
 # --- (a) dialog signature ---------------------------------------------------
 
 test_signature_matches_the_real_prompt() {
@@ -192,6 +245,12 @@ window_state_with() {  # <fakebin> <json>
   FM_FAKE_QUOTA_JSON="$2" PATH="$1:$PATH" fm_claude_limit_window_state
 }
 
+# The two-field read: "<verdict><TAB><recheck epoch, or empty>".
+TAB=$'\t'
+window_read_with() {  # <fakebin> <json>
+  FM_FAKE_QUOTA_JSON="$2" PATH="$1:$PATH" fm_claude_limit_window_read
+}
+
 test_quota_window_reset_and_exhausted() {
   local fb; fb=$(make_quota_bin "$TMP_ROOT")
   [ "$(window_state_with "$fb" "$(quota_json 97)")" = reset ] \
@@ -225,6 +284,154 @@ test_quota_window_fails_closed_to_unknown() {
   [ "$(PATH=/nonexistent-for-fm-test fm_claude_limit_window_state)" = unknown ] \
     || fail "a missing quota-axi was not unknown"
   pass "every unreadable or unmarked quota input fails closed to unknown"
+}
+
+# --- (e) reset time and the scheduled recheck -------------------------------
+
+# The parser is arithmetic rather than a `date` call precisely so its answer
+# cannot depend on which platform ran it, so this pins it against known epochs -
+# including the offsets, leap days, and the 2100 non-leap century that separate a
+# correct civil-date conversion from an approximate one.
+test_reset_time_parses_without_a_platform_date() {
+  local ts want got
+  while read -r ts want; do
+    [ -n "$ts" ] || continue
+    got=$(fm_claude_limit_parse_iso8601 "$ts")
+    [ "$got" = "$want" ] || fail "parsing '$ts' gave '$got', expected '$want'"
+  done <<'EOF'
+2026-07-30T10:40:00.593064+00:00 1785408000
+2026-07-30T10:40:00Z 1785408000
+2026-07-30T10:40:00.5Z 1785408000
+1970-01-01T00:00:00Z 0
+2000-02-29T12:00:00Z 951825600
+2024-02-29T00:00:00-07:00 1709190000
+2026-03-01T00:00:00+05:30 1772303400
+2100-03-01T00:00:00Z 4107542400
+EOF
+  # Everything unparseable is empty, never a guess: an absent reset time is the
+  # documented fallback, and a wrong one would schedule a real recheck wrongly.
+  for ts in '' 'not a date' '2026-07-30' '2026-07-30T10:40:00' '2026-13-01T00:00:00Z' \
+            '2026-07-30T24:00:00Z' '1969-12-31T23:59:59Z' '2026-07-30T10:40:00+99:00'; do
+    got=$(fm_claude_limit_parse_iso8601 "$ts")
+    [ -z "$got" ] || fail "unparseable timestamp '$ts' produced '$got' instead of nothing"
+  done
+  pass "reset timestamps parse to fixed epochs on any platform, and fail closed to nothing"
+}
+
+test_exhausted_window_reports_when_it_resets() {
+  local fb soon later got
+  fb=$(make_quota_bin "$TMP_ROOT")
+  soon=$(( $(date +%s) + 2400 ))
+  later=$(( $(date +%s) + 9000 ))
+
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')")
+  [ "$got" = "exhausted${TAB}$(( soon + 60 ))" ] \
+    || fail "an exhausted window did not report its reset plus the grace, got '$got'"
+
+  # The grace is what makes the recheck worth taking: landing on the reset itself
+  # would just re-read the same exhausted window.
+  got=$(FM_CLAUDE_LIMIT_RESET_GRACE_SECS=300 window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')")
+  [ "$got" = "exhausted${TAB}$(( soon + 300 ))" ] || fail "the reset grace is not configurable, got '$got'"
+
+  # Two short bounding windows: effective availability is their MINIMUM, so the
+  # account is short until the LATER of them has rolled. Rechecking at the
+  # earlier one would only re-observe the other.
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")"), $(quota_window seven_day 1 "$(iso_at "$later")") ]" \
+    '["five_hour","seven_day"]')")
+  [ "$got" = "exhausted${TAB}$(( later + 60 ))" ] \
+    || fail "the recheck was not scheduled from the last short window to reset, got '$got'"
+
+  # A bounding window with headroom is not what is holding the account back, so
+  # its reset must not schedule anything.
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")"), $(quota_window seven_day 80 "$(iso_at "$later")") ]" \
+    '["five_hour","seven_day"]')")
+  [ "$got" = "exhausted${TAB}$(( soon + 60 ))" ] \
+    || fail "a window that still has headroom was treated as holding the account back, got '$got'"
+
+  # A reset already in the past is reported as it is. It means the recheck is due
+  # now, and the caller - not the reader - decides what to do about that.
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$(( $(date +%s) - 900 ))")") ]" '["five_hour"]')")
+  [ "${got%%"${TAB}"*}" = exhausted ] || fail "a past reset changed the window verdict"
+  [ "${got#*"${TAB}"}" -lt "$(date +%s)" ] || fail "a reset already in the past was not reported as past"
+  pass "an exhausted window reports when it resets, from the last short bounding window"
+}
+
+test_missing_or_unreadable_reset_time_falls_back() {
+  local fb got soon
+  fb=$(make_quota_bin "$TMP_ROOT")
+  soon=$(( $(date +%s) + 2400 ))
+
+  # No resetsAt on the short window: still a good exhausted verdict, but nothing
+  # to schedule, so the caller keeps its own cadence.
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 -) ]" '["five_hour"]')")
+  [ "$got" = "exhausted${TAB}" ] || fail "a missing resetsAt did not fall back to no recheck time, got '$got'"
+
+  # One short window with a reset and one without: the unknown one could be the
+  # later, so the whole schedule is unknown rather than optimistically early.
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")"), $(quota_window seven_day 0 -) ]" \
+    '["five_hour","seven_day"]')")
+  [ "$got" = "exhausted${TAB}" ] || fail "a partly-unknown reset schedule was guessed at, got '$got'"
+
+  got=$(window_read_with "$fb" "$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "yesterday afternoon") ]" '["five_hour"]')")
+  [ "$got" = "exhausted${TAB}" ] || fail "an unparseable resetsAt was not discarded, got '$got'"
+
+  # The pre-existing shape, with no windows array at all.
+  got=$(window_read_with "$fb" "$(quota_json 0)")
+  [ "$got" = "exhausted${TAB}" ] || fail "quota output without windows did not fall back, got '$got'"
+
+  # A quota read that fails outright, and a reset window: neither schedules.
+  got=$(FM_FAKE_QUOTA_FAILS=1 PATH="$fb:$PATH" fm_claude_limit_window_read)
+  [ "$got" = "unknown${TAB}" ] || fail "a failed quota read reported a recheck time, got '$got'"
+  got=$(window_read_with "$fb" "$(quota_json_windows 97 \
+    "[ $(quota_window five_hour 97 "$(iso_at "$soon")") ]" '["five_hour"]')")
+  [ "$got" = "reset${TAB}" ] || fail "a reset window reported a recheck time, got '$got'"
+  pass "absent, malformed, or unreadable reset data leaves the existing cadence in charge"
+}
+
+# The sidecar's three invariants, which are what keep a scheduled recheck from
+# becoming a second cadence: only a future epoch is recorded, an elapsed one is
+# due, and it is a plain one-shot record any consumer can clear.
+test_pause_deadline_records_only_a_future_recheck() {
+  local d now
+  d="$TMP_ROOT/deadline"; mkdir -p "$d"
+  now=$(date +%s)
+
+  pause_deadline_set "$d" task "$(( now + 600 ))"
+  [ -f "$d/task.pause-recheck" ] || fail "a future recheck deadline was not recorded"
+  pause_deadline_reached "$d" task && fail "a deadline ten minutes out was already due"
+
+  # An elapsed deadline is due immediately - the observed case, where the window
+  # had rolled while the crew was still parked.
+  printf '%s\n' "$(( now - 5 ))" > "$d/task.pause-recheck"
+  pause_deadline_reached "$d" task || fail "an elapsed deadline was not due"
+
+  # A deadline that is already due at the moment it is written carries nothing
+  # the writer does not already know, and recording one would re-fire every poll.
+  pause_deadline_set "$d" task "$(( now - 60 ))"
+  [ ! -e "$d/task.pause-recheck" ] || fail "a non-future deadline was recorded instead of cleared"
+
+  for bad in '' 'soon' '-5' '12x'; do
+    printf '%s\n' "$(( now + 600 ))" > "$d/task.pause-recheck"
+    pause_deadline_set "$d" task "$bad"
+    [ ! -e "$d/task.pause-recheck" ] || fail "malformed deadline '$bad' was recorded"
+  done
+
+  printf 'not an epoch\n' > "$d/task.pause-recheck"
+  pause_deadline_reached "$d" task && fail "a corrupt deadline file was read as due"
+  pause_deadline_reached "$d" never-paused && fail "a task with no deadline file was read as due"
+
+  pause_deadline_set "$d" task "$(( now + 600 ))"
+  pause_deadline_clear "$d" task
+  [ ! -e "$d/task.pause-recheck" ] || fail "clearing the deadline left the record behind"
+  pass "only a future recheck deadline is recorded, an elapsed one is due, and clearing removes it"
 }
 
 # --- (c)/(d) guarded recovery ----------------------------------------------
@@ -484,6 +691,61 @@ test_failed_steer_is_reported_not_swallowed() {
   pass "a resume instruction that does not land is reported, not swallowed"
 }
 
+# The end the whole feature turns on: the recorded wait carries the reset time,
+# so the supervisors recheck when the window actually rolls rather than up to an
+# hour later. It is refreshed on each recheck, never left behind after recovery,
+# and simply absent when the provider did not report a usable reset.
+test_exhausted_wait_schedules_its_own_recheck() {
+  local d soon later deadline
+  d=$(make_case recheck-deadline)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+  later=$(( $(date +%s) + 4800 ))
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  deadline=$(cat "$d/state/stalled.pause-recheck" 2>/dev/null || true)
+  [ "$deadline" = "$(( soon + 60 ))" ] \
+    || fail "the wait did not schedule its recheck from the reported reset, got '$deadline'"
+
+  # A later recheck sees a window that will now roll later; the schedule follows
+  # the current read rather than the first one.
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$later")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "the second recheck exited non-zero"
+  deadline=$(cat "$d/state/stalled.pause-recheck" 2>/dev/null || true)
+  [ "$deadline" = "$(( later + 60 ))" ] || fail "the recheck deadline was not refreshed, got '$deadline'"
+
+  # A window whose reset has already passed schedules nothing: the recheck is
+  # happening now, and re-recording an elapsed deadline would fire every poll.
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$(( $(date +%s) - 300 ))")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "the recheck on an elapsed reset exited non-zero"
+  [ ! -e "$d/state/stalled.pause-recheck" ] \
+    || fail "an elapsed reset was recorded as a deadline, which would re-fire every poll"
+
+  # No reset reported at all: the wait is still recorded, just without a schedule.
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
+    run_resume "$d" stalled >/dev/null || fail "the recheck without reset data exited non-zero"
+  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded wait itself was lost"
+  [ ! -e "$d/state/stalled.pause-recheck" ] || fail "a deadline was invented without reset data"
+
+  # Recovery clears the schedule with the wait, so nothing is left to fire later.
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "re-recording the bounded wait exited non-zero"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not re-recorded"
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
+    || fail "recovery of the reset window exited non-zero"
+  [ ! -e "$d/state/stalled.pause-recheck" ] || fail "recovery left its recheck deadline behind"
+  pass "the recorded wait schedules its recheck from the reported reset, refreshes it, and clears it on recovery"
+}
+
 test_check_only_never_sends() {
   local d out; d=$(make_case check-only)
   setup_task "$d" stalled claude
@@ -508,6 +770,10 @@ test_signature_requires_every_anchor_in_order
 test_signature_matches_plain_marker_and_ansi
 test_quota_window_reset_and_exhausted
 test_quota_window_fails_closed_to_unknown
+test_reset_time_parses_without_a_platform_date
+test_exhausted_window_reports_when_it_resets
+test_missing_or_unreadable_reset_time_falls_back
+test_pause_deadline_records_only_a_future_recheck
 test_recovery_refuses_non_claude_harness
 test_recovery_refuses_unresolvable_targets
 test_recovery_refuses_without_a_live_match
@@ -520,6 +786,7 @@ test_recovery_closes_only_a_wait_it_owns
 test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
+test_exhausted_wait_schedules_its_own_recheck
 test_check_only_never_sends
 
 echo "all fm-limit-resume tests passed"

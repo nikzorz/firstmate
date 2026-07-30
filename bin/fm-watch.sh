@@ -291,8 +291,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # timer would. A .paused-resurfaced-<key> throttle marker records the last
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
+# A pause that recorded WHEN its wait ends (fm-classify-lib.sh's one-shot
+# deadline) also re-surfaces at that instant, which is only ever earlier than the
+# window above: the throttle is skipped because the deadline is cleared as it
+# fires, so it cannot repeat, and the next recheck is back on the fixed cadence.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason due
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -303,8 +307,20 @@ handle_paused_stale() {  # <window> <task> <hash>
   age=$(( $(date +%s) - mtime ))
   rf="$STATE/.paused-resurfaced-$key"
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
-  if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
+  due=none
+  if pause_deadline_reached "$STATE" "$task"; then
+    # Consumed the moment it decides this recheck, not after the wake lands: an
+    # elapsed deadline left in place would re-decide on every poll. A cadence
+    # re-surface that happens to come first never consumes it, so a recheck still
+    # scheduled ahead survives.
+    due=deadline
+    pause_deadline_clear "$STATE" "$task"
+    reason="stale: $win (paused ${age}s, awaiting external - the wait's reported end time has arrived; recheck it now)"
+  elif [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
+    due=cadence
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
+  fi
+  if [ "$due" != none ]; then
     fm_wake_append stale "$win" "$reason" || exit 1
     date +%s > "$rf"
     wake "$reason"
