@@ -755,8 +755,140 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# --- claude usage-limit stall (2026-07-29) ----------------------------------
+#
+# A crew parked on Claude Code's usage-limit prompt is read from its PANE, and a
+# pane read is otherwise the snapshot's proof that the crew has moved PAST its
+# gate - which is why the two folds below both had to learn the new state. A
+# fakebin of its own (rather than the shared one above) so the prompt pane and the
+# quota authority are served only to these cases.
+make_limit_fakebin() {  # <dir>
+  local fb
+  fb=$(fm_fakebin "$1")
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fb/no-mistakes"
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+target=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-t" ]; then target=$arg; fi
+  prev=$arg
+done
+case "${1:-}" in
+  list-windows) sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta ;;
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf 'claude\n' ;;
+      *) printf '%%1\n' ;;
+    esac ;;
+  capture-pane)
+    # The prompt exactly as Claude Code draws it: it REPLACES the composer, so
+    # nothing is rendered below the confirm row.
+    case "$target" in
+      *limit-task*) cat <<'EOF'
+● Pushed the branch and opened the pull request.
+
+Claude usage limit reached. Your limit will reset at 6:40pm.
+
+   What do you want to do?
+
+ ❯ 1. Stop and wait for limit to reset
+   2. Upgrade your plan
+
+   Enter to confirm · Esc to cancel
+EOF
+        ;;
+      *) printf 'all quiet\n> \n' ;;
+    esac ;;
+esac
+exit 0
+SH
+  # quota-axi is firstmate's quota authority; serving it from the fakebin keeps
+  # these cases hermetic and off the real account.
+  cat > "$fb/quota-axi" <<'SH'
+#!/usr/bin/env bash
+cat <<EOF
+{ "providers": [ { "provider": "claude",
+    "state": { "status": "fresh", "stale": false },
+    "quotaSemantics": { "status": "known",
+      "effectiveAvailability": [
+        { "scope": "all_models", "status": "known", "effectivePercentRemaining": 0 } ] } } ] }
+EOF
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/quota-axi"
+  printf '%s\n' "$fb"
+}
+
+# A pane read normally proves the crew moved past its gate, so it CLEARS the
+# keyed decision fold. The usage-limit pane read proves the opposite - the crew
+# stopped, with the prompt drawn over whatever it was doing - so its open
+# decision must keep surfacing instead of being cleared by the sighting.
+test_usage_limited_crew_keeps_its_open_decision() {
+  local home fakebin out view
+  home=$(make_home usage-limited-decision)
+  mkdir -p "$home/projects/limit-wt"
+  fm_write_meta "$home/state/limit-task.meta" \
+    "window=firstmate:fm-limit-task" \
+    "worktree=$home/projects/limit-wt" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'needs-decision [key=api]: choose an API shape\n' > "$home/state/limit-task.status"
+  fakebin=$(make_limit_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "limit-task")
+    | .current_state.state == "usage-limited"
+      and .current_state.source == "pane"
+      and (.current_state.detail | test("limit-window: exhausted"))
+      and .hints.pending_decision == true
+      and (.hints.open_decisions | length) == 1
+      and .hints.open_decisions[0].key == "api"
+  ' >/dev/null || fail "a usage-limited crew's open decision must keep surfacing: $out"
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  assert_contains "$view" "usage-limited / pane" \
+    "the fleet view must name the usage-limited state in the crew's row"
+  pass "a crew on the claude usage-limit prompt keeps its open decision and is named in the view"
+}
+
+# The home-summary fold's other direction: a usage-limited child is neither
+# `working` (so it is not active child work) nor a backlog hold, so without the
+# new state in the child-state hold fold the home would summarise as having NO
+# active work at all - the stalled crew rendered invisible exactly as it was in
+# the incident.
+test_usage_limited_child_is_an_external_hold_not_no_active_work() {
+  local home fakebin out
+  home=$(make_home usage-limited-home-summary)
+  mkdir -p "$home/projects/limit-wt2"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] limit-task - Limit Task (repo: alpha) (kind: ship) (since 2026-07-29)
+EOF
+  fm_write_meta "$home/state/limit-task.meta" \
+    "window=firstmate:fm-limit-task" \
+    "worktree=$home/projects/limit-wt2" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'working: implementing\n' > "$home/state/limit-task.status"
+  fakebin=$(make_limit_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true
+      and .state == "externally_held"
+      and ((.holds // []) | any(.id == "limit-task" and (.reason | test("usage-limit"))))
+      and (.active_children | length) == 0
+  ' >/dev/null || fail "a usage-limited child must read as an external hold, not no active work: $out"
+  pass "a home summary with a usage-limited child reads as externally held, not no-active-work"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_usage_limited_crew_keeps_its_open_decision
+test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

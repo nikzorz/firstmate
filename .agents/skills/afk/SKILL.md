@@ -164,6 +164,7 @@ Classify each wake this way:
 - `stale` with a terminal status or bare legacy captain-relevant line -> escalate.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.
   If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge.
+  One idle shape is not a wedge: a claude crew parked on Claude Code's usage-limit prompt escalates named for what it is - window reset and recoverable, window still exhausted as a bounded external wait, or quota window unreadable - so handle it through `harness-adapters` instead of wedge recovery.
   This bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
   Healthy crewmates are autonomous and do not wait on firstmate mid-task.
 - `heartbeat` -> self-handle. The daemon runs its own cheap bash fleet scan
