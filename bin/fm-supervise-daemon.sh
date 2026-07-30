@@ -45,6 +45,9 @@
 #     (configurable), rechecked once. A wedged crewmate is therefore detected
 #     within STALE_ESCALATE_SECS + a tick, never lost. A declared pause instead
 #     gets its own longer PAUSE_RESURFACE_SECS recheck, never a wedge escalation.
+#     A crew parked on Claude Code's usage-limit prompt is escalated on that same
+#     wedge schedule but named for what it is, so a still-exhausted account
+#     window reads as a bounded external wait rather than a fault to hunt.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
 #     Buffered escalation delivery also has a max-defer alarm: if a digest stays
@@ -593,7 +596,7 @@ task_window_harness() {  # <window> <state>
   local win=$1 state=$2 task meta
   task=$(window_to_task "$win" "$state")
   meta="$state/$task.meta"
-  grep '^harness=' "$meta" | cut -d= -f2- || true
+  grep '^harness=' "$meta" 2>/dev/null | cut -d= -f2- || true
 }
 
 stale_window_is_busy() {  # <window> <state>
@@ -937,7 +940,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs limit_class
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -994,8 +997,37 @@ housekeeping() {  # <state>
     case "$?" in
       0) rm -f "$marker" ;;
       2) rm -f "$marker" ;;
-      *) escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"
-         stale_marker_remove "$win" "$state" ;;
+      *)
+        # Before calling this a possible wedge, ask the shared classifier about
+        # the one idle shape that is not one: a crew parked on Claude Code's
+        # usage-limit prompt (bin/fm-classify-lib.sh's crew_usage_limit_class).
+        # It never self-resumes, so away mode must still surface it - but a
+        # still-exhausted window is a bounded external wait, and reporting that
+        # as a wedge sends the supervisor looking for a fault that is not there.
+        # Asked HERE, at the one point per wedge where the pane is already proven
+        # idle past the threshold, so the daemon's cheap per-wake status-log
+        # classification keeps making no current-state calls at all. Once
+        # firstmate records the wait as `paused:`, this loop stops seeing the
+        # task and the pause re-surface cadence below owns the recheck.
+        # Cheap pre-filter only: the recorded harness is read straight from
+        # metadata, so a fleet with no claude crew keeps this loop's property of
+        # making no current-state calls at all. bin/fm-crew-state.sh remains the
+        # authoritative gate, so an absent or unreadable record still asks.
+        limit_class=none
+        case "$(task_window_harness "$win" "$state")" in
+          claude|'') limit_class=$(crew_usage_limit_class "$task") ;;
+        esac
+        case "$limit_class" in
+          ready)
+            escalate_add "$state" "claude usage limit prompt waiting, account window has reset - recoverable: $win" ;;
+          waiting)
+            escalate_add "$state" "claude usage limit prompt waiting, account window still exhausted - bounded external wait, not a wedge: $win" ;;
+          unknown)
+            escalate_add "$state" "claude usage limit prompt waiting, quota window unreadable - needs a look: $win" ;;
+          *)
+            escalate_add "$state" "stale persisted ${age}s (possible wedge): $win" ;;
+        esac
+        stale_marker_remove "$win" "$state" ;;
     esac
   done
 

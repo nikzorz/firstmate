@@ -175,6 +175,16 @@ First launch in a fresh worktree, or first ever on a machine, may show a trust o
 After every spawn, peek the pane within about 20 seconds.
 If such a dialog is showing, accept it from an active firstmate session using `FM_HOME=<this-firstmate-home> bin/fm-send.sh <window> --key Enter`, or the choice the dialog requires, unless `FM_HOME` is already set to the active firstmate home; verify the brief started processing.
 
+**Usage-limit stall (observed 2026-07-29).**
+When the account usage limit is exhausted mid-turn, Claude Code stops on an interactive choice prompt: the question `What do you want to do?`, a numbered `Stop and wait for limit to reset` option, and an `Enter to confirm · Esc to cancel` row.
+It waits for a human indefinitely, including long after the window resets, and the pane it leaves is idle with no error.
+`bin/fm-crew-state.sh` reports that pane as the distinct `usage-limited` state with a `limit-window: reset|exhausted|unknown` verdict from `quota-axi`; `bin/fm-claude-limit-lib.sh` owns the signature and that read.
+Recover with `FM_HOME=<this-firstmate-home> bin/fm-limit-resume.sh <id>`, which re-proves the live match, dismisses the prompt with one Escape, and resumes the crew with an instruction to re-read its own current state.
+Add `--check` to get the verdict without sending anything.
+It refuses rather than guessing whenever the pane, the match, or the quota window is uncertain, so treat a refusal as a stop-and-inspect result.
+A still-exhausted window is not a wedge: the script records the wait with `paused:` and the ordinary declared-pause cadence takes over until the window clears.
+No other verified harness has been observed presenting a blocking usage-limit prompt, so nothing here applies to codex, opencode, pi, grok, or kimi.
+
 Claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.
 A plain `tmux capture-pane` cannot tell that ghost text apart from typed text.
 Firstmate launches every claude crewmate and secondmate with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, scoped to firstmate-launched agents through `bin/fm-spawn.sh`, so it never touches the captain's global config.

@@ -277,7 +277,7 @@ When `config/crew-dispatch.json` exists, bootstrap also requires `jq` for dispat
 When X mode is opted in, bootstrap also requires `curl` and `jq` before arming the relay poll shim.
 `tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
-An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array until current quota output is available for every candidate.
+An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array until current quota output is available for every candidate, and a crewmate stalled on Claude Code's usage-limit prompt reports an unreadable window, which authorizes neither automatic recovery nor a settled wait.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
 The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh`.
@@ -412,6 +412,13 @@ FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in C
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
+FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usage-limit prompt
+FM_CLAUDE_LIMIT_FOOTER_TAIL_SLACK=2   # non-blank lines allowed below that prompt's confirm row before the match is rejected
+FM_CLAUDE_LIMIT_RESET_MIN_REMAINING=5   # effective percent of account headroom at or above which the usage-limit window counts as reset
+FM_CLAUDE_LIMIT_QUOTA_TIMEOUT=15   # seconds allowed for the bounded quota-axi read behind that decision
+FM_LIMIT_RESUME_SETTLE=1   # seconds fm-limit-resume.sh waits after Escape before re-reading the pane
+FM_LIMIT_RESUME_STEER=    # override for the resume instruction fm-limit-resume.sh sends after dismissing the prompt
+FM_CLAUDE_LIMIT_PROMPT_RE= FM_CLAUDE_LIMIT_OPTION_RE= FM_CLAUDE_LIMIT_FOOTER_RE=   # override the three prompt anchors if Claude Code changes their wording; bin/fm-claude-limit-lib.sh owns the defaults
 FMX_PAIRING_TOKEN=      # X mode pairing token; .env opt-in authorizes replies and eligible lifecycle actions
 FMX_RELAY_URL=https://myfirstmate.io   # optional X relay override, mainly for local relay development
 FMX_ENV_FILE=           # optional alternate .env file for direct X client invocations; bootstrap still checks $FM_HOME/.env

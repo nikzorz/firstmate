@@ -450,13 +450,15 @@ task_json_lines() {
     #     report POINTER, never as a reopened pending decision.
     # Secondmates are excluded from lifecycle clearing: they are persistent and
     # multiplex many concerns onto one stream, so activity on one concern must
-    # never clear another concern's keyed decision. A parked/blocked state, or a
-    # non-authoritative status-log/none read on a still-live task, keeps the fold's
-    # open decision surfacing.
+    # never clear another concern's keyed decision. A parked/blocked state, a crew
+    # parked on the claude usage-limit prompt (a pane read that proves it has
+    # STOPPED, not moved past its gate), or a non-authoritative status-log/none
+    # read on a still-live task, keeps the fold's open decision surfacing.
     open_decisions_tsv=$(status_open_decisions "$status_log")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
-           && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
+           && [ "$current_state" != parked ] && [ "$current_state" != blocked ] \
+           && [ "$current_state" != "$FM_CLASSIFY_USAGE_LIMITED_STATE" ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
     fi
@@ -599,6 +601,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     --argjson queued_n "$FM_SNAPSHOT_SECONDMATE_QUEUED" \
     --argjson decisions_n "$FM_SNAPSHOT_SECONDMATE_DECISIONS" \
     --argjson landed_n "$FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME" \
+    --arg usage_limited "$FM_CLASSIFY_USAGE_LIMITED_STATE" \
     --argjson backlog "$1" \
     --argjson tasks "$2" '
     def trunc($n):
@@ -672,7 +675,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
             reason:((.hold_reason // .blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]
        + [ $owned_in_flight[] as $work
            | $tasks[]
-           | select(.id == $work.id and (.current_state.state == "parked" or .current_state.state == "paused" or .current_state.state == "blocked"))
+           | select(.id == $work.id and (.current_state.state == "parked" or .current_state.state == "paused" or .current_state.state == "blocked" or .current_state.state == $usage_limited))
            | select(($work.hold_reason != null and $work.hold_kind != null) | not)
            | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
               blocked_by_ids:[],unresolved_blocker_ids:[],

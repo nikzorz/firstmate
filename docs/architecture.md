@@ -36,6 +36,15 @@ Only when no matching run exists does it fall back to the pane busy-signature an
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
 For herdr, that pane fallback trusts a native `busy` verdict outright, but corroborates native `idle` or unknown verdicts against the recorded harness's rendered busy signature before deciding the crew is not working.
+
+Ahead of all of that, and only for a crew whose recorded harness is claude, the same reader checks whether the pane is parked on Claude Code's usage-limit prompt and reports the distinct `usage-limited` state.
+That check outranks the run-step rather than sitting in the fallback because the prompt waits for a human indefinitely, so a crew showing it is not working however its pipeline run reads; leaving it to the run-step is what let three crewmates idle for hours behind a still-`running` validation.
+`bin/fm-claude-limit-lib.sh` owns the prompt signature and the bounded `quota-axi` read that decides whether the account window has reset, and the state's detail carries that verdict so no consumer reads the pane a second time.
+Making it a state rather than a wake-triage predicate is what gives both supervisors the same view through the existing seam: `bin/fm-classify-lib.sh` reads that one line for its shared vocabulary, the always-on watcher inherits it through the absorb classification, and the away-mode daemon names the condition instead of reporting a bounded external wait as a possible wedge.
+A still-exhausted window is recorded with the existing `paused:` vocabulary, so the ordinary declared-pause cadence owns the recheck; recovery once the window has reset is the guarded `bin/fm-limit-resume.sh`, which re-proves the live match before it sends anything.
+Because the crew never learns that firstmate wrote that pause, the recover path also closes it once the steer lands, and only ever the line it opened itself, so a resume that silently does not take ages on the wedge cadence rather than the hour-long pause recheck.
+The signature is deliberately claude-only: no other verified harness has been observed presenting a blocking usage-limit prompt, and per-harness knowledge belongs in `harness-adapters`.
+
 For whole-fleet read-only review, `bin/fm-fleet-snapshot.sh --json` emits schema `fm-fleet-snapshot.v1` from the backlog, task metadata, current crew state, endpoint probes, PR/report pointers, scout reports, bounded current summaries from registered secondmate homes, and secondmate return-channel guidance.
 `bin/fm-fleet-view.sh` renders that snapshot as Markdown for humans, while `bin/fm-bearings-snapshot.sh` provides the bounded bearings projection, so both views consume one structured contract instead of reparsing raw fleet files.
 The script header owns the exact JSON schema.
