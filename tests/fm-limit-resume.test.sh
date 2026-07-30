@@ -21,7 +21,9 @@
 #       pane that cannot be re-read refuses too), and the steer tells the crew to
 #       re-read its own state rather than asserting one;
 #   (d) a still-exhausted window records the bounded external wait with the
-#       fleet's `paused:` vocabulary, idempotently, and sends nothing.
+#       fleet's `paused:` vocabulary, idempotently, and sends nothing - and once
+#       recovery lands, that wait is closed again, but only ever the one firstmate
+#       itself opened.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -391,6 +393,54 @@ test_recovery_stops_when_the_prompt_survives_escape() {
   pass "a prompt that survives Escape stops the run instead of escalating keys"
 }
 
+# The wait firstmate opens on the crew's behalf must not outlive the condition it
+# describes. The crew never learns that line exists, so if recovery leaves it
+# standing, a resume that silently does not take idles on the hour-long pause
+# recheck instead of surfacing on the wedge cadence - the exact hours-unnoticed
+# failure this feature exists to end.
+test_recovery_closes_the_wait_it_opened() {
+  local d last; d=$(make_case close-pause)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded external wait was not recorded"
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
+    || fail "recovery after a recorded wait exited non-zero"
+  [ -s "$d/sent.log" ] || fail "recovery did not send the resume instruction"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) fail "recovery left its own paused: line standing as the crew's last event" ;;
+  esac
+  pass "recovery closes the bounded wait it opened, returning the crew to the wedge cadence"
+}
+
+# The close is owned, not blanket: it fires only for the line this script wrote.
+test_recovery_closes_only_a_wait_it_owns() {
+  local d; d=$(make_case foreign-pause)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
+    || fail "recovery with no recorded wait exited non-zero"
+  [ ! -s "$d/state/stalled.status" ] \
+    || fail "recovery wrote a status line although it had no wait to close"
+
+  # A pause the CREW declared for its own reason still means what it says.
+  printf 'paused: waiting on the upstream release\n' > "$d/state/stalled.status"
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
+    || fail "recovery over a crew-declared pause exited non-zero"
+  [ "$(cat "$d/state/stalled.status")" = "paused: waiting on the upstream release" ] \
+    || fail "recovery closed a paused: line it did not open"
+  pass "recovery writes nothing when there is no wait of its own, and never closes the crew's"
+}
+
 # The dismissal proof must be POSITIVE. A pane that cannot be re-read after
 # Escape establishes nothing about the prompt, so it must refuse exactly like a
 # prompt that survived, rather than reading "did not match" as "gone".
@@ -465,6 +515,8 @@ test_recovery_refuses_on_unreadable_quota
 test_exhausted_window_records_a_bounded_wait
 test_reset_window_dismisses_and_resumes
 test_recovery_stops_when_the_prompt_survives_escape
+test_recovery_closes_the_wait_it_opened
+test_recovery_closes_only_a_wait_it_owns
 test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed

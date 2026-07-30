@@ -47,6 +47,13 @@
 # toward a possible-wedge escalation every FM_STALE_ESCALATE_SECS. The append is
 # idempotent, so re-running this every recheck does not stack duplicate lines.
 #
+# That wait is OPENED and CLOSED here, as one contract. Unlike an ordinary pause,
+# the crew never learns this line exists, so nothing else would ever close it: a
+# `paused:` line left standing keeps a recovered crew on the hour-long pause
+# recheck when it should be back on the wedge cadence, and this feature exists
+# because crews sat frozen for hours unnoticed. So the recover path closes it,
+# and only its OWN line, identified exactly as the idempotent open identifies it.
+#
 # THE STEER deliberately does not assert where the crew stopped. In the live
 # incident the interrupted validation run had lost custody and the crew correctly
 # started a fresh one; a steer that had asserted a remembered position would have
@@ -144,6 +151,26 @@ record_pause() {
   printf '%s: %s\n' "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" "$PAUSE_NOTE" >> "$LOG"
 }
 
+# Close that wait once recovery has landed, by appending the fleet's ordinary
+# non-paused progress verb so the crew's last event stops satisfying
+# status_is_paused and the daemon's wedge branch is reachable again.
+# Ownership is the same exact-match identity record_pause uses: a `paused:` line
+# the CREW wrote for its own reason still means what it says and is left alone,
+# because closing a wait firstmate does not own would silence it. Nothing to
+# close - never opened, no status file, or someone else's pause - is a no-op, and
+# a close can never fail the recovery it follows.
+RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
+close_pause() {
+  local last
+  last=$(last_status_line "$LOG")
+  case "$last" in
+    "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") ;;
+    *) return 0 ;;
+  esac
+  printf 'working: %s\n' "$RESUME_NOTE" >> "$LOG" 2>/dev/null || true
+  return 0
+}
+
 case "$WINDOW" in
   reset) ;;
   exhausted)
@@ -199,5 +226,7 @@ if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER"; then
   echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
   exit 1
 fi
+
+close_pause
 
 echo "$ID: dismissed the claude usage-limit prompt and sent the resume instruction"
