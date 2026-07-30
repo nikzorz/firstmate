@@ -92,6 +92,12 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 # gets the epoch from bin/fm-claude-limit-lib.sh's quota read. This lib owns the
 # file and the predicate because both supervisors already read the pause cadence
 # from here, and neither should learn a second place to look.
+#
+# A deadline belongs to the ONE pause it was written for. Each supervisor's
+# clear_pause_tracking drops it along with the rest of that pause's state as soon
+# as the crew stops declaring the pause, so it cannot survive a recovery that
+# never went through its writer and later mislabel an unrelated wait as having
+# reported an end time.
 FM_CLASSIFY_PAUSE_DEADLINE_SUFFIX='.pause-recheck'
 
 pause_deadline_file() {  # <state-dir> <id>

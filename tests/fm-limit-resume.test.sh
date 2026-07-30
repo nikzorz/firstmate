@@ -743,6 +743,24 @@ test_exhausted_wait_schedules_its_own_recheck() {
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
     || fail "recovery of the reset window exited non-zero"
   [ ! -e "$d/state/stalled.pause-recheck" ] || fail "recovery left its recheck deadline behind"
+
+  # Recovery through this script is not the only way a stall ends: a human can
+  # dismiss the prompt in the pane, and then this script never reaches close_pause
+  # again - it exits at the prompt gate. So this script is NOT where the deadline's
+  # lifetime is bounded; the supervisors' clear_pause_tracking is, and that seam is
+  # covered by tests/fm-watch-triage.test.sh and tests/fm-daemon.test.sh. Pinned
+  # here so the sidecar's owner records which exit paths leave it in place.
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "re-recording the bounded wait exited non-zero"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not re-recorded"
+  dismissed_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
+    run_resume "$d" stalled >/dev/null 2>&1 \
+    && fail "a pane with no usage-limit prompt was treated as a stall"
+  [ -e "$d/state/stalled.pause-recheck" ] \
+    || fail "the prompt-gate exit cleared a deadline it never evaluated"
   pass "the recorded wait schedules its recheck from the reported reset, refreshes it, and clears it on recovery"
 }
 

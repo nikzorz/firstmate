@@ -336,13 +336,20 @@ clear_pause_state() {  # <window>
   rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
 }
 
+# Drops every artifact of a pause the crew is no longer declaring, including the
+# one-shot recheck deadline: this is where that guarantee lives, so a deadline
+# recorded for one wait can never outlive it and fire against whatever pause the
+# task enters next.
 clear_pause_tracking() {  # <window>
-  local win=$1 key
+  local win=$1 key task
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
   clear_pause_state "$win"
   rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  task=$(window_to_task "$win" "$STATE")
+  [ -n "$task" ] && pause_deadline_clear "$STATE" "$task"
+  return 0
 }
 
 # Reconcile a declared pause or captain-held status with authoritative crew state.

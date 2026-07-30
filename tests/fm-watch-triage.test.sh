@@ -710,6 +710,68 @@ test_paused_stale_resurfaces_at_its_recorded_deadline() {
   pass "a pause whose reported end time has arrived is rechecked immediately, once, without touching the wedge path"
 }
 
+# A deadline belongs to the ONE pause it was recorded for. Recovery does not have
+# to run through fm-limit-resume.sh - a human can dismiss the prompt in the pane -
+# so the deadline is dropped by clear_pause_tracking alongside every other pause
+# artifact the moment the crew stops declaring the pause. Without that, a deadline
+# from a usage-limit wait outlives it and makes the watcher tell the captain that
+# some later, unrelated wait "reported an end time" it never reported.
+test_resumed_pause_drops_its_recheck_deadline() {
+  local dir state fakebin out capture_file window key sig pid statusf
+  dir=$(make_case paused-deadline-cleared); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-resumed"
+  printf 'window=%s\nkind=ship\nharness=claude\n' "$window" > "$state/resumed.meta"
+  statusf="$state/resumed.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+
+  # The crew was parked on the usage-limit prompt and the pause carried a recheck
+  # deadline. A human dismissed the prompt, so the crew resumed on its own and
+  # fm-limit-resume.sh - the deadline's only writer - never ran again.
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\nworking: resumed after the prompt was dismissed by hand\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-resumed_status"
+  : > "$state/.paused-$key"
+  printf 'crunching... (esc to interrupt)\n' > "$capture_file"
+  printf '%s\n' "$(( $(date +%s) - 30 ))" > "$state/resumed.pause-recheck"
+  export FM_FAKE_CREW_STATE='state: working · source: status-log · resumed'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited for a crew that simply resumed: $(cat "$out")"
+  fi
+  [ ! -e "$state/.paused-$key" ] || { reap "$pid"; fail "pause tracking survived the resume"; }
+  [ ! -e "$state/resumed.pause-recheck" ] \
+    || { reap "$pid"; fail "the recheck deadline outlived the pause it was recorded for"; }
+  reap "$pid"
+
+  # Later, the same task declares an unrelated wait that reported no end time.
+  # With the fixed cadence out of reach, nothing may fire - a surviving deadline
+  # would surface it now, wrongly named as that wait's end time arriving.
+  printf 'paused: waiting on review\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-resumed_status"
+  printf 'idle awaiting review\n' > "$capture_file"
+  : > "$out"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · waiting on review'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "a later unrelated pause was surfaced against a dead deadline: $(cat "$out")"
+  fi
+  reap "$pid"
+  grep -F "reported end time has arrived" "$out" >/dev/null \
+    && fail "a wait that reported no end time was rechecked as though it had"
+  [ ! -s "$out" ] || fail "a later unrelated pause produced a wake with no deadline and no cadence due"
+  unset FM_FAKE_CREW_STATE
+  pass "a recheck deadline is dropped with the rest of its pause, so it cannot fire against a later unrelated wait"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -1357,6 +1419,7 @@ test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_paused_stale_resurfaces_at_its_recorded_deadline
+test_resumed_pause_drops_its_recheck_deadline
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed

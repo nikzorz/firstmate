@@ -179,8 +179,13 @@ record_pause() {
 # close - never opened, no status file, or someone else's pause - is a no-op, and
 # a close can never fail the recovery it follows.
 # The recheck deadline is dropped unconditionally here, unlike the status line:
-# it is firstmate's own artifact with no other writer, so a recovered crew can
-# never leave one behind for whatever pause it enters next.
+# it is firstmate's own artifact with no other writer, so recovery through this
+# path leaves nothing behind. It is not the guarantee, though - recovery can also
+# happen without this script running at all, e.g. a human dismissing the prompt in
+# the pane. What actually bounds the deadline's life to the pause it was written
+# for is each supervisor's clear_pause_tracking (bin/fm-watch.sh,
+# bin/fm-supervise-daemon.sh), which drops it alongside every other pause artifact
+# the moment the crew stops declaring the pause.
 RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
 close_pause() {
   local last

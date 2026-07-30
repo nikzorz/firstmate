@@ -460,6 +460,10 @@ pause_marker_remove() {  # <window> <state>
   rm -f "$state/.subsuper-paused-$key"
 }
 
+# Drops every artifact of a pause the crew is no longer declaring, including the
+# one-shot recheck deadline: this is where that guarantee lives, so a deadline
+# recorded for one wait can never outlive it and fire against whatever pause the
+# task enters next.
 clear_pause_tracking() {  # <window> <state>
   local win=$1 state=$2 task key watcher_key
   task=$(window_to_task "$win" "$state")
@@ -468,6 +472,8 @@ clear_pause_tracking() {  # <window> <state>
   rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-stale-$key" \
     "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
+  [ -n "$task" ] && pause_deadline_clear "$state" "$task"
+  return 0
 }
 
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
