@@ -772,6 +772,54 @@ test_resumed_pause_drops_its_recheck_deadline() {
   pass "a recheck deadline is dropped with the rest of its pause, so it cannot fire against a later unrelated wait"
 }
 
+# The other half of the same invariant: a deadline survives as long as its pause
+# does. Turning AFK on mid-wait hands this pause to the daemon, and the watcher
+# drops its own normal-mode pause tracking on the way - but the deadline is not
+# watcher bookkeeping the next poll re-derives, it is the quota read's only
+# record of when this wait ends. Taking it here would put away mode back on
+# FM_PAUSE_RESURFACE_SECS, which is the exact latency this schedule removes and
+# the mode where waiting out a quota window is most likely.
+test_afk_handoff_keeps_a_live_pause_deadline() {
+  local dir state fakebin out capture_file statusf window key sig pid back deadline
+  dir=$(make_case afk-handoff-deadline); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-afk-limited"
+  printf 'idle, parked on the usage-limit prompt\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\n' "$window" > "$state/afk-limited.meta"
+  statusf="$state/afk-limited.status"
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-limited_status"
+  key=$(printf '%s' "$window" | tr '.:/' '___')
+
+  # The state a normal-mode watcher leaves behind: it already absorbed this pause
+  # once (.paused-<key>), and the wait carries a reset still forty minutes out.
+  : > "$state/.paused-$key"
+  deadline=$(( $(date +%s) + 2400 ))
+  printf '%s\n' "$deadline" > "$state/afk-limited.pause-recheck"
+
+  # The captain then goes AFK. No seeded .hash-*, so the first poll takes the
+  # changed-pane branch, where AFK alone routes past the pause handling into
+  # clear_pause_tracking with the pause still fully declared.
+  date '+%s' > "$state/.afk"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · claude usage limit reached' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "AFK handoff of a paused pane did not hand off a stale wake"
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "AFK handoff did not preserve the plain window identity: $(cat "$out")"
+  [ ! -e "$state/.paused-$key" ] || fail "AFK watcher kept normal-mode pause tracking instead of handing off"
+  [ -e "$state/afk-limited.pause-recheck" ] \
+    || fail "the AFK handoff took a recheck deadline that still belongs to a declared pause"
+  [ "$(cat "$state/afk-limited.pause-recheck")" = "$deadline" ] \
+    || fail "the recheck deadline was rewritten during the AFK handoff"
+  pass "handing a still-declared pause to the daemon leaves its recheck deadline intact"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -1420,6 +1468,7 @@ test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_paused_stale_resurfaces_at_its_recorded_deadline
 test_resumed_pause_drops_its_recheck_deadline
+test_afk_handoff_keeps_a_live_pause_deadline
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed

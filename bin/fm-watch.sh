@@ -336,10 +336,18 @@ clear_pause_state() {  # <window>
   rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
 }
 
-# Drops every artifact of a pause the crew is no longer declaring, including the
-# one-shot recheck deadline: this is where that guarantee lives, so a deadline
-# recorded for one wait can never outlive it and fire against whatever pause the
-# task enters next.
+# Drops this window's pause-mode and stale bookkeeping, and - only when the crew
+# has genuinely stopped declaring the pause - its one-shot recheck deadline too,
+# so a deadline recorded for one wait cannot outlive it and fire against whatever
+# pause the task enters next.
+#
+# The deadline needs that extra gate because this function is NOT only a
+# "the pause is over" boundary: several callers also reach it with the pause fully
+# declared - the AFK handoff below, where the daemon becomes the one that will
+# honour the deadline, and a pane that merely looks busy for a poll or two. Those
+# must not take a schedule that is still live, or away mode silently falls back to
+# the fixed cadence. The rest of the bookkeeping is re-derived on the next poll;
+# the deadline is not, because its only writer is the quota read.
 clear_pause_tracking() {  # <window>
   local win=$1 key task
   key=${win//:/_}
@@ -348,7 +356,9 @@ clear_pause_tracking() {  # <window>
   clear_pause_state "$win"
   rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
   task=$(window_to_task "$win" "$STATE")
-  [ -n "$task" ] && pause_deadline_clear "$STATE" "$task"
+  if [ -n "$task" ] && ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
+    pause_deadline_clear "$STATE" "$task"
+  fi
   return 0
 }
 
