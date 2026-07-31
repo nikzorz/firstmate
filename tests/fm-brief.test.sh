@@ -135,20 +135,10 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
     "no-mistakes DOD lost the declared pause at the pipeline handoff"
   assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
     "no-mistakes DOD lost the reason the pause declaration matters"
-  # A pause nobody closes stays the last status event, so a crew that later
-  # genuinely stalls is read as still waiting and gets the hour-long recheck
-  # instead of the wedge path. `working:` is what the fleet already treats as
-  # ending a declared pause (bin/fm-classify-lib.sh map_log_state/open activities).
-  assert_grep "Close that pause with a \`working: {what you are doing next}\` line as soon as the pipeline hands control back" "$brief" \
-    "no-mistakes DOD lost the instruction to close the declared pause"
-  assert_grep "leaving \`awaiting:\` standing would keep firstmate on the long recheck cadence" "$brief" \
-    "no-mistakes DOD lost why a standing pause is dangerous"
-  # And the pause line must not read as a cue that the turn is over, or the run
-  # parks at its next gate with nobody to respond to it.
-  assert_grep "the \`awaiting:\` line is nonterminal exactly like a mid-task \`working:\` line" "$brief" \
-    "no-mistakes DOD lost the nonterminal guard on the pause line"
-  assert_grep "keep responding to the pipeline's gates" "$brief" \
-    "no-mistakes DOD lost the instruction to keep driving after a pause"
+  # The lifecycle itself belongs to shared rule 4 so every mode inherits it; the
+  # DOD only points at it. Restating it here would let the two copies drift.
+  assert_grep "then open and close that wait exactly as rule 4 requires" "$brief" \
+    "no-mistakes DOD lost the pointer to rule 4's pause lifecycle"
   assert_grep "a fix round, re-review, or long test step you handed back to the no-mistakes pipeline" "$brief" \
     "no-mistakes Rules did not name the pipeline wait as a pause case"
 
@@ -162,6 +152,41 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
   assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
     "direct-PR brief named a pipeline it never runs"
   pass "fm-brief.sh: no-mistakes briefs declare a pause before each pipeline handoff"
+}
+
+# A declared pause nobody closes stays the crew's last status event, so a worker
+# that later genuinely stalls is read as still waiting and gets the hour-long
+# recheck instead of the 240s wedge path. `working:` is what every consumer
+# already treats as ending a pause (bin/fm-classify-lib.sh map_log_state and the
+# open-activities fold). The lifecycle lives in shared rule 4 precisely so this
+# holds for EVERY delivery mode - the faster paths are nudged toward a pause by
+# their own "long test or build run" example and never see the pipeline DOD.
+test_every_ship_mode_carries_the_whole_pause_lifecycle() {
+  local home id proj brief id_proj
+  home="$TMP_ROOT/pause-lifecycle-home"
+  write_registry "$home"
+
+  for id_proj in "brief-pause-life-f1:no-registry-proj" "brief-pause-life-f2:direct-proj" "brief-pause-life-f3:local-proj"; do
+    id=${id_proj%%:*}
+    proj=${id_proj##*:}
+    FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+      "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "A \`awaiting:\` line is nonterminal too: do not end the turn after it" "$brief" \
+      "$id: brief lost the nonterminal guard on the pause line"
+    assert_grep "close the wait with" "$brief" \
+      "$id: brief lost the instruction to close a declared pause"
+    assert_grep "\`working: {what you are doing next}\` the moment it ends" "$brief" \
+      "$id: brief lost the verb that actually ends a declared pause"
+    assert_grep "not an FYI progress line" "$brief" \
+      "$id: brief did not reconcile closing a pause with rule 4's no-FYI-lines bar"
+    assert_grep "a \`awaiting:\` line left standing keeps firstmate on the" "$brief" \
+      "$id: brief lost why a standing pause is dangerous"
+    assert_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
+      "$id: brief lost the paused-versus-blocked distinction"
+  done
+  pass "fm-brief.sh: every ship mode carries the full pause lifecycle"
 }
 
 test_ship_project_memory_wording() {
@@ -433,6 +458,7 @@ test_ship_modes_generate_clean_briefs
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
+test_every_ship_mode_carries_the_whole_pause_lifecycle
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

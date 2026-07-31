@@ -41,11 +41,11 @@
 # blocked when firstmate must act. Ship briefs name the wait their own delivery
 # mode actually produces first, and a no-mistakes ship brief additionally
 # requires the pause line before handing a long stretch back to the pipeline,
-# because that idle wait is otherwise escalated as a possible wedge. That brief
-# also has the worker CLOSE the pause with a "working:" line once control comes
-# back - a standing pause would otherwise mask a later real wedge behind the long
-# recheck cadence - and marks the pause line nonterminal, so declaring it is
-# never read as permission to end the turn and park the pipeline at a gate.
+# because that idle wait is otherwise escalated as a possible wedge. The pause
+# LIFECYCLE lives once in shared rule 4, so every delivery mode inherits it: the
+# pause line is nonterminal (declaring it is never permission to end the turn)
+# and the worker CLOSES the wait with a "working:" line when it ends, because a
+# standing pause would mask a later real wedge behind the long recheck cadence.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -330,10 +330,8 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
-Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`$PAUSED_VERB: {what you are waiting on}\` to the status file.
+Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`$PAUSED_VERB: {what you are waiting on}\` to the status file, then open and close that wait exactly as rule 4 requires.
 That idle wait is expected, and declaring it is what keeps firstmate from reading your quiet pane as a possible wedge and escalating it repeatedly.
-Close that pause with a \`working: {what you are doing next}\` line as soon as the pipeline hands control back: the close is a state change firstmate acts on rather than an FYI progress line, and leaving \`$PAUSED_VERB:\` standing would keep firstmate on the long recheck cadence when a later quiet pane is a real wedge.
-Neither line ends your turn - the \`$PAUSED_VERB:\` line is nonterminal exactly like a mid-task \`working:\` line: do not end the turn after it; stay in the driver loop and keep responding to the pipeline's gates until one of this section's \`done:\` gates.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
@@ -381,6 +379,10 @@ $RULE1
    known external wait you expect to clear on its own ($PAUSE_EXAMPLE):
    firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   A \`$PAUSED_VERB:\` line is nonterminal too: do not end the turn after it, and close the wait with
+   \`working: {what you are doing next}\` the moment it ends. That close is a state change firstmate
+   acts on, not an FYI progress line; a \`$PAUSED_VERB:\` line left standing keeps firstmate on the
+   long recheck cadence when a later quiet pane is a real wedge.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
