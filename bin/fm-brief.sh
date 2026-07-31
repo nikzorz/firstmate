@@ -41,7 +41,11 @@
 # blocked when firstmate must act. Ship briefs name the wait their own delivery
 # mode actually produces first, and a no-mistakes ship brief additionally
 # requires the pause line before handing a long stretch back to the pipeline,
-# because that idle wait is otherwise escalated as a possible wedge.
+# because that idle wait is otherwise escalated as a possible wedge. That brief
+# also has the worker CLOSE the pause with a "working:" line once control comes
+# back - a standing pause would otherwise mask a later real wedge behind the long
+# recheck cadence - and marks the pause line nonterminal, so declaring it is
+# never read as permission to end the turn and park the pipeline at a gate.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -328,6 +332,8 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`$PAUSED_VERB: {what you are waiting on}\` to the status file.
 That idle wait is expected, and declaring it is what keeps firstmate from reading your quiet pane as a possible wedge and escalating it repeatedly.
+Close that pause with a \`working: {what you are doing next}\` line as soon as the pipeline hands control back: the close is a state change firstmate acts on rather than an FYI progress line, and leaving \`$PAUSED_VERB:\` standing would keep firstmate on the long recheck cadence when a later quiet pane is a real wedge.
+Neither line ends your turn - the \`$PAUSED_VERB:\` line is nonterminal exactly like a mid-task \`working:\` line: do not end the turn after it; stay in the driver loop and keep responding to the pipeline's gates until one of this section's \`done:\` gates.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.

@@ -135,6 +135,20 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
     "no-mistakes DOD lost the declared pause at the pipeline handoff"
   assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
     "no-mistakes DOD lost the reason the pause declaration matters"
+  # A pause nobody closes stays the last status event, so a crew that later
+  # genuinely stalls is read as still waiting and gets the hour-long recheck
+  # instead of the wedge path. `working:` is what the fleet already treats as
+  # ending a declared pause (bin/fm-classify-lib.sh map_log_state/open activities).
+  assert_grep "Close that pause with a \`working: {what you are doing next}\` line as soon as the pipeline hands control back" "$brief" \
+    "no-mistakes DOD lost the instruction to close the declared pause"
+  assert_grep "leaving \`awaiting:\` standing would keep firstmate on the long recheck cadence" "$brief" \
+    "no-mistakes DOD lost why a standing pause is dangerous"
+  # And the pause line must not read as a cue that the turn is over, or the run
+  # parks at its next gate with nobody to respond to it.
+  assert_grep "the \`awaiting:\` line is nonterminal exactly like a mid-task \`working:\` line" "$brief" \
+    "no-mistakes DOD lost the nonterminal guard on the pause line"
+  assert_grep "keep responding to the pipeline's gates" "$brief" \
+    "no-mistakes DOD lost the instruction to keep driving after a pause"
   assert_grep "a fix round, re-review, or long test step you handed back to the no-mistakes pipeline" "$brief" \
     "no-mistakes Rules did not name the pipeline wait as a pause case"
 
