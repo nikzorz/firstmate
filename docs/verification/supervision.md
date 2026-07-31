@@ -228,17 +228,18 @@ The opt-in gate, fail-open behavior, idempotence, release on stand-down, and rel
 This record supports the quota half of the usage-limit stall detection in `bin/fm-claude-limit-lib.sh`.
 The prompt half is a stable text signature covered without a real stall by `tests/fm-limit-resume.test.sh` and `tests/fm-crew-state.test.sh`, in both directions: the observed prompt matches, and ordinary worker output discussing rate limits does not.
 
-Whether the account window has reset is read from the quota authority rather than inferred from elapsed time.
-Measured on 2026-07-29 with quota-axi 0.1.13 against a Claude Max account, alongside Claude Code 2.1.220.
+Whether the account window has reset is read from the quota authority rather than inferred from elapsed time, and WHEN it will reset is read from the same place rather than guessed from a fixed cadence.
+Measured on 2026-07-30 with the installed quota-axi 0.1.13 against a Claude Max account, alongside Claude Code 2.1.220.
 
 ```sh
 quota-axi --provider claude --json \
   | jq '{schemaVersion,
          state: .providers[0].state | {status, stale},
+         windows: .providers[0].windows | map({id, percentRemaining, resetsAt}),
          semantics: .providers[0].quotaSemantics
            | {status, all_models: (.effectiveAvailability[]
                                    | select(.scope == "all_models")
-                                   | {status, effectivePercentRemaining, limitingWindowIds})}}'
+                                   | {status, effectivePercentRemaining, boundedBy, limitingWindowIds})}}'
 ```
 
 Observed output:
@@ -247,18 +248,36 @@ Observed output:
 {
   "schemaVersion": 2,
   "state": { "status": "fresh", "stale": false },
+  "windows": [
+    { "id": "five_hour",   "percentRemaining": 36,  "resetsAt": "2026-07-30T10:40:00.397443+00:00" },
+    { "id": "seven_day",   "percentRemaining": 53,  "resetsAt": "2026-08-04T06:00:00.397461+00:00" },
+    { "id": "model:fable", "percentRemaining": 100, "resetsAt": null }
+  ],
   "semantics": {
     "status": "known",
     "all_models": {
       "status": "known",
-      "effectivePercentRemaining": 41,
+      "effectivePercentRemaining": 36,
+      "boundedBy": ["five_hour", "seven_day"],
       "limitingWindowIds": ["five_hour"]
     }
   }
 }
 ```
 
-Every field the reader depends on is present here: the provider's own freshness flag, its `known` semantics marker, and the bounded all-models headroom with the window that is currently limiting it.
+Every field the verdict depends on is present here: the provider's own freshness flag, its `known` semantics marker, and the bounded all-models headroom.
 Reading `effectiveAvailability` rather than a chosen entry of `windows` is what keeps a model window sitting inside a shorter account window from being missed.
 `stale` is a real boolean here, which is why the reader compares it with `== false` instead of jq's `//` alternative operator: `//` treats a literal `false` the same as an absent field and would have discarded exactly the good case.
-Every unreadable, unparseable, provider-stale, or not-`known` input reports `unknown` instead, which authorizes neither recovery nor a settled wait; `tests/fm-limit-resume.test.sh` covers each of those inputs without touching a real account.
+
+The scheduled recheck adds four more fields to that dependency, all present above: `providers[].windows[].id`, `.percentRemaining`, `.resetsAt`, and `effectiveAvailability[].boundedBy`.
+`boundedBy` is what joins the two arrays - it names the window ids that bound all-models availability, and the reader keeps exactly those `windows` entries, so the reset time can only ever come from a window that actually constrains the account.
+Note that `boundedBy` is broader than `limitingWindowIds`: the recorded output bounds on both `five_hour` and `seven_day` while only `five_hour` is currently limiting.
+That distinction is the point of reading it - the account stays short until every currently-short bounding window has rolled, so the reader schedules from the LATEST of their `resetsAt`, not the first.
+
+`resetsAt` is a UTC ISO 8601 timestamp with microseconds and a numeric `+00:00` offset, which is the exact shape `fm_claude_limit_parse_iso8601` is written for.
+`model:fable` is the useful counter-example in this capture: it reports `resetsAt: null`, and at 100 percent remaining it is not a currently-short window - it is not even listed in `boundedBy`, so it never enters the set the reset time is taken from.
+A short bounding window whose `resetsAt` or `percentRemaining` the provider does not report makes the whole schedule unknown rather than optimistically early.
+
+Every unreadable, unparseable, provider-stale, or not-`known` input reports `unknown` with no recheck time, which authorizes neither recovery nor a settled wait; `tests/fm-limit-resume.test.sh` covers each of those inputs without touching a real account.
+A readable window whose reset time is absent or unparseable is still a good `exhausted` verdict - only the scheduling refinement is lost, and the supervisors fall back to `FM_PAUSE_RESURFACE_SECS` exactly as before.
+If the provider ever renames any of the four fields, that fallback is what happens silently, so this record is the thing to re-run when a quota-axi upgrade lands.

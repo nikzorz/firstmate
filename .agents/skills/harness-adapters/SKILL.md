@@ -182,7 +182,8 @@ It waits for a human indefinitely, including long after the window resets, and t
 Recover with `FM_HOME=<this-firstmate-home> bin/fm-limit-resume.sh <id>`, which re-proves the live match, dismisses the prompt with one Escape, and resumes the crew with an instruction to re-read its own current state.
 Add `--check` to get the verdict without sending anything.
 It refuses rather than guessing whenever the pane, the match, or the quota window is uncertain, so treat a refusal as a stop-and-inspect result.
-A still-exhausted window is not a wedge: the script records the wait with `paused:` and the ordinary declared-pause cadence takes over until the window clears.
+A still-exhausted window is not a wedge: the script records the wait with `paused:` and ordinary declared-pause handling takes over until the window clears.
+That pause also carries when it ends, so the recheck lands shortly after the account window resets rather than up to `FM_PAUSE_RESURFACE_SECS` later; `docs/architecture.md` owns that scheduling mechanism, and a reset time the provider does not report simply leaves the fixed cadence in charge.
 No other verified harness has been observed presenting a blocking usage-limit prompt, so nothing here applies to codex, opencode, pi, grok, or kimi.
 
 Claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.

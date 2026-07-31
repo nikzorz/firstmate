@@ -296,6 +296,90 @@ test_housekeeping_paused_resurfaces_and_resets() {
   pass "housekeeping re-surfaces a stale declared pause on the long cadence and resets its window"
 }
 
+# A pause that recorded WHEN its wait ends is rechecked at that instant instead of
+# waiting out PAUSE_RESURFACE_SECS - the away-mode half of the 2026-07-29/30 case
+# where a crew stayed parked on Claude Code's usage-limit prompt for the rest of
+# an hour-long cadence after the account window had already rolled. The cadence
+# here is set far out of reach, so only the deadline can produce the escalation,
+# and it is consumed as it fires so it cannot repeat.
+test_housekeeping_paused_resurfaces_at_its_deadline() {
+  local dir state fakebin win pane key
+  dir=$(make_supercase paused-deadline)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-held-w11d"; pane="$dir/pane.txt"
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\n' > "$state/held-w11d.status"
+  printf 'idle prompt $\n' > "$pane"
+  key=$(printf '%s' "held-w11d" | tr ':/.' '___')
+
+  # A recheck still ahead: the wait is genuinely idling, so nothing fires.
+  date +%s > "$state/.subsuper-paused-$key"
+  printf '%s\n' "$(( $(date +%s) + 3000 ))" > "$state/held-w11d.pause-recheck"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a pause whose recheck is still ahead was escalated"
+  [ -e "$state/held-w11d.pause-recheck" ] || fail "a future recheck deadline was consumed early"
+
+  # The window has rolled: due now, named for what it is, and consumed.
+  printf '%s\n' "$(( $(date +%s) - 30 ))" > "$state/held-w11d.pause-recheck"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  grep -F "reported end time has arrived" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a pause whose reported end time had arrived was not rechecked"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    && fail "a scheduled pause recheck was mislabeled a possible wedge"
+  [ ! -e "$state/held-w11d.pause-recheck" ] \
+    || fail "the deadline was not consumed, so it would re-fire on every tick"
+  [ -e "$state/.subsuper-paused-$key" ] || fail "pause tracking was dropped instead of reset for the next window"
+  pass "housekeeping rechecks a pause at its recorded end time, once, instead of waiting out the long cadence"
+}
+
+# A deadline belongs to the ONE pause it was recorded for. Recovery does not have
+# to run through fm-limit-resume.sh - a human can dismiss the prompt in the pane -
+# so clear_pause_tracking drops the deadline alongside every other pause artifact
+# the moment the crew stops declaring the pause. Without that, a deadline from a
+# usage-limit wait outlives it and escalates a later, unrelated wait as having
+# reported an end time it never reported.
+test_housekeeping_resumed_pause_drops_its_deadline() {
+  local dir state fakebin win pane key
+  dir=$(make_supercase paused-deadline-cleared)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-held-w11e"; pane="$dir/pane.txt"
+  key=$(printf '%s' "held-w11e" | tr ':/.' '___')
+  printf 'idle prompt $\n' > "$pane"
+
+  # Parked on the usage-limit prompt, with a recheck still ahead: nothing fires
+  # and the deadline is left alone.
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\n' > "$state/held-w11e.status"
+  date +%s > "$state/.subsuper-paused-$key"
+  printf '%s\n' "$(( $(date +%s) + 3000 ))" > "$state/held-w11e.pause-recheck"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a pause whose recheck is still ahead was escalated"
+  [ -e "$state/held-w11e.pause-recheck" ] || fail "a future recheck deadline was consumed early"
+
+  # A human dismissed the prompt, so the crew resumed on its own and the
+  # deadline's only writer never ran again. By now the reset it named has passed.
+  printf 'working: resumed after the prompt was dismissed by hand\n' >> "$state/held-w11e.status"
+  printf '%s\n' "$(( $(date +%s) - 30 ))" > "$state/held-w11e.pause-recheck"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] || fail "pause tracking survived the resume"
+  [ ! -e "$state/held-w11e.pause-recheck" ] \
+    || fail "the recheck deadline outlived the pause it was recorded for"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a resumed crew was escalated"
+
+  # Later, the same task declares an unrelated wait that reported no end time.
+  # With the cadence out of reach, a surviving deadline is the only thing that
+  # could escalate it - wrongly named as that wait's end time arriving.
+  printf 'paused: waiting on review\n' >> "$state/held-w11e.status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  grep -F "reported end time has arrived" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    && fail "a wait that reported no end time was rechecked as though it had"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a fresh unrelated pause was escalated before its cadence came due"
+  pass "housekeeping drops a recheck deadline with the rest of its pause, so it cannot fire against a later unrelated wait"
+}
+
 # A pause whose pane became busy again (the crew resumed) drops its marker without
 # escalating, exactly like a resumed wedge.
 test_housekeeping_paused_resumed_cleared() {
@@ -1871,6 +1955,8 @@ test_housekeeping_usage_limited_stale_is_named_not_a_wedge
 test_housekeeping_stale_non_claude_makes_no_current_state_call
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
+test_housekeeping_paused_resurfaces_at_its_deadline
+test_housekeeping_resumed_pause_drops_its_deadline
 test_housekeeping_paused_resumed_cleared
 test_housekeeping_paused_unpaused_cleared
 test_housekeeping_stale_marker_transitions_to_pause

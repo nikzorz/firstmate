@@ -65,7 +65,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-supervisor-target-lib.sh` | Resolve the shared supervisor target and backend for the daemon and launcher       |
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
-| `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature and the quota read for whether the account window has reset |
+| `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature and the quota read for whether, and when, the account window resets |
 | `fm-limit-resume.sh`     | Recover one crewmate stalled on Claude Code's usage-limit prompt once the account window has reset |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |

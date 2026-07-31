@@ -644,6 +644,182 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# --- a pause that knows when its wait ends -----------------------------------
+# The 2026-07-29/30 follow-on: crews parked on Claude Code's usage-limit prompt
+# were paused correctly, but the account window rolled about forty minutes into
+# the hour-long recheck cadence and they stayed parked until it came due. A pause
+# whose end time is known (state/<id>.pause-recheck, written by fm-limit-resume.sh
+# from the quota window's reported reset) is rechecked at that instant instead.
+# It only ever fires EARLIER - here the fixed cadence is set far out of reach, so
+# nothing but the deadline can produce the wake - and it is ONE-SHOT, cleared as
+# it fires so an elapsed deadline cannot re-fire on every poll.
+test_paused_stale_resurfaces_at_its_recorded_deadline() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid statusf
+  dir=$(make_case paused-deadline); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-limited"
+  printf 'idle, parked on the usage-limit prompt' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\n' "$window" > "$state/limited.meta"
+  statusf="$state/limited.status"
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-limited_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, parked on the usage-limit prompt")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · claude usage limit reached'
+
+  # Phase A: the window has not rolled yet. The deadline is real but in the
+  # future, so this must stay absorbed - a scheduled recheck is one well-timed
+  # read, not a reason to poll.
+  printf '%s\n' "$(( $(date +%s) + 3000 ))" > "$state/limited.pause-recheck"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited for a pause whose recheck is still ahead: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "a pause whose recheck is still ahead produced a wake"
+  [ -e "$state/limited.pause-recheck" ] || fail "a future recheck deadline was consumed early"
+  reap "$pid"
+
+  # Phase B: the window has rolled. The status file is untouched and the fixed
+  # cadence is still unreachable, so only the deadline can fire this.
+  printf '%s\n' "$(( $(date +%s) - 30 ))" > "$state/limited.pause-recheck"
+  : > "$out"
+  printf 'idle, parked on the usage-limit prompt (token 2)' > "$capture_file"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the watcher did not recheck a pause whose reported end time had arrived"
+  grep -F "stale: $window" "$out" >/dev/null || fail "the deadline recheck did not print a stale wake"
+  grep -F "reported end time has arrived" "$out" >/dev/null \
+    || fail "the deadline recheck was not named as the wait's end time arriving"
+  grep -F "possible wedge" "$out" >/dev/null && fail "a scheduled pause recheck was mislabeled a possible wedge"
+  [ ! -e "$state/limited.pause-recheck" ] \
+    || fail "the deadline was not consumed, so it would re-fire on every poll"
+  [ ! -e "$state/.stale-since-$key" ] || fail "a scheduled pause recheck must not use the wedge timer"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the deadline recheck failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null \
+    || fail "the deadline recheck was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a pause whose reported end time has arrived is rechecked immediately, once, without touching the wedge path"
+}
+
+# A deadline belongs to the ONE pause it was recorded for. Recovery does not have
+# to run through fm-limit-resume.sh - a human can dismiss the prompt in the pane -
+# so the deadline is dropped by clear_pause_tracking alongside every other pause
+# artifact the moment the crew stops declaring the pause. Without that, a deadline
+# from a usage-limit wait outlives it and makes the watcher tell the captain that
+# some later, unrelated wait "reported an end time" it never reported.
+test_resumed_pause_drops_its_recheck_deadline() {
+  local dir state fakebin out capture_file window key sig pid statusf
+  dir=$(make_case paused-deadline-cleared); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-resumed"
+  printf 'window=%s\nkind=ship\nharness=claude\n' "$window" > "$state/resumed.meta"
+  statusf="$state/resumed.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+
+  # The crew was parked on the usage-limit prompt and the pause carried a recheck
+  # deadline. A human dismissed the prompt, so the crew resumed on its own and
+  # fm-limit-resume.sh - the deadline's only writer - never ran again.
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\nworking: resumed after the prompt was dismissed by hand\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-resumed_status"
+  : > "$state/.paused-$key"
+  printf 'crunching... (esc to interrupt)\n' > "$capture_file"
+  printf '%s\n' "$(( $(date +%s) - 30 ))" > "$state/resumed.pause-recheck"
+  export FM_FAKE_CREW_STATE='state: working · source: status-log · resumed'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited for a crew that simply resumed: $(cat "$out")"
+  fi
+  [ ! -e "$state/.paused-$key" ] || { reap "$pid"; fail "pause tracking survived the resume"; }
+  [ ! -e "$state/resumed.pause-recheck" ] \
+    || { reap "$pid"; fail "the recheck deadline outlived the pause it was recorded for"; }
+  reap "$pid"
+
+  # Later, the same task declares an unrelated wait that reported no end time.
+  # With the fixed cadence out of reach, nothing may fire - a surviving deadline
+  # would surface it now, wrongly named as that wait's end time arriving.
+  printf 'paused: waiting on review\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-resumed_status"
+  printf 'idle awaiting review\n' > "$capture_file"
+  : > "$out"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · waiting on review'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "a later unrelated pause was surfaced against a dead deadline: $(cat "$out")"
+  fi
+  reap "$pid"
+  grep -F "reported end time has arrived" "$out" >/dev/null \
+    && fail "a wait that reported no end time was rechecked as though it had"
+  [ ! -s "$out" ] || fail "a later unrelated pause produced a wake with no deadline and no cadence due"
+  unset FM_FAKE_CREW_STATE
+  pass "a recheck deadline is dropped with the rest of its pause, so it cannot fire against a later unrelated wait"
+}
+
+# The other half of the same invariant: a deadline survives as long as its pause
+# does. Turning AFK on mid-wait hands this pause to the daemon, and the watcher
+# drops its own normal-mode pause tracking on the way - but the deadline is not
+# watcher bookkeeping the next poll re-derives, it is the quota read's only
+# record of when this wait ends. Taking it here would put away mode back on
+# FM_PAUSE_RESURFACE_SECS, which is the exact latency this schedule removes and
+# the mode where waiting out a quota window is most likely.
+test_afk_handoff_keeps_a_live_pause_deadline() {
+  local dir state fakebin out capture_file statusf window key sig pid back deadline
+  dir=$(make_case afk-handoff-deadline); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-afk-limited"
+  printf 'idle, parked on the usage-limit prompt\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\n' "$window" > "$state/afk-limited.meta"
+  statusf="$state/afk-limited.status"
+  printf 'paused: claude usage limit reached; waiting for the account window to reset\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-limited_status"
+  key=$(printf '%s' "$window" | tr '.:/' '___')
+
+  # The state a normal-mode watcher leaves behind: it already absorbed this pause
+  # once (.paused-<key>), and the wait carries a reset still forty minutes out.
+  : > "$state/.paused-$key"
+  deadline=$(( $(date +%s) + 2400 ))
+  printf '%s\n' "$deadline" > "$state/afk-limited.pause-recheck"
+
+  # The captain then goes AFK. No seeded .hash-*, so the first poll takes the
+  # changed-pane branch, where AFK alone routes past the pause handling into
+  # clear_pause_tracking with the pause still fully declared.
+  date '+%s' > "$state/.afk"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · claude usage limit reached' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "AFK handoff of a paused pane did not hand off a stale wake"
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "AFK handoff did not preserve the plain window identity: $(cat "$out")"
+  [ ! -e "$state/.paused-$key" ] || fail "AFK watcher kept normal-mode pause tracking instead of handing off"
+  [ -e "$state/afk-limited.pause-recheck" ] \
+    || fail "the AFK handoff took a recheck deadline that still belongs to a declared pause"
+  [ "$(cat "$state/afk-limited.pause-recheck")" = "$deadline" ] \
+    || fail "the recheck deadline was rewritten during the AFK handoff"
+  pass "handing a still-declared pause to the daemon leaves its recheck deadline intact"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -1290,6 +1466,9 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
+test_paused_stale_resurfaces_at_its_recorded_deadline
+test_resumed_pause_drops_its_recheck_deadline
+test_afk_handoff_keeps_a_live_pause_deadline
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed

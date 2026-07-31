@@ -43,9 +43,18 @@
 # not a wedge, so this records it with the fleet's existing `paused:` vocabulary
 # (bin/fm-classify-lib.sh) on the task's status file. From that point the ordinary
 # declared-pause handling in both supervisors applies: absorbed while idle and
-# re-surfaced once per FM_PAUSE_RESURFACE_SECS for a recheck, instead of aging
-# toward a possible-wedge escalation every FM_STALE_ESCALATE_SECS. The append is
-# idempotent, so re-running this every recheck does not stack duplicate lines.
+# re-surfaced for a recheck, instead of aging toward a possible-wedge escalation
+# every FM_STALE_ESCALATE_SECS. The append is idempotent, so re-running this every
+# recheck does not stack duplicate lines.
+#
+# That pause also carries WHEN it is worth rechecking. The same quota read that
+# proves the window is still exhausted reports when it resets, so this records a
+# one-shot recheck deadline (bin/fm-classify-lib.sh's pause_deadline_set) and the
+# supervisors recheck at the reset instead of purely on FM_PAUSE_RESURFACE_SECS.
+# Without it the recheck was up to a full hour late for a window that had already
+# rolled - correct recovery, but late enough on a short window to read as none.
+# A reset time the provider does not report simply is not recorded, which leaves
+# the fixed cadence in charge exactly as before.
 #
 # That wait is OPENED and CLOSED here, as one contract. Unlike an ordinary pause,
 # the crew never learns this line exists, so nothing else would ever close it: a
@@ -136,14 +145,24 @@ if [ "$(prompt_state)" != showing ]; then
   exit 1
 fi
 
-WINDOW=$(fm_claude_limit_window_state)
+# One quota read serves both the verdict and, when the window is exhausted, the
+# epoch at which rechecking it can actually change the answer.
+WINDOW_READ=$(fm_claude_limit_window_read)
+WINDOW=${WINDOW_READ%%$'\t'*}
+RECHECK_EPOCH=${WINDOW_READ#*$'\t'}
 
 # Record the bounded external wait once, using the fleet's own pause vocabulary.
 # Idempotent: a status stream whose last event is already this pause is left
 # alone, so repeated rechecks add no duplicate wake-triggering lines.
+# The recheck deadline is refreshed on every recheck rather than only on the
+# first append, because the window that will actually clear the wait can change
+# between reads - and an elapsed deadline is dropped rather than re-recorded, so
+# a recheck that finds the window still exhausted returns to the fixed cadence
+# instead of scheduling itself again for a time that has already passed.
 PAUSE_NOTE="claude usage limit reached; waiting for the account window to reset"
 record_pause() {
   local last
+  pause_deadline_set "$STATE" "$ID" "$RECHECK_EPOCH"
   last=$(last_status_line "$LOG")
   case "$last" in
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") return 0 ;;
@@ -159,9 +178,18 @@ record_pause() {
 # because closing a wait firstmate does not own would silence it. Nothing to
 # close - never opened, no status file, or someone else's pause - is a no-op, and
 # a close can never fail the recovery it follows.
+# The recheck deadline is dropped unconditionally here, unlike the status line:
+# it is firstmate's own artifact with no other writer, so recovery through this
+# path leaves nothing behind. It is not the guarantee, though - recovery can also
+# happen without this script running at all, e.g. a human dismissing the prompt in
+# the pane. What actually bounds the deadline's life to the pause it was written
+# for is each supervisor's clear_pause_tracking (bin/fm-watch.sh,
+# bin/fm-supervise-daemon.sh), which drops it alongside every other pause artifact
+# the moment the crew stops declaring the pause.
 RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
 close_pause() {
   local last
+  pause_deadline_clear "$STATE" "$ID"
   last=$(last_status_line "$LOG")
   case "$last" in
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") ;;

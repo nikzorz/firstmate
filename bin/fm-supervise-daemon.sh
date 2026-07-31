@@ -460,6 +460,10 @@ pause_marker_remove() {  # <window> <state>
   rm -f "$state/.subsuper-paused-$key"
 }
 
+# Drops every artifact of a pause the crew is no longer declaring, including the
+# one-shot recheck deadline: this is where that guarantee lives, so a deadline
+# recorded for one wait can never outlive it and fire against whatever pause the
+# task enters next.
 clear_pause_tracking() {  # <window> <state>
   local win=$1 state=$2 task key watcher_key
   task=$(window_to_task "$win" "$state")
@@ -468,6 +472,8 @@ clear_pause_tracking() {  # <window> <state>
   rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-stale-$key" \
     "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
+  [ -n "$task" ] && pause_deadline_clear "$state" "$task"
+  return 0
 }
 
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
@@ -940,7 +946,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs limit_class
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs pause_due limit_class
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1036,7 +1042,10 @@ housekeeping() {  # <state>
   # and never escalated as one - but it MUST re-surface, so a forgotten pause cannot
   # rot invisibly. Past the window: busy (resumed) or gone -> drop; still idle and
   # still declaring the pause -> escalate a recheck digest and reset the marker so
-  # the window repeats.
+  # the window repeats. A pause that recorded WHEN its wait ends (fm-classify-lib.sh's
+  # one-shot deadline) is also due at that instant, always earlier than the window;
+  # the deadline is cleared as it fires, so it cannot repeat and the next recheck
+  # falls back to the fixed cadence.
   pause_secs=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
   for marker in "$state"/.subsuper-paused-*; do
     [ -e "$marker" ] || continue
@@ -1052,7 +1061,19 @@ housekeeping() {  # <state>
       continue
     fi
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
-    [ "$age" -ge "$pause_secs" ] || continue
+    pause_due=none
+    if pause_deadline_reached "$state" "$task"; then
+      # Consumed the moment it decides this recheck, not after the digest lands:
+      # an elapsed deadline left in place would re-decide on every tick, including
+      # on the busy and gone paths below that drop the marker without escalating.
+      # A cadence recheck that comes first never consumes it, so a recheck still
+      # scheduled ahead survives.
+      pause_due=deadline
+      pause_deadline_clear "$state" "$task"
+    elif [ "$age" -ge "$pause_secs" ]; then
+      pause_due=cadence
+    fi
+    [ "$pause_due" != none ] || continue
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker" ;;
@@ -1060,7 +1081,11 @@ housekeeping() {  # <state>
       *)
         last=$(last_status_line "$state/$task.status")
         if [ -n "$last" ] && status_is_paused "$last"; then
-          escalate_add "$state" "paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
+          if [ "$pause_due" = deadline ]; then
+            escalate_add "$state" "paused ${age}s (awaiting external, the wait's reported end time has arrived - recheck it now): $win"
+          else
+            escalate_add "$state" "paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
+          fi
           _now > "$marker"
         else
           rm -f "$marker"
