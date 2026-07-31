@@ -48,7 +48,14 @@
 # the turn) and the worker CLOSES the wait with a "working:" line when it ends,
 # because a standing pause would mask a later real wedge behind the long recheck
 # cadence. A scout never hands work to a pipeline, so it inherits the lifecycle
-# without the pipeline-handoff instruction.
+# without the pipeline-handoff instruction. The shared block is self-contained:
+# it back-references nothing above it, because rule 4 differs between variants.
+# Known limitation, do not overstate this contract: declaring the pause bounds
+# the common case but does NOT fully retire the false possible-wedge escalations
+# for a worker waiting on a validation pipeline. A declared pause is honoured
+# only while its recheck marker is fresh; after that the supervision stack falls
+# back to the run-step verdict, which outranks the pause. Brief text cannot close
+# that gap - it needs a supervision-layer change, filed as its own task.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -204,7 +211,7 @@ fi
 
 REPO=${POS[1]}
 
-PAUSE_LIFECYCLE="   A \`$PAUSED_VERB:\` line is nonterminal too: do not end the turn after it, and close the wait with
+PAUSE_LIFECYCLE="   A \`$PAUSED_VERB:\` line is nonterminal: do not end the turn after it, and close the wait with
    \`working: {what you are doing next}\` the moment it ends. That close is a state change firstmate
    acts on, not an FYI progress line; a \`$PAUSED_VERB:\` line left standing keeps firstmate on the
    long recheck cadence when a later quiet pane is a real wedge."

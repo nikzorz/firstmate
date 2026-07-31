@@ -181,8 +181,10 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
     fi
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "A \`awaiting:\` line is nonterminal too: do not end the turn after it" "$brief" \
+    assert_grep "A \`awaiting:\` line is nonterminal: do not end the turn after it" "$brief" \
       "$id: brief lost the nonterminal guard on the pause line"
+    assert_no_grep "nonterminal too" "$brief" \
+      "$id: shared pause block back-references a sentence its variant may not have"
     assert_grep "close the wait with" "$brief" \
       "$id: brief lost the instruction to close a declared pause"
     assert_grep "\`working: {what you are doing next}\` the moment it ends" "$brief" \
