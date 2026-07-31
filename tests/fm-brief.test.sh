@@ -207,6 +207,46 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
   pass "fm-brief.sh: every crewmate brief carries the full pause lifecycle"
 }
 
+# The firstmate-codexapp skill no longer restates the status protocol; it tells
+# firstmate to lift rule 4 out of the generated brief by an exact textual
+# boundary. That boundary is a property of this scaffold, so it is asserted here:
+# if a future edit renumbers or reshapes rule 4, the pointer breaks silently and
+# the Codex Desktop path loses the protocol entirely.
+test_rule_four_is_liftable_by_the_codexapp_boundary() {
+  local home id proj kind brief entry rest block
+  home="$TMP_ROOT/codexapp-boundary-home"
+  write_registry "$home"
+
+  for entry in "brief-lift-g1:no-registry-proj:ship" "brief-lift-g2:direct-proj:ship" "brief-lift-g3:local-proj:ship" "brief-lift-g4:scout-proj:scout"; do
+    id=${entry%%:*}
+    rest=${entry#*:}
+    proj=${rest%%:*}
+    kind=${rest##*:}
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    block=$(awk '/^4\. Report status by appending one line:/{f=1} /^5\./{f=0} f' "$brief")
+    [ -n "$block" ] || fail "$id: the codexapp lift boundary matched nothing in the generated brief"
+    assert_contains "$block" "$home/state/$id.status" \
+      "$id: lifted rule 4 lost the absolute status path a Desktop thread needs"
+    assert_contains "$block" "States: working, needs-decision, blocked, paused, done, failed." \
+      "$id: lifted rule 4 lost the state list"
+    assert_contains "$block" "close the wait with" \
+      "$id: lifted rule 4 lost the instruction to close a declared pause"
+    assert_contains "$block" "is nonterminal: do not end the turn after it" \
+      "$id: lifted rule 4 lost the nonterminal guard"
+    case "$block" in
+      *"5. If you hit the same obstacle twice"*)
+        fail "$id: the codexapp lift boundary ran past rule 4 into rule 5" ;;
+    esac
+  done
+  pass "fm-brief.sh: rule 4 lifts cleanly at the boundary firstmate-codexapp names"
+}
+
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -477,6 +517,7 @@ test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle
+test_rule_four_is_liftable_by_the_codexapp_boundary
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

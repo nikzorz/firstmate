@@ -11,6 +11,7 @@ DIAG="$ROOT/.agents/skills/diagnostic-reasoning/SKILL.md"
 PROJECT="$ROOT/.agents/skills/project-management/SKILL.md"
 HARNESS="$ROOT/.agents/skills/harness-adapters/SKILL.md"
 CODING="$ROOT/.agents/skills/firstmate-coding-guidelines/SKILL.md"
+CODEXAPP="$ROOT/.agents/skills/firstmate-codexapp/SKILL.md"
 RECOVERY="$ROOT/.agents/skills/stuck-crewmate-recovery/SKILL.md"
 SECONDMATE="$ROOT/.agents/skills/secondmate-provisioning/SKILL.md"
 CONFIG="$ROOT/docs/configuration.md"
@@ -208,6 +209,24 @@ test_state_startup_and_ordinary_recovery_placement() {
   pass "state, startup, and ordinary recovery have focused owners and triggers"
 }
 
+test_codexapp_points_at_the_status_protocol_owner() {
+  assert_grep '`bin/fm-brief.sh` is its single owner' "$CODEXAPP" \
+    "firstmate-codexapp does not name the status-protocol owner"
+  assert_grep '`4. Report status by appending one line:`' "$CODEXAPP" \
+    "firstmate-codexapp lost the exact boundary that makes the pointer mechanical"
+  # The drifted copy taught the state list and the paused-versus-blocked
+  # distinction without the close-the-pause instruction or the nonterminal
+  # guard. Any restatement of those is the duplication that drifted.
+  for phrase in \
+    'Use only these prefixes for status changes' \
+    'working:, needs-decision:, blocked:' \
+    'never for a blocker that needs firstmate to act'; do
+    assert_no_grep "$phrase" "$CODEXAPP" \
+      "firstmate-codexapp restated the status protocol instead of pointing at its owner"
+  done
+  pass "firstmate-codexapp points at bin/fm-brief.sh instead of copying the status protocol"
+}
+
 test_compressed_agents_owner_map() {
   assert_grep '`docs/configuration.md` is the single owner of the top-level operational-home layout' "$AGENTS" \
     "AGENTS.md lost the state-layout owner pointer"
@@ -294,6 +313,7 @@ test_agent_owned_quota_array_dispatch_contract
 test_shared_authoring_requirements_are_owned
 test_secondmate_registry_contract_stays_concise
 test_state_startup_and_ordinary_recovery_placement
+test_codexapp_points_at_the_status_protocol_owner
 test_compressed_agents_owner_map
 test_intake_reuses_evidence_and_parallelizes_safe_work
 test_compressed_agents_retains_authority_and_supervision_safety

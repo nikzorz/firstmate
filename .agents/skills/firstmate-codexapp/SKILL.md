@@ -57,13 +57,16 @@ If the user types directly into the visible thread, treat that as authoritative 
 A Desktop-owned Codex thread can append to Firstmate status files only when the prompt gives an absolute path and the Desktop permission context can write that checkout.
 That makes status writes a verified return-channel requirement, not a fact to assume.
 
-For a Firstmate-managed task, include an explicit status instruction:
+For a Firstmate-managed task, do not hand-write a status protocol here.
+`bin/fm-brief.sh` is its single owner, and the partial copy this section used to carry had already drifted from it: it taught the declared pause without the instruction to close it.
+Scaffold the task's brief as usual, then copy rule 4 out of the generated `data/<task-id>/brief.md` verbatim into the thread message, from the line beginning `4. Report status by appending one line:` up to but not including the line beginning `5.`.
+That block is self-contained and already carries the absolute `state/<task-id>.status` path, the full state list, and the pause lifecycle.
+
+Add only the two Desktop-specific lines the scaffold has no reason to carry:
 
 ```text
-Append supervisor-visible status lines to <absolute-firstmate-home>/state/<task-id>.status.
-Use only these prefixes for status changes: working:, needs-decision:, blocked:, paused:, done:, failed:.
-Use paused: only for a deliberate known external wait that should be rechecked later, never for a blocker that needs firstmate to act.
-Before doing substantive work, append "working: Codex Desktop thread started".
+In rule 4 above, "your pane" means this visible thread, which firstmate reads with read_thread.
+Before doing substantive work, append "working: Codex Desktop thread started" to that status file.
 ```
 
 Verify the return channel before treating the thread as supervised:
