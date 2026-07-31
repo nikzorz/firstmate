@@ -158,19 +158,27 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
 # that later genuinely stalls is read as still waiting and gets the hour-long
 # recheck instead of the 240s wedge path. `working:` is what every consumer
 # already treats as ending a pause (bin/fm-classify-lib.sh map_log_state and the
-# open-activities fold). The lifecycle lives in shared rule 4 precisely so this
-# holds for EVERY delivery mode - the faster paths are nudged toward a pause by
-# their own "long test or build run" example and never see the pipeline DOD.
-test_every_ship_mode_carries_the_whole_pause_lifecycle() {
-  local home id proj brief id_proj
+# open-activities fold). The lifecycle is one shared block rendered into rule 4 of
+# EVERY crewmate brief - the faster paths are nudged toward a pause by their own
+# "long test or build run" example and never see the pipeline DOD, and a scout is
+# taught the pause verb too, so each of them needs the whole lifecycle.
+test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
+  local home id proj kind brief entry rest
   home="$TMP_ROOT/pause-lifecycle-home"
   write_registry "$home"
 
-  for id_proj in "brief-pause-life-f1:no-registry-proj" "brief-pause-life-f2:direct-proj" "brief-pause-life-f3:local-proj"; do
-    id=${id_proj%%:*}
-    proj=${id_proj##*:}
-    FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-      "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+  for entry in "brief-pause-life-f1:no-registry-proj:ship" "brief-pause-life-f2:direct-proj:ship" "brief-pause-life-f3:local-proj:ship" "brief-pause-life-f4:scout-proj:scout"; do
+    id=${entry%%:*}
+    rest=${entry#*:}
+    proj=${rest%%:*}
+    kind=${rest##*:}
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+    fi
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "A \`awaiting:\` line is nonterminal too: do not end the turn after it" "$brief" \
@@ -185,8 +193,16 @@ test_every_ship_mode_carries_the_whole_pause_lifecycle() {
       "$id: brief lost why a standing pause is dangerous"
     assert_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
       "$id: brief lost the paused-versus-blocked distinction"
+    # A scout has no branch, no push, and no PR, so it inherits the lifecycle
+    # without the handoff sentence, which would name an impossible wait.
+    if [ "$kind" = scout ]; then
+      assert_no_grep "hand control back to the pipeline" "$brief" \
+        "$id: scout brief named a pipeline handoff it can never make"
+      assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
+        "$id: scout brief named a pipeline wait it can never have"
+    fi
   done
-  pass "fm-brief.sh: every ship mode carries the full pause lifecycle"
+  pass "fm-brief.sh: every crewmate brief carries the full pause lifecycle"
 }
 
 test_ship_project_memory_wording() {
@@ -458,7 +474,7 @@ test_ship_modes_generate_clean_briefs
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
-test_every_ship_mode_carries_the_whole_pause_lifecycle
+test_every_crewmate_brief_carries_the_whole_pause_lifecycle
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

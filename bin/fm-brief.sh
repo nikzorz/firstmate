@@ -42,10 +42,13 @@
 # mode actually produces first, and a no-mistakes ship brief additionally
 # requires the pause line before handing a long stretch back to the pipeline,
 # because that idle wait is otherwise escalated as a possible wedge. The pause
-# LIFECYCLE lives once in shared rule 4, so every delivery mode inherits it: the
-# pause line is nonterminal (declaring it is never permission to end the turn)
-# and the worker CLOSES the wait with a "working:" line when it ends, because a
-# standing pause would mask a later real wedge behind the long recheck cadence.
+# LIFECYCLE is one shared block rendered into rule 4 of every crewmate brief -
+# every ship delivery mode and the scout contract alike - so the copies cannot
+# drift: the pause line is nonterminal (declaring it is never permission to end
+# the turn) and the worker CLOSES the wait with a "working:" line when it ends,
+# because a standing pause would mask a later real wedge behind the long recheck
+# cadence. A scout never hands work to a pipeline, so it inherits the lifecycle
+# without the pipeline-handoff instruction.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -201,6 +204,11 @@ fi
 
 REPO=${POS[1]}
 
+PAUSE_LIFECYCLE="   A \`$PAUSED_VERB:\` line is nonterminal too: do not end the turn after it, and close the wait with
+   \`working: {what you are doing next}\` the moment it ends. That close is a state change firstmate
+   acts on, not an FYI progress line; a \`$PAUSED_VERB:\` line left standing keeps firstmate on the
+   long recheck cadence when a later quiet pane is a real wedge."
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -262,6 +270,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+$PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -379,10 +388,7 @@ $RULE1
    known external wait you expect to clear on its own ($PAUSE_EXAMPLE):
    firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-   A \`$PAUSED_VERB:\` line is nonterminal too: do not end the turn after it, and close the wait with
-   \`working: {what you are doing next}\` the moment it ends. That close is a state change firstmate
-   acts on, not an FYI progress line; a \`$PAUSED_VERB:\` line left standing keeps firstmate on the
-   long recheck cadence when a later quiet pane is a real wedge.
+$PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
