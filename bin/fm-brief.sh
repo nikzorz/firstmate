@@ -52,10 +52,12 @@
 # it back-references nothing above it, because rule 4 differs between variants.
 # Known limitation, do not overstate this contract: declaring the pause bounds
 # the common case but does NOT fully retire the false possible-wedge escalations
-# for a worker waiting on a validation pipeline. A declared pause is honoured
-# only while its recheck marker is fresh; after that the supervision stack falls
-# back to the run-step verdict, which outranks the pause. Brief text cannot close
-# that gap - it needs a supervision-layer change, filed as its own task.
+# for a worker waiting on a validation pipeline. While that fix round, re-review,
+# or test step is actually running, bin/fm-crew-state.sh reports the crew working
+# from its run step, which outranks the declared pause, so the stale path still
+# escalates the quiet pane past FM_STALE_ESCALATE_SECS; docs/architecture.md owns
+# that precedence. Brief text cannot close that gap - it needs a supervision-layer
+# change, filed as its own task.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
