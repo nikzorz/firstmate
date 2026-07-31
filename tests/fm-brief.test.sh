@@ -119,6 +119,37 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
+# A worker idling between no-mistakes gates has a quiet pane, so an undeclared
+# wait is aged into a repeating possible-wedge escalation. The instruction has to
+# sit at the pipeline handoff itself; the passive definition in Rules is not enough.
+test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
+  local home id brief
+  home="$TMP_ROOT/pipeline-pause-home"
+  mkdir -p "$home/data"
+  id="brief-pipeline-pause-e1"
+  FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+    "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`awaiting: {what you are waiting on}\`" "$brief" \
+    "no-mistakes DOD lost the declared pause at the pipeline handoff"
+  assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
+    "no-mistakes DOD lost the reason the pause declaration matters"
+  assert_grep "a fix round, re-review, or long test step you handed back to the no-mistakes pipeline" "$brief" \
+    "no-mistakes Rules did not name the pipeline wait as a pause case"
+
+  # The faster paths run no pipeline, so their pause examples must not name one.
+  write_registry "$home"
+  id="brief-pipeline-pause-e2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_grep "a long test or build run you are waiting out" "$brief" \
+    "direct-PR brief lost a delivery-appropriate pause example"
+  assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
+    "direct-PR brief named a pipeline it never runs"
+  pass "fm-brief.sh: no-mistakes briefs declare a pause before each pipeline handoff"
+}
+
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -387,6 +418,7 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

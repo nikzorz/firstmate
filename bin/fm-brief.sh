@@ -38,7 +38,10 @@
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
-# blocked when firstmate must act.
+# blocked when firstmate must act. Ship briefs name the wait their own delivery
+# mode actually produces first, and a no-mistakes ship brief additionally
+# requires the pause line before handing a long stretch back to the pipeline,
+# because that idle wait is otherwise escalated as a possible wedge.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -284,6 +287,7 @@ EOF
 case "$MODE" in
   direct-PR)
     SETUP2=""
+    PAUSE_EXAMPLE="a long test or build run you are waiting out, an upstream release, a rate-limit reset, a scheduled window"
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
     DOD=$(cat <<EOF
 # Definition of done
@@ -296,6 +300,7 @@ EOF
     ;;
   local-only)
     SETUP2=""
+    PAUSE_EXAMPLE="a long test or build run you are waiting out, an upstream release, a rate-limit reset, a scheduled window"
     RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
     DOD=$(cat <<EOF
 # Definition of done
@@ -308,6 +313,7 @@ EOF
 )
     ;;
   *)  # no-mistakes (default)
+    PAUSE_EXAMPLE="a fix round, re-review, or long test step you handed back to the no-mistakes pipeline, an upstream release, a rate-limit reset, a scheduled window"
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     RULE1='1. Never push to the default branch. Never merge a PR.'
@@ -320,6 +326,8 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`$PAUSED_VERB: {what you are waiting on}\` to the status file.
+That idle wait is expected, and declaring it is what keeps firstmate from reading your quiet pane as a possible wedge and escalating it repeatedly.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
@@ -364,8 +372,8 @@ $RULE1
    A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the
    turn after it; continue the same stage until a defined \`done:\` gate under Definition of done.
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
-   known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
-   a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
+   known external wait you expect to clear on its own ($PAUSE_EXAMPLE):
+   firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
