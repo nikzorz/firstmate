@@ -210,12 +210,20 @@ test_state_startup_and_ordinary_recovery_placement() {
 }
 
 test_codexapp_points_at_the_status_protocol_owner() {
-  assert_grep '`bin/fm-brief.sh` is the single owner of both' "$CODEXAPP" \
-    "firstmate-codexapp does not name the status-protocol and done-gate owner"
-  assert_grep '`4. Report status by appending one line:`' "$CODEXAPP" \
-    "firstmate-codexapp lost the exact boundary that makes the status pointer mechanical"
-  assert_grep 'from the line `# Definition of done` to the end of the file' "$CODEXAPP" \
-    "firstmate-codexapp lost the exact boundary that lifts the mode-specific done gate"
+  assert_grep '`<absolute-firstmate-home>/data/<task-id>/brief.md`' "$CODEXAPP" \
+    "firstmate-codexapp does not name the absolute brief path it points the worker at"
+  assert_grep 'Read it in full and follow it exactly' "$CODEXAPP" \
+    "firstmate-codexapp does not tell the Desktop worker to follow the brief it points at"
+  assert_grep 'that file is the single owner of the whole contract' "$CODEXAPP" \
+    "firstmate-codexapp does not name the brief as the owner of the crewmate contract"
+  # The read is as unverifiable-by-assumption as the status write, so the section
+  # has to name an observable receipt for it too.
+  assert_grep 'quoted a definition of done that matches the one' "$CODEXAPP" \
+    "firstmate-codexapp does not verify the brief read with an observable receipt"
+  assert_grep 'cannot read its brief' "$CODEXAPP" \
+    "firstmate-codexapp lost the fallback for a thread that cannot read its brief"
+  assert_grep 'readable `data/<id>/brief.md` path' "$CODEXAPP" \
+    "firstmate-codexapp preflight does not require a readable brief path"
   # The drifted copy taught the state list and the paused-versus-blocked
   # distinction without the close-the-pause instruction or the nonterminal
   # guard. Any restatement of those is the duplication that drifted.
@@ -226,19 +234,22 @@ test_codexapp_points_at_the_status_protocol_owner() {
     assert_no_grep "$phrase" "$CODEXAPP" \
       "firstmate-codexapp restated the status protocol instead of pointing at its owner"
   done
-  # bin/fm-brief.sh shapes the done gate per delivery mode, so any gate authored
-  # here is wrong for three of the four variants: a direct-PR worker told it is
-  # finished at a local commit never pushes or opens its PR, and a scout has no
-  # branch to be finished on.
+  # Excerpting was tried twice and abandoned: every boundary left the brief's own
+  # cross-references dangling outside it (the no-mistakes done gate cites rule 6,
+  # which no status-protocol boundary covers). These are the excerpt headers and
+  # the hand-written gates that replaced them, all of which must stay absent.
   for phrase in \
+    '4. Report status by appending one line:' \
+    '# Definition of done' \
+    'up to but not including the line beginning' \
     'complete and committed on its branch' \
     'as this message itself' \
     'done: PR' \
     'ready in branch'; do
     assert_no_grep "$phrase" "$CODEXAPP" \
-      "firstmate-codexapp hand-wrote a done gate instead of lifting the brief's mode-specific one"
+      "firstmate-codexapp excerpted or hand-wrote the crewmate contract instead of pointing at the brief"
   done
-  pass "firstmate-codexapp points at bin/fm-brief.sh instead of copying the status protocol or the done gate"
+  pass "firstmate-codexapp points the Desktop worker at its brief instead of copying the contract"
 }
 
 test_compressed_agents_owner_map() {

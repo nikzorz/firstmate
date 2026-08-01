@@ -154,6 +154,30 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
   pass "fm-brief.sh: no-mistakes briefs declare a pause before each pipeline handoff"
 }
 
+# The four crewmate variants - the three ship delivery modes plus scout - share
+# most of one contract, and several tests need the whole set. Scaffold one brief
+# per variant under <home> with the given id prefix and pause verb, and echo one
+# `<id>:<proj>:<kind>:<brief-path>` line per variant for the caller to iterate.
+scaffold_every_crewmate_variant() {
+  local home=$1 prefix=$2 verb=$3
+  local entry id proj kind
+  write_registry "$home"
+  for entry in "1:no-registry-proj:ship" "2:direct-proj:ship" "3:local-proj:ship" "4:scout-proj:scout"; do
+    id="$prefix${entry%%:*}"
+    proj=${entry#*:}
+    proj=${proj%%:*}
+    kind=${entry##*:}
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB="$verb" \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB="$verb" \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+    fi
+    printf '%s:%s:%s:%s\n' "$id" "$proj" "$kind" "$home/data/$id/brief.md"
+  done
+}
+
 # A declared pause nobody closes stays the crew's last status event, so a worker
 # that later genuinely stalls is read as still waiting and gets the hour-long
 # recheck instead of the 240s wedge path. `working:` is what every consumer
@@ -163,23 +187,11 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
 # "long test or build run" example and never see the pipeline DOD, and a scout is
 # taught the pause verb too, so each of them needs the whole lifecycle.
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
-  local home id proj kind brief entry rest
+  local home variants id proj kind brief
   home="$TMP_ROOT/pause-lifecycle-home"
-  write_registry "$home"
+  variants=$(scaffold_every_crewmate_variant "$home" brief-pause-life-f awaiting)
 
-  for entry in "brief-pause-life-f1:no-registry-proj:ship" "brief-pause-life-f2:direct-proj:ship" "brief-pause-life-f3:local-proj:ship" "brief-pause-life-f4:scout-proj:scout"; do
-    id=${entry%%:*}
-    rest=${entry#*:}
-    proj=${rest%%:*}
-    kind=${rest##*:}
-    if [ "$kind" = scout ]; then
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
-    else
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
-    fi
-    brief="$home/data/$id/brief.md"
+  while IFS=: read -r id proj kind brief; do
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "A \`awaiting:\` line is nonterminal: do not end the turn after it" "$brief" \
       "$id: brief lost the nonterminal guard on the pause line"
@@ -203,111 +215,72 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
       assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
         "$id: scout brief named a pipeline wait it can never have"
     fi
-  done
+  done <<< "$variants"
   pass "fm-brief.sh: every crewmate brief carries the full pause lifecycle"
 }
 
-# The firstmate-codexapp skill no longer restates the status protocol; it tells
-# firstmate to lift rule 4 out of the generated brief by an exact textual
-# boundary. That boundary is a property of this scaffold, so it is asserted here:
-# if a future edit renumbers or reshapes rule 4, the pointer breaks silently and
-# the Codex Desktop path loses the protocol entirely.
-test_rule_four_is_liftable_by_the_codexapp_boundary() {
-  local home id proj kind brief entry rest block
-  home="$TMP_ROOT/codexapp-boundary-home"
-  write_registry "$home"
+# The firstmate-codexapp skill does not excerpt this contract into a Codex Desktop
+# thread; it hands the worker this brief's absolute path and tells it to read the
+# whole file. Excerpting was tried and abandoned - every boundary left the brief's
+# own cross-references dangling on the far side of it - so what matters now is that
+# the file being pointed at is genuinely self-contained. A Desktop worker has no
+# second source: whatever is missing here is missing from its whole task.
+test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
+  local home variants id proj kind brief
+  home="$TMP_ROOT/pointed-worker-home"
+  variants=$(scaffold_every_crewmate_variant "$home" brief-pointed-g paused)
 
-  for entry in "brief-lift-g1:no-registry-proj:ship" "brief-lift-g2:direct-proj:ship" "brief-lift-g3:local-proj:ship" "brief-lift-g4:scout-proj:scout"; do
-    id=${entry%%:*}
-    rest=${entry#*:}
-    proj=${rest%%:*}
-    kind=${rest##*:}
-    if [ "$kind" = scout ]; then
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
-    else
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
-    fi
-    brief="$home/data/$id/brief.md"
+  while IFS=: read -r id proj kind brief; do
     assert_present "$brief" "$id: brief was not scaffolded"
-    block=$(awk '/^4\. Report status by appending one line:/{f=1} /^5\./{f=0} f' "$brief")
-    [ -n "$block" ] || fail "$id: the codexapp lift boundary matched nothing in the generated brief"
-    assert_contains "$block" "$home/state/$id.status" \
-      "$id: lifted rule 4 lost the absolute status path a Desktop thread needs"
-    assert_contains "$block" "States: working, needs-decision, blocked, paused, done, failed." \
-      "$id: lifted rule 4 lost the state list"
-    assert_contains "$block" "close the wait with" \
-      "$id: lifted rule 4 lost the instruction to close a declared pause"
-    assert_contains "$block" "is nonterminal: do not end the turn after it" \
-      "$id: lifted rule 4 lost the nonterminal guard"
-    assert_contains "$block" "Use \`blocked:\` when you are stuck and need help." \
-      "$id: lifted rule 4 lost the paused-versus-blocked distinction"
-    case "$block" in
-      *"5. If you hit the same obstacle twice"*)
-        fail "$id: the codexapp lift boundary ran past rule 4 into rule 5" ;;
-    esac
-  done
-  pass "fm-brief.sh: rule 4 lifts cleanly at the boundary firstmate-codexapp names"
-}
-
-# The skill lifts this scaffold's own `# Definition of done` rather than writing a
-# Desktop done gate, because the gate is mode-specific: a direct-PR worker must
-# push and open a PR, a local-only worker must hand over a rebased branch, and a
-# scout has no branch to commit on at all. A single hand-written "committed on its
-# branch" gate is right for exactly one of the four variants, so the boundary that
-# supplies the real one is asserted per variant here. It runs to end-of-file, so a
-# section appended after the DOD would silently join the lift; that is caught too.
-test_definition_of_done_is_liftable_by_the_codexapp_boundary() {
-  local home id proj kind brief entry rest block trailing
-  home="$TMP_ROOT/codexapp-dod-boundary-home"
-  write_registry "$home"
-
-  for entry in "brief-dod-lift-h1:no-registry-proj:ship" "brief-dod-lift-h2:direct-proj:ship" "brief-dod-lift-h3:local-proj:ship" "brief-dod-lift-h4:scout-proj:scout"; do
-    id=${entry%%:*}
-    rest=${entry#*:}
-    proj=${rest%%:*}
-    kind=${rest##*:}
-    if [ "$kind" = scout ]; then
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
-    else
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
-    fi
-    brief="$home/data/$id/brief.md"
-    assert_present "$brief" "$id: brief was not scaffolded"
-    block=$(awk '/^# Definition of done$/{f=1} f' "$brief")
-    [ -n "$block" ] || fail "$id: the codexapp done-gate boundary matched nothing in the generated brief"
-    # Any later top-level section would ride along on an end-of-file boundary.
-    trailing=$(printf '%s\n' "$block" | awk 'NR > 1 && /^# /')
-    [ -z "$trailing" ] || fail "$id: the codexapp done-gate lift ran past the section into: $trailing"
+    assert_grep "$home/state/$id.status" "$brief" \
+      "$id: brief lacks the absolute status path a pointed worker cannot infer"
+    assert_grep "4. Report status by appending one line:" "$brief" \
+      "$id: brief lost the status protocol rule"
+    assert_grep "States: working, needs-decision, blocked, paused, done, failed." "$brief" \
+      "$id: brief lost the state list"
+    assert_grep "close the wait with" "$brief" \
+      "$id: brief lost the pause lifecycle rule 4 owns"
+    assert_grep "5. If you hit the same obstacle twice" "$brief" \
+      "$id: brief lost the repeated-obstacle rule"
+    assert_grep "6. If a decision belongs" "$brief" \
+      "$id: brief lost the escalation rule the definition of done refers to"
+    # Rule 6 is the only place a worker is taught to CLOSE a decision or blocker
+    # it opened; without it a standing needs-decision masks later events exactly
+    # as a standing pause would.
+    assert_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
+      "$id: brief lost rule 6's closure for a decision or blocker it opens"
+    assert_grep "[key=<slug>]" "$brief" \
+      "$id: brief lost the correlation key that ties a closure to what it opened"
+    assert_grep "7. Never stop, restart, or update the shared" "$brief" \
+      "$id: brief lost the shared-daemon rule"
+    assert_grep "# Definition of done" "$brief" \
+      "$id: brief lost the done gate a pointed worker has no other source for"
     case "$proj" in
       direct-proj)
-        assert_contains "$block" "This project ships **direct-PR**" \
-          "$id: lifted done gate lost the delivery mode it belongs to"
-        assert_contains "$block" "push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\`" \
-          "$id: a direct-PR Desktop worker would be told it is finished at a local commit"
+        assert_grep "This project ships **direct-PR**" "$brief" \
+          "$id: brief lost the delivery mode its done gate belongs to"
+        assert_grep "push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\`" "$brief" \
+          "$id: a direct-PR worker would be left thinking it is finished at a local commit"
         ;;
       local-proj)
-        assert_contains "$block" "Keep your branch a clean fast-forward onto the current default branch" \
-          "$id: lifted done gate lost the local-only fast-forward rebase requirement"
-        assert_contains "$block" "append \`done: ready in branch fm/$id\`" \
-          "$id: lifted done gate lost the local-only ready-branch report"
+        assert_grep "Keep your branch a clean fast-forward onto the current default branch" "$brief" \
+          "$id: brief lost the local-only fast-forward rebase requirement"
+        assert_grep "append \`done: ready in branch fm/$id\`" "$brief" \
+          "$id: brief lost the local-only ready-branch report"
         ;;
       scout-proj)
-        assert_contains "$block" "$home/data/$id/report.md" \
-          "$id: lifted done gate lost the scout report deliverable"
-        assert_not_contains "$block" "your branch" \
-          "$id: a scout Desktop worker would be told to commit on a branch it never creates"
+        assert_grep "$home/data/$id/report.md" "$brief" \
+          "$id: brief lost the scout report deliverable"
+        assert_no_grep "committed on your branch" "$brief" \
+          "$id: a scout would be told to commit on a branch it never creates"
         ;;
       *)
-        assert_contains "$block" "Firstmate will then instruct you to run /no-mistakes" \
-          "$id: lifted done gate lost the no-mistakes pipeline handoff"
+        assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+          "$id: brief lost the no-mistakes pipeline handoff"
         ;;
     esac
-  done
-  pass "fm-brief.sh: the mode-specific done gate lifts cleanly at the boundary firstmate-codexapp names"
+  done <<< "$variants"
+  pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
 }
 
 test_ship_project_memory_wording() {
@@ -580,8 +553,7 @@ test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle
-test_rule_four_is_liftable_by_the_codexapp_boundary
-test_definition_of_done_is_liftable_by_the_codexapp_boundary
+test_every_crewmate_brief_is_complete_for_a_pointed_worker
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
