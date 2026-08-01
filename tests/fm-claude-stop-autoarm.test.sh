@@ -19,7 +19,10 @@ fm_git_identity fmtest fmtest@example.invalid
 
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fakebin")
 ln -s /bin/bash "$FAKEBIN/claude"
-FAKE_CLAUDE="$FAKEBIN/claude"
+# Exported so the nesting fork fixture below can launch a second fake harness
+# from inside the first; a per-invocation prefix assignment would be read by the
+# inner shell only after the outer command word had already expanded.
+export FAKE_CLAUDE="$FAKEBIN/claude"
 
 # Copy the hook and its sourced dependencies into a fixture checkout.
 install_autoarm_scripts() {
@@ -240,6 +243,36 @@ test_inert_when_lock_held_by_other_harness() {
   pass "auto-arm: inert without arm, rewake, or lock replacement when another live harness owns the home"
 }
 
+test_arms_for_forked_session_under_new_pid() {
+  local dir out status parent_pid fork_pid owner_after
+  dir=$(make_primary_dir "$TMP_ROOT/forked-session")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" actionable
+  # The recorded owner STAYS ALIVE while an inner fake harness - the forked
+  # session running under a new pid, the shape Claude Code produces when a
+  # session is forked, resumed, or moved to the background - fires the hook.
+  # Both bodies keep a trailing statement so bash cannot exec the child into the
+  # parent's pid and collapse the two sessions this case depends on.
+  out=$(printf '%s\n' '{"session_id":"forked"}' \
+    | FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+        RC=0
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        printf "%s\n" "$$" > "$FM_HOME/state/parent-pid"
+        "$FAKE_CLAUDE" -c '"'"'RC=0; printf "%s\n" "$$" > "$FM_HOME/state/fork-pid"; "$FM_HOME/bin/fm-claude-stop-autoarm.sh" || RC=$?; exit "$RC"'"'"' || RC=$?
+        exit "$RC"
+      ' 2>&1); status=$?
+  parent_pid=$(cat "$dir/state/parent-pid")
+  fork_pid=$(cat "$dir/state/fork-pid")
+  owner_after=$(cat "$dir/state/.lock")
+  [ "$parent_pid" != "$fork_pid" ] || fail "fork fixture collapsed onto one pid ($parent_pid): the forked session must be a separate process for this case to mean anything"
+  expect_code 2 "$status" "a forked session under a new pid must arm and rewake for its own home"
+  [ -e "$dir/state/arm-ran" ] || fail "hook did not arm for a forked session that owns this home"
+  assert_contains "$out" "stale: fixture-win actionable" "forked-session rewake must carry the arm's reason line"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "forked-session arm must record outcome=rewake"
+  [ "$owner_after" = "$parent_pid" ] || fail "hook rewrote a live owner it descends from: expected $parent_pid, got $owner_after"
+  pass "auto-arm: a forked session under a new pid arms its own home instead of deferring to its parent"
+}
+
 test_inert_when_afk() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/afk")
@@ -411,6 +444,7 @@ test_inert_in_child_worktree
 test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming
 test_inert_when_lock_held_by_other_harness
+test_arms_for_forked_session_under_new_pid
 test_inert_when_afk
 test_stale_lock_recovery_preserves_afk_and_need_gates
 test_inert_when_fleet_idle
