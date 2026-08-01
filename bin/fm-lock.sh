@@ -74,8 +74,7 @@ if [ -e "$LOCK" ] || [ -L "$LOCK" ]; then
   # or backgrounded session running under a new pid - this is the same session
   # reclaiming its own home, and the claim below re-points the lock at the pid
   # that is actually executing turns.
-  if [ "$old" != "$me" ] && fm_harness_pid_alive "$old" \
-    && ! fm_session_lock_owner_launched_self "$old"; then
+  if [ "$old" != "$me" ] && fm_session_lock_owner_is_other_session "$old"; then
     echo "error: another live firstmate session holds the lock (pid $old); operate read-only until resolved" >&2
     exit 1
   fi
