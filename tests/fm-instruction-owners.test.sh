@@ -210,10 +210,12 @@ test_state_startup_and_ordinary_recovery_placement() {
 }
 
 test_codexapp_points_at_the_status_protocol_owner() {
-  assert_grep '`bin/fm-brief.sh` is its single owner' "$CODEXAPP" \
-    "firstmate-codexapp does not name the status-protocol owner"
+  assert_grep '`bin/fm-brief.sh` is the single owner of both' "$CODEXAPP" \
+    "firstmate-codexapp does not name the status-protocol and done-gate owner"
   assert_grep '`4. Report status by appending one line:`' "$CODEXAPP" \
-    "firstmate-codexapp lost the exact boundary that makes the pointer mechanical"
+    "firstmate-codexapp lost the exact boundary that makes the status pointer mechanical"
+  assert_grep 'from the line `# Definition of done` to the end of the file' "$CODEXAPP" \
+    "firstmate-codexapp lost the exact boundary that lifts the mode-specific done gate"
   # The drifted copy taught the state list and the paused-versus-blocked
   # distinction without the close-the-pause instruction or the nonterminal
   # guard. Any restatement of those is the duplication that drifted.
@@ -224,7 +226,19 @@ test_codexapp_points_at_the_status_protocol_owner() {
     assert_no_grep "$phrase" "$CODEXAPP" \
       "firstmate-codexapp restated the status protocol instead of pointing at its owner"
   done
-  pass "firstmate-codexapp points at bin/fm-brief.sh instead of copying the status protocol"
+  # bin/fm-brief.sh shapes the done gate per delivery mode, so any gate authored
+  # here is wrong for three of the four variants: a direct-PR worker told it is
+  # finished at a local commit never pushes or opens its PR, and a scout has no
+  # branch to be finished on.
+  for phrase in \
+    'complete and committed on its branch' \
+    'as this message itself' \
+    'done: PR' \
+    'ready in branch'; do
+    assert_no_grep "$phrase" "$CODEXAPP" \
+      "firstmate-codexapp hand-wrote a done gate instead of lifting the brief's mode-specific one"
+  done
+  pass "firstmate-codexapp points at bin/fm-brief.sh instead of copying the status protocol or the done gate"
 }
 
 test_compressed_agents_owner_map() {

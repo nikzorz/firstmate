@@ -251,6 +251,65 @@ test_rule_four_is_liftable_by_the_codexapp_boundary() {
   pass "fm-brief.sh: rule 4 lifts cleanly at the boundary firstmate-codexapp names"
 }
 
+# The skill lifts this scaffold's own `# Definition of done` rather than writing a
+# Desktop done gate, because the gate is mode-specific: a direct-PR worker must
+# push and open a PR, a local-only worker must hand over a rebased branch, and a
+# scout has no branch to commit on at all. A single hand-written "committed on its
+# branch" gate is right for exactly one of the four variants, so the boundary that
+# supplies the real one is asserted per variant here. It runs to end-of-file, so a
+# section appended after the DOD would silently join the lift; that is caught too.
+test_definition_of_done_is_liftable_by_the_codexapp_boundary() {
+  local home id proj kind brief entry rest block trailing
+  home="$TMP_ROOT/codexapp-dod-boundary-home"
+  write_registry "$home"
+
+  for entry in "brief-dod-lift-h1:no-registry-proj:ship" "brief-dod-lift-h2:direct-proj:ship" "brief-dod-lift-h3:local-proj:ship" "brief-dod-lift-h4:scout-proj:scout"; do
+    id=${entry%%:*}
+    rest=${entry#*:}
+    proj=${rest%%:*}
+    kind=${rest##*:}
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    block=$(awk '/^# Definition of done$/{f=1} f' "$brief")
+    [ -n "$block" ] || fail "$id: the codexapp done-gate boundary matched nothing in the generated brief"
+    # Any later top-level section would ride along on an end-of-file boundary.
+    trailing=$(printf '%s\n' "$block" | awk 'NR > 1 && /^# /')
+    [ -z "$trailing" ] || fail "$id: the codexapp done-gate lift ran past the section into: $trailing"
+    case "$proj" in
+      direct-proj)
+        assert_contains "$block" "This project ships **direct-PR**" \
+          "$id: lifted done gate lost the delivery mode it belongs to"
+        assert_contains "$block" "push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\`" \
+          "$id: a direct-PR Desktop worker would be told it is finished at a local commit"
+        ;;
+      local-proj)
+        assert_contains "$block" "Keep your branch a clean fast-forward onto the current default branch" \
+          "$id: lifted done gate lost the local-only fast-forward rebase requirement"
+        assert_contains "$block" "append \`done: ready in branch fm/$id\`" \
+          "$id: lifted done gate lost the local-only ready-branch report"
+        ;;
+      scout-proj)
+        assert_contains "$block" "$home/data/$id/report.md" \
+          "$id: lifted done gate lost the scout report deliverable"
+        assert_not_contains "$block" "your branch" \
+          "$id: a scout Desktop worker would be told to commit on a branch it never creates"
+        ;;
+      *)
+        assert_contains "$block" "Firstmate will then instruct you to run /no-mistakes" \
+          "$id: lifted done gate lost the no-mistakes pipeline handoff"
+        ;;
+    esac
+  done
+  pass "fm-brief.sh: the mode-specific done gate lifts cleanly at the boundary firstmate-codexapp names"
+}
+
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -522,6 +581,7 @@ test_no_mistakes_dod_wording
 test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle
 test_rule_four_is_liftable_by_the_codexapp_boundary
+test_definition_of_done_is_liftable_by_the_codexapp_boundary
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

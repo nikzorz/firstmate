@@ -57,18 +57,22 @@ If the user types directly into the visible thread, treat that as authoritative 
 A Desktop-owned Codex thread can append to Firstmate status files only when the prompt gives an absolute path and the Desktop permission context can write that checkout.
 That makes status writes a verified return-channel requirement, not a fact to assume.
 
-For a Firstmate-managed task, do not hand-write a status protocol here.
-`bin/fm-brief.sh` is its single owner, and the partial copy this section used to carry had already drifted from it: it taught the declared pause without the instruction to close it.
-Scaffold the task's brief as usual, then copy rule 4 out of the generated `data/<task-id>/brief.md` verbatim into the thread message, from the line beginning `4. Report status by appending one line:` up to but not including the line beginning `5.`.
-That block already carries the absolute `state/<task-id>.status` path, the full state list, and the pause lifecycle.
-It is self-contained but for one reference: the ship variant's rule 4 closes by naming a `Definition of done` section that sits outside the lift boundary, and the Desktop-specific lines below supply that gate instead.
+For a Firstmate-managed task, do not hand-write a status protocol or a done gate here.
+`bin/fm-brief.sh` is the single owner of both, and the partial status copy this section used to carry had already drifted from it: it taught the declared pause without the instruction to close it.
+Scaffold the task's brief as usual, then lift two blocks verbatim out of the generated `data/<task-id>/brief.md` into the thread message:
+
+- Rule 4, from the line beginning `4. Report status by appending one line:` up to but not including the line beginning `5.`.
+- The done gate, from the line `# Definition of done` to the end of the file.
+
+Rule 4 already carries the absolute `state/<task-id>.status` path, the full state list, and the pause lifecycle, and the `Definition of done` its ship variant names is the second lifted block.
+Lift that second block as written instead of summarizing it, because `bin/fm-brief.sh` shapes the gate around the project's delivery mode: it sends a direct-PR thread on to push and raise its PR, a local-only thread to hand over a rebased branch, a no-mistakes thread through the pipeline, and a scout thread to a written report on no branch at all.
+A gate authored here instead would be wrong for three of those four.
 
 Add only the Desktop-specific lines the scaffold has no reason to carry:
 
 ```text
 In rule 4 above, "your pane" means this visible thread, which firstmate reads with read_thread.
-Treat rule 4's "Definition of done" as this message itself, which carries no such section of its own: the task is done only when the work described above is complete and committed on its branch.
-Before doing substantive work, append "working: Codex Desktop thread started" to that status file.
+Rule 4's report-sparingly bar has exactly one named exception: before doing substantive work, append "working: Codex Desktop thread started" to that status file, so firstmate can verify this thread's return channel before trusting it.
 ```
 
 Verify the return channel before treating the thread as supervised:
