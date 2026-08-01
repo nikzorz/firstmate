@@ -25,7 +25,7 @@
 #                          confirmed live and a no-mistakes run step attributed to
 #                          its branch reports a non-terminal status
 #                          (pause_state_class owns that reconciliation). Only when
-#                          neither absorb class applies does the log's last line decide:
+#                          no absorb class applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
 #                          wedge threshold also surfaces, with an "escalation N"
