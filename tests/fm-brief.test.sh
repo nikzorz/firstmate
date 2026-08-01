@@ -223,9 +223,11 @@ test_rule_four_is_liftable_by_the_codexapp_boundary() {
     proj=${rest%%:*}
     kind=${rest##*:}
     if [ "$kind" = scout ]; then
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
     else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
+        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
     fi
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
@@ -239,6 +241,8 @@ test_rule_four_is_liftable_by_the_codexapp_boundary() {
       "$id: lifted rule 4 lost the instruction to close a declared pause"
     assert_contains "$block" "is nonterminal: do not end the turn after it" \
       "$id: lifted rule 4 lost the nonterminal guard"
+    assert_contains "$block" "Use \`blocked:\` when you are stuck and need help." \
+      "$id: lifted rule 4 lost the paused-versus-blocked distinction"
     case "$block" in
       *"5. If you hit the same obstacle twice"*)
         fail "$id: the codexapp lift boundary ran past rule 4 into rule 5" ;;

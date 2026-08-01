@@ -60,12 +60,14 @@ That makes status writes a verified return-channel requirement, not a fact to as
 For a Firstmate-managed task, do not hand-write a status protocol here.
 `bin/fm-brief.sh` is its single owner, and the partial copy this section used to carry had already drifted from it: it taught the declared pause without the instruction to close it.
 Scaffold the task's brief as usual, then copy rule 4 out of the generated `data/<task-id>/brief.md` verbatim into the thread message, from the line beginning `4. Report status by appending one line:` up to but not including the line beginning `5.`.
-That block is self-contained and already carries the absolute `state/<task-id>.status` path, the full state list, and the pause lifecycle.
+That block already carries the absolute `state/<task-id>.status` path, the full state list, and the pause lifecycle.
+It is self-contained but for one reference: the ship variant's rule 4 closes by naming a `Definition of done` section that sits outside the lift boundary, and the Desktop-specific lines below supply that gate instead.
 
-Add only the two Desktop-specific lines the scaffold has no reason to carry:
+Add only the Desktop-specific lines the scaffold has no reason to carry:
 
 ```text
 In rule 4 above, "your pane" means this visible thread, which firstmate reads with read_thread.
+Treat rule 4's "Definition of done" as this message itself, which carries no such section of its own: the task is done only when the work described above is complete and committed on its branch.
 Before doing substantive work, append "working: Codex Desktop thread started" to that status file.
 ```
 
