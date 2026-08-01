@@ -1296,6 +1296,80 @@ test_paused_progressing_run_with_live_endpoint_uses_pause_cadence() {
   pass "a declared pause with a live endpoint and a progressing pipeline takes the pause cadence, not the wedge timer"
 }
 
+# --- the bounded pause cadence stays cheap across polls -----------------------
+# fm-crew-state.sh may shell out to a bounded no-mistakes call, so fm-classify-lib.sh's
+# contract is that the absorb classification runs on first sighting of a stale hash,
+# never on every wake. The handoff route above re-absorbs the SAME unchanged pane on
+# every poll for as long as the wait holds, so it has to carry that contract itself:
+# it memoizes the endpoint reading that earned the cadence in .paused-rechecked-<key>
+# and, while that memo is young and the endpoint still reads alive, re-absorbs on the
+# cheap liveness probe alone. The memo still expires after STALE_ESCALATE_SECS, so a
+# crew whose run has since stopped supporting the handoff is re-read - and lands back
+# on the wedge timer - within the ordinary threshold.
+test_paused_handoff_cadence_memoizes_its_crew_state_read() {
+  local dir state fakebin out capture_file window key pane_hash sig pid log calls i
+  dir=$(make_case paused-handoff-memo); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-memo"
+  log="$dir/crew-state-calls.log"
+  printf 'idle awaiting external\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/paused-memo.meta"
+  printf 'paused: handed a fix round back to the pipeline\n' > "$state/paused-memo.status"
+  sig=$(seen_sig "$state/paused-memo.status"); printf '%s' "$sig" > "$state/.seen-paused-memo_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle awaiting external")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  : > "$log"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude FM_FAKE_CREW_STATE_LOG="$log" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do
+    [ "$(cat "$state/.paused-rechecked-$key" 2>/dev/null || true)" = handoff ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.paused-rechecked-$key" 2>/dev/null || true)" = handoff ] \
+    || { reap "$pid"; fail "the pipeline-handoff pause recorded no reusable recheck memo: $(cat "$out")"; }
+  calls=$(wc -l < "$log" | tr -d '[:space:]')
+  sleep 3
+  kill -0 "$pid" 2>/dev/null || { reap "$pid"; fail "a memoized handoff pause exited instead of absorbing: $(cat "$out")"; }
+  [ "$(wc -l < "$log" | tr -d '[:space:]')" = "$calls" ] \
+    || { reap "$pid"; fail "repeat polls of an unchanged handoff pause re-read crew state"; }
+  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "memoized handoff pause lost its bounded-cadence marker"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "memoized handoff pause acquired a wedge timer"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "memoized handoff pause printed a wake reason: $(cat "$out")"; }
+  reap "$pid"
+
+  # An expired memo buys nothing: the verdict is read again, and one that no longer
+  # supports the handoff goes straight back to the ordinary wedge timer.
+  printf 'handoff' > "$state/.paused-rechecked-$key"
+  touch -t 200001010000 "$state/.paused-rechecked-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$log"
+  : > "$out"
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude FM_FAKE_CREW_STATE_LOG="$log" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || { reap "$pid"; fail "an expired handoff memo kept absorbing a pause its verdict no longer supports: $(cat "$out")"; }
+  [ -s "$log" ] || fail "an expired handoff memo was reused without re-reading crew state"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "a re-read handoff pause that lost its run-step evidence omitted its possible-wedge reason: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "a handoff pause memoizes its verdict across polls and re-reads it once the memo expires"
+}
+
 # --- a busy PANE cannot corroborate its own stale pane -----------------------
 # The boundary of the test above, and the reason the pause cadence is granted on
 # run-step evidence alone. A `working` verdict sourced from the PANE says only that
@@ -1743,6 +1817,7 @@ test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
 test_paused_progressing_run_with_dead_endpoint_still_wedge_escalates
 test_paused_progressing_run_with_live_endpoint_uses_pause_cadence
+test_paused_handoff_cadence_memoizes_its_crew_state_read
 test_paused_busy_pane_verdict_still_wedge_escalates
 test_paused_unreliable_run_verdict_absorbed_then_wedge_escalates
 test_unreliable_verdict_without_declared_pause_surfaced

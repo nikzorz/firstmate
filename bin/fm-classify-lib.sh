@@ -13,13 +13,18 @@
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
 # signatures).
 #
-# The one exception is the absorb classification (crew_absorb_class and its
-# working/paused wrappers). It is NOT a pure status-file read: it reuses
-# bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide
-# whether a crew that just stopped its turn or went stale is working, deliberately
-# paused, or neither. Callers run it ONLY on no-verb signal handling and first
-# sighting of a stale hash, never on every wake, so the per-wake triage stays
-# cheap.
+# The one exception is the absorb classification: crew_absorb_verdict, the primitive
+# that prints "<class> <source>", plus crew_absorb_class (the class alone) and its
+# working/paused wrappers. It is NOT a pure status-file read: it reuses
+# bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide whether
+# a crew that just stopped its turn or went stale is working, deliberately paused,
+# unreliable (a verdict that is evidence of nothing either way), or none of those.
+# Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
+# never on every wake, so the per-wake triage stays cheap. A caller that keeps
+# absorbing the same unchanged pane across polls - today only bin/fm-watch.sh's
+# declared-pause cadence - memoizes the verdict in its own marker state and re-reads
+# no more often than FM_STALE_ESCALATE_SECS, which is what keeps "never on every
+# wake" true for a crew that stays absorbed indefinitely.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
