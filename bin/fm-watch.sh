@@ -20,8 +20,12 @@
 #                          line, since the crew's own log gets no new entry once
 #                          firstmate hands it to a no-mistakes validation. A declared
 #                          external-wait pause is absorbed instead with its own long
-#                          re-surface cadence, never as a wedge. Only when neither
-#                          absorb class applies does the log's last line decide:
+#                          re-surface cadence, never as a wedge - including the
+#                          pipeline-handoff case, where the crew's endpoint is
+#                          confirmed live and a no-mistakes run step attributed to
+#                          its branch reports a non-terminal status
+#                          (pause_state_class owns that reconciliation). Only when
+#                          no absorb class applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
 #                          wedge threshold also surfaces, with an "escalation N"
@@ -130,7 +134,9 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # A crew that declared a pause is idling on a known external wait, so its stale
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
-# bounded cadence, while a live or ambiguously read agent still surfaces once.
+# bounded cadence, and so does a confirmed-live endpoint with an attributed run step
+# reporting a non-terminal status; an idle live endpoint with no such corroboration
+# still surfaces once.
 # These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten hold cannot rot invisibly.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
@@ -365,8 +371,54 @@ clear_pause_tracking() {  # <window>
 # Reconcile a declared pause or captain-held status with authoritative crew state.
 # Only a confidently dead ordinary crew may recover paused classification after
 # fm-crew-state has fallen back to stopped or unknown.
+#
+# Two of the returns below grade a crew-state verdict against the endpoint's own
+# liveness rather than taking it at face value, because a no-mistakes run-step
+# verdict describes the RUN and the pause declaration describes the CREW, and
+# no-mistakes runs its steps in its own bare repo (see crew_absorb_verdict in
+# bin/fm-classify-lib.sh):
+#
+#   - `working` from RUN-STEP + a CONFIRMED-alive endpoint is the pipeline-handoff
+#     case the pause verb exists for: the crew declared a wait, its endpoint is still
+#     there, and a no-mistakes run step attributed to its branch reports a
+#     non-terminal status (running/fixing/ci). That last part is an out-of-band
+#     record that the pipeline HAS the work, not a verification that the run is
+#     advancing: nothing here compares the status against a prior observation, so a
+#     hung run keeps reporting the same non-terminal status. It gets the bounded
+#     pause cadence. Before this, that combination went to the wedge timer and
+#     escalated as a possible wedge every STALE_ESCALATE_SECS - so the crew with the
+#     STRONGEST evidence of health (declared pause + live endpoint + an attributed
+#     non-terminal run step) was alarmed on four times harder than a declared pause
+#     with a dead endpoint, which already got the long cadence. That inversion is the
+#     defect this removes.
+#   - `working` from PANE keeps the wedge timer, unchanged. Only out-of-band evidence
+#     may override that timer, and a busy pane signature is read from the very pane
+#     this wake already found unchanged: an idle-looking-but-busy-signatured stale
+#     pane is the classic wedge shape, so it cannot be its own corroboration.
+#   - `working` + a dead or merely unreadable endpoint keeps the wedge timer. A run
+#     that keeps reporting a non-terminal status while the crew's endpoint is gone is
+#     exactly the 2026-07-29 usage-limit shape, and is the single most important
+#     thing this path must still escalate. `alive` is required, not "not dead": an
+#     unreadable probe is not evidence of health.
+#   - `unreliable` (a superseded/failed run-step verdict, which is evidence of
+#     nothing) no longer counts as proof the crew stopped, so it stops surfacing a
+#     declared pause as a stopped crew on every new stale hash. It does NOT earn the
+#     long pause cadence either: it goes to the wedge timer, so a paused pane that
+#     really is frozen still escalates on the ordinary threshold.
+#
+# Both bounded-cadence routes memoize themselves in .paused-rechecked-<key>, whose
+# CONTENT names the endpoint reading that justified the cadence, so a repeat poll of
+# an unchanged pane can re-confirm it with the cheap liveness probe alone and never
+# re-reads crew state (fm-crew-state.sh may shell out to no-mistakes, and
+# bin/fm-classify-lib.sh's contract is that it runs on first sighting of a stale
+# hash, not every wake). `handoff` is the pipeline-handoff route above and holds only
+# while the endpoint stays alive; anything else (including the bare epoch older
+# watchers wrote) is the dead-or-unprobed-endpoint route and holds only while the
+# endpoint is not alive. Either memo expires after STALE_ESCALATE_SECS, so a fresh
+# verdict is read at least that often and a crew whose run has since finished still
+# reaches the wedge timer within the ordinary threshold.
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file class agent_alive
+  local win=$1 task=$2 key last recheck_file verdict class src agent_alive=unknown
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
@@ -374,36 +426,76 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    crew_absorb_class "$task"
+    # No declared wait here, so there is no independent reason to soften a verdict:
+    # `unreliable` collapses back to the plain not-working verdict it has always
+    # been, and this crew surfaces immediately exactly as before. Only the
+    # declared-pause path below may read "evidence of nothing" as anything else.
+    class=$(crew_absorb_class "$task")
+    [ "$class" = unreliable ] && class=none
+    printf '%s' "$class"
     return
   fi
-  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
-    if [ "$(window_kind "$win")" != secondmate ]; then
-      agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-      if [ "$agent_alive" != dead ]; then
-        rm -f "$recheck_file"
-        printf 'none'
-        return
-      fi
-    fi
-    printf 'paused'
-    return
-  fi
-  class=$(crew_absorb_class "$task")
-  if [ "$class" = working ]; then
-    rm -f "$recheck_file"
-    printf 'working'
-    return
-  fi
+  # Secondmates idle by charter and are never probed for liveness here, so their
+  # agent_alive stays `unknown` and every graded branch below falls to its
+  # conservative side, exactly as before. Probed once per call, before the memo
+  # check, because that check now decides on the same reading.
   if [ "$(window_kind "$win")" != secondmate ]; then
     agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-    if [ "$agent_alive" != dead ]; then
-      rm -f "$recheck_file"
-      printf 'none'
-      return
-    fi
   fi
-  [ "$class" = none ] && [ "${agent_alive:-unknown}" = dead ] && class=paused
+  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
+    case "$(cat "$recheck_file" 2>/dev/null || true)" in
+      handoff)
+        if [ "$agent_alive" = alive ]; then
+          printf 'paused'
+          return
+        fi
+        # The endpoint that carried this cadence is no longer confirmed live, so the
+        # handoff no longer explains the idle: drop the memo and pay for a fresh
+        # verdict, which is what routes the 2026-07-29 shape back to the wedge timer.
+        rm -f "$recheck_file"
+        ;;
+      *)
+        if [ "$(window_kind "$win")" != secondmate ] && [ "$agent_alive" != dead ]; then
+          rm -f "$recheck_file"
+          printf 'none'
+          return
+        fi
+        printf 'paused'
+        return
+        ;;
+    esac
+  fi
+  verdict=$(crew_absorb_verdict "$task")
+  class=${verdict%% *}
+  src=${verdict##* }
+  case "$class" in
+    working)
+      if [ "$src" = run-step ] && [ "$agent_alive" = alive ]; then
+        printf 'handoff' > "$recheck_file"
+        printf 'paused'
+      else
+        rm -f "$recheck_file"
+        printf 'working'
+      fi
+      return
+      ;;
+    unreliable)
+      if [ "$agent_alive" = alive ]; then
+        rm -f "$recheck_file"
+        printf 'unreliable'
+        return
+      fi
+      # No confirmed-live endpoint to pair it with, so it carries no more weight
+      # than the plain not-working verdict it used to be.
+      class=none
+      ;;
+  esac
+  if [ "$(window_kind "$win")" != secondmate ] && [ "$agent_alive" != dead ]; then
+    rm -f "$recheck_file"
+    printf 'none'
+    return
+  fi
+  [ "$class" = none ] && [ "$agent_alive" = dead ] && class=paused
   case "$class" in
     paused) date +%s > "$recheck_file" ;;
     *) rm -f "$recheck_file" ;;
@@ -950,9 +1042,17 @@ EOF
           #   - working: an actively-running pipeline legitimately sits on a static
           #     pane (e.g. waiting on CI), so absorb and start the wedge timer so a
           #     genuinely frozen run still escalates past STALE_ESCALATE_SECS;
-          #   - paused: the crew declared an external wait, or a declared pause or
-          #     captain hold is paired with a confidently dead agent, so absorb on
-          #     the long PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
+          #   - paused: the crew declared an external wait and that wait is
+          #     corroborated OUT OF BAND - by a confirmed-live endpoint with a run
+          #     step attributed to its branch reporting a non-terminal status (which
+          #     records the handoff, not verified progress), or, for a declared pause
+          #     or captain hold, by a confidently dead agent - so absorb on the long
+          #     PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
+          #   - unreliable: the crew declared a wait and its endpoint is confirmed
+          #     live, but the only current-state verdict available says nothing
+          #     about whether it stopped. Not proof of a stopped crew, so it must
+          #     not surface as one - absorb and let the wedge timer decide, exactly
+          #     like an actively-running pipeline;
           #   - none: no running pipeline, idle pane, no busy signature, no declared
           #     pause - the crew has STOPPED. Surface immediately so firstmate peeks
           #     (it may be done via an interactive menu that wrote no done: status,
@@ -970,6 +1070,12 @@ EOF
               paused)
                 handle_paused_stale "$w" "$task" "$h"
                 ;;
+              unreliable)
+                clear_pause_tracking "$w"
+                printf '%s' "$h" > "$sf"
+                date +%s > "$ssf"
+                triage_log "absorbed non-terminal stale (declared pause, live endpoint, no usable run verdict): $w"
+                ;;
               *)
                 surface_nonterminal_stale "$w" "$h"
                 ;;
@@ -983,6 +1089,11 @@ EOF
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
+                unreliable)
+                         clear_pause_state "$w"
+                         printf '%s' "$h" > "$sf"
+                         wedge_timer_check "$w" "$ssf" "non-terminal stale (declared pause, no usable run verdict)" "$ewf"
+                         triage_log "absorbed non-terminal stale (declared pause, live endpoint, no usable run verdict): $w" ;;
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
