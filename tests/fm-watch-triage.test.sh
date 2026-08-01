@@ -248,10 +248,14 @@ test_status_is_paused_classifier() {
   pass "status_is_paused: only the leading paused verb matches, and paused is not captain-relevant"
 }
 
-# crew_absorb_class: the single fm-crew-state.sh read that returns BOTH absorb
-# reasons - working (active run/busy pane), paused (declared external wait), or none
-# (surface it) - so the watcher's stale path gets both for one bounded call.
-# crew_is_paused delegates to it exactly as crew_is_provably_working does.
+# crew_absorb_class and its crew_absorb_verdict primitive: the single
+# fm-crew-state.sh read that returns EVERY absorb reason - working (active run/busy
+# pane), paused (declared external wait), unreliable (a verdict that is evidence of
+# nothing either way), or none (surface it), each with the evidence source that
+# produced it - so the watcher's stale path gets them all for one bounded call.
+# crew_is_paused delegates to it exactly as crew_is_provably_working does, and
+# neither treats `unreliable` as absorbable on its own: only a caller with its own
+# independent reason to believe the crew is fine (the declared-pause path) may.
 test_crew_absorb_class_classifier() {
   local dir fakebin
   dir=$(make_case absorb-class); fakebin="$dir/fakebin"
@@ -271,8 +275,39 @@ test_crew_absorb_class_classifier() {
   [ "$(crew_absorb_class a)" = none ] || fail "unknown crew classed absorbable"
   ! crew_is_paused a || fail "unknown crew classed paused"
   [ "$(crew_absorb_class "")" = none ] || fail "empty id not classed none"
+  # A failed RUN-STEP verdict describes a no-mistakes run, which executes in
+  # no-mistakes' own bare repo - it is not evidence this crew stopped, and it is a
+  # documented misread (a superseded earlier run answering for a live fresh one).
+  # It is `unreliable`, distinct from a confidently not-working verdict, and it is
+  # still absorbable by NOBODY on its own.
+  FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+  [ "$(crew_absorb_class a)" = unreliable ] || fail "a failed run-step verdict not classed unreliable"
+  ! crew_is_provably_working a || fail "an unreliable verdict treated as provably working"
+  ! crew_is_paused a || fail "an unreliable verdict treated as a declared pause"
+  # The neighbouring verdicts stay confidently not-working: a failed STATUS LOG line
+  # is the crew's own report, a parked run is waiting on the crew to answer a gate,
+  # and a finished run means the work is done - all must still surface.
+  FM_FAKE_CREW_STATE='state: failed · source: status-log · failed: the build broke'
+  [ "$(crew_absorb_class a)" = none ] || fail "a crew's own failed: report classed unreliable"
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s)'
+  [ "$(crew_absorb_class a)" = none ] || fail "a run parked at a gate classed unreliable"
+  FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  [ "$(crew_absorb_class a)" = none ] || fail "a finished run classed unreliable"
+  # The verdict primitive also reports WHICH evidence produced the class, because
+  # the two ways to be `working` are not equally strong: only the run-step one is
+  # out-of-band. A line with no source: field must report `none`, never leak the
+  # state word as if it were a source.
+  FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  [ "$(crew_absorb_verdict a)" = "working run-step" ] || fail "run-step working verdict lost its source"
+  FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
+  [ "$(crew_absorb_verdict a)" = "working pane" ] || fail "pane working verdict lost its source"
+  FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+  [ "$(crew_absorb_verdict a)" = "unreliable run-step" ] || fail "unreliable verdict lost its source"
+  FM_FAKE_CREW_STATE='state: working'
+  [ "$(crew_absorb_verdict a)" = "none none" ] || fail "a sourceless line leaked a bogus source"
+  [ "$(crew_absorb_verdict "")" = "none none" ] || fail "empty id not classed none none"
   unset FM_FAKE_CREW_STATE
-  pass "crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree"
+  pass "crew_absorb_class: working/paused/unreliable/none from one read, and the verdict keeps its evidence source"
 }
 
 # signal_crew_provably_working: a no-verb "signal:" wake is benign ONLY when EVERY
@@ -573,6 +608,48 @@ test_nonterminal_stale_not_working_surfaced() {
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the immediate stale failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "immediate stale wake was not queued"
   pass "a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)"
+}
+
+# --- an unreliable verdict WITHOUT a declared pause still surfaces at once ----
+# The blast-radius boundary of the `unreliable` class. It exists so a crew's own
+# declared wait is not overruled by a verdict that is evidence of nothing - it is
+# NOT a general softening of the stopped-crew path. A crew that never declared a
+# wait has offered no independent reason to believe it is fine, so a failed
+# run-step verdict must class exactly as it always did and surface immediately
+# rather than being absorbed onto the wedge timer. Without this, introducing the
+# class would have quietly delayed every stopped no-mistakes crew by the wedge
+# threshold - trading real detection for quiet on a path this change never
+# intended to touch.
+test_unreliable_verdict_without_declared_pause_surfaced() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case unreliable-no-pause); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-unreliable-nopause"
+  printf 'idle prompt, finished' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/unreliable-nopause.meta"
+  # A plain non-terminal status: the crew never declared a pause.
+  printf 'working: implementing\n' > "$state/unreliable-nopause.status"
+  sig=$(seen_sig "$state/unreliable-nopause.status")
+  printf '%s' "$sig" > "$state/.seen-unreliable-nopause_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle prompt, finished")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # The same verdict the declared-pause path treats as unreliable, and a live
+  # endpoint besides - so only the ABSENT pause declaration withholds the softening.
+  export FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || { reap "$pid"; fail "an unreliable verdict with no declared pause was absorbed instead of surfaced: $(cat "$out")"; }
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "no declared pause: unreliable verdict did not print the immediate stale wake: $(cat "$out")"
+  [ ! -e "$state/.stale-since-$key" ] \
+    || fail "no declared pause: unreliable verdict was put on the wedge timer instead of surfacing"
+  unset FM_FAKE_CREW_STATE
+  pass "an unreliable run verdict with NO declared pause still surfaces immediately (the class does not leak)"
 }
 
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
@@ -1134,6 +1211,194 @@ test_paused_authoritative_working_preserves_wedge_timer() {
   pass "a paused status overridden by authoritative working preserves its wedge timer and escalates"
 }
 
+# --- the declared pause is graded against the endpoint, not taken on faith -----
+# THE case this whole reconciliation must never lose. A no-mistakes run executes in
+# no-mistakes' own bare repo, so a run that keeps progressing says nothing about
+# whether the crew that started it is still alive: on 2026-07-29 three crews sat
+# stopped on Claude Code's usage-limit prompt for ~8.7 hours while their runs read
+# `running`. A declared pause is a claim, and a stale pause line is exactly what a
+# dead crew leaves behind, so pairing "the pipeline is moving" with a dead endpoint
+# must STILL wedge-escalate. This test fails the moment that detection is traded
+# away for quieter alarms.
+test_paused_progressing_run_with_dead_endpoint_still_wedge_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case paused-dead-endpoint-wedge); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-dead"
+  printf 'idle awaiting external\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/paused-dead.meta"
+  printf 'paused: handed a fix round back to the pipeline\n' > "$state/paused-dead.status"
+  sig=$(seen_sig "$state/paused-dead.status"); printf '%s' "$sig" > "$state/.seen-paused-dead_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle awaiting external")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # A bare login shell in the pane is a CONFIDENTLY dead agent, while the run-step
+  # verdict still reports an actively-running pipeline.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || { reap "$pid"; fail "a declared pause whose endpoint is dead did not wedge-escalate: $(cat "$out")"; }
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "dead-endpoint pause escalation omitted its possible-wedge reason: $(cat "$out")"
+  grep -F "$(printf '\tstale\t')" "$state/.wake-queue" >/dev/null \
+    || fail "dead-endpoint pause escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared pause whose pipeline progresses behind a DEAD endpoint still wedge-escalates"
+}
+
+# --- the pipeline-handoff case the pause verb exists for ----------------------
+# The disconfirming half of the test above, and the defect this change removes: the
+# crew declared a wait, its endpoint is confirmed live, and its pipeline is
+# demonstrably still moving. That is the strongest evidence of health this watcher
+# can assemble, yet it used to be alarmed on four times harder (STALE_ESCALATE_SECS)
+# than a declared pause with a DEAD endpoint, which already got the long cadence.
+# It now takes the same bounded pause cadence - the residual wedge timer must be
+# discarded, not fired, even when it is already well past the threshold.
+test_paused_progressing_run_with_live_endpoint_uses_pause_cadence() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case paused-live-endpoint-cadence); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-live"
+  printf 'idle awaiting external\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/paused-live.meta"
+  printf 'paused: handed a fix round back to the pipeline\n' > "$state/paused-live.status"
+  sig=$(seen_sig "$state/paused-live.status"); printf '%s' "$sig" > "$state/.seen-paused-live_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle awaiting external")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 40; then
+    reap "$pid"; fail "a declared pause with a live endpoint and a progressing run was escalated: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "live-endpoint pause printed a wake reason: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "live-endpoint pause enqueued a wake"; }
+  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "live-endpoint pause lost its bounded-cadence marker"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "live-endpoint pause retained the wedge timer"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared pause with a live endpoint and a progressing pipeline takes the pause cadence, not the wedge timer"
+}
+
+# --- a busy PANE cannot corroborate its own stale pane -----------------------
+# The boundary of the test above, and the reason the pause cadence is granted on
+# run-step evidence alone. A `working` verdict sourced from the PANE says only that
+# the pane still matches its harness's busy signature - read from the very pane this
+# wake already found unchanged. A frozen agent leaves exactly that: a live process,
+# an unchanged pane, and a busy banner that never advances. Out-of-band evidence (a
+# separate process's record that the run advanced) can override the wedge timer;
+# the suspect pane cannot vouch for itself, so this combination keeps the ordinary
+# threshold it has always had. Guarding the widest plausible reading of "the
+# pipeline is progressing" is what stops this change from trading wedge detection
+# for quiet.
+test_paused_busy_pane_verdict_still_wedge_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case paused-busy-pane-wedge); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-pane"
+  printf 'idle awaiting external\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/paused-pane.meta"
+  printf 'paused: handed a fix round back to the pipeline\n' > "$state/paused-pane.status"
+  sig=$(seen_sig "$state/paused-pane.status"); printf '%s' "$sig" > "$state/.seen-paused-pane_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle awaiting external")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # A CONFIRMED-live endpoint, so liveness is not what withholds the long cadence
+  # here - the pane-sourced evidence is.
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || { reap "$pid"; fail "a declared pause corroborated only by a busy pane did not wedge-escalate: $(cat "$out")"; }
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "busy-pane pause escalation omitted its possible-wedge reason: $(cat "$out")"
+  grep -F "$(printf '\tstale\t')" "$state/.wake-queue" >/dev/null \
+    || fail "busy-pane pause escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared pause whose only corroboration is its own busy pane still wedge-escalates"
+}
+
+# --- a verdict that is evidence of nothing may not un-declare a pause ---------
+# The observed 2026-07-30 shape: a crew whose last status was `paused: fresh
+# validation run started on recovered branch` had fm-crew-state report `state:
+# failed - source: run-step - run failed` from the run a usage limit had killed,
+# while the live run was healthy and mid-review. A failed run-step verdict is a
+# statement about a RUN, and a documented misread besides, so it must not surface a
+# declared pause as a stopped crew on every new stale hash. It buys no long cadence
+# either: the pane goes on the ordinary wedge timer, so one that really is frozen
+# still escalates on the ordinary threshold.
+test_paused_unreliable_run_verdict_absorbed_then_wedge_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case paused-unreliable-verdict); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-superseded"
+  printf 'idle awaiting external\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/paused-superseded.meta"
+  printf 'paused: fresh validation run started on recovered branch\n' > "$state/paused-superseded.status"
+  sig=$(seen_sig "$state/paused-superseded.status"); printf '%s' "$sig" > "$state/.seen-paused-superseded_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle awaiting external")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+
+  # Phase A: a NEW stale hash - the exact path that used to surface a bare stale
+  # wake every time this crew's pane changed and settled again.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_numeric_file "$state/.stale-since-$key" 40 \
+    || { reap "$pid"; fail "an unreliable verdict under a declared pause did not start the wedge timer: $(cat "$out")"; }
+  kill -0 "$pid" 2>/dev/null \
+    || { reap "$pid"; fail "an unreliable verdict surfaced a declared pause as a stopped crew: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "unreliable-verdict pause enqueued a wake on first sight"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] \
+    || { reap "$pid"; fail "unreliable-verdict pause did not advance its stale suppressor"; }
+  reap "$pid"
+
+  # Phase B: the same pane, timer already past the threshold. Detection is intact -
+  # a paused pane that really is frozen still escalates.
+  printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || { reap "$pid"; fail "a frozen paused pane with an unreliable verdict never escalated: $(cat "$out")"; }
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "unreliable-verdict escalation omitted its possible-wedge reason: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "an unreliable run verdict cannot un-declare a pause, but a frozen paused pane still wedge-escalates"
+}
+
 # --- consecutive wedge escalations on the same pane demand deep inspection ----
 # Root cause of the PR #252 incident's ~20 minutes of unnoticed green: each
 # wedge escalation fires, gets classified as "still validating" one poll later
@@ -1476,6 +1741,11 @@ test_secondmate_unpause_clears_pause_tracking
 test_nonterminal_stale_pause_transitions_reclassify_unchanged_hash
 test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
+test_paused_progressing_run_with_dead_endpoint_still_wedge_escalates
+test_paused_progressing_run_with_live_endpoint_uses_pause_cadence
+test_paused_busy_pane_verdict_still_wedge_escalates
+test_paused_unreliable_run_verdict_absorbed_then_wedge_escalates
+test_unreliable_verdict_without_declared_pause_surfaced
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_heartbeat_no_change_absorbed

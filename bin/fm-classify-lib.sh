@@ -406,37 +406,84 @@ signal_reason_is_actionable() {  # <file> ...
 
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
-# ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
-#   working - an actively-running no-mistakes step (running/fixing/ci) or a busy
-#             pane; the crew is legitimately mid-work on a static-looking pane
-#             (e.g. waiting on CI);
-#   paused  - the crew's authoritative current state is a declared external-wait
-#             pause (paused:), which is EXPECTED to idle;
-#   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
-#             torn-down/unknown crew, or an unreadable verdict). A crew parked on
-#             Claude Code's usage-limit prompt lands here too, deliberately: it is
-#             genuinely stopped, so it must reach firstmate once instead of being
-#             absorbed. crew_usage_limit_class below distinguishes it, and once
-#             firstmate records the wait as `paused:` the ordinary declared-pause
-#             cadence takes over and it is never aged as a wedge.
+# ("state: <s> · source: <src> · <detail>"). crew_absorb_verdict is the primitive
+# and prints "<class> <source>"; crew_absorb_class below projects out the class
+# alone, which is all any consumer but one needs. The classes are:
+#   working    - an actively-running no-mistakes step (running/fixing/ci) or a busy
+#                pane; the crew is legitimately mid-work on a static-looking pane
+#                (e.g. waiting on CI);
+#   paused     - the crew's authoritative current state is a declared external-wait
+#                pause (paused:), which is EXPECTED to idle;
+#   unreliable - the verdict came back, but it is not evidence about THIS CREW
+#                either way (see below). Consumers that have an independent reason
+#                to believe the crew is fine - today only the watcher's declared-pause
+#                path - may treat it as "no contrary evidence" instead of proof the
+#                crew stopped; every other consumer treats it exactly like none;
+#   none       - none of those, so the wake must surface (a stopped/finished/parked/
+#                torn-down/unknown crew, or an unreadable verdict). A crew parked on
+#                Claude Code's usage-limit prompt lands here too, deliberately: it is
+#                genuinely stopped, so it must reach firstmate once instead of being
+#                absorbed. crew_usage_limit_class below distinguishes it, and once
+#                firstmate records the wait as `paused:` the ordinary declared-pause
+#                cadence takes over and it is never aged as a wedge.
+#
+# Why `unreliable` is its own token rather than more `none`: a run-step verdict
+# describes a no-mistakes RUN, and no-mistakes executes its steps in its own bare
+# repo under ~/.no-mistakes/repos/, not in the crew's worktree. A run that is
+# progressing is therefore not proof the crew is alive (the 2026-07-29 usage-limit
+# incident: three crews were stopped on an interactive prompt while their runs still
+# read `running`), and symmetrically a run that FAILED is not proof the crew stopped
+# - the crew's normal response to a failed run is to start another one. Worse, a
+# `failed` run-step verdict is a known misread: `axi status` reports one run per
+# branch, and it can answer with a SUPERSEDED earlier run after the crew has already
+# started a fresh one on the same commit, which this side cannot distinguish because
+# both runs share the branch and the head that nm_run_head_matches_worktree binds on.
+# Folding that into `none` made a verdict that is evidence of nothing outrank a
+# crew's own declared pause.
+# Only `failed` from `run-step` qualifies: `parked` means the run is waiting on the
+# crew to answer a gate, and `done`/`unknown` cover genuinely finished and
+# genuinely torn-down crews, all of which really must surface.
+#
+# The <source> field is fm-crew-state.sh's own source token (run-step, pane,
+# status-log, or none) passed through verbatim, and `none` when the line could not
+# be parsed. It exists because the two ways to be `working` are not equally strong
+# evidence: a run-step verdict is OUT-OF-BAND, a separate process's record that the
+# pipeline advanced, while a pane verdict is read from the very pane a stale wake
+# has already found unchanged, so it cannot corroborate itself. Only bin/fm-watch.sh's
+# declared-pause path needs that distinction; every other consumer asks the class alone.
+#
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
-crew_absorb_class() {  # <id>
+crew_absorb_verdict() {  # <id>
   local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
+  [ -n "$id" ] || { printf 'none none'; return; }
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  case "$line" in state:*) ;; *) printf 'none none'; return ;; esac
   state=${line#state: }; state=${state%% *}
-  if [ "$state" = paused ]; then printf 'paused'; return; fi
+  # A line with no source: field cannot name its evidence, so it reports `none`
+  # rather than letting the prefix strip fall through to the state word itself.
+  case "$line" in
+    *"source: "*) src=${line#*source: }; src=${src%% *} ;;
+    *)            src=none ;;
+  esac
+  if [ "$state" = paused ]; then printf 'paused %s' "$src"; return; fi
   if [ "$state" = working ]; then
-    src=${line#*source: }; src=${src%% *}
-    case "$src" in run-step|pane) printf 'working'; return ;; esac
+    case "$src" in run-step|pane) printf 'working %s' "$src"; return ;; esac
   fi
-  printf 'none'
+  if [ "$state" = failed ] && [ "$src" = run-step ]; then printf 'unreliable %s' "$src"; return; fi
+  printf 'none %s' "$src"
+}
+
+# The class alone, for the consumers that do not care which evidence produced it.
+# Shares crew_absorb_verdict's single fm-crew-state.sh read, adding none of its own.
+crew_absorb_class() {  # <id>
+  local verdict
+  verdict=$(crew_absorb_verdict "$1")
+  printf '%s' "${verdict%% *}"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
@@ -445,7 +492,7 @@ crew_absorb_class() {  # <id>
 # ONLY when this returns 0, and SURFACED otherwise (the crew may be done, waiting
 # on a decision, or wedged). For stale panes it is checked before trusting the
 # status log so a pre-validation captain-relevant line does not override an active
-# run. See crew_absorb_class for the exact working/paused/none decision.
+# run. See crew_absorb_class for the exact classification.
 crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
 }
