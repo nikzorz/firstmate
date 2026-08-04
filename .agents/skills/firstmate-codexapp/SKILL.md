@@ -13,7 +13,7 @@ metadata:
 ## Overview
 
 Use this playbook when Firstmate work needs a visible Codex Desktop thread.
-The current supported shape is Desktop host-tool choreography plus an explicit status-file return-channel check, not a `codex-app` value in `FM_BACKEND`.
+The current supported shape is Desktop host-tool choreography plus explicit checks that the thread read the brief it was pointed at and wrote its status file, not a `codex-app` value in `FM_BACKEND`.
 
 ## Boundary
 
