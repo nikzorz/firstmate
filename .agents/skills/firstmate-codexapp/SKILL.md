@@ -61,15 +61,17 @@ That makes both the brief read and the status write verified requirements, not f
 For a Firstmate-managed task, do not restate any part of the crewmate contract here.
 `bin/fm-brief.sh` scaffolds a complete brief at `<absolute-firstmate-home>/data/<task-id>/brief.md`, and that file is the single owner of the whole contract: the task, the setup, every rule, the status protocol with its pause lifecycle, and the definition of done the project's delivery mode requires.
 Excerpting part of it into the thread message was tried and kept failing the same way, because every excerpt boundary leaves the brief's own internal cross-references dangling on the far side of it.
-So point at the brief instead of copying it, the same way this section already hands over an absolute status path rather than describing where status lives.
+So point at the brief instead of copying it, and hand over both absolute paths outright rather than describing where either file lives.
+The status path has to stand on its own rather than arriving through the brief, because a worker that cannot read its brief still has to be able to say so.
 
-Scaffold the task's brief as usual, then send its absolute path with only the context the brief cannot know:
+Scaffold the task's brief as usual, then send both absolute paths with only the context the brief cannot know:
 
 ```text
-Your brief is <absolute-firstmate-home>/data/<task-id>/brief.md.
-Read it in full and follow it exactly; it is the authority on your task, your rules, your status protocol, and your definition of done.
+Your brief is <absolute-firstmate-home>/data/<task-id>/brief.md and your status file is <absolute-firstmate-home>/state/<task-id>.status.
+Read the brief in full and follow it exactly; it is the authority on your task, your rules, your status protocol, and your definition of done.
+If you cannot read it, append "blocked: cannot read brief at <absolute-firstmate-home>/data/<task-id>/brief.md" to that status file and stop; never proceed on guesswork about the task.
 Where the brief says "your pane", it means this visible thread, which firstmate reads with read_thread.
-Its report-sparingly bar has exactly one named exception, and it comes first: before any substantive work, append "working: Codex Desktop thread started" to the status file the brief names, then reply here quoting your brief's definition of done.
+Its report-sparingly bar has exactly one named exception, and it comes first: before any substantive work, append "working: Codex Desktop thread started" to that status file, then reply here quoting your brief's definition of done.
 ```
 
 That quoted reply is the read receipt, and it is checkable rather than taken on faith: a worker that never opened the file cannot produce the gate its own delivery mode carries.
@@ -78,12 +80,13 @@ Verify both channels before treating the thread as supervised:
 
 - `read_thread` shows the worker quoted a definition of done that matches the one `bin/fm-brief.sh` generated for this task's delivery mode.
 - `read_thread` shows the worker attempted the status write.
-- The local `state/<task-id>.status` file contains the expected line.
+- The local `state/<task-id>.status` file contains the expected line, or the `blocked:` line reporting an unreadable brief.
 - If available, the transcript includes a file-change entry for that status file.
 
 If the thread cannot read its brief or cannot write the status file, keep it as a visible companion thread only.
 Do not treat it as a Firstmate-managed task, and do not claim it is a complete Firstmate backend.
 Never leave a thread running on a brief it could not read: without that file it has no task, no rules, no status protocol, and no definition of done at all.
+The absolute status path in the prompt is what lets such a thread report that failure instead of going silent.
 
 ## Observe And Reconcile
 

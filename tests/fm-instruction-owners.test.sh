@@ -212,7 +212,7 @@ test_state_startup_and_ordinary_recovery_placement() {
 test_codexapp_points_at_the_status_protocol_owner() {
   assert_grep '`<absolute-firstmate-home>/data/<task-id>/brief.md`' "$CODEXAPP" \
     "firstmate-codexapp does not name the absolute brief path it points the worker at"
-  assert_grep 'Read it in full and follow it exactly' "$CODEXAPP" \
+  assert_grep 'Read the brief in full and follow it exactly' "$CODEXAPP" \
     "firstmate-codexapp does not tell the Desktop worker to follow the brief it points at"
   assert_grep 'that file is the single owner of the whole contract' "$CODEXAPP" \
     "firstmate-codexapp does not name the brief as the owner of the crewmate contract"
@@ -250,6 +250,31 @@ test_codexapp_points_at_the_status_protocol_owner() {
       "firstmate-codexapp excerpted or hand-wrote the crewmate contract instead of pointing at the brief"
   done
   pass "firstmate-codexapp points the Desktop worker at its brief instead of copying the contract"
+}
+
+# The section makes two claims about its own prompt: that the prompt hands the
+# thread absolute pathS, and that it hands over the status path outright rather
+# than describing where status lives. Those are only true of the prompt block
+# itself, so assert them against that block rather than against the prose that
+# claims them. A pointer whose status path arrives only through the brief leaves a
+# worker that cannot read the brief with no way to report anything at all.
+test_codexapp_prompt_block_carries_both_absolute_paths() {
+  local block
+  block=$(awk '/^## Status Return Channel/{s=1} s && /^```text$/{f=1; next} f && /^```$/{f=0} f' "$CODEXAPP")
+  [ -n "$block" ] || fail "firstmate-codexapp has no Status Return Channel prompt block to send a Desktop worker"
+  assert_contains "$block" '<absolute-firstmate-home>/data/<task-id>/brief.md' \
+    "the Desktop prompt does not hand the worker its absolute brief path"
+  assert_contains "$block" '<absolute-firstmate-home>/state/<task-id>.status' \
+    "the Desktop prompt does not hand the worker its absolute status path, so an unreadable brief leaves it mute"
+  assert_contains "$block" 'blocked: cannot read brief at' \
+    "the Desktop prompt does not tell the worker how to report an unreadable brief"
+  assert_contains "$block" 'and stop' \
+    "the Desktop prompt lets a worker proceed without the brief it could not read"
+  assert_not_contains "$block" 'the status file the brief names' \
+    "the Desktop prompt routes the status path through the brief the worker may be unable to read"
+  assert_grep 'hand over both absolute paths outright rather than describing where either file lives' "$CODEXAPP" \
+    "firstmate-codexapp lost the claim its prompt block now has to satisfy"
+  pass "firstmate-codexapp hands the Desktop worker both absolute paths and an unreadable-brief fallback"
 }
 
 test_compressed_agents_owner_map() {
@@ -339,6 +364,7 @@ test_shared_authoring_requirements_are_owned
 test_secondmate_registry_contract_stays_concise
 test_state_startup_and_ordinary_recovery_placement
 test_codexapp_points_at_the_status_protocol_owner
+test_codexapp_prompt_block_carries_both_absolute_paths
 test_compressed_agents_owner_map
 test_intake_reuses_evidence_and_parallelizes_safe_work
 test_compressed_agents_retains_authority_and_supervision_safety
