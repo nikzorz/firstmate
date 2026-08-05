@@ -13,7 +13,7 @@ metadata:
 ## Overview
 
 Use this playbook when Firstmate work needs a visible Codex Desktop thread.
-The current supported shape is Desktop host-tool choreography plus an explicit status-file return-channel check, not a `codex-app` value in `FM_BACKEND`.
+The current supported shape is Desktop host-tool choreography plus explicit checks that the thread read the brief it was pointed at and wrote its status file, not a `codex-app` value in `FM_BACKEND`.
 
 ## Boundary
 
@@ -32,7 +32,8 @@ For helpers outside `bin/`, inspect the source or header before running `--help`
 3. Do not create projectless threads for repo work.
    If the project is absent, stop and ask for the project to be added or use a normal Firstmate backend instead.
 4. Decide whether this is a real Firstmate-managed task or a visible companion thread.
-   A real task needs a task id, an isolated worktree or Desktop-owned cwd, a branch plan, and a writable `state/<id>.status` path.
+   A real task needs a task id, an isolated worktree or Desktop-owned cwd, a branch plan, a readable `data/<id>/brief.md` path, and a writable `state/<id>.status` path.
+   Those last two are siblings: the brief is the only place the worker learns its contract, and the status file is the only place firstmate learns the result.
 
 ## Create And Send
 
@@ -54,26 +55,38 @@ If the user types directly into the visible thread, treat that as authoritative 
 
 ## Status Return Channel
 
-A Desktop-owned Codex thread can append to Firstmate status files only when the prompt gives an absolute path and the Desktop permission context can write that checkout.
-That makes status writes a verified return-channel requirement, not a fact to assume.
+A Desktop-owned Codex thread can read its brief and append to Firstmate status files only when the prompt gives absolute paths and the Desktop permission context can reach that checkout.
+That makes both the brief read and the status write verified requirements, not facts to assume.
 
-For a Firstmate-managed task, include an explicit status instruction:
+For a Firstmate-managed task, do not restate any part of the crewmate contract here.
+`bin/fm-brief.sh` scaffolds a complete brief at `<absolute-firstmate-home>/data/<task-id>/brief.md`, and that file is the single owner of the whole contract: the task, the setup, every rule, the status protocol with its pause lifecycle, and the definition of done the project's delivery mode requires.
+Excerpting part of it into the thread message was tried and kept failing the same way, because every excerpt boundary leaves the brief's own internal cross-references dangling on the far side of it.
+So point at the brief instead of copying it, and hand over both absolute paths outright rather than describing where either file lives.
+The status path has to stand on its own rather than arriving through the brief, because a worker that cannot read its brief still has to be able to say so.
+
+Scaffold the task's brief as usual, then send both absolute paths with only the context the brief cannot know:
 
 ```text
-Append supervisor-visible status lines to <absolute-firstmate-home>/state/<task-id>.status.
-Use only these prefixes for status changes: working:, needs-decision:, blocked:, paused:, done:, failed:.
-Use paused: only for a deliberate known external wait that should be rechecked later, never for a blocker that needs firstmate to act.
-Before doing substantive work, append "working: Codex Desktop thread started".
+Your brief is <absolute-firstmate-home>/data/<task-id>/brief.md and your status file is <absolute-firstmate-home>/state/<task-id>.status.
+Read the brief in full and follow it exactly; it is the authority on your task, your rules, your status protocol, and your definition of done.
+If you cannot read it, append "blocked: cannot read brief at <absolute-firstmate-home>/data/<task-id>/brief.md" to that status file and stop; never proceed on guesswork about the task.
+Where the brief says "your pane", it means this visible thread, which firstmate reads with read_thread.
+Its report-sparingly bar has exactly one named exception, and it comes first: before any substantive work, append "working: Codex Desktop thread started" to that status file, then reply here quoting your brief's definition of done.
 ```
 
-Verify the return channel before treating the thread as supervised:
+That quoted reply is the read receipt, and it is checkable rather than taken on faith: a worker that never opened the file cannot produce the gate its own delivery mode carries.
 
+Verify both channels before treating the thread as supervised:
+
+- `read_thread` shows the worker quoted a definition of done that matches the one `bin/fm-brief.sh` generated for this task's delivery mode.
 - `read_thread` shows the worker attempted the status write.
-- The local `state/<task-id>.status` file contains the expected line.
+- The local `state/<task-id>.status` file contains the expected line, or the `blocked:` line reporting an unreadable brief.
 - If available, the transcript includes a file-change entry for that status file.
 
-If the thread cannot write the status file, keep it as a visible companion thread only.
-Do not claim it is a complete Firstmate backend.
+If the thread cannot read its brief or cannot write the status file, keep it as a visible companion thread only.
+Do not treat it as a Firstmate-managed task, and do not claim it is a complete Firstmate backend.
+Never leave a thread running on a brief it could not read: without that file it has no task, no rules, no status protocol, and no definition of done at all.
+The absolute status path in the prompt is what lets such a thread report that failure instead of going silent.
 
 ## Observe And Reconcile
 
