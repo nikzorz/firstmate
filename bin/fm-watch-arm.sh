@@ -29,6 +29,11 @@
 #   watcher: attached pid=<N> (beacon <age>s)            - a live+fresh successor holds the lock;
 #                                                          this arm attaches and follows it
 #   watcher: FAILED - no live watcher with a fresh beacon  - could not confirm one
+#   watcher: delivered - cycle ended after queueing an actionable wake
+#                                                        - the observed cycle closed because its
+#                                                          wake reached the durable queue; the arm
+#                                                          that forked the watcher also prints the
+#                                                          reason line itself
 #   watcher: FAILED - cycle ended without an actionable reason
 #                                                        - a clean cycle ended with no wake and no
 #                                                          verified healthy successor
@@ -37,10 +42,10 @@
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
 # returns the FAILED line. On started it waits the child and propagates the wake
 # reason; on attached it stays live across identity-matched successors. An
-# attached cycle that ends without a healthy successor is a typed nonzero failure,
-# never a clean empty completion. On FAILED it exits non-zero so the failure is
-# loud. A live cycle already present means re-arm attaches - do not start a second
-# watcher.
+# attached cycle that ends without a healthy successor and without a delivered
+# wake is a typed nonzero failure, never a clean empty completion. On FAILED it
+# exits non-zero so the failure is loud. A live cycle already present means
+# re-arm attaches - do not start a second watcher.
 #
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
@@ -98,12 +103,14 @@ cycle_watcher_pid=none
 cycle_origin=unknown
 cycle_started_at=0
 cycle_lock_before='pid:none|identity:none'
+cycle_wake_seq=0
 
 cycle_begin() {
   cycle_watcher_pid=$1
   cycle_origin=$2
   cycle_started_at=$(date +%s)
   cycle_lock_before=$(lock_snapshot)
+  cycle_wake_seq=$(fm_wake_seq)
   cycle_active=1
 }
 
@@ -250,14 +257,44 @@ wait_for_healthy_successor() {
   done
 }
 
-fail_unexplained_cycle() {
+# Classify a cycle that closed with no verified successor. The durable wake
+# queue's monotonic counter is the delivery evidence: only the watcher enqueues,
+# and a drain never rewinds it, so a bump since this cycle began means the cycle
+# ended BECAUSE it delivered an actionable wake - the normal close, not a
+# supervision outage. An arm that did not own the watcher's stdout (an attached
+# one, whose wake reason went to the arm that forked it) has no other way to see
+# that. With no bump the cycle really did end without a reason, and that stays
+# the loud typed failure.
+#
+# The counter is read exactly once per close, here, so the ledger row and the
+# printed line can never disagree about what the same cycle did. The caller
+# supplies the reason the ledger should carry when nothing was delivered.
+CYCLE_END_DELIVERED=0
+CYCLE_END_REASON=
+classify_cycle_end() {
+  local outage_reason=$1
+  if [ "$(fm_wake_seq)" -gt "$cycle_wake_seq" ]; then
+    CYCLE_END_DELIVERED=1
+    CYCLE_END_REASON=delivered-wake
+    return 0
+  fi
+  CYCLE_END_DELIVERED=0
+  CYCLE_END_REASON=$outage_reason
+}
+
+report_cycle_end() {
+  if [ "$CYCLE_END_DELIVERED" -eq 1 ]; then
+    echo "watcher: delivered - cycle ended after queueing an actionable wake"
+    return 0
+  fi
   echo "watcher: FAILED - cycle ended without an actionable reason"
   return 1
 }
 
 # Stay alive across identity-matched healthy holders. If one cycle ends, attach
-# to a verified successor. With no successor, fail loudly instead of returning a
-# clean empty completion that an adapter could mistake for a no-op.
+# to a verified successor. With no successor, report the cycle end through
+# report_cycle_end instead of returning a clean empty completion that an adapter
+# could mistake for a no-op.
 attach_and_wait() {
   local attached_pid=$1
   while :; do
@@ -278,9 +315,10 @@ attach_and_wait() {
       report_attached
       continue
     fi
-    cycle_log_append unknown unknown attached-cycle-ended none
-    fail_unexplained_cycle
-    return 1
+    classify_cycle_end attached-cycle-ended
+    cycle_log_append unknown unknown "$CYCLE_END_REASON" none
+    report_cycle_end
+    return $?
   done
 }
 
@@ -424,13 +462,14 @@ owned_child_finished() {
       attach_and_wait "$HEALTHY_PID"
       return $?
     fi
-    cycle_log_append "$rc" "$signal" unexpected-clean-exit none
+    classify_cycle_end unexpected-clean-exit
+    cycle_log_append "$rc" "$signal" "$CYCLE_END_REASON" none
     print_watch_output "$child_out"
     rm -f "$child_out" 2>/dev/null || true
     child=
     child_out=
-    fail_unexplained_cycle
-    return 1
+    report_cycle_end
+    return $?
   fi
 
   reason_type="nonzero-exit"
