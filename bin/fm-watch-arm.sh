@@ -44,8 +44,8 @@
 # reason; on attached it stays live across identity-matched successors. An
 # attached cycle that ends without a healthy successor and without a delivered
 # wake is a typed nonzero failure, never a clean empty completion. On FAILED it
-# exits non-zero so the failure is loud. A live cycle already present means re-arm attaches - do not start a second
-# watcher.
+# exits non-zero so the failure is loud. A live cycle already present means
+# re-arm attaches - do not start a second watcher.
 #
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records

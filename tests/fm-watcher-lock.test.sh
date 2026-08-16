@@ -631,6 +631,50 @@ test_attached_arm_reports_delivered_wake_instead_of_failure() {
   pass "attached arm reports and records a delivered wake instead of a false cycle-end failure"
 }
 
+test_undrained_wake_does_not_silence_a_real_cycle_failure() {
+  # Delivery evidence is the queue counter MOVING during the cycle, not a
+  # non-empty queue: a home whose earlier wake is still undrained must keep the
+  # loud failure when a watcher dies having delivered nothing.
+  local dir state fakebin out armout wpid armpid status i
+  dir=$(make_case arm-outage-undrained-queue)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  armout="$dir/arm.out"
+  mark_pr_check_migration_complete "$state"
+  append_wake "$state" signal older-undrained "signal: queued before this cycle"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  wpid=$!
+  i=0
+  while [ "$i" -lt 60 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] && [ -e "$state/.last-watcher-beat" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "seed watcher did not take the lock"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$armout" &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF "watcher: attached pid=$wpid" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF "watcher: attached pid=$wpid" "$armout" || fail "arm did not attach to the live watcher: $(cat "$armout")"
+  kill "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  wait_for_exit "$armpid" 80
+  status=$?
+  [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "attached arm did not fail after the watcher died (status $status): $(cat "$armout")"
+  grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" \
+    || fail "attached arm dropped the typed cycle-end failure: $(cat "$armout")"
+  ! grep -qF 'watcher: delivered' "$armout" || fail "an undrained older wake was mistaken for this cycle's delivery"
+  awk -F'\t' -v arm="arm_pid=$armpid" '$1 == arm && $8 == "reason=delivered-wake" { exit 1 } END { exit 0 }' \
+    "$state/.watch-cycle-exits.log" \
+    || fail "outage cycle recorded a delivered classification: $(cat "$state/.watch-cycle-exits.log")"
+  pass "an older undrained wake never downgrades a genuine cycle failure to delivered"
+}
+
 test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   local dir state fakebin out armout i wpid armpid status
   dir=$(make_case attached-arm-signal-ledger)
@@ -1032,6 +1076,7 @@ test_watcher_self_evicts_on_lock_takeover
 test_arm_self_eviction_is_loud_without_successor
 test_arm_attaches_and_waits_for_live_fresh_watcher
 test_attached_arm_reports_delivered_wake_instead_of_failure
+test_undrained_wake_does_not_silence_a_real_cycle_failure
 test_attached_arm_signal_is_recorded_in_cycle_ledger
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output

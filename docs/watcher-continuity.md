@@ -14,6 +14,7 @@ A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predic
 A live owner that launched this session - the forked, resumed, or backgrounded session running under a new pid - is the same session reclaiming its own home rather than a competitor, so it arms; `bin/fm-session-lock-lib.sh` owns that rule.
 The stale-owner claim occurs only after the existing AFK and supervision-need gates pass.
 While supervision is still needed and away mode remains inactive, an actionable close or typed failure wakes the idle session through exit 2.
+A delivered close counts as actionable there, because its wake already reached the durable queue and still needs a handling turn.
 
 ## Actionable wake ordering
 
@@ -41,7 +42,7 @@ The turn-end guard remains the final backstop rather than the normal continuity 
 An actionable child output returns that reason normally.
 A zero/empty child return rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or classifies the close through the durable wake queue's monotonic counter.
 A counter that advanced during the cycle means the watcher exited because it delivered a wake, which returns `watcher: delivered - cycle ended after queueing an actionable wake` and exits zero.
-No delivered wake emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
+A counter that did not move during the cycle means it really ended with nothing to hand over, which keeps `watcher: FAILED - cycle ended without an actionable reason` and a nonzero exit; an older wake still sitting undrained is not delivery evidence.
 An attached arm follows verified identity-matched successors and applies the same classification when that chain ends without one, so the arm that did not own the watcher's stdout never reports a delivered wake as a failure.
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
@@ -57,8 +58,9 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 
 `tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
+That suite also drives two real arms over one real watcher to prove the arm that does not own the watcher's stdout reports the delivered wake, and keeps a killed watcher loud in a home whose earlier wake is still undrained.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.
-`tests/fm-claude-stop-autoarm.test.sh` covers the auto-arm's scope, stale and live session owners, a forked session arming its own home, unchanged AFK and need boundaries, single-flight, and exit-2 translation.
+`tests/fm-claude-stop-autoarm.test.sh` covers the auto-arm's scope, stale and live session owners, a forked session arming its own home, unchanged AFK and need boundaries, single-flight, and exit-2 translation of actionable, delivered, and typed-failure closes.
 `tests/fm-session-lock.test.sh` pins both halves of the identity contract against real process shapes: a forked session under a new pid claims its own home, a genuinely different live session is still refused, and a negative control removes the liveness protection from a copied lib to prove that refusal depends on it.
 `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` starts with the reproduced stale-lock state, runs session start first, completes two tokenless cycles, and checks the competing-live-owner negative control.
 `tests/fm-turnend-guard.test.sh` covers the cooperative `--claude` guard.

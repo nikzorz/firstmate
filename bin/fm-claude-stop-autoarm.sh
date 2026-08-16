@@ -32,12 +32,11 @@
 #     this hook-owned process tree (never shell &); Claude owns the process
 #     group, so its timeout/session teardown kills arm and watcher together.
 #   - Translation: while supervision is still needed and AFK remains inactive,
-#     an actionable arm close (signal:/stale:/check:/heartbeat, or the
-#     watcher: delivered close an attached arm reports for a wake that reached
-#     the durable queue) or a typed
-#     watcher: FAILED prints one rewake banner to stderr and exits 2, which
-#     wakes Claude even while idle ("Stop hook feedback"). A clean close with
-#     no actionable reason and no remaining need exits 0 silently.
+#     an actionable arm close (signal:/stale:/check:/heartbeat, or a
+#     watcher: delivered close, whose wake already reached the durable queue)
+#     or a typed watcher: FAILED prints one rewake banner to stderr and exits
+#     2, which wakes Claude even while idle ("Stop hook feedback"). A clean
+#     close with no actionable reason and no remaining need exits 0 silently.
 #
 # The epoch ledger state/.claude-autoarm-epoch records the latest claim and
 # outcome so the synchronous Stop guard (bin/fm-turnend-guard.sh --claude) can
