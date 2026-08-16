@@ -265,8 +265,25 @@ wait_for_healthy_successor() {
 # one, whose wake reason went to the arm that forked it) has no other way to see
 # that. With no bump the cycle really did end without a reason, and that stays
 # the loud typed failure.
-report_cycle_end() {
+#
+# The counter is read exactly once per close, here, so the ledger row and the
+# printed line can never disagree about what the same cycle did. The caller
+# supplies the reason the ledger should carry when nothing was delivered.
+CYCLE_END_DELIVERED=0
+CYCLE_END_REASON=
+classify_cycle_end() {
+  local outage_reason=$1
   if [ "$(fm_wake_seq)" -gt "$cycle_wake_seq" ]; then
+    CYCLE_END_DELIVERED=1
+    CYCLE_END_REASON=delivered-wake
+    return 0
+  fi
+  CYCLE_END_DELIVERED=0
+  CYCLE_END_REASON=$outage_reason
+}
+
+report_cycle_end() {
+  if [ "$CYCLE_END_DELIVERED" -eq 1 ]; then
     echo "watcher: delivered - cycle ended after queueing an actionable wake"
     return 0
   fi
@@ -298,7 +315,8 @@ attach_and_wait() {
       report_attached
       continue
     fi
-    cycle_log_append unknown unknown attached-cycle-ended none
+    classify_cycle_end attached-cycle-ended
+    cycle_log_append unknown unknown "$CYCLE_END_REASON" none
     report_cycle_end
     return $?
   done
@@ -444,7 +462,8 @@ owned_child_finished() {
       attach_and_wait "$HEALTHY_PID"
       return $?
     fi
-    cycle_log_append "$rc" "$signal" unexpected-clean-exit none
+    classify_cycle_end unexpected-clean-exit
+    cycle_log_append "$rc" "$signal" "$CYCLE_END_REASON" none
     print_watch_output "$child_out"
     rm -f "$child_out" 2>/dev/null || true
     child=

@@ -620,7 +620,15 @@ test_attached_arm_reports_delivered_wake_instead_of_failure() {
   grep -qF 'watcher: delivered - cycle ended after queueing an actionable wake' "$attached_out" \
     || fail "attached arm did not report the delivered cycle: $(cat "$attached_out")"
   ! grep -qF 'watcher: FAILED' "$attached_out" || fail "attached arm reported FAILED for a cycle that delivered a wake"
-  pass "attached arm reports a delivered wake instead of a false cycle-end failure"
+  # The lifecycle ledger is the triage evidence for a repeat-failure pattern, so
+  # the delivered close must be distinguishable there from a genuine outage.
+  awk -F'\t' -v arm="arm_pid=$attached" '$1 == arm && $8 == "reason=delivered-wake" { found = 1 } END { exit found ? 0 : 1 }' \
+    "$state/.watch-cycle-exits.log" \
+    || fail "attached arm did not record the delivered classification: $(cat "$state/.watch-cycle-exits.log")"
+  awk -F'\t' -v arm="arm_pid=$attached" '$1 == arm && $8 == "reason=attached-cycle-ended" { exit 1 } END { exit 0 }' \
+    "$state/.watch-cycle-exits.log" \
+    || fail "attached arm recorded a delivered close as an unexplained cycle end: $(cat "$state/.watch-cycle-exits.log")"
+  pass "attached arm reports and records a delivered wake instead of a false cycle-end failure"
 }
 
 test_attached_arm_signal_is_recorded_in_cycle_ledger() {

@@ -28,7 +28,7 @@ Claude's Stop hook starts the successor arm at the next Stop after the handling 
 The durable wake queue preserves actionable events during the residual active-turn window, and the unchanged bounded turn-end guard enforces recovery at Stop when no watcher or auto-arm claim is present.
 No PreToolUse hook denies fleet commands based on watcher status.
 The model no longer re-arms after ordinary wakes.
-Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
+Terminal arm-output classification (`started`, `attached`, the zero-exit `delivered`, or `FAILED`) remains defense in depth for the manual recovery path.
 Codex retains its bounded foreground checkpoint protocol.
 Grok retains its tracked background-task notification protocol.
 No adapter starts a replacement with shell `&`.
@@ -46,6 +46,7 @@ An attached arm follows verified identity-matched successors and applies the sam
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
 Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
+A close with no verified successor is classified once, so a delivered cycle records `reason=delivered-wake` while a genuine outage keeps its unexplained close reason.
 The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYCLE_LOG_KEEP_LINES`.
 `state/.watch-triage.log` remains only the watcher's bounded absorbed-wake debug log and carries no lifecycle semantics.
 
