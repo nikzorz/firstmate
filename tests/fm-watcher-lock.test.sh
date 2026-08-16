@@ -575,6 +575,54 @@ test_arm_attaches_and_waits_for_live_fresh_watcher() {
   pass "arm attaches to a live fresh watcher and fails loudly when that cycle has no successor"
 }
 
+test_attached_arm_reports_delivered_wake_instead_of_failure() {
+  # A watcher exits after delivering a wake, so an arm attached to that cycle
+  # sees it close with no successor - the same shape as a real outage, but the
+  # wake reason went to the arm that forked the watcher. The attached arm must
+  # read the durable queue as delivery evidence and report a delivered cycle,
+  # not the FAILED line firstmate repairs against.
+  local dir state fakebin owner_out attached_out owner attached status i
+  dir=$(make_case arm-attached-delivered)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  owner_out="$dir/arm-owner.out"
+  attached_out="$dir/arm-attached.out"
+  mark_pr_check_migration_complete "$state"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=2 "$WATCH_ARM" > "$owner_out" &
+  owner=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF 'watcher: started pid=' "$owner_out" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF 'watcher: started pid=' "$owner_out" || fail "owner arm did not start a watcher"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=2 "$WATCH_ARM" > "$attached_out" &
+  attached=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF 'watcher: attached pid=' "$attached_out" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF 'watcher: attached pid=' "$attached_out" || fail "second arm did not attach to the live cycle: $(cat "$attached_out")"
+
+  # A captain-relevant status append makes the watcher deliver one wake and exit.
+  echo "done: ready for review" >> "$state/crew.status"
+
+  wait_for_exit "$owner" 200
+  status=$?
+  [ "$status" -eq 0 ] || fail "owner arm did not exit cleanly after its wake (status $status): $(cat "$owner_out")"
+  grep -qF "signal: $state/crew.status" "$owner_out" || fail "owner arm did not propagate the wake reason: $(cat "$owner_out")"
+  wait_for_exit "$attached" 200
+  status=$?
+  [ "$status" -eq 0 ] || fail "attached arm did not exit cleanly after the delivered wake (status $status): $(cat "$attached_out")"
+  grep -qF 'watcher: delivered - cycle ended after queueing an actionable wake' "$attached_out" \
+    || fail "attached arm did not report the delivered cycle: $(cat "$attached_out")"
+  ! grep -qF 'watcher: FAILED' "$attached_out" || fail "attached arm reported FAILED for a cycle that delivered a wake"
+  pass "attached arm reports a delivered wake instead of a false cycle-end failure"
+}
+
 test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   local dir state fakebin out armout i wpid armpid status
   dir=$(make_case attached-arm-signal-ledger)
@@ -975,6 +1023,7 @@ test_watch_restart_attaches_to_healthy_peer
 test_watcher_self_evicts_on_lock_takeover
 test_arm_self_eviction_is_loud_without_successor
 test_arm_attaches_and_waits_for_live_fresh_watcher
+test_attached_arm_reports_delivered_wake_instead_of_failure
 test_attached_arm_signal_is_recorded_in_cycle_ledger
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output

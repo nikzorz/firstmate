@@ -32,7 +32,9 @@
 #     this hook-owned process tree (never shell &); Claude owns the process
 #     group, so its timeout/session teardown kills arm and watcher together.
 #   - Translation: while supervision is still needed and AFK remains inactive,
-#     an actionable arm close (signal:/stale:/check:/heartbeat) or a typed
+#     an actionable arm close (signal:/stale:/check:/heartbeat, or the
+#     watcher: delivered close an attached arm reports for a wake that reached
+#     the durable queue) or a typed
 #     watcher: FAILED prints one rewake banner to stderr and exits 2, which
 #     wakes Claude even while idle ("Stop hook feedback"). A clean close with
 #     no actionable reason and no remaining need exits 0 silently.
@@ -161,7 +163,10 @@ fi
 ACTIONABLE=0
 FAILED=0
 if [ -n "$OUT" ]; then
-  grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
+  # An arm attached to someone else's cycle sees the wake only as a delivered
+  # close: the reason line went to the arm that forked the watcher, while the
+  # record waits in the durable queue and still needs a handling turn.
+  grep -Eq '^(signal:|stale:|check:|heartbeat($|:)|watcher: delivered)' "$OUT" 2>/dev/null && ACTIONABLE=1
   grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILED=1
 fi
 [ "$RC" -ne 0 ] && FAILED=1
@@ -190,7 +195,7 @@ if [ "$FAILED" -eq 1 ]; then
 else
   {
     printf 'firstmate watcher wake - one supervision event needs a handling turn now.\n'
-    [ -n "$OUT" ] && grep -E '^(signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+    [ -n "$OUT" ] && grep -E '^(signal:|stale:|check:|heartbeat|watcher: delivered)' "$OUT" 2>/dev/null | head -8
     printf 'Run bin/fm-wake-drain.sh first and handle the wake. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
   } >&2
 fi

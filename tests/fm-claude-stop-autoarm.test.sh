@@ -100,6 +100,15 @@ printf 'watcher: FAILED - no live watcher with a fresh beacon\n'
 exit 1
 SH
       ;;
+    delivered)
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >> "$FM_HOME/state/arm-ran"
+printf 'watcher: attached pid=%s (beacon 2s)\n' "$$"
+printf 'watcher: delivered - cycle ended after queueing an actionable wake\n'
+exit 0
+SH
+      ;;
     clean)
       cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
@@ -350,6 +359,26 @@ test_failed_close_rewakes_with_failure_banner() {
   pass "auto-arm: watcher: FAILED translates to an exit-2 alarm rewake"
 }
 
+test_delivered_close_rewakes_without_failure_banner() {
+  # An arm attached to another cycle reports only the delivered close: the wake
+  # itself waits in the durable queue, so this still needs a handling turn, and
+  # it must not be dressed as a supervision failure.
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/delivered")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" delivered
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "a delivered cycle close must exit 2 so the queued wake gets a handling turn"
+  assert_contains "$out" "firstmate watcher wake" "delivered rewake must carry the wake banner"
+  assert_contains "$out" "watcher: delivered" "delivered rewake must carry the arm's delivered close"
+  assert_contains "$out" "bin/fm-wake-drain.sh" "delivered rewake must direct the drain-first protocol"
+  case "$out" in
+    *"watcher cycle FAILED"*) fail "delivered close must not raise the supervision-failure alarm" ;;
+  esac
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: delivered close rewakes for the queued wake without a failure alarm"
+}
+
 test_clean_close_exits_silently() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/clean")
@@ -450,6 +479,7 @@ test_stale_lock_recovery_preserves_afk_and_need_gates
 test_inert_when_fleet_idle
 test_actionable_close_rewakes_with_reason
 test_failed_close_rewakes_with_failure_banner
+test_delivered_close_rewakes_without_failure_banner
 test_clean_close_exits_silently
 test_arms_for_x_mode_poll_need_without_inflight
 test_single_flight_admits_exactly_one_owner

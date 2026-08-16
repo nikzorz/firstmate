@@ -8,6 +8,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
 FM_WAKE_QUEUE="${FM_WAKE_QUEUE:-$STATE/.wake-queue}"
 FM_WAKE_QUEUE_LOCK="${FM_WAKE_QUEUE_LOCK:-$STATE/.wake-queue.lock}"
+FM_WAKE_QUEUE_SEQ="${FM_WAKE_QUEUE_SEQ:-$STATE/.wake-queue.seq}"
 FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 mkdir -p "$STATE"
 
@@ -371,6 +372,18 @@ fm_wake_clean_field() {
   LC_ALL=C tr '\t\r\n' '   '
 }
 
+# Monotonic count of wakes ever enqueued in this home. A drain removes records
+# but never rewinds the counter, so a reader can compare two readings to learn
+# whether a wake was delivered between them.
+fm_wake_seq() {
+  local seq
+  seq=$(cat "$FM_WAKE_QUEUE_SEQ" 2>/dev/null || echo 0)
+  case "$seq" in
+    ''|*[!0-9]*) seq=0 ;;
+  esac
+  printf '%s' "$seq"
+}
+
 fm_wake_append() {
   local kind=$1 key=$2 payload=$3 clean_key clean_payload epoch seq seq_file status
   case "$kind" in
@@ -381,7 +394,7 @@ fm_wake_append() {
   clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | fm_wake_clean_field)
   epoch=$(date +%s)
-  seq_file="$STATE/.wake-queue.seq"
+  seq_file="$FM_WAKE_QUEUE_SEQ"
   status=0
 
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"

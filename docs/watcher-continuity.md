@@ -39,8 +39,10 @@ The turn-end guard remains the final backstop rather than the normal continuity 
 
 `bin/fm-watch-arm.sh` never returns a clean empty success.
 An actionable child output returns that reason normally.
-A zero/empty child return rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
-An attached arm follows verified identity-matched successors and reports the same typed failure if that chain ends without one.
+A zero/empty child return rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or classifies the close through the durable wake queue's monotonic counter.
+A counter that advanced during the cycle means the watcher exited because it delivered a wake, which returns `watcher: delivered - cycle ended after queueing an actionable wake` and exits zero.
+No delivered wake emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
+An attached arm follows verified identity-matched successors and applies the same classification when that chain ends without one, so the arm that did not own the watcher's stdout never reports a delivered wake as a failure.
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
 Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
