@@ -630,22 +630,17 @@ teardown_treehouse_return() {
   # failure without the swallowed git message.
   lock=$(worktree_git_lock_present "$dir") || lock=""
   if [ -n "$lock" ]; then
+    lock_desc=$lock
     echo "teardown: $label return failed while git lock $lock is present; treating it as a transient lock race" >&2
   elif [ -n "$lock_before" ]; then
+    lock_desc=$lock_before
     echo "teardown: $label return failed after starting with git lock $lock_before, which has since cleared; treating it as a transient lock race" >&2
   elif treehouse_return_is_index_lock_error "$out"; then
+    lock_desc="index.lock"
     echo "teardown: $label return failed with a git index.lock error whose lock is already gone; treating it as a transient lock race" >&2
   else
     echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race" >&2
     return 1
-  fi
-
-  if [ -n "$lock" ]; then
-    lock_desc=$lock
-  elif [ -n "$lock_before" ]; then
-    lock_desc=$lock_before
-  else
-    lock_desc="index.lock"
   fi
 
   max_retries=$TREEHOUSE_RETURN_LOCK_RETRIES

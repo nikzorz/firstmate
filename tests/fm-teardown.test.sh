@@ -55,6 +55,7 @@
 #   (z2) lock cleared mid-attempt, error text names no cause  -> retry ALLOW
 #   (aa) return failure with no lock present                  -> abort, no retry
 #   (ab) unlanded work while a lock is present                -> REFUSE before return
+#   (ac) git lock signature in the error text, no lock file   -> retry ALLOW
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -363,6 +364,45 @@ if [ "${1:-}" = return ]; then
     else
       echo "fatal: Unable to create 'index.lock': File exists." >&2
     fi
+    exit 128
+  fi
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# treehouse return that fails once with git's real index.lock signature while no
+# lock file ever exists on disk, so neither the pre-attempt nor the post-failure
+# probe can see one and the error text is the only signal left.
+add_signature_only_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = return ]; then
+  shift
+  wt=""
+  for a in "$@"; do
+    case "$a" in
+      --force) ;;
+      *) wt=$a ;;
+    esac
+  done
+  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
+  case "$lock" in
+    /*|'') ;;
+    *) lock="$wt/$lock" ;;
+  esac
+  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
+  count=0
+  if [ -f "$count_file" ]; then
+    count=$(cat "$count_file")
+  fi
+  count=$(( count + 1 ))
+  printf '%s\n' "$count" > "$count_file"
+  if [ "$count" -eq 1 ]; then
+    echo "fatal: Unable to create '${lock:-index.lock}': File exists." >&2
     exit 128
   fi
   exit 0
@@ -1313,6 +1353,47 @@ test_swallowed_message_without_lock_aborts_on_first_attempt() {
   pass "a genuine return failure with no git lock aborts immediately and says so"
 }
 
+test_index_lock_signature_without_lock_file_is_retried() {
+  local case_dir rc lock attempt_file
+  case_dir=$(make_case signature-without-lock)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_signature_only_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  lock=$(git_index_lock_path "$case_dir/wt")
+  assert_absent "$lock" "signature-without-lock: no lock file should exist before teardown"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  # No lock file exists at any probe point, so git's own error text is the only
+  # signal that can classify this failure as a lock race.
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_LOCK_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+  FM_STALE_WORKTREE_LOCK_AGE_SECS=3600 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "signature-without-lock: teardown should retry a lock signature whose lock file is gone"
+  assert_grep "whose lock is already gone; treating it as a transient lock race" "$case_dir/stderr" \
+    "signature-without-lock: teardown did not classify from the error text"
+  assert_not_contains "$(cat "$case_dir/stderr")" "no git lock is present" \
+    "signature-without-lock: teardown treated a signalled lock race as a genuine failure"
+  assert_grep "succeeded on retry" "$case_dir/stderr" \
+    "signature-without-lock: teardown did not retry the return"
+  [ "$(cat "$attempt_file")" = 2 ] \
+    || fail "signature-without-lock: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
+  assert_absent "$lock" "signature-without-lock: teardown created or left a lock file"
+  pass "a lock signature in the error text is retried even when no lock file is ever present"
+}
+
 test_unlanded_work_refuses_before_any_return_attempt() {
   local case_dir rc lock attempt_file
   case_dir=$(make_case unlanded-with-lock)
@@ -1635,6 +1716,7 @@ test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_swallowed_lock_message_still_retries_and_succeeds
 test_swallowed_lock_message_retries_when_lock_self_clears_mid_attempt
 test_swallowed_message_without_lock_aborts_on_first_attempt
+test_index_lock_signature_without_lock_file_is_retried
 test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
