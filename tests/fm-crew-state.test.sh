@@ -286,8 +286,10 @@ EOF
 # The branch_sync block no-mistakes appends to `axi status` when the checked-out
 # branch is bound to the reported run. Its local.head is read from the crew's
 # own worktree, so it binds a run whose head is a commit only no-mistakes' own
-# repo holds.
-branch_sync_block() {  # <branch> <local-head> [<run-id>]
+# repo holds. submitted_head defaults to that same local head, which is where a
+# healthy run's worktree sits; pass it explicitly to model a worktree that has
+# moved on since the run was submitted.
+branch_sync_block() {  # <branch> <local-head> [<run-id>] [<submitted-head>]
   cat <<EOF
 branch_sync:
   state: behind
@@ -300,7 +302,7 @@ branch_sync:
     run: "${3-01RUN}"
     status: running
     phase: ""
-    submitted_head: $2
+    submitted_head: ${4-$2}
     current_head: ${FM_FAKE_RUN_HEAD:-abc1234}
 EOF
 }
@@ -1576,6 +1578,35 @@ test_branch_sync_without_run_id_does_not_attribute() {
   pass "branch_sync without a run id does not attribute"
 }
 
+# branch_sync outlives the run it binds, so local.head alone only proves the
+# block was read just now. A crew that finished a run and kept working on the
+# same branch must not have its live needs-decision masked by that finished run.
+test_branch_sync_after_local_work_past_submitted_head_does_not_attribute() {
+  reset_fakes
+  local d submitted_head local_head out
+  d=$(new_case branch-sync-local-advanced)
+  make_repo_on_branch "$d/wt" fm/feat-postrun
+  submitted_head=$(git -C "$d/wt" rev-parse HEAD)
+  git -C "$d/wt" commit -q --allow-empty -m 'follow-up work after the run passed'
+  local_head=$(git -C "$d/wt" rev-parse HEAD)
+  [ "$local_head" != "$submitted_head" ] || fail "fixture invalid: follow-up commit did not move HEAD"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/postrun.meta" "window=fm:fm-postrun" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: keep the deprecated flag or drop it in this slice?\n' > "$d/state/postrun.status"
+  FM_FAKE_RUN_HEAD="$submitted_head"
+  FM_FAKE_AXI_STATUS="$(run_passed fm/feat-postrun; branch_sync_block fm/feat-postrun "$local_head" 01RUN "$submitted_head")"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" postrun)
+  assert_not_contains "$out" "source: run-step" "a finished run must not be attributed after local work advanced"
+  assert_not_contains "$out" "state: done" "the finished run must not report the crew as done"
+  assert_not_contains "$out" "superseded" "a live needs-decision must not be marked superseded"
+  assert_contains "$out" "state: parked" "the live needs-decision is the current state"
+  assert_contains "$out" "source: status-log" "falls back to the status log after the binding is refused"
+  assert_contains "$out" "keep the deprecated flag" "the decision prose still reaches firstmate"
+  pass "branch_sync does not attribute a run the worktree has advanced past"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -1644,6 +1675,7 @@ test_pipeline_fix_head_in_foreign_repo_binds_via_branch_sync
 test_branch_sync_for_other_branch_does_not_attribute
 test_branch_sync_for_a_different_run_does_not_attribute
 test_branch_sync_without_run_id_does_not_attribute
+test_branch_sync_after_local_work_past_submitted_head_does_not_attribute
 test_missing_run_head_falls_back_to_current_state
 test_usage_limit_prompt_outranks_active_run
 test_usage_limit_prompt_exhausted_window

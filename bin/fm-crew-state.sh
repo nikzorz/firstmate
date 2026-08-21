@@ -34,13 +34,18 @@
 #      fallback)? Branch name alone is not enough: a historical run on a reused
 #      branch whose head was rewritten or diverged must not be attributed.
 #      A run matches when no-mistakes' own branch_sync block binds it to this
-#      worktree's branch and HEAD, or, failing that, when its head equals the
-#      worktree HEAD or the worktree HEAD is an ancestor of the run head
-#      (pipeline fix commits advanced the run on the same line of history).
+#      worktree's branch and HEAD and names that same HEAD as the head the run
+#      was submitted at, or, failing that, when its head equals the worktree HEAD
+#      or the worktree HEAD is an ancestor of the run head (pipeline fix commits
+#      advanced the run on the same line of history).
 #      The head rule alone cannot bind a healthy run: the pipeline's auto-fix
 #      commits live only in no-mistakes' own repo, so the head it reports stops
-#      resolving here as soon as the first one is made. Local work that advanced
-#      past the run head, or diverged from it, invalidates attribution.
+#      resolving here as soon as the first one is made. Only the pipeline's own
+#      submitted head still carries code identity there, and it has to: the
+#      binding stays published after a run goes terminal, so without it a
+#      finished run would keep masking a crew that has since committed further
+#      work. Local work that advanced past the run head, or diverged from it,
+#      invalidates attribution.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
@@ -480,24 +485,38 @@ nm_run_head_matches_worktree() {
 # commit, and attribution is lost for the rest of the run.
 #
 # Scalar value of <key> inside branch_sync's <section> sub-block; empty when the
-# block, the section, or the key is absent.
+# block, the section, or the key is absent. TOON indents with plain spaces, so
+# the indent tests stay plain-space too: POSIX bracket expressions are a silent
+# no-match on one-true-awk builds old enough to predate them, and a silent empty
+# read here is indistinguishable from an absent block.
 nm_bs_field() {  # <section> <key>
   printf '%s\n' "$RUN_OUT" | awk -v sec="  $1:" -v key="    $2:" '
     /^branch_sync:$/ { in_bs = 1; next }
     !in_bs { next }
-    /^[^[:space:]]/ { exit }
+    /^[^ ]/ { exit }
     $0 == sec { in_sec = 1; next }
-    in_sec && /^  [^[:space:]]/ { exit }
-    in_sec && index($0, key) == 1 { sub(/^[^:]*:[[:space:]]*/, "", $0); print; exit }
+    in_sec && /^  [^ ]/ { exit }
+    in_sec && index($0, key) == 1 { sub(/^[^:]*: */, "", $0); print; exit }
   '
 }
 
+# The commit a branch_sync field names, resolved here so an abbreviated sha still
+# compares equal to a full one; non-zero when the field is absent or names no
+# commit this worktree holds.
+nm_bs_commit() {  # <section> <key>
+  local raw
+  raw=$(strip_quotes "$(nm_bs_field "$1" "$2")")
+  [ -n "$raw" ] || return 1
+  git -C "$WT" rev-parse --verify "${raw}^{commit}" 2>/dev/null
+}
+
 # 0 when no-mistakes itself asserts the reported run owns this worktree: a bound
-# run id, this crew's branch, and this worktree's exact HEAD. The triple keeps
-# the refusal direction even if a future no-mistakes emits branch_sync
-# unconditionally rather than only for a bound branch.
+# run id, this crew's branch, this worktree's exact HEAD, and that same HEAD as
+# the head the run was submitted at. The triple keeps the refusal direction even
+# if a future no-mistakes emits branch_sync unconditionally rather than only for
+# a bound branch.
 nm_branch_sync_binds_worktree() {
-  local bs_run bs_branch bs_head run_id
+  local bs_run bs_branch bs_head bs_submitted run_id local_full
   bs_run=$(strip_quotes "$(nm_bs_field pipeline run)")
   [ -n "$bs_run" ] || return 1
   bs_branch=$(strip_quotes "$(nm_bs_field local branch)")
@@ -507,9 +526,14 @@ nm_branch_sync_binds_worktree() {
   # reaching for. An output with no run id at all falls through to that rule.
   run_id=$(strip_quotes "$(nm_field id)")
   [ -z "$run_id" ] || [ "$run_id" = "$bs_run" ] || return 1
-  bs_head=$(strip_quotes "$(nm_bs_field local head)")
-  [ -n "$bs_head" ] || return 1
-  [ "$bs_head" = "$(git -C "$WT" rev-parse HEAD 2>/dev/null)" ]
+  local_full=$(git -C "$WT" rev-parse HEAD 2>/dev/null) || return 1
+  # local.head only proves the block was read from this worktree just now; it is
+  # the submitted head that carries code identity, and the binding outlives the
+  # run, so both are required.
+  bs_head=$(nm_bs_commit local head) || return 1
+  [ "$bs_head" = "$local_full" ] || return 1
+  bs_submitted=$(nm_bs_commit pipeline submitted_head) || return 1
+  [ "$bs_submitted" = "$local_full" ]
 }
 
 # Coarse runs-list rows are "<status> <branch> <short-sha> ...". 0 if the short
