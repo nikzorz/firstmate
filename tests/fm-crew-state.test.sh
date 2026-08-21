@@ -283,6 +283,30 @@ run:
 EOF
 }
 
+# The branch_sync block no-mistakes appends to `axi status` when the checked-out
+# branch is bound to the reported run. Its local.head is read from the crew's
+# own worktree, so it binds a run whose head is a commit only no-mistakes' own
+# repo holds. submitted_head defaults to that same local head, which is where a
+# healthy run's worktree sits; pass it explicitly to model a worktree that has
+# moved on since the run was submitted.
+branch_sync_block() {  # <branch> <local-head> [<run-id>] [<submitted-head>]
+  cat <<EOF
+branch_sync:
+  state: behind
+  changed: false
+  local:
+    branch: $1
+    head: $2
+    clean: true
+  pipeline:
+    run: "${3-01RUN}"
+    status: running
+    phase: ""
+    submitted_head: ${4-$2}
+    current_head: ${FM_FAKE_RUN_HEAD:-abc1234}
+EOF
+}
+
 run_fixing() {  # <branch>
   cat <<EOF
 run:
@@ -1466,6 +1490,168 @@ test_local_advanced_past_run_head_invalidates() {
   pass "local work advanced past run head invalidates attribution"
 }
 
+# Head-binding: the production shape the local-fixture case above cannot reach.
+# A pipeline auto-fix commit lives only in no-mistakes' own repo, so the run head
+# never resolves in the crew's worktree and the ancestry rule cannot bind it;
+# branch_sync binds it instead.
+test_pipeline_fix_head_in_foreign_repo_binds_via_branch_sync() {
+  reset_fakes
+  local d base_head foreign_head out
+  d=$(new_case pipeline-foreign-head)
+  make_repo_on_branch "$d/wt" fm/feat-foreign
+  base_head=$(git -C "$d/wt" rev-parse HEAD)
+  # The pipeline's fix commit, made where no-mistakes actually makes it.
+  mkdir -p "$d/pipeline"
+  git -C "$d/pipeline" init -q
+  git -C "$d/pipeline" commit -q --allow-empty -m 'pipeline fix commit'
+  foreign_head=$(git -C "$d/pipeline" rev-parse HEAD)
+  ! git -C "$d/wt" rev-parse --verify --quiet "${foreign_head}^{commit}" >/dev/null \
+    || fail "fixture invalid: pipeline fix commit resolves in the crew worktree"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/foreign.meta" "window=fm:fm-foreign" "worktree=$d/wt" "kind=ship"
+  printf 'working: implementation handed to the pipeline\n' > "$d/state/foreign.status"
+  FM_FAKE_RUN_HEAD="$foreign_head"
+  FM_FAKE_AXI_STATUS="$(run_fixing fm/feat-foreign; branch_sync_block fm/feat-foreign "$base_head")"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" foreign)
+  assert_contains "$out" "source: run-step" "branch_sync binds a run whose head is not local"
+  assert_contains "$out" "state: working" "bound fixing run reports working"
+  pass "unresolvable pipeline fix head still binds via branch_sync"
+}
+
+# branch_sync must never widen attribution: a block naming another branch, or
+# carrying no run id, is not a binding for this crew.
+test_branch_sync_for_other_branch_does_not_attribute() {
+  reset_fakes
+  local d base_head out
+  d=$(new_case branch-sync-other-branch)
+  make_repo_on_branch "$d/wt" fm/feat-mine
+  base_head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/other.meta" "window=fm:fm-other" "worktree=$d/wt" "kind=ship"
+  printf 'working: current stage still in progress\n' > "$d/state/other.status"
+  FM_FAKE_RUN_HEAD=0000000000000000000000000000000000000000
+  FM_FAKE_AXI_STATUS="$(run_fixing fm/feat-theirs; branch_sync_block fm/feat-theirs "$base_head")"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" other)
+  assert_not_contains "$out" "source: run-step" "another branch's binding must not attribute"
+  assert_contains "$out" "source: status-log" "falls back when branch_sync names another branch"
+  pass "branch_sync naming another branch does not attribute"
+}
+
+test_branch_sync_for_a_different_run_does_not_attribute() {
+  reset_fakes
+  local d base_head out
+  d=$(new_case branch-sync-other-run)
+  make_repo_on_branch "$d/wt" fm/feat-otherrun
+  base_head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/otherrun.meta" "window=fm:fm-otherrun" "worktree=$d/wt" "kind=ship"
+  printf 'working: current stage still in progress\n' > "$d/state/otherrun.status"
+  FM_FAKE_RUN_HEAD=0000000000000000000000000000000000000000
+  FM_FAKE_AXI_STATUS="$(run_fixing fm/feat-otherrun; branch_sync_block fm/feat-otherrun "$base_head" 01OTHER)"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" otherrun)
+  assert_not_contains "$out" "source: run-step" "a binding for another run must not attribute this one"
+  assert_contains "$out" "source: status-log" "falls back when the reported run is not the bound run"
+  pass "branch_sync binding another run does not attribute the reported run"
+}
+
+test_branch_sync_without_run_id_does_not_attribute() {
+  reset_fakes
+  local d base_head out
+  d=$(new_case branch-sync-no-run)
+  make_repo_on_branch "$d/wt" fm/feat-norun
+  base_head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/norun.meta" "window=fm:fm-norun" "worktree=$d/wt" "kind=ship"
+  printf 'working: current stage still in progress\n' > "$d/state/norun.status"
+  FM_FAKE_RUN_HEAD=0000000000000000000000000000000000000000
+  FM_FAKE_AXI_STATUS="$(run_fixing fm/feat-norun; branch_sync_block fm/feat-norun "$base_head" "")"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" norun)
+  assert_not_contains "$out" "source: run-step" "an unbound branch_sync must not attribute"
+  assert_contains "$out" "source: status-log" "falls back when branch_sync carries no run"
+  pass "branch_sync without a run id does not attribute"
+}
+
+# branch_sync outlives the run it binds, so local.head alone only proves the
+# block was read just now. A crew that finished a run and kept working on the
+# same branch must not have its live needs-decision masked by that finished run.
+test_branch_sync_after_local_work_past_submitted_head_does_not_attribute() {
+  reset_fakes
+  local d submitted_head local_head out
+  d=$(new_case branch-sync-local-advanced)
+  make_repo_on_branch "$d/wt" fm/feat-postrun
+  submitted_head=$(git -C "$d/wt" rev-parse HEAD)
+  git -C "$d/wt" commit -q --allow-empty -m 'follow-up work after the run passed'
+  local_head=$(git -C "$d/wt" rev-parse HEAD)
+  [ "$local_head" != "$submitted_head" ] || fail "fixture invalid: follow-up commit did not move HEAD"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/postrun.meta" "window=fm:fm-postrun" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: keep the deprecated flag or drop it in this slice?\n' > "$d/state/postrun.status"
+  FM_FAKE_RUN_HEAD="$submitted_head"
+  FM_FAKE_AXI_STATUS="$(run_passed fm/feat-postrun; branch_sync_block fm/feat-postrun "$local_head" 01RUN "$submitted_head")"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" postrun)
+  assert_not_contains "$out" "source: run-step" "a finished run must not be attributed after local work advanced"
+  assert_not_contains "$out" "state: done" "the finished run must not report the crew as done"
+  assert_not_contains "$out" "superseded" "a live needs-decision must not be marked superseded"
+  assert_contains "$out" "state: parked" "the live needs-decision is the current state"
+  assert_contains "$out" "source: status-log" "falls back to the status log after the binding is refused"
+  assert_contains "$out" "keep the deprecated flag" "the decision prose still reaches firstmate"
+  pass "branch_sync does not attribute a run the worktree has advanced past"
+}
+
+# Field scoping: branch_sync reuses the run object's `branch` and `head` keys, so
+# emitting it first must not decide which run the head-match fallback reads. The
+# run object still owns those fields, and this crew's own run stays attributed.
+test_branch_sync_before_run_object_still_reads_run_fields() {
+  reset_fakes
+  local d head out
+  d=$(new_case branch-sync-first-run-fields)
+  make_repo_on_branch "$d/wt" fm/feat-order
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/order.meta" "window=fm:fm-order" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: which retry budget belongs in this slice?\n' > "$d/state/order.status"
+  FM_FAKE_RUN_HEAD="$head"
+  FM_FAKE_AXI_STATUS="$(branch_sync_block fm/feat-theirs "$head"; run_fixing fm/feat-order)"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" order)
+  assert_contains "$out" "source: run-step" "the run object still binds when branch_sync is emitted first"
+  assert_contains "$out" "state: working" "this crew's own fixing run remains working"
+  pass "branch_sync emitted first still resolves run fields from the run object"
+}
+
+# Field scoping, refusal direction: a branch_sync naming this crew's branch and
+# HEAD must not lend those values to a foreign run block reported alongside it.
+test_branch_sync_before_run_object_does_not_attribute_foreign_run() {
+  reset_fakes
+  local d head out
+  d=$(new_case branch-sync-first-foreign-run)
+  make_repo_on_branch "$d/wt" fm/feat-anchored
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/anchored.meta" "window=fm:fm-anchored" "worktree=$d/wt" "kind=ship"
+  printf 'working: stage 2 implementation in progress\n' > "$d/state/anchored.status"
+  FM_FAKE_RUN_HEAD=0000000000000000000000000000000000000000
+  FM_FAKE_AXI_STATUS="$(branch_sync_block fm/feat-anchored "$head" 01OTHER; run_fixing fm/feat-theirs)"
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" anchored)
+  assert_not_contains "$out" "source: run-step" "a foreign run must not borrow branch_sync's branch and head"
+  assert_contains "$out" "source: status-log" "falls back when no run binds this worktree"
+  assert_contains "$out" "state: working" "status-log working: remains current"
+  pass "branch_sync emitted first does not attribute a foreign run"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -1530,6 +1716,13 @@ test_usage_error
 test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
+test_pipeline_fix_head_in_foreign_repo_binds_via_branch_sync
+test_branch_sync_for_other_branch_does_not_attribute
+test_branch_sync_for_a_different_run_does_not_attribute
+test_branch_sync_without_run_id_does_not_attribute
+test_branch_sync_after_local_work_past_submitted_head_does_not_attribute
+test_branch_sync_before_run_object_still_reads_run_fields
+test_branch_sync_before_run_object_does_not_attribute_foreign_run
 test_missing_run_head_falls_back_to_current_state
 test_usage_limit_prompt_outranks_active_run
 test_usage_limit_prompt_exhausted_window
