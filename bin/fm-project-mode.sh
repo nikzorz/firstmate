@@ -32,8 +32,10 @@
 #                    still ships the opposite of that decision.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
-# to stderr, so a typo never silently drops the gate. The project-memory posture
-# falls back to agents-md, the behavior every project had before the flag existed.
+# to stderr, and a bracket token starting with "+" that is neither +yolo nor
+# +keep-claude-md warns and is ignored, so a typo never silently drops a posture.
+# The project-memory posture falls back to agents-md, the behavior every project
+# had before the flag existed.
 # Usage: fm-project-mode.sh [--project-memory] <project-name>
 set -eu
 
@@ -73,10 +75,11 @@ if [ ! -f "$REG" ]; then
   exit 0
 fi
 
-# awk emits "<mode> <yolo> <memory>" (one line) or nothing if the project is absent.
+# awk emits "<mode> <yolo> <memory> [unknown +flags...]" (one line) or nothing if
+# the project is absent.
 parsed=$(awk -v n="$NAME" '
   $1=="-" && $2==n {
-    mode="no-mistakes"; yolo="off"; memory="agents-md";
+    mode="no-mistakes"; yolo="off"; memory="agents-md"; unknown="";
     if ($3 ~ /^\[/) {
       s="";
       for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
@@ -85,10 +88,11 @@ parsed=$(awk -v n="$NAME" '
       if (a[1] != "" && a[1] !~ /^\+/) mode = a[1];
       for (j=1; j<=k; j++) {
         if (a[j]=="+yolo") yolo="on";
-        if (a[j]=="+keep-claude-md") memory="keep-claude-md";
+        else if (a[j]=="+keep-claude-md") memory="keep-claude-md";
+        else if (a[j] ~ /^\+/) unknown = unknown (unknown==""?"":" ") a[j];
       }
     }
-    print mode, yolo, memory; exit
+    print mode, yolo, memory, unknown; exit
   }
 ' "$REG")
 
@@ -98,9 +102,12 @@ if [ -z "$parsed" ]; then
   exit 0
 fi
 
-read -r mode yolo memory <<EOF
+read -r mode yolo memory unknown <<EOF
 $parsed
 EOF
+for flag in $unknown; do
+  echo "warn: unknown flag \"$flag\" for $NAME; ignoring it" >&2
+done
 case "$mode" in
   no-mistakes|direct-PR|local-only) ;;
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off ;;

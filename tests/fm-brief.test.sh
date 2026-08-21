@@ -306,7 +306,7 @@ test_ship_project_memory_wording() {
 # The registry marker is +keep-claude-md (bin/fm-project-mode.sh); data/projects.md
 # is gitignored, so the unmarked default must stay exactly what it was.
 test_keep_claude_md_project_gets_prohibition_not_omission() {
-  local home id brief default_brief out rc
+  local home id brief default_brief out rc proj
   home="$TMP_ROOT/keep-claude-md-home"
   mkdir -p "$home/data"
   cat > "$home/data/projects.md" <<'EOF'
@@ -359,6 +359,32 @@ EOF
     [ "$rc" -ne 0 ] || fail "fm-project-mode.sh accepted bad arguments: $bad_args"
     assert_contains "$out" "usage: fm-project-mode.sh" \
       "fm-project-mode.sh did not report usage for: $bad_args"
+  done
+
+  # A one-character slip in this hand-edited, gitignored registry must not
+  # resolve to the default posture in silence, or the marked project quietly
+  # gets back the instruction its captain decision forbids.
+  cat >> "$home/data/projects.md" <<'EOF'
+- typo-flag [no-mistakes +keep-claudemd] - fixture with a mistyped marker (added 2026-08-21)
+- typo-only [+keep-claudemd] - fixture whose only bracket token is mistyped (added 2026-08-21)
+EOF
+  for proj in typo-flag typo-only; do
+    [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>/dev/null)" = "no-mistakes off" ] \
+      || fail "$proj: a mistyped bracket flag changed the resolved delivery posture"
+    [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>/dev/null)" = "agents-md" ] \
+      || fail "$proj: a mistyped bracket flag did not fall back to agents-md"
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>&1 >/dev/null)
+    assert_contains "$out" '+keep-claudemd' \
+      "$proj: a mistyped bracket flag resolved with no warning"
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
+    assert_contains "$out" '+keep-claudemd' \
+      "$proj: a mistyped bracket flag resolved with no warning under --project-memory"
+  done
+  for proj in keeper direct-keeper flags-only; do
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
+    [ -z "$out" ] || fail "$proj: a correctly spelled bracket flag warned: $out"
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>&1 >/dev/null)
+    [ -z "$out" ] || fail "$proj: a correctly spelled bracket flag warned: $out"
   done
 
   # data/projects.md is gitignored, so every absent-registry path must answer with
