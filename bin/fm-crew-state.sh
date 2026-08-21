@@ -268,10 +268,25 @@ nm_run() {  # <args...>
   esac
 }
 
-# Scalar value of a TOON key in the captured run output ($RUN_OUT).
+# Scalar value of a TOON key in the captured run output ($RUN_OUT), read from
+# the reported run's own scope only: a top-level key, or a field of the run
+# object. `axi status` renders sibling top-level blocks whose keys collide with
+# the run object's own - branch_sync carries `branch`, `head` and `status` - so
+# an unscoped read resolves whichever block is emitted first, and the emission
+# order silently decides which run's identity the attribution rules below see.
 RUN_OUT=""
 nm_field() {  # <key>
-  printf '%s\n' "$RUN_OUT" | sed -n "s/^[[:space:]]*$1:[[:space:]]*\(.*\)/\1/p" | head -1
+  printf '%s\n' "$RUN_OUT" | awk -v pre="$1:" '
+    /^[^ ]/ { top = $0; sub(/:.*$/, "", top) }
+    /^ / && top != "run" { next }
+    { line = $0; sub(/^ +/, "", line) }
+    index(line, pre) == 1 {
+      val = substr(line, length(pre) + 1)
+      sub(/^ +/, "", val)
+      print val
+      exit
+    }
+  '
 }
 # Finding count from a findings[N]{...} table header; empty when none.
 nm_findings_count() {
