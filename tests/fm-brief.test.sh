@@ -306,7 +306,7 @@ test_ship_project_memory_wording() {
 # The registry marker is +keep-claude-md (bin/fm-project-mode.sh); data/projects.md
 # is gitignored, so the unmarked default must stay exactly what it was.
 test_keep_claude_md_project_gets_prohibition_not_omission() {
-  local home id brief default_brief
+  local home id brief default_brief out rc
   home="$TMP_ROOT/keep-claude-md-home"
   mkdir -p "$home/data"
   cat > "$home/data/projects.md" <<'EOF'
@@ -326,6 +326,13 @@ EOF
       "$id: keep-claude-md brief did not forbid creating AGENTS.md"
     assert_no_grep "fm-ensure-agents-md.sh .\` in the worktree" "$brief" \
       "$id: keep-claude-md brief still instructs the worker to run the helper"
+    assert_grep "If this task produced durable project-intrinsic knowledge, record it in \`CLAUDE.md\`." "$brief" \
+      "$id: keep-claude-md brief lost the durable-knowledge recording condition"
+    # The default variant's existence trigger fires a helper run; the prohibition
+    # variant has no such action, so carrying it over would leave a condition
+    # with nothing to condition.
+    assert_no_grep "already exists" "$brief" \
+      "$id: keep-claude-md brief kept an existence trigger with no action behind it"
   done
 
   # The marker must not leak into the delivery mode or autonomy posture, and a
@@ -338,6 +345,21 @@ EOF
     || fail "a flags-only bracket was read as a delivery mode"
   [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory flags-only)" = "keep-claude-md" ] \
     || fail "--project-memory did not read a flags-only bracket"
+
+  # A misplaced flag must never resolve to a posture the captain decision
+  # forbids: answer the query wherever the flag sits, and refuse anything else
+  # loudly rather than defaulting to agents-md behind the caller's back.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" keeper --project-memory)" = "keep-claude-md" ] \
+    || fail "--project-memory after the project name silently returned the wrong posture"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" keeper)" = "no-mistakes off" ] \
+    || fail "the default two-word stdout contract changed"
+  for bad_args in "keeper --project-memry" "keeper extra-proj" "--project-memory" "-x keeper"; do
+    # shellcheck disable=SC2086
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" $bad_args 2>&1); rc=$?
+    [ "$rc" -ne 0 ] || fail "fm-project-mode.sh accepted bad arguments: $bad_args"
+    assert_contains "$out" "usage: fm-project-mode.sh" \
+      "fm-project-mode.sh did not report usage for: $bad_args"
+  done
 
   # data/projects.md is gitignored, so every absent-registry path must answer with
   # the pre-existing behavior rather than a missing-value error.

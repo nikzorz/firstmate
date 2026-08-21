@@ -43,12 +43,21 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
 
+usage() {
+  echo "usage: fm-project-mode.sh [--project-memory] <project-name>" >&2
+  exit 1
+}
+
 QUERY=posture
-if [ "${1:-}" = "--project-memory" ]; then
-  QUERY=project-memory
-  shift
-fi
-NAME=${1:?usage: fm-project-mode.sh [--project-memory] <project-name>}
+NAME=
+for arg in "$@"; do
+  case "$arg" in
+    --project-memory) QUERY=project-memory ;;
+    -*) usage ;;
+    *) [ -z "$NAME" ] || usage; NAME=$arg ;;
+  esac
+done
+[ -n "$NAME" ] || usage
 
 emit() {
   if [ "$QUERY" = project-memory ]; then

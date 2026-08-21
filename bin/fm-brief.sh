@@ -378,7 +378,7 @@ case "$PROJECT_MEMORY" in
 # Project memory
 This project keeps its project memory in \`CLAUDE.md\` as the real file.
 Do NOT create an \`AGENTS.md\` here, do NOT run \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`, and do NOT turn \`CLAUDE.md\` into a symlink.
-If \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, record that knowledge in \`CLAUDE.md\`.
+If this task produced durable project-intrinsic knowledge, record it in \`CLAUDE.md\`.
 Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 Keep it proportionate: skip \`CLAUDE.md\` edits for trivial tasks that produced no durable project knowledge.
