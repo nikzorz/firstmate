@@ -291,13 +291,13 @@ SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
 }
 
-# Override fakebin/treehouse so `treehouse return --force <wt>` fails with a
-# git "file exists" lock error whenever the worktree's real index.lock is
-# present, and succeeds once it is gone. This drives the lock through
-# fm-teardown.sh's own retry-then-stale-cleanup logic (teardown_treehouse_return
-# in bin/fm-teardown.sh) rather than hand-simulating that logic in the test.
-add_lock_aware_treehouse() {
-  local case_dir=$1
+# Open a fakebin/treehouse whose `return` subcommand resolves the worktree's real
+# index.lock path into $lock before the case-specific failure body runs. Pass
+# "count" to also record the attempt number in $count against TREEHOUSE_ATTEMPT_FILE,
+# which the fakes whose tests assert an exact number of return attempts need. The
+# caller appends its body, then closes with end_fake_treehouse.
+begin_fake_treehouse() {
+  local case_dir=$1 counter=${2:-}
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = return ]; then
@@ -314,15 +314,46 @@ if [ "${1:-}" = return ]; then
     /*|'') ;;
     *) lock="$wt/$lock" ;;
   esac
-  if [ -n "$lock" ] && [ -e "$lock" ]; then
-    echo "fatal: Unable to create '$lock': File exists." >&2
-    exit 128
+SH
+  [ "$counter" = count ] || return 0
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
+  count=0
+  if [ -f "$count_file" ]; then
+    count=$(cat "$count_file")
   fi
+  count=$(( count + 1 ))
+  printf '%s\n' "$count" > "$count_file"
+SH
+}
+
+# Close a fake opened by begin_fake_treehouse: a body that falls through without
+# exiting means the return succeeded.
+end_fake_treehouse() {
+  local case_dir=$1
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   exit 0
 fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# `treehouse return --force <wt>` fails with a git "file exists" lock error whenever
+# the worktree's real index.lock is present, and succeeds once it is gone. This drives
+# the lock through fm-teardown.sh's own retry-then-stale-cleanup logic
+# (teardown_treehouse_return in bin/fm-teardown.sh) rather than hand-simulating that
+# logic in the test.
+add_lock_aware_treehouse() {
+  local case_dir=$1
+  begin_fake_treehouse "$case_dir"
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  if [ -n "$lock" ] && [ -e "$lock" ]; then
+    echo "fatal: Unable to create '$lock': File exists." >&2
+    exit 128
+  fi
+SH
+  end_fake_treehouse "$case_dir"
 }
 
 # treehouse return fails once with the index.lock signature, then clears the lock
@@ -332,29 +363,8 @@ SH
 # between the failed return and the supervisor's existence check.
 add_transient_lock_treehouse() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = return ]; then
-  shift
-  wt=""
-  for a in "$@"; do
-    case "$a" in
-      --force) ;;
-      *) wt=$a ;;
-    esac
-  done
-  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
-  case "$lock" in
-    /*|'') ;;
-    *) lock="$wt/$lock" ;;
-  esac
-  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
-  count=0
-  if [ -f "$count_file" ]; then
-    count=$(cat "$count_file")
-  fi
-  count=$(( count + 1 ))
-  printf '%s\n' "$count" > "$count_file"
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   if [ "$count" -eq 1 ]; then
     # Emit the real git signature, then drop the lock so a lock-existence-only
     # recovery path would wrongly abort without retrying.
@@ -366,11 +376,8 @@ if [ "${1:-}" = return ]; then
     fi
     exit 128
   fi
-  exit 0
-fi
-exit 0
 SH
-  chmod +x "$case_dir/fakebin/treehouse"
+  end_fake_treehouse "$case_dir"
 }
 
 # treehouse return that fails once with git's real index.lock signature while no
@@ -378,38 +385,14 @@ SH
 # probe can see one and the error text is the only signal left.
 add_signature_only_treehouse() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = return ]; then
-  shift
-  wt=""
-  for a in "$@"; do
-    case "$a" in
-      --force) ;;
-      *) wt=$a ;;
-    esac
-  done
-  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
-  case "$lock" in
-    /*|'') ;;
-    *) lock="$wt/$lock" ;;
-  esac
-  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
-  count=0
-  if [ -f "$count_file" ]; then
-    count=$(cat "$count_file")
-  fi
-  count=$(( count + 1 ))
-  printf '%s\n' "$count" > "$count_file"
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   if [ "$count" -eq 1 ]; then
     echo "fatal: Unable to create '${lock:-index.lock}': File exists." >&2
     exit 128
   fi
-  exit 0
-fi
-exit 0
 SH
-  chmod +x "$case_dir/fakebin/treehouse"
+  end_fake_treehouse "$case_dir"
 }
 
 # treehouse return that swallows git's message, reproducing the observed production
@@ -419,29 +402,8 @@ SH
 # the lock is dropped; 0 keeps the lock forever.
 add_message_swallowing_treehouse() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = return ]; then
-  shift
-  wt=""
-  for a in "$@"; do
-    case "$a" in
-      --force) ;;
-      *) wt=$a ;;
-    esac
-  done
-  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
-  case "$lock" in
-    /*|'') ;;
-    *) lock="$wt/$lock" ;;
-  esac
-  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
-  count=0
-  if [ -f "$count_file" ]; then
-    count=$(cat "$count_file")
-  fi
-  count=$(( count + 1 ))
-  printf '%s\n' "$count" > "$count_file"
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   clear_after=${FM_TEST_TREEHOUSE_CLEAR_LOCK_AFTER:-0}
   if [ -n "$lock" ] && [ -e "$lock" ]; then
     echo "🌳 Terminated lingering processes: bash (6287), claude (6619)"
@@ -451,63 +413,35 @@ if [ "${1:-}" = return ]; then
     fi
     exit 1
   fi
-  exit 0
-fi
-exit 0
 SH
-  chmod +x "$case_dir/fakebin/treehouse"
+  end_fake_treehouse "$case_dir"
 }
 
 # treehouse return that always fails for a reason that is not a lock race, with no
 # lock present; used to assert a genuine failure still aborts on the first attempt.
 add_failing_treehouse() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = return ]; then
-  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
-  count=0
-  if [ -f "$count_file" ]; then
-    count=$(cat "$count_file")
-  fi
-  printf '%s\n' "$(( count + 1 ))" > "$count_file"
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
   exit 1
-fi
-exit 0
 SH
-  chmod +x "$case_dir/fakebin/treehouse"
+  end_fake_treehouse "$case_dir"
 }
 
 # treehouse return always fails with the lock signature while the lock file
 # remains; used to assert exhausted retries still refuse loudly.
 add_persistent_lock_treehouse() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = return ]; then
-  shift
-  wt=""
-  for a in "$@"; do
-    case "$a" in
-      --force) ;;
-      *) wt=$a ;;
-    esac
-  done
-  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
-  case "$lock" in
-    /*|'') ;;
-    *) lock="$wt/$lock" ;;
-  esac
+  begin_fake_treehouse "$case_dir"
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
   if [ -z "$lock" ]; then
     lock="index.lock"
   fi
   echo "fatal: Unable to create '$lock': File exists." >&2
   exit 128
-fi
-exit 0
 SH
-  chmod +x "$case_dir/fakebin/treehouse"
+  end_fake_treehouse "$case_dir"
 }
 
 git_index_lock_path() {
@@ -1409,7 +1343,7 @@ test_unlanded_work_refuses_before_any_return_attempt() {
   lock=$(git_index_lock_path "$case_dir/wt")
   mkdir -p "$(dirname "$lock")"
   : > "$lock"
-  touch -d '2 hours ago' "$lock"
+  touch -t 200001010000 "$lock"
 
   attempt_file="$case_dir/treehouse-attempts"
   : > "$attempt_file"

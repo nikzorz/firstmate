@@ -80,11 +80,11 @@
 #   1. Retries up to FM_TREEHOUSE_RETURN_LOCK_RETRIES times (default 3), waiting
 #      FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS (default 1s; falls back to the older
 #      FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS name when the new one is unset) between
-#      attempts. A retry also continues while either lock-race signal still holds, so
+#      attempts. A retry also continues while any of those three signals still holds, so
 #      neither a lock that self-clears mid-check nor a swallowed git message ends the
 #      patience window early.
 #   2. Other treehouse return failures still abort immediately and loudly (no retry).
-#   3. If every retry still hits the lock signature and the lock remains, it is removed
+#   3. If the lock race persists across every retry and the lock remains, it is removed
 #      and the return tried once more ONLY when the lock is provably stale per
 #      bin/fm-lock-lib.sh's fm_lock_is_provably_stale, passing the worktree dir as the
 #      companion directory and FM_STALE_WORKTREE_LOCK_AGE_SECS (default 30s) as the age
@@ -579,16 +579,14 @@ worktree_git_lock_present() {
 
 worktree_safety_blocked_by_lock() {
   local reason=$1 lock
-  lock=$(worktree_git_lock_path "$WT") || lock=""
-  [ -n "$lock" ] && [ -e "$lock" ] || return 1
+  lock=$(worktree_git_lock_present "$WT") || return 1
   echo "teardown: cannot inspect worktree $WT for $reason while git lock $lock is present; checking whether the lock is stale" >&2
   return 0
 }
 
 cleanup_stale_lock_for_safety_check() {
   local dir=$1 lock
-  lock=$(worktree_git_lock_path "$dir") || lock=""
-  [ -n "$lock" ] && [ -e "$lock" ] || return 0
+  lock=$(worktree_git_lock_present "$dir") || return 0
 
   echo "teardown: worktree safety check blocked by git lock $lock; waiting ${STALE_WORKTREE_LOCK_RETRY_WAIT_SECS}s and retrying (owning process may be exiting)" >&2
   sleep "$STALE_WORKTREE_LOCK_RETRY_WAIT_SECS"
@@ -614,9 +612,13 @@ teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-}
   local out lock lock_before attempt=0 max_retries lock_desc
 
-  # Capture stdout+stderr so non-lock failures stay visible and lock failures can
-  # be matched by signature even when the lock file is already gone mid-check.
+  # A lock the dying process releases during the failing attempt is invisible to
+  # both the post-failure probe and a swallowed error message; only this
+  # pre-attempt observation can still prove that race.
   lock_before=$(worktree_git_lock_present "$dir") || lock_before=""
+
+  # Capture stdout+stderr so non-lock failures stay visible and the error text
+  # stays available as the third classification signal.
   if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
     [ -n "$out" ] && printf '%s\n' "$out"
     return 0
@@ -669,8 +671,7 @@ teardown_treehouse_return() {
 
   # Refresh lock path after the patience window; it may have appeared, moved, or
   # cleared while we waited.
-  lock=$(worktree_git_lock_path "$dir") || lock=""
-  if [ -n "$lock" ] && [ -e "$lock" ]; then
+  if lock=$(worktree_git_lock_present "$dir"); then
     lock_desc=$lock
     if fm_lock_is_provably_stale "$lock" "$dir" "$STALE_WORKTREE_LOCK_AGE_SECS"; then
       rm -f "$lock"
