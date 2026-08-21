@@ -16,9 +16,11 @@
 #     recognizes a merged PR head containing the local work (or the content already
 #     in main) as landed.
 #   - teardown-lock-race: a killed crew process can leave a transient worktree
-#     git index.lock that blocks teardown. The return path retries on the lock
-#     error signature (even if the lock self-clears mid-check), then only removes a
-#     provably stale lock before re-running safety checks.
+#     git index.lock that blocks teardown. The return path retries whenever the lock
+#     is present or the error text carries git's lock signature (so neither a lock
+#     that self-clears mid-check nor an error text that names no cause ends the
+#     patience window early), then only removes a provably stale lock before
+#     re-running safety checks.
 #
 # Matrix:
 #   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (fork fix)
@@ -49,6 +51,10 @@
 #   (w) index.lock mtime read failure                         -> lock kept, REFUSE
 #   (x) transient lock cleared after first failed return      -> retry ALLOW
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
+#   (z) transient lock, return error text names no cause      -> retry ALLOW
+#   (z2) lock cleared mid-attempt, error text names no cause  -> retry ALLOW
+#   (aa) return failure with no lock present                  -> abort, no retry
+#   (ab) unlanded work while a lock is present                -> REFUSE before return
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -360,6 +366,73 @@ if [ "${1:-}" = return ]; then
     exit 128
   fi
   exit 0
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# treehouse return that swallows git's message, reproducing the observed production
+# failure text: the wrapper names the git command it ran and nothing after the colon,
+# so no lock signature is ever visible. FM_TEST_TREEHOUSE_CLEAR_LOCK_AFTER is the
+# attempt number after which the dying crew process is treated as having finished and
+# the lock is dropped; 0 keeps the lock forever.
+add_message_swallowing_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = return ]; then
+  shift
+  wt=""
+  for a in "$@"; do
+    case "$a" in
+      --force) ;;
+      *) wt=$a ;;
+    esac
+  done
+  lock=$(git -C "$wt" rev-parse --git-path index.lock 2>/dev/null || true)
+  case "$lock" in
+    /*|'') ;;
+    *) lock="$wt/$lock" ;;
+  esac
+  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
+  count=0
+  if [ -f "$count_file" ]; then
+    count=$(cat "$count_file")
+  fi
+  count=$(( count + 1 ))
+  printf '%s\n' "$count" > "$count_file"
+  clear_after=${FM_TEST_TREEHOUSE_CLEAR_LOCK_AFTER:-0}
+  if [ -n "$lock" ] && [ -e "$lock" ]; then
+    echo "🌳 Terminated lingering processes: bash (6287), claude (6619)"
+    echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+    if [ "$clear_after" -gt 0 ] && [ "$count" -ge "$clear_after" ]; then
+      rm -f "$lock"
+    fi
+    exit 1
+  fi
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# treehouse return that always fails for a reason that is not a lock race, with no
+# lock present; used to assert a genuine failure still aborts on the first attempt.
+add_failing_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = return ]; then
+  count_file="${TREEHOUSE_ATTEMPT_FILE:?}"
+  count=0
+  if [ -f "$count_file" ]; then
+    count=$(cat "$count_file")
+  fi
+  printf '%s\n' "$(( count + 1 ))" > "$count_file"
+  echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+  exit 1
 fi
 exit 0
 SH
@@ -1120,6 +1193,164 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds() {
   pass "transient index.lock cleared after first failed return is retried successfully without force-remove"
 }
 
+test_swallowed_lock_message_still_retries_and_succeeds() {
+  local case_dir rc lock attempt_file
+  case_dir=$(make_case swallowed-lock-message)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_message_swallowing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  lock=$(git_index_lock_path "$case_dir/wt")
+  mkdir -p "$(dirname "$lock")"
+  : > "$lock"
+  # Fresh lock: never eligible for force-removal, so only patience can recover it.
+  touch "$lock"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TEST_TREEHOUSE_CLEAR_LOCK_AFTER=2 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRIES=3 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+  FM_STALE_WORKTREE_LOCK_AGE_SECS=3600 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "swallowed-lock-message: teardown should recover when the return error names no cause"
+  assert_grep "is present; treating it as a transient lock race" "$case_dir/stderr" \
+    "swallowed-lock-message: teardown did not name the lock the error text omitted"
+  assert_grep "$lock" "$case_dir/stderr" \
+    "swallowed-lock-message: teardown did not print the lock path"
+  assert_grep "succeeded on retry" "$case_dir/stderr" \
+    "swallowed-lock-message: teardown did not retry the return"
+  assert_not_contains "$(cat "$case_dir/stderr")" "removed provably-stale git lock" \
+    "swallowed-lock-message: teardown force-removed a lock that only needed patience"
+  [ "$(cat "$attempt_file")" = 3 ] \
+    || fail "swallowed-lock-message: expected exactly 3 treehouse return attempts, got $(cat "$attempt_file")"
+  pass "a return failure whose error text names no cause is still recognized as a lock race and retried"
+}
+
+test_swallowed_lock_message_retries_when_lock_self_clears_mid_attempt() {
+  local case_dir rc lock attempt_file
+  case_dir=$(make_case swallowed-lock-selfclear)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_message_swallowing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  lock=$(git_index_lock_path "$case_dir/wt")
+  mkdir -p "$(dirname "$lock")"
+  : > "$lock"
+  touch "$lock"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  # The dying crew process releases the lock during the very first return, so
+  # neither the error text nor a post-failure probe can see it. Only the lock
+  # observed before the attempt proves the race.
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TEST_TREEHOUSE_CLEAR_LOCK_AFTER=1 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+  FM_STALE_WORKTREE_LOCK_AGE_SECS=3600 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "swallowed-lock-selfclear: teardown should recover from a lock that cleared mid-attempt"
+  assert_grep "which has since cleared; treating it as a transient lock race" "$case_dir/stderr" \
+    "swallowed-lock-selfclear: teardown did not report the lock it saw before the attempt"
+  assert_grep "succeeded on retry" "$case_dir/stderr" \
+    "swallowed-lock-selfclear: teardown did not retry the return"
+  [ "$(cat "$attempt_file")" = 2 ] \
+    || fail "swallowed-lock-selfclear: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
+  pass "a lock that clears during the failing return is still recognized from the pre-attempt probe"
+}
+
+test_swallowed_message_without_lock_aborts_on_first_attempt() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case swallowed-no-lock)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_LOCK_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "swallowed-no-lock: a genuine return failure must still abort"
+  assert_grep "no git lock is present" "$case_dir/stderr" \
+    "swallowed-no-lock: teardown did not distinguish the failure from a lock race"
+  assert_not_contains "$(cat "$case_dir/stderr")" "transient lock race" \
+    "swallowed-no-lock: teardown misreported a genuine failure as a lock race"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "swallowed-no-lock: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "swallowed-no-lock: teardown completed despite the failed return"
+  pass "a genuine return failure with no git lock aborts immediately and says so"
+}
+
+test_unlanded_work_refuses_before_any_return_attempt() {
+  local case_dir rc lock attempt_file
+  case_dir=$(make_case unlanded-with-lock)
+  write_meta "$case_dir" no-mistakes ship
+  # Unpushed work with no PR and no content in the default branch: the one refusal
+  # that must always stop teardown, including while a lock race is in progress.
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  add_gh_axi_error "$case_dir"
+
+  add_message_swallowing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  lock=$(git_index_lock_path "$case_dir/wt")
+  mkdir -p "$(dirname "$lock")"
+  : > "$lock"
+  touch -d '2 hours ago' "$lock"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_LOCK_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+  FM_STALE_WORKTREE_LOCK_AGE_SECS=1 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unlanded-with-lock: unlanded work must refuse teardown"
+  grep -q REFUSED "$case_dir/stderr" || fail "unlanded-with-lock: no REFUSED line in stderr"
+  [ "$(cat "$attempt_file")" = 0 ] || [ ! -s "$attempt_file" ] \
+    || fail "unlanded-with-lock: teardown returned the worktree despite unlanded work"
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "unlanded-with-lock: teardown completed despite unlanded work"
+  pass "unlanded work still refuses loudly and never reaches the return, lock race or not"
+}
+
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly() {
   local case_dir rc lock
   case_dir=$(make_case persistent-index-lock)
@@ -1401,5 +1632,9 @@ test_non_linked_index_lock_path_is_checked_from_worktree
 test_index_lock_mtime_read_failure_refuses
 test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
+test_swallowed_lock_message_still_retries_and_succeeds
+test_swallowed_lock_message_retries_when_lock_self_clears_mid_attempt
+test_swallowed_message_without_lock_aborts_on_first_attempt
+test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
