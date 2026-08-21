@@ -36,8 +36,8 @@
 #      A run matches when no-mistakes' own branch_sync block binds it to this
 #      worktree's branch and HEAD and names that same HEAD as the head the run
 #      was submitted at, or, failing that, when its head equals the worktree HEAD
-#      or the worktree HEAD is an ancestor of the run head (pipeline fix commits
-#      advanced the run on the same line of history).
+#      or the worktree HEAD is an ancestor of the run head (a run tip this
+#      worktree can still resolve, advanced past HEAD on the same history).
 #      The head rule alone cannot bind a healthy run: the pipeline's auto-fix
 #      commits live only in no-mistakes' own repo, so the head it reports stops
 #      resolving here as soon as the first one is made. Only the pipeline's own
@@ -473,8 +473,9 @@ CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true
 # identity. Branch match is a precondition (caller). Rules:
 #   - missing/empty head field: cannot bind; reject the run
 #   - equal commits (short or full SHA): match
-#   - worktree HEAD is an ancestor of run head: match (pipeline fix commits on
-#     the same history advanced the run tip)
+#   - worktree HEAD is an ancestor of run head: match (the run tip advanced past
+#     HEAD on the same history and still resolves here; a pipeline auto-fix
+#     commit does not, which is what nm_branch_sync_binds_worktree binds)
 #   - run head is a strict ancestor of worktree HEAD: no match (local work
 #     advanced outside the run)
 #   - diverged / run head not in this worktree: no match (rewritten branch tip)
