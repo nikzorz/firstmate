@@ -63,6 +63,10 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
+# A project registered +keep-claude-md (bin/fm-project-mode.sh) gets that section
+# replaced by the matching prohibition rather than having it dropped: an omitted
+# instruction would still leave the worker free to create the AGENTS.md that
+# project's recorded captain decision forbids.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -305,6 +309,7 @@ fi
 read -r MODE _ <<EOF
 $("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
 EOF
+PROJECT_MEMORY=$("$FM_ROOT/bin/fm-project-mode.sh" --project-memory "$REPO" 2>/dev/null || echo agents-md)
 
 case "$MODE" in
   direct-PR)
@@ -363,6 +368,35 @@ EOF
     ;;
 esac
 
+# The project-memory instruction is generated, never omitted: a project whose
+# captain decision keeps CLAUDE.md as the real file needs the prohibition in its
+# place, because the default text tells the worker to do exactly what that
+# decision forbids (bin/fm-project-mode.sh --project-memory).
+case "$PROJECT_MEMORY" in
+  keep-claude-md)
+    PROJECT_MEMORY_SECTION=$(cat <<EOF
+# Project memory
+This project keeps its project memory in \`CLAUDE.md\` as the real file.
+Do NOT create an \`AGENTS.md\` here, do NOT run \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`, and do NOT turn \`CLAUDE.md\` into a symlink.
+If this task produced durable project-intrinsic knowledge, record it in \`CLAUDE.md\`.
+Record only project knowledge useful to almost every future session.
+For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+Keep it proportionate: skip \`CLAUDE.md\` edits for trivial tasks that produced no durable project knowledge.
+EOF
+)
+    ;;
+  *)
+    PROJECT_MEMORY_SECTION=$(cat <<EOF
+# Project memory
+If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
+Record only project knowledge useful to almost every future session.
+For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
+Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+EOF
+)
+    ;;
+esac
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -406,12 +440,7 @@ $PAUSE_LIFECYCLE
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
-# Project memory
-If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
-Record only project knowledge useful to almost every future session.
-For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
-If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
-Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+$PROJECT_MEMORY_SECTION
 
 $DOD
 EOF

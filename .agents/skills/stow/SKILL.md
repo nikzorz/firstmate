@@ -19,7 +19,7 @@ The goal is a session that is safe to reset or destroy because everything durabl
    Read back over this conversation and look for:
    - Operational learnings: fleet-local facts and gotchas discovered while operating firstmate (a script's sharp edge, a harness quirk, a recurring false alarm and its real cause).
    - Captain preferences expressed in passing: a working-style or approval preference the captain stated conversationally rather than through the destination selected by AGENTS.md's knowledge-routing table.
-   - Project-intrinsic facts discovered: build, test, release, or architecture facts about a project that belong in that project's own `AGENTS.md`.
+   - Project-intrinsic facts discovered: build, test, release, or architecture facts about a project that belong in that project's own project-memory file.
    - Decisions made: a standing choice the captain made this session that should outlive it.
    - Undone next steps: anything left open that has not yet been filed as backlog work.
 
@@ -32,8 +32,8 @@ The goal is a session that is safe to reset or destroy because everything durabl
    - Captain preferences and fleet-local operational facts: hand-write directly to the destination selected by AGENTS.md's knowledge-routing table, using inspect-then-update every time.
      Before writing, inspect the destination, find the existing bullet or section the finding duplicates or supersedes, and rewrite it in place rather than adding a new trailing entry.
      `data/learnings.md` may not exist yet; create it on first local learning, in the same dated, evidence-backed, curated style as the captain-preference files.
-   - Project-intrinsic knowledge: never hand-write a project's `AGENTS.md`.
-     Route it through a normal ship task so a crewmate records it via `bin/fm-ensure-agents-md.sh` and commits it through that project's delivery pipeline, exactly as section 6 describes.
+   - Project-intrinsic knowledge: never hand-write a project's project-memory file.
+     Route it through a normal ship task so a crewmate records it through the project-memory instruction in its generated brief and commits it through that project's delivery pipeline, exactly as section 6 describes.
      If the fleet is live, delegate this to a crewmate rather than doing it inline.
    - Knowledge generalizable to every firstmate user: this repo's own `AGENTS.md` (or other shared, tracked material), shipped through the normal branch -> no-mistakes -> PR -> captain-merge pipeline for this repo (section 1), never hand-committed straight to `main`.
    - Task-scoped notes: inspect the relevant backlog item with `tasks-axi show <id> --full`, judge whether the new note is new, duplicate, superseding, or obsolete, then write a considered replacement body with `tasks-axi update <id> --body-file <path>`.

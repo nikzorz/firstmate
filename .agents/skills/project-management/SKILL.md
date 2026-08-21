@@ -38,6 +38,9 @@ The optional `+yolo` posture changes routine approval authority but does not cha
 Default it off, and enable it only on the captain's explicit instruction.
 `AGENTS.md` section 7 owns the complete authority boundary and exceptions when it is on.
 
+The optional `+keep-claude-md` marker records that the project keeps `CLAUDE.md` as its real project-memory file and gets no `AGENTS.md`.
+Set it when the captain decides that for a project, so `bin/fm-brief.sh` generates the prohibition instead of the default instruction to create `AGENTS.md`.
+
 ## Add or clone an existing project
 
 Confirm the source URL, local project name, delivery mode, and autonomy posture.
