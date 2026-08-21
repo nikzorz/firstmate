@@ -33,10 +33,14 @@
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
 #      branch whose head was rewritten or diverged must not be attributed.
-#      A run matches when its head equals the worktree HEAD, or the worktree HEAD
-#      is an ancestor of the run head (pipeline fix commits advanced the run on
-#      the same line of history). Local work that advanced past the run head, or
-#      diverged from it, invalidates attribution.
+#      A run matches when no-mistakes' own branch_sync block binds it to this
+#      worktree's branch and HEAD, or, failing that, when its head equals the
+#      worktree HEAD or the worktree HEAD is an ancestor of the run head
+#      (pipeline fix commits advanced the run on the same line of history).
+#      The head rule alone cannot bind a healthy run: the pipeline's auto-fix
+#      commits live only in no-mistakes' own repo, so the head it reports stops
+#      resolving here as soon as the first one is made. Local work that advanced
+#      past the run head, or diverged from it, invalidates attribution.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
@@ -467,6 +471,47 @@ nm_run_head_matches_worktree() {
   return 1
 }
 
+# branch_sync is the run-to-worktree binding no-mistakes publishes itself: it is
+# emitted only when the checked-out branch is bound to the reported run, and its
+# local.head is read from THIS worktree, so binding needs no commit to be
+# resolvable here. That is what nm_run_head_matches_worktree cannot do: a
+# pipeline auto-fix commit lives only in no-mistakes' own repo, so the run head
+# it reports stops resolving the moment a healthy run makes its first fix
+# commit, and attribution is lost for the rest of the run.
+#
+# Scalar value of <key> inside branch_sync's <section> sub-block; empty when the
+# block, the section, or the key is absent.
+nm_bs_field() {  # <section> <key>
+  printf '%s\n' "$RUN_OUT" | awk -v sec="  $1:" -v key="    $2:" '
+    /^branch_sync:$/ { in_bs = 1; next }
+    !in_bs { next }
+    /^[^[:space:]]/ { exit }
+    $0 == sec { in_sec = 1; next }
+    in_sec && /^  [^[:space:]]/ { exit }
+    in_sec && index($0, key) == 1 { sub(/^[^:]*:[[:space:]]*/, "", $0); print; exit }
+  '
+}
+
+# 0 when no-mistakes itself asserts the reported run owns this worktree: a bound
+# run id, this crew's branch, and this worktree's exact HEAD. The triple keeps
+# the refusal direction even if a future no-mistakes emits branch_sync
+# unconditionally rather than only for a bound branch.
+nm_branch_sync_binds_worktree() {
+  local bs_run bs_branch bs_head run_id
+  bs_run=$(strip_quotes "$(nm_bs_field pipeline run)")
+  [ -n "$bs_run" ] || return 1
+  bs_branch=$(strip_quotes "$(nm_bs_field local branch)")
+  [ -n "$bs_branch" ] && [ "$bs_branch" = "$CREW_BRANCH" ] || return 1
+  # The binding authorizes exactly one run, so a reported run that is not that
+  # run stays unattributed - the same cross-attribution guard the head rule was
+  # reaching for. An output with no run id at all falls through to that rule.
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ -z "$run_id" ] || [ "$run_id" = "$bs_run" ] || return 1
+  bs_head=$(strip_quotes "$(nm_bs_field local head)")
+  [ -n "$bs_head" ] || return 1
+  [ "$bs_head" = "$(git -C "$WT" rev-parse HEAD 2>/dev/null)" ]
+}
+
 # Coarse runs-list rows are "<status> <branch> <short-sha> ...". 0 if the short
 # sha for this branch row matches the worktree head under the same rules as
 # nm_run_head_matches_worktree (equal, or local is ancestor of run tip).
@@ -495,7 +540,10 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   RUN_OUT=$(nm_run axi status)
   if [ -n "$RUN_OUT" ]; then
     run_branch=$(strip_quotes "$(nm_field branch)")
-    if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] && nm_run_head_matches_worktree; then
+    # The head-match rule stays as a fallback: it still binds runs branch_sync
+    # does not cover (an older no-mistakes that omits the block).
+    if nm_branch_sync_binds_worktree \
+       || { [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] && nm_run_head_matches_worktree; }; then
       HAVE_RUN=1
     else
       # The active-or-most-recent run is for another branch, or same branch with
