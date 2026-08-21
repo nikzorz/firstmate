@@ -300,6 +300,65 @@ test_ship_project_memory_wording() {
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
 }
 
+# A project whose captain decision keeps CLAUDE.md as the real file must not be
+# handled by dropping the default instruction: the scaffold has to ship the
+# prohibition in its place, or the worker is still told to create an AGENTS.md.
+# The registry marker is +keep-claude-md (bin/fm-project-mode.sh); data/projects.md
+# is gitignored, so the unmarked default must stay exactly what it was.
+test_keep_claude_md_project_gets_prohibition_not_omission() {
+  local home id brief default_brief
+  home="$TMP_ROOT/keep-claude-md-home"
+  mkdir -p "$home/data"
+  cat > "$home/data/projects.md" <<'EOF'
+- keeper [no-mistakes +keep-claude-md] - fixture keeping CLAUDE.md (added 2026-08-21)
+- direct-keeper [direct-PR +yolo +keep-claude-md] - fixture with every flag (added 2026-08-21)
+- plain-proj [no-mistakes] - fixture without the marker (added 2026-08-21)
+EOF
+
+  for id_proj in "brief-keep-claude-g1:keeper" "brief-keep-claude-g2:direct-keeper"; do
+    id=${id_proj%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "${id_proj##*:}" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "This project keeps its project memory in \`CLAUDE.md\` as the real file." "$brief" \
+      "$id: keep-claude-md brief lost the project-memory prohibition"
+    assert_grep "Do NOT create an \`AGENTS.md\` here" "$brief" \
+      "$id: keep-claude-md brief did not forbid creating AGENTS.md"
+    assert_no_grep "fm-ensure-agents-md.sh .\` in the worktree" "$brief" \
+      "$id: keep-claude-md brief still instructs the worker to run the helper"
+  done
+
+  # The marker must not leak into the delivery mode or autonomy posture, and a
+  # bracket holding only flags still resolves the default mode.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" direct-keeper)" = "direct-PR on" ] \
+    || fail "+keep-claude-md changed the resolved delivery mode or yolo posture"
+  printf '%s\n' '- flags-only [+keep-claude-md] - fixture with no mode word (added 2026-08-21)' \
+    >> "$home/data/projects.md"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" flags-only)" = "no-mistakes off" ] \
+    || fail "a flags-only bracket was read as a delivery mode"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory flags-only)" = "keep-claude-md" ] \
+    || fail "--project-memory did not read a flags-only bracket"
+
+  # data/projects.md is gitignored, so every absent-registry path must answer with
+  # the pre-existing behavior rather than a missing-value error.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory plain-proj)" = "agents-md" ] \
+    || fail "--project-memory did not default an unmarked project to agents-md"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory absent-proj 2>/dev/null)" = "agents-md" ] \
+    || fail "--project-memory did not default an unregistered project to agents-md"
+  [ "$(FM_HOME="$TMP_ROOT/no-registry-home" "$ROOT/bin/fm-project-mode.sh" --project-memory any 2>/dev/null)" = "agents-md" ] \
+    || fail "--project-memory did not default a missing registry to agents-md"
+
+  # Unmarked projects keep the pre-existing instruction verbatim.
+  id="brief-keep-claude-g3"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" plain-proj >/dev/null 2>&1
+  default_brief="$home/data/$id/brief.md"
+  assert_grep "run \`$ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree" "$default_brief" \
+    "unmarked project lost the default ensure-agents-md instruction"
+  assert_no_grep "Do NOT create an" "$default_brief" \
+    "unmarked project inherited the keep-claude-md prohibition"
+  pass "fm-brief.sh: +keep-claude-md replaces the ensure-agents-md instruction with its prohibition"
+}
+
 test_herdr_lab_contract_is_explicit_and_complete() {
   local home id brief
   home="$TMP_ROOT/herdr-lab-home"
@@ -555,6 +614,7 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle
 test_every_crewmate_brief_is_complete_for_a_pointed_worker
 test_ship_project_memory_wording
+test_keep_claude_md_project_gets_prohibition_not_omission
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout

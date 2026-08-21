@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Resolve a project's delivery mode and yolo flag from the data/projects.md registry.
+# Resolve a project's delivery mode, yolo flag, and project-memory posture from
+# the data/projects.md registry.
 # Prints two words to stdout: "<mode> <yolo>" where mode is one of
 # no-mistakes|direct-PR|local-only and yolo is on|off.
+# With --project-memory, prints one word instead: agents-md|keep-claude-md.
 #
 # Registry line format (data/projects.md):
 #   - <name> - <desc> (added <date>)                  -> no-mistakes off  (legacy default)
 #   - <name> [<mode>] - <desc> (added <date>)          -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)    -> <mode> on
+#
+# Flags inside the brackets are order-independent and each is optional:
+#   +yolo             autonomy posture (below)
+#   +keep-claude-md   project-memory posture (below)
 #
 # mode = how a finished change reaches main:
 #   no-mistakes  full pipeline -> PR -> captain merge (default)
@@ -15,10 +21,20 @@
 # yolo (orthogonal) = when on, firstmate may make routine approval decisions itself.
 #   AGENTS.md section 7 is the single owner of authority exceptions, including
 #   ask-user contract expansion and stronger captain boundaries.
+# project memory (orthogonal) = which file a crewmate records durable project
+#   knowledge in, queried with --project-memory:
+#   agents-md        default: AGENTS.md via bin/fm-ensure-agents-md.sh
+#   keep-claude-md   +keep-claude-md: the project keeps CLAUDE.md as the real
+#                    file and no AGENTS.md is created for it. Set this only on a
+#                    recorded captain decision for that project; bin/fm-brief.sh
+#                    turns it into a prohibition in the generated ship brief,
+#                    because a brief that merely omits the default instruction
+#                    still ships the opposite of that decision.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
-# to stderr, so a typo never silently drops the gate.
-# Usage: fm-project-mode.sh <project-name>
+# to stderr, so a typo never silently drops the gate. The project-memory posture
+# falls back to agents-md, the behavior every project had before the flag existed.
+# Usage: fm-project-mode.sh [--project-memory] <project-name>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,41 +42,60 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
-NAME=${1:?usage: fm-project-mode.sh <project-name>}
+
+QUERY=posture
+if [ "${1:-}" = "--project-memory" ]; then
+  QUERY=project-memory
+  shift
+fi
+NAME=${1:?usage: fm-project-mode.sh [--project-memory] <project-name>}
+
+emit() {
+  if [ "$QUERY" = project-memory ]; then
+    echo "$3"
+  else
+    echo "$1 $2"
+  fi
+}
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  echo "no-mistakes off"
+  emit no-mistakes off agents-md
   exit 0
 fi
 
-# awk emits "<mode> <yolo>" (one line) or nothing if the project is absent.
+# awk emits "<mode> <yolo> <memory>" (one line) or nothing if the project is absent.
 parsed=$(awk -v n="$NAME" '
   $1=="-" && $2==n {
-    mode="no-mistakes"; yolo="off";
+    mode="no-mistakes"; yolo="off"; memory="agents-md";
     if ($3 ~ /^\[/) {
       s="";
       for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
       gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
       k = split(s, a, " ");
-      if (a[1] != "" && a[1] != "+yolo") mode = a[1];
-      for (j=1; j<=k; j++) if (a[j]=="+yolo") yolo="on";
+      if (a[1] != "" && a[1] !~ /^\+/) mode = a[1];
+      for (j=1; j<=k; j++) {
+        if (a[j]=="+yolo") yolo="on";
+        if (a[j]=="+keep-claude-md") memory="keep-claude-md";
+      }
     }
-    print mode, yolo; exit
+    print mode, yolo, memory; exit
   }
 ' "$REG")
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
-  echo "no-mistakes off"
+  emit no-mistakes off agents-md
   exit 0
 fi
 
-mode=${parsed%% *}
-yolo=${parsed##* }
+read -r mode yolo memory <<EOF
+$parsed
+EOF
 case "$mode" in
   no-mistakes|direct-PR|local-only) ;;
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
-echo "$mode $yolo"
+case "$memory" in agents-md|keep-claude-md) ;; *) memory=agents-md ;; esac
+emit "$mode" "$yolo" "$memory"
