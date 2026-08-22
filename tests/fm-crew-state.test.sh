@@ -536,6 +536,31 @@ test_hung_agent_step_reports_stalled() {
   pass "a hung agent step reports stalled"
 }
 
+# A zero-padded duration component is an invalid octal constant in bash
+# arithmetic, and that is a fatal expansion error rather than a bad term, so an
+# unguarded parse would kill the elapsed read and drop the step from the budget
+# with no verdict change to show for it. The installed formatter does not pad, so
+# this pins the guard rather than a rendering anyone has seen.
+test_zero_padded_duration_still_reaches_the_budget() {
+  reset_fakes
+  local d; d=$(new_case padded-duration)
+  make_repo_on_branch "$d/wt" fm/feat-pad
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/pad.meta" "window=fm:fm-pad" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-pad review '"quiet 3d09h ago: log: reviewing"')"
+  local out err
+  err="$d/pad.err"
+  out=$(run_crew_state "$d" pad 2>"$err")
+  assert_contains "$out" "state: stalled" "a padded 3d09h must still be measured against the budget"
+  [ ! -s "$err" ] || fail "the padded duration left an arithmetic error on stderr: $(cat "$err")"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-pad review '"quiet 0h08m ago: log: reviewing"')"
+  out=$(run_crew_state "$d" pad 2>"$err")
+  assert_contains "$out" "state: working" "a padded 0h08m is inside the agent budget, not a parse failure"
+  [ ! -s "$err" ] || fail "the padded minute component left an arithmetic error on stderr: $(cat "$err")"
+  pass "a zero-padded duration component still reaches the inactivity budget"
+}
+
 # The same 45m silence is a breach on an agent-driven step and inside budget on
 # a remote-check one, which is the whole reason the two budgets are separate.
 test_quiet_remote_check_step_keeps_the_looser_budget() {
@@ -1960,6 +1985,7 @@ test_branch_sync_before_run_object_does_not_attribute_foreign_run
 test_missing_run_head_falls_back_to_current_state
 test_advancing_agent_step_stays_working
 test_hung_agent_step_reports_stalled
+test_zero_padded_duration_still_reaches_the_budget
 test_quiet_remote_check_step_keeps_the_looser_budget
 test_hung_remote_check_step_reports_stalled
 test_quiet_ci_monitor_with_checks_green_report_stays_done

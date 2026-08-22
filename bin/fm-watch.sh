@@ -27,7 +27,7 @@
 #                          re-surface cadence, never as a wedge - including the
 #                          pipeline-handoff case, where the crew's endpoint is
 #                          confirmed live and a no-mistakes run step attributed to
-#                          its branch reports a non-terminal status
+#                          its branch is both non-terminal and still advancing
 #                          (pause_state_class owns that reconciliation). Only when
 #                          no absorb class applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
@@ -139,8 +139,8 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
 # bounded cadence, and so does a confirmed-live endpoint with an attributed run step
-# reporting a non-terminal status; an idle live endpoint with no such corroboration
-# still surfaces once.
+# that is both non-terminal and still advancing; an idle live endpoint with no such
+# corroboration still surfaces once.
 # These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten hold cannot rot invisibly.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
@@ -384,15 +384,14 @@ clear_pause_tracking() {  # <window>
 #
 #   - `working` from RUN-STEP + a CONFIRMED-alive endpoint is the pipeline-handoff
 #     case the pause verb exists for: the crew declared a wait, its endpoint is still
-#     there, and a no-mistakes run step attributed to its branch reports a
-#     non-terminal status (running/fixing/ci). `working` from a run step now means
-#     that run is non-terminal AND still advancing: past its inactivity budget
-#     fm-crew-state.sh reports `stalled` instead, so a hung run never reaches this
-#     arm at all and takes the bottom row of the table below. The old reading, where
-#     a non-terminal status alone earned the cadence because nothing compared it
-#     against a prior observation, survives only where no elapsed figure exists to
-#     compare: the coarse runs-list fallback, an absent active_steps table, and a
-#     `last_activity` of `unknown`. It gets the bounded
+#     there, and a no-mistakes run step attributed to its branch is both non-terminal
+#     (running/fixing/ci) and still advancing. That second half is what `working`
+#     from a run step now means: past its inactivity budget fm-crew-state.sh reports
+#     `stalled` instead, so a hung run never reaches this arm at all. The old
+#     reading, where a non-terminal status alone earned the cadence because nothing
+#     compared it against a prior observation, survives only where no elapsed figure
+#     exists to compare: the coarse runs-list fallback, an absent active_steps table,
+#     and a `last_activity` of `unknown`. This case gets the bounded
 #     pause cadence. Before this, that combination went to the wedge timer and
 #     escalated as a possible wedge every STALE_ESCALATE_SECS - so the crew with the
 #     STRONGEST evidence of health (declared pause + live endpoint + an attributed
@@ -1097,10 +1096,10 @@ EOF
           #     genuinely frozen run still escalates past STALE_ESCALATE_SECS;
           #   - paused: the crew declared an external wait and that wait is
           #     corroborated OUT OF BAND - by a confirmed-live endpoint with a run
-          #     step attributed to its branch reporting a non-terminal status (which
-          #     records the handoff, not verified progress), or, for a declared pause
-          #     or captain hold, by a confidently dead agent - so absorb on the long
-          #     PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
+          #     step attributed to its branch that is both non-terminal and still
+          #     advancing, or, for a declared pause or captain hold, by a confidently
+          #     dead agent - so absorb on the long PAUSE_RESURFACE_SECS cadence
+          #     instead of wedge-escalating;
           #   - unreliable: the crew declared a wait and its endpoint is confirmed
           #     live, but the only current-state verdict available says nothing
           #     about whether it stopped. Not proof of a stopped crew, so it must

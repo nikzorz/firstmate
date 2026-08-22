@@ -477,6 +477,13 @@ nm_active_step_rows() {
 # 3d11h). Non-zero when the token is not a duration, which is how an `unknown`
 # last_activity and any future rendering this reader does not understand stay
 # out of the budget rather than being guessed at.
+#
+# Each component is forced to base ten. The installed formatter does not zero-pad
+# (`1h0m`, `13h5m`, `3d11h`, never `1h05m`), so this guards a rendering nobody
+# emits today rather than one observed - but a padded `08` or `09` is an INVALID
+# OCTAL constant, and bash treats that as a fatal expansion error rather than a
+# bad term. That would kill this function's subshell and drop the step from the
+# budget silently, which is the one outcome the paragraph above forbids.
 nm_duration_secs() {  # <token>
   local tok=$1 total=0 num='' ch i len
   case "$tok" in ''|*[!0-9dhms]*) return 1 ;; esac
@@ -490,10 +497,10 @@ nm_duration_secs() {  # <token>
     esac
     [ -n "$num" ] || return 1
     case "$ch" in
-      d) total=$((total + num * 86400)) ;;
-      h) total=$((total + num * 3600)) ;;
-      m) total=$((total + num * 60)) ;;
-      s) total=$((total + num)) ;;
+      d) total=$((total + 10#$num * 86400)) ;;
+      h) total=$((total + 10#$num * 3600)) ;;
+      m) total=$((total + 10#$num * 60)) ;;
+      s) total=$((total + 10#$num)) ;;
     esac
     num=''
   done
