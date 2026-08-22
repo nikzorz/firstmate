@@ -654,6 +654,56 @@ test_missing_activity_figure_leaves_the_verdict_alone() {
   pass "a missing activity figure leaves the verdict alone"
 }
 
+# The same active_steps table under an arbitrary column layout, so the header is
+# proved to be what locates the fields. A reader that counted positions instead
+# would read the wrong cell - or none - the first time no-mistakes reorders the
+# table or adds a column of its own, and would then report a hung run healthy
+# again with nothing to show for it.
+run_with_active_step_layout() {  # <branch> <header-columns> <row>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+  active_steps[1]{$2}:
+    $3
+EOF
+}
+
+test_active_step_columns_are_located_by_name() {
+  reset_fakes
+  local d; d=$(new_case column-layout)
+  make_repo_on_branch "$d/wt" fm/feat-cols
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cols.meta" "window=fm:fm-cols" "worktree=$d/wt" "kind=ship"
+  local quiet='"quiet 20h52m ago: log: I will review the branch changes now."' out
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'step,status,active_for,last_activity,agent_pid,round' \
+    "review,running,20h53m,$quiet,\"424242\",round 1")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "the layout published today must reach the budget"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'last_activity,status,active_for,agent_pid,round,step' \
+    "$quiet,running,20h53m,\"424242\",round 1,review")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "a reordered table must still be read by column name"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'worker,step,status,active_for,last_activity,agent_pid,round' \
+    "worker-9,review,running,20h53m,$quiet,\"424242\",round 1")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "a new leading column must not shift the read"
+  pass "active_steps columns are located by name, not by position"
+}
+
 # The budgets are tuning constants, changeable without editing logic.
 test_inactivity_budgets_are_configurable() {
   reset_fakes
@@ -1991,6 +2041,7 @@ test_hung_remote_check_step_reports_stalled
 test_quiet_ci_monitor_with_checks_green_report_stays_done
 test_quiet_ci_monitor_without_green_checks_still_stalls
 test_missing_activity_figure_leaves_the_verdict_alone
+test_active_step_columns_are_located_by_name
 test_inactivity_budgets_are_configurable
 test_unrecognized_run_status_is_not_working
 test_empty_run_status_is_not_working

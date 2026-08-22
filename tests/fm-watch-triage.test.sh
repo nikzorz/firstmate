@@ -531,6 +531,38 @@ test_landing_absorb_class_classifier() {
   pass "crew_absorb_class: a terminal done is landing only with a recorded route and an armed merge poll"
 }
 
+# The armed-poll test is a READ, and it is taken while a caller may be holding
+# the FM_PR_* globals for the very poll being classified. Sourced into the
+# caller's own shell instead of a subshell, fm-pr-lib.sh's parse would overwrite
+# that caller's record with the classified task's - so the poll it goes on to run
+# would be a different PR from the one it validated.
+test_landing_probe_does_not_clobber_a_callers_pr_globals() {
+  local dir state STATE readings before after
+  dir=$(make_case landing-globals); state="$dir/state"
+  # shellcheck disable=SC2034 # Read by _fm_classify_state_dir in the callee.
+  STATE=$state
+  export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: done · source: status-log · PR https://example.test/pr/7 checks green'
+  # The probed task's own route is a different PR from the caller's below, so a
+  # clobber cannot pass by looking identical.
+  arm_landing_route "$dir" probed
+  readings=$(
+    # shellcheck source=bin/fm-pr-lib.sh
+    # shellcheck disable=SC1091
+    . "$ROOT/bin/fm-pr-lib.sh"
+    fm_pr_url_parse "https://github.com/example/other/pull/91" || exit 1
+    printf '%s|%s|%s|%s\n' "$FM_PR_URL" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"
+    [ "$(crew_absorb_class probed)" = landing ] || exit 1
+    printf '%s|%s|%s|%s\n' "$FM_PR_URL" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"
+  ) || fail "the landing-route probe fixture did not reach the landing class"
+  before=$(printf '%s' "$readings" | sed -n 1p)
+  after=$(printf '%s' "$readings" | sed -n 2p)
+  [ "$before" = "$after" ] \
+    || fail "the landing probe clobbered the caller's PR record: $before -> $after"
+  unset FM_FAKE_CREW_STATE
+  pass "the landing-route probe leaves a caller's own PR record untouched"
+}
+
 # --- stale pane, finished work awaiting merge: absorbed with NO wedge timer ---
 # Observed live 2026-08-20: the crew appended `done: PR <url> checks green` and
 # stopped, exactly as instructed. Its pane is therefore idle for as long as the
@@ -1976,6 +2008,7 @@ test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier
 test_landing_absorb_class_classifier
+test_landing_probe_does_not_clobber_a_callers_pr_globals
 test_signal_crew_provably_working_classifier
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed

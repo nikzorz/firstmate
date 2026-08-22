@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared wake classifier: the common source of truth for captain-relevant status
-# tests, declared-external-wait vocabulary, and the working/paused absorb
-# classification that makes no-verb signal and stale-pane wakes safe to absorb.
+# tests, declared-external-wait vocabulary, and the absorb classification that
+# makes no-verb signal and stale-pane wakes safe to absorb.
 # Sourced by BOTH the always-on watcher
 # (bin/fm-watch.sh) and the away-mode daemon (bin/fm-supervise-daemon.sh) so the
 # overlapping triage policy lives in one place instead of two copies that can
@@ -18,7 +18,8 @@
 # working/paused wrappers. It is NOT a pure status-file read: it reuses
 # bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide whether
 # a crew that just stopped its turn or went stale is working, deliberately paused,
-# unreliable (a verdict that is evidence of nothing either way), or none of those.
+# finished with a landing route, unreliable (a verdict that is evidence of nothing
+# either way), or none of those.
 # Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
 # never on every wake, so the per-wake triage stays cheap. A caller that keeps
 # absorbing the same unchanged pane across polls - today only bin/fm-watch.sh's
@@ -500,8 +501,9 @@ fm_classify_landing_route_armed() {  # <id>
 #                path - may treat it as "no contrary evidence" instead of proof the
 #                crew stopped; every other consumer treats it exactly like none;
 #   none       - none of those, so the wake must surface (a stopped/parked/
-#                torn-down/unknown crew, a `done` with no landing route recorded,
-#                or an unreadable verdict). A crew parked on
+#                torn-down/unknown crew, a run that has stopped advancing
+#                (stalled), a `done` with no landing route recorded, or an
+#                unreadable verdict). A crew parked on
 #                Claude Code's usage-limit prompt lands here too, deliberately: it is
 #                genuinely stopped, so it must reach firstmate once instead of being
 #                absorbed. crew_usage_limit_class below distinguishes it, and once
