@@ -1011,12 +1011,45 @@ EOF
   pass "an unreadable child costs strict validity without collapsing the home state"
 }
 
+# The corner the case above cannot reach, because its readable sibling supplies a
+# hold: a home whose ONLY in-flight child is the unreadable one. Every positive
+# answer is empty, so the summary would otherwise answer `no_active_work` - an
+# affirmative claim about every child, made while holding one it could not read,
+# which is the same unknown-read-as-a-definite-state answer this whole reader
+# exists to refuse.
+test_unreadable_only_home_does_not_claim_no_active_work() {
+  local home fakebin out
+  home=$(make_home unreadable-only-home)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] gone-task - Gone Task (repo: alpha) (kind: ship) (since 2026-07-29)
+EOF
+  fm_write_meta "$home/state/gone-task.meta" \
+    "window=firstmate:fm-gone-task" \
+    "worktree=$home/projects/torn-down" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  fakebin=$(make_limit_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .state == "unknown"
+      and (.reason | test("child current state unavailable: gone-task"))
+      and (.active_children | length) == 0
+      and (.holds | length) == 0
+      and (.decisions_open | length) == 0
+  ' >/dev/null || fail "a home holding only an unreadable child claimed no active work: $out"
+  pass "a home whose only child is unreadable does not claim no active child work"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work
 test_unreadable_child_does_not_collapse_the_home_state
+test_unreadable_only_home_does_not_claim_no_active_work
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

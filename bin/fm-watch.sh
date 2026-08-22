@@ -449,10 +449,11 @@ pause_state_class() {  # <window> <task>
     # declared-pause path below may read "evidence of nothing" as anything else.
     class=$(crew_absorb_class "$task")
     [ "$class" = unreliable ] && class=none
-    # `landing` is owned entirely by the terminal-stale branch below, which is
-    # the only place a finished crew's captain-relevant status line is read. It
-    # carries no meaning for this pause-cadence decision, so it collapses to the
-    # plain not-working verdict a finished crew has always produced here.
+    # `landing` is owned entirely by the terminal-stale branch below, the only
+    # place a finished crew's own captain-relevant line is weighed against that
+    # verdict. It carries no meaning for this pause-cadence decision, so it
+    # collapses to the plain not-working verdict a finished crew has always
+    # produced here.
     [ "$class" = landing ] && class=none
     printf '%s' "$class"
     return
@@ -1039,7 +1040,17 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            case "$(crew_absorb_class "$(window_to_task "$w" "$STATE")")" in
+            stale_class=$(crew_absorb_class "$task")
+            # `landing` describes the RUN, and a finished run keeps reporting
+            # `done` after the crew has appended a needs-decision or blocked line
+            # of its own. Absorbing on the run alone would silence exactly that
+            # crew: the merge poll it hands the wake to only ever fires on
+            # `merged`, so a crew asking for help on a conflicted or closed PR
+            # would have nothing left to surface it. The crew's own last line has
+            # to say `done` too - $last, already read at the top of this loop and
+            # the same line stale_is_terminal judged, so this costs no new read.
+            [ "$stale_class" = landing ] && [ "$(status_line_verb "$last")" != "done" ] && stale_class=none
+            case "$stale_class" in
               working)
                 printf '%s' "$h" > "$sf"
                 date +%s > "$ssf"
@@ -1060,7 +1071,7 @@ EOF
                 fm_wake_append stale "$w" "stale: $w" || exit 1
                 printf '%s' "$h" > "$sf"
                 rm -f "$ssf"
-                mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
+                mark_surfaced "$STATE/$task.status"
                 wake "stale: $w"
                 ;;
             esac

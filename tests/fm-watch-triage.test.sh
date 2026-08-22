@@ -605,6 +605,42 @@ test_finished_with_no_landing_route_still_surfaces() {
   pass "a finished crew with no landing route recorded still surfaces"
 }
 
+# The third direction: the RUN is done and the merge poll is armed, but the crew
+# has since appended a captain-relevant line of its own. That crew is not waiting
+# on the captain to merge, it is waiting on the captain to answer, and the merge
+# poll it would hand the wake to fires only on `merged` - so a conflicted or
+# closed PR would leave it silent forever. It must surface exactly as it did
+# before the landing class existed.
+test_post_run_decision_on_a_landing_route_still_surfaces() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case landing-stale-blocked); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-conflicted"
+  printf 'PR opened, checks green' > "$capture_file"
+  arm_landing_route "$dir" conflicted
+  grep -q '^pr=' "$state/conflicted.meta" || fail "the fixture recorded no pr="
+  [ -f "$state/conflicted.check.sh" ] || fail "the fixture armed no merge poll"
+  printf 'blocked: PR has a merge conflict with main\n' > "$state/conflicted.status"
+  sig=$(seen_sig "$state/conflicted.status"); printf '%s' "$sig" > "$state/.seen-conflicted_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "PR opened, checks green")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "a post-run blocked line on a landing route was absorbed"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the blocked crew"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the blocked stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the blocked stale was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a captain-relevant line appended after the run finished still surfaces on a landing route"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -1949,6 +1985,7 @@ test_actionable_signal_surfaced
 test_terminal_stale_surfaced
 test_finished_awaiting_merge_absorbed_without_a_wedge_timer
 test_finished_with_no_landing_route_still_surfaces
+test_post_run_decision_on_a_landing_route_still_surfaces
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

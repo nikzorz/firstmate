@@ -149,8 +149,8 @@ JSON is the stable machine-readable output contract.
 validated registered-home handoff. It is local-only, skips nested secondmate
 aggregation, and marks inventory contradictions or unavailable child state invalid.
 Its invalidity object names the normalized failure kind and affected ids.
-An unreadable child costs strict validity but keeps the readable rest of the home
-summarized; only an inventory contradiction collapses the state word to unknown.
+An unreadable child costs strict validity but keeps every state word the readable
+children positively support; it never lets the home claim no active child work.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, and plural blocker fields for downstream
 projections. A captain hold is actionable only when every blocker is Done.
@@ -708,10 +708,16 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     # does NOT collapse the state word to `unknown` and take the readable rest of
     # the home down with it. Only a contradiction that makes the inventory itself
     # untrustworthy ($strict_invalidities) does that.
+    # The three POSITIVE answers stay true whatever an unreadable sibling is
+    # doing: work that was read is work that exists. The NEGATIVE one is the
+    # exception, because "no active child work" is a claim about every child, and
+    # a home cannot make it while holding a child it could not read - that is the
+    # same unknown-read-as-a-definite-state answer this reader exists to refuse.
     | (if ($strict_invalidities | length) > 0 then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
        elif ($active_all | length) > 0 then "active_child_work"
        elif ($holds_all | length) > 0 then "externally_held"
+       elif ($unknown_children | length) > 0 then "unknown"
        else "no_active_work" end) as $state
     | {
         schema:"fm-secondmate-home-summary.v1",
