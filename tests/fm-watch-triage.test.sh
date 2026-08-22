@@ -547,7 +547,6 @@ test_landing_probe_does_not_clobber_a_callers_pr_globals() {
   # clobber cannot pass by looking identical.
   arm_landing_route "$dir" probed
   readings=$(
-    # shellcheck source=bin/fm-pr-lib.sh
     # shellcheck disable=SC1091
     . "$ROOT/bin/fm-pr-lib.sh"
     fm_pr_url_parse "https://github.com/example/other/pull/91" || exit 1
