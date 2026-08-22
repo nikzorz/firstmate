@@ -112,7 +112,8 @@ Real tests share the captain's running app rather than creating an isolated cmux
 ## Active limits
 
 - cmux is experimental, macOS-only, GUI-first, and requires the app running.
-- The declared-pause absorb is unsupported here. Both of its routes need a definite agent-liveness answer, confirmed-live for the pipeline handoff and confidently dead for a plain declared pause, and cmux has no agent-liveness classifier that can return either. A crew whose attributed run step is still non-terminal fails only its liveness test, so it is absorbed onto the ordinary wedge timer rather than the long pause cadence, while a crew whose only evidence is its own `paused:` line reaches neither and raises a wake the first time each new idle pane signature is seen; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- cmux has no agent-liveness classifier, so only that table's liveness-unknown column is reachable here.
 - Socket access requires a one-time manual Settings change.
 - Secondmate spawns are unsupported until a per-home lifecycle design is verified.
 - There is no native busy or push-event signal.

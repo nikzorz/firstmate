@@ -62,23 +62,6 @@ Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected un
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
-
-The declared-pause absorb is supported on `tmux` and `herdr` only, for ordinary crew windows.
-That absorb is the path that lets a crew which declared a bounded external wait idle quietly on a long recheck cadence instead of being raised as a possible wedge.
-It has two routes, and each of them needs a DEFINITE agent-liveness answer rather than merely a favourable one.
-The pipeline-handoff route needs a confirmed-live endpoint paired with a no-mistakes run step attributed to the crew's branch.
-The plain declared-pause route needs the opposite reading, a confidently dead endpoint, which is the inversion named at the end of this section.
-Only `tmux` and `herdr` implement the `agent_state` classifier that can return either answer.
-`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown, neither route is ever satisfied for a crew window, and the absorb does not apply to one.
-What a verdict that waits quietly under tmux costs on those three is two outcomes rather than one, because the two routes fall to different sides.
-A crew on the pipeline-handoff shape, whose attributed run step still reports a non-terminal status, fails only its liveness test, so it is still absorbed, but onto the ordinary wedge timer instead of the long pause cadence, and escalates once that ordinary threshold passes.
-A crew on the plain declared-pause shape, whose only evidence is the `paused:` line in its own status log, reaches neither the absorb nor that threshold: it raises a wake the first time each new idle pane signature is seen.
-A secondmate window is the exception, on every backend: this absorb never probes a secondmate's liveness at all, so a secondmate that declared a pause keeps the bounded recheck cadence where a crew window on the same backend would not.
-That distinction is live only on `zellij`, which accepts secondmate spawns; `orca` and `cmux` refuse them, so a crew window is the only kind either one has.
-This is a deliberate supported-surface limit rather than an unnoticed gap.
-Building and verifying liveness classifiers for three experimental backends nobody in this fleet runs would be machinery serving an unused path; the work reopens on its own merits if a home adopts one of them.
-Naming the limit is also not a claim that the behavior on the two supported backends is already right.
-One known defect on that path is explicitly NOT addressed by this scoping: the health ordering is inverted for a crew whose authoritative state falls back to the declared pause in its status log, which is absorbed when its endpoint is confidently dead and surfaced when it is confirmed alive.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
 A cmux spawn additionally version-gates against the installed `cmux` binary's version, requires `jq`, and requires the control socket to be reachable and accessible (see [`docs/cmux-backend.md`](cmux-backend.md) "Setup" for the one-time socket-access configuration this needs; Automation mode is the recommended socket control mode, with Password mode supported via `config/cmux-socket-password`), refusing loudly and non-retryably on a `cmuxOnly`/unauthenticated socket.
@@ -108,6 +91,36 @@ cmux has no session layer at all - one workspace per task, in whatever cmux wind
 The caller-facing label remains `fm-<id>`, but the actual cmux workspace title is scoped by the active `FM_HOME` readable label plus a short hash of the resolved `FM_ROOT` path as `fm-<home-label>-<id>`.
 Test cleanup must use the guarded path in [`docs/cmux-backend.md`](cmux-backend.md#current-operation-and-safety), never enumerate-and-close every workspace.
 The `config/backend` file is not inherited by secondmate homes.
+
+### Declared-pause absorb, by verdict and endpoint liveness
+
+When a crew declares a bounded external wait, the stale path decides from two inputs: the authoritative current-state verdict for that crew, and what the runtime backend can prove about its endpoint.
+`bin/fm-watch.sh`'s `pause_state_class` owns that decision; this table is the single statement of its outcomes, and the backend guides point here rather than each restating it.
+
+| Current-state verdict | Endpoint `alive` | Endpoint `dead` | Liveness `unknown` |
+|---|---|---|---|
+| `working` from a run step | long pause cadence | ordinary wedge timer | ordinary wedge timer |
+| `working` from the pane only | ordinary wedge timer | ordinary wedge timer | ordinary wedge timer |
+| `failed` from a run step | ordinary wedge timer | long pause cadence | immediate wake |
+| `paused` from the status log | immediate wake | long pause cadence | immediate wake |
+| anything else | immediate wake | long pause cadence | immediate wake |
+
+Long pause cadence means absorbed, rechecked once per `FM_PAUSE_RESURFACE_SECS` window or at a recorded one-shot deadline, whichever comes first.
+Ordinary wedge timer means absorbed now and escalated once the pane stays idle past `FM_STALE_ESCALATE_SECS`.
+Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
+
+Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
+On `zellij`, `orca` and `cmux` the liveness-unknown column is the only reachable one.
+That is a deliberate supported-surface limit: classifiers for three experimental backends this fleet does not run are not built, and the work reopens on its own merits if a home adopts one.
+
+A secondmate window is never probed for liveness, so its reading is always unknown, but the two gates that force the unknown column are themselves skipped for a secondmate.
+A declared pause on a secondmate is therefore absorbed on the long pause cadence on every backend, this table's unknown column included.
+
+`working` from a run step means the run is non-terminal AND still advancing.
+Past its inactivity budget the reader reports `stalled`, which takes the last row instead.
+The older behaviour, where a run that had stopped advancing still held the long cadence, survives only where no elapsed figure is available at all: the coarse runs-list fallback, an absent `active_steps` table, and a `last_activity` of `unknown`.
+
+The health ordering in the `paused` row is inverted, and this change does not fix it: a confidently dead endpoint earns the long cadence while a confirmed-live one is surfaced.
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 

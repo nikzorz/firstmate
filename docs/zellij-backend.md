@@ -90,8 +90,9 @@ Real test cleanup uses only an isolated non-`firstmate` session and the guard in
 ## Active limits
 
 - Zellij is experimental and explicit-only.
-- The declared-pause absorb is unsupported here for crew windows. Both of its routes need a definite agent-liveness answer, confirmed-live for the pipeline handoff and confidently dead for a plain declared pause, and Zellij has no agent-liveness classifier that can return either. A crew whose attributed run step is still non-terminal fails only its liveness test, so it is absorbed onto the ordinary wedge timer rather than the long pause cadence, while a crew whose only evidence is its own `paused:` line reaches neither and raises a wake the first time each new idle pane signature is seen; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
-- A secondmate home is unaffected by that limit, because the absorb never probes a secondmate's liveness on any backend, so a paused Zellij secondmate still waits quietly on the bounded recheck cadence.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- Zellij has no agent-liveness classifier, so only that table's liveness-unknown column is reachable for a crew window here.
+- A secondmate home is never probed for liveness, so a paused Zellij secondmate still waits quietly on the bounded recheck cadence.
 - All homes share one session and tab bar; scoped titles prevent cross-home identity collisions but do not create per-home visual containers.
 - There is no native busy or push-event signal, so supervision uses capture/hash and busy-regex polling.
 - There is no verified agent-process liveness signal, so a dead Zellij secondmate is reported inconclusive rather than auto-respawned.

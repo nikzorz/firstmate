@@ -385,10 +385,14 @@ clear_pause_tracking() {  # <window>
 #   - `working` from RUN-STEP + a CONFIRMED-alive endpoint is the pipeline-handoff
 #     case the pause verb exists for: the crew declared a wait, its endpoint is still
 #     there, and a no-mistakes run step attributed to its branch reports a
-#     non-terminal status (running/fixing/ci). That last part is an out-of-band
-#     record that the pipeline HAS the work, not a verification that the run is
-#     advancing: nothing here compares the status against a prior observation, so a
-#     hung run keeps reporting the same non-terminal status. It gets the bounded
+#     non-terminal status (running/fixing/ci). `working` from a run step now means
+#     that run is non-terminal AND still advancing: past its inactivity budget
+#     fm-crew-state.sh reports `stalled` instead, so a hung run never reaches this
+#     arm at all and takes the bottom row of the table below. The old reading, where
+#     a non-terminal status alone earned the cadence because nothing compared it
+#     against a prior observation, survives only where no elapsed figure exists to
+#     compare: the coarse runs-list fallback, an absent active_steps table, and a
+#     `last_activity` of `unknown`. It gets the bounded
 #     pause cadence. Before this, that combination went to the wedge timer and
 #     escalated as a possible wedge every STALE_ESCALATE_SECS - so the crew with the
 #     STRONGEST evidence of health (declared pause + live endpoint + an attributed
@@ -410,26 +414,17 @@ clear_pause_tracking() {  # <window>
 #     long pause cadence either: it goes to the wedge timer, so a paused pane that
 #     really is frozen still escalates on the ordinary threshold.
 #
-# SUPPORTED BACKENDS. Requiring `alive` scopes this whole path, for a CREW window,
-# to the backends that can produce one, which today is tmux and herdr: those two
-# implement `agent_state` (bin/fm-backend.sh's fm_backend_agent_state), while
-# zellij, orca and cmux always answer `unverified`, so agent liveness there is
-# permanently unknown and every graded branch above falls to its conservative side.
-# What a verdict that waits quietly under tmux costs on those three is TWO
-# outcomes, not one, because the two routes fall to different sides. A
-# handoff-shaped verdict fails only its `alive` test, so it is still absorbed, but
-# onto the ordinary wedge timer instead of the long pause cadence, and escalates
-# once that threshold passes. A plain declared-pause verdict reaches neither: it
-# returns `none` and the caller surfaces it on every new idle pane signature, with
-# no threshold in front of it. A secondmate window is outside all of this on every
-# backend, since it is never probed for liveness at all. That is a recorded
-# supported-surface limit, not an oversight - docs/configuration.md's "Runtime
-# backend" section is its owner and states why classifiers for the three are
-# deliberately not built.
-# Naming it settles nothing about the ordering above: a crew whose authoritative
-# state falls back to the declared pause in its status log is still absorbed on a
-# confidently DEAD endpoint and surfaced on a confirmed-live one, which is
-# inverted and is NOT fixed here.
+# SUPPORTED BACKENDS. Requiring a definite liveness reading scopes this whole path,
+# for a CREW window, to the backends that can produce one, which today is tmux and
+# herdr: those two implement `agent_state` (bin/fm-backend.sh's
+# fm_backend_agent_state), while zellij, orca and cmux always answer `unverified`,
+# so agent liveness there is permanently unknown. A secondmate window is outside
+# that on every backend, since it is never probed for liveness at all. That is a
+# recorded supported-surface limit, not an oversight, and the outcome for every
+# verdict and liveness reading - including what the three unverified backends get
+# instead, and the health-ordering inversion this does NOT fix - is stated once in
+# docs/configuration.md's "Declared-pause absorb, by verdict and endpoint liveness"
+# table rather than restated here.
 #
 # Both bounded-cadence routes memoize themselves in .paused-rechecked-<key>, whose
 # CONTENT names the endpoint reading that justified the cadence, so a repeat poll of
