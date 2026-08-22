@@ -16,7 +16,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|usage-limited|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
+#   state: <working|stalled|parked|done|blocked|paused|usage-limited|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta.
@@ -53,6 +53,21 @@
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
 #      green, so a green PR is never silently read as still-validating.
+#   2b. A non-terminal run reports WHETHER it is advancing, not only that it
+#      exists. `axi status` publishes an `active_steps` table whose
+#      `last_activity` names how long the active step has been quiet, so a run
+#      parked for hours and one that logged four seconds ago are distinguishable
+#      from the response already being read. Past the inactivity budget for that
+#      step (FM_CREW_STATE_* below) the state is `stalled`, which no absorb class
+#      treats as healthy, so it reaches firstmate instead of reading as working.
+#      An `active_steps` table that is absent (an older no-mistakes) or whose
+#      `last_activity` is `unknown` carries no elapsed figure, and the run stays
+#      `working` - a stated limit of the budget, not a silent one.
+#      docs/verification/supervision.md records the live evidence for that
+#      table's field names and its three last_activity renderings.
+#      Symmetrically, a run status word this reader does not recognize, and an
+#      empty one, report `unknown` rather than `working`: an unrecognized future
+#      status is not evidence of a healthy run.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -96,6 +111,26 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+# Inactivity budgets for an active run, in seconds, measured from the active
+# step's own reported last activity. Past its budget a step is reported
+# `stalled` rather than `working`.
+#
+# Two budgets, not one, because the two kinds of active step go quiet for
+# different reasons: an agent-driven step (review, test, lint, document, and the
+# fix rounds) logs as it works, so half an hour of silence is already unusual,
+# while the ci step only monitors a remote forge, logs sparsely by design, and
+# carries no native agent pid. Both figures are captain preferences chosen far
+# tighter than the observed 20h52m failure and loose enough that an ordinary
+# quiet stretch wakes nobody; they are tuning constants, not derived limits, and
+# are meant to be revised on evidence of false wakes without editing any logic.
+FM_CREW_STATE_AGENT_QUIET_SECS=${FM_CREW_STATE_AGENT_QUIET_SECS:-1800}
+case "$FM_CREW_STATE_AGENT_QUIET_SECS" in ''|*[!0-9]*) FM_CREW_STATE_AGENT_QUIET_SECS=1800 ;; esac
+FM_CREW_STATE_REMOTE_QUIET_SECS=${FM_CREW_STATE_REMOTE_QUIET_SECS:-7200}
+case "$FM_CREW_STATE_REMOTE_QUIET_SECS" in ''|*[!0-9]*) FM_CREW_STATE_REMOTE_QUIET_SECS=7200 ;; esac
+# The active-step names that only monitor a remote forge and therefore draw the
+# looser budget above. One entry today; a space-delimited list so a future
+# remote-only step needs no new branch.
+FM_CREW_STATE_REMOTE_STEPS=${FM_CREW_STATE_REMOTE_STEPS:-ci}
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -376,6 +411,155 @@ nm_effective_ci_step_status() {
   if [ "${RUN_STATUS:-}" = ci ]; then
     printf 'running'
   fi
+}
+
+# --- is the active run still advancing? -------------------------------------
+#
+# `axi status` publishes, for a running or fixing run, a table shaped
+#
+#   active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+#     review,running,7h7m,"5s ago: log: I'll review the branch changes now.","424242",round 3
+#     ci,running,4h20m,"quiet 20h52m ago: log: all CI checks passed...","",round 1
+#     ci,running,4h20m,unknown,"",round 1
+#
+# so the elapsed-since-last-activity figure firstmate needs is already inside the
+# response it pays for. Columns are located by NAME from the table header rather
+# than by position, so a no-mistakes that reorders or adds columns still parses,
+# and `last_activity` is unquoted only in the third shape above, which reports no
+# elapsed figure at all.
+#
+# Prints one "<step><TAB><last_activity>" line per active step; nothing when the
+# table is absent.
+nm_active_step_rows() {
+  printf '%s\n' "$RUN_OUT" | awk '
+    # Split a TOON table row on commas that are not inside a quoted field, and
+    # drop the quotes. A quoted last_activity carries commas of its own.
+    function splitrow(s, out,   i, c, cur, inq, n) {
+      n = 0; cur = ""; inq = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (inq) { if (c == "\"") inq = 0; else cur = cur c }
+        else if (c == "\"") inq = 1
+        else if (c == ",") { out[++n] = cur; cur = "" }
+        else cur = cur c
+      }
+      out[++n] = cur
+      return n
+    }
+    /^ *active_steps\[[0-9]+\]\{/ {
+      hdr = $0
+      sub(/^[^{]*\{/, "", hdr)
+      sub(/\}.*$/, "", hdr)
+      n = split(hdr, cols, ",")
+      si = 0; li = 0
+      for (i = 1; i <= n; i++) {
+        gsub(/^ +/, "", cols[i]); gsub(/ +$/, "", cols[i])
+        if (cols[i] == "step") si = i
+        if (cols[i] == "last_activity") li = i
+      }
+      intab = (si > 0 && li > 0)
+      next
+    }
+    intab {
+      # Rows are indented past the header; anything shallower ends the table.
+      if ($0 !~ /^    /) { intab = 0; next }
+      line = $0
+      sub(/^ +/, "", line)
+      if (line == "") { intab = 0; next }
+      n = splitrow(line, f)
+      if (n < si || n < li) next
+      print f[si] "\t" f[li]
+    }
+  '
+}
+
+# Seconds named by a no-mistakes duration token (30s, 5m30s, 1h0m, 20h52m,
+# 3d11h). Non-zero when the token is not a duration, which is how an `unknown`
+# last_activity and any future rendering this reader does not understand stay
+# out of the budget rather than being guessed at.
+#
+# Each component is forced to base ten. The installed formatter does not zero-pad
+# (`1h0m`, `13h5m`, `3d11h`, never `1h05m`), so this guards a rendering nobody
+# emits today rather than one observed - but a padded `08` or `09` is an INVALID
+# OCTAL constant, and bash treats that as a fatal expansion error rather than a
+# bad term. That would kill this function's subshell and drop the step from the
+# budget silently, which is the one outcome the paragraph above forbids.
+nm_duration_secs() {  # <token>
+  local tok=$1 total=0 num='' ch i len
+  case "$tok" in ''|*[!0-9dhms]*) return 1 ;; esac
+  len=${#tok}
+  i=0
+  while [ "$i" -lt "$len" ]; do
+    ch=${tok:$i:1}
+    i=$((i + 1))
+    case "$ch" in
+      [0-9]) num="$num$ch"; continue ;;
+    esac
+    [ -n "$num" ] || return 1
+    case "$ch" in
+      d) total=$((total + 10#$num * 86400)) ;;
+      h) total=$((total + 10#$num * 3600)) ;;
+      m) total=$((total + 10#$num * 60)) ;;
+      s) total=$((total + 10#$num)) ;;
+    esac
+    num=''
+  done
+  [ -z "$num" ] || return 1
+  printf '%s' "$total"
+}
+
+# Seconds a `last_activity` value reports as elapsed, from its leading duration
+# token: "5s ago: log: ..." and "quiet 20h52m ago: log: ..." both parse, and
+# "unknown" does not. Reads only the leading token, so prose after it - which
+# can legitimately contain digits and unit letters - is never mistaken for a
+# duration.
+nm_last_activity_secs() {  # <last_activity-value>
+  local v=$1
+  v=$(trim "$v")
+  case "$v" in 'quiet '*) v=${v#quiet } ;; esac
+  v=$(trim "$v")
+  nm_duration_secs "${v%% *}"
+}
+
+# The inactivity budget for one active step: the looser remote-monitoring figure
+# for a step that only watches a remote forge, the agent-driven figure otherwise.
+nm_step_quiet_budget() {  # <step>
+  local step=$1 remote
+  for remote in $FM_CREW_STATE_REMOTE_STEPS; do
+    if [ "$step" = "$remote" ]; then
+      printf '%s' "$FM_CREW_STATE_REMOTE_QUIET_SECS"
+      return
+    fi
+  done
+  printf '%s' "$FM_CREW_STATE_AGENT_QUIET_SECS"
+}
+
+# Prints "<step> <quiet-secs> <budget-secs>" for the active step that has been
+# quiet longest past its own budget; prints nothing when every active step is
+# inside budget, when no elapsed figure was reported, or when the table is absent.
+nm_stalled_step() {
+  local step act secs budget worst_over=0 worst=''
+  while IFS=$'\t' read -r step act; do
+    [ -n "$step" ] || continue
+    secs=$(nm_last_activity_secs "$act") || continue
+    budget=$(nm_step_quiet_budget "$step")
+    [ "$secs" -gt "$budget" ] || continue
+    if [ $((secs - budget)) -ge "$worst_over" ]; then
+      worst_over=$((secs - budget))
+      worst="$step $secs $budget"
+    fi
+  done <<EOF
+$(nm_active_step_rows)
+EOF
+  printf '%s' "$worst"
+}
+
+# Human-readable minutes/hours for a budget breach detail.
+nm_secs_human() {  # <seconds>
+  local s=$1
+  if [ "$s" -ge 3600 ]; then printf '%dh%dm' "$((s / 3600))" "$(((s % 3600) / 60))"
+  elif [ "$s" -ge 60 ]; then printf '%dm' "$((s / 60))"
+  else printf '%ds' "$s"; fi
 }
 
 # Root cause of the PR #252 incident (2026-07): for a repo where merge is left
@@ -664,8 +848,12 @@ if [ "$HAVE_RUN" = 1 ]; then
         completed)      RUN_STATE="done"; RUN_DETAIL="run completed" ;;
         failed)         RUN_STATE=failed;  RUN_DETAIL="run failed" ;;
         cancelled)      RUN_STATE=failed;  RUN_DETAIL="run cancelled" ;;
-        "")             RUN_STATE=working; RUN_DETAIL="run active" ;;
-        *)              RUN_STATE=working; RUN_DETAIL="run active ($status)" ;;
+        # Neither default arm may report a healthy run. An empty status names
+        # no step at all, and a status word this reader does not recognize is a
+        # future no-mistakes state whose meaning is unknown here - reading
+        # either as `working` is what let an unknown run read as a healthy one.
+        "")             RUN_STATE=unknown; RUN_DETAIL="run reported no status" ;;
+        *)              RUN_STATE=unknown; RUN_DETAIL="unrecognized run status: $status" ;;
       esac
       if [ "$RUN_STATE" = working ]; then
         CI_STEP_STATUS=$(nm_effective_ci_step_status)
@@ -699,6 +887,29 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+    fi
+  fi
+
+  # A non-terminal run that has stopped advancing is not a working one. This is
+  # the LAST of the working-state overrides, which is what the budget needs to
+  # stay honest in both directions. Every route by which a PR whose checks are
+  # already green has been reported `done` - the ci step's own log marker above,
+  # and the crew's own checks-green status log - has already emitted by here, so
+  # a crew waiting out the captain on a merge is never called stalled no matter
+  # how long that wait runs or whether the ci log tail could be read at all.
+  # What does reach here is a run still claiming to validate with no checks-green
+  # evidence from either source, and that claim is exactly what the elapsed
+  # figure is allowed to contradict. Only the full `axi status` path can answer
+  # it: the coarse runs list publishes no per-step activity.
+  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ]; then
+    STALLED=$(nm_stalled_step)
+    if [ -n "$STALLED" ]; then
+      STALL_STEP=${STALLED%% *}
+      STALL_REST=${STALLED#* }
+      STALL_SECS=${STALL_REST%% *}
+      STALL_BUDGET=${STALL_REST##* }
+      RUN_STATE=stalled
+      RUN_DETAIL="run stopped advancing: $STALL_STEP step quiet $(nm_secs_human "$STALL_SECS"), past its $(nm_secs_human "$STALL_BUDGET") budget"
     fi
   fi
 

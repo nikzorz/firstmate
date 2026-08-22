@@ -112,6 +112,8 @@ Real tests share the captain's running app rather than creating an isolated cmux
 ## Active limits
 
 - cmux is experimental, macOS-only, GUI-first, and requires the app running.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- cmux has no agent-liveness classifier, so only that table's liveness-unknown column is reachable here.
 - Socket access requires a one-time manual Settings change.
 - Secondmate spawns are unsupported until a per-home lifecycle design is verified.
 - There is no native busy or push-event signal.

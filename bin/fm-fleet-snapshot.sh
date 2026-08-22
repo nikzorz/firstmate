@@ -49,8 +49,10 @@
 #     appear in decisions_open; blocked captain holds remain queued with metadata.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
-#     structured homes with an unknown current classification are partial, not
-#     unreadable, and retain independently trustworthy structured surfaces.
+#     structured homes that came back short of strictly valid are partial, not
+#     unreadable, and retain independently trustworthy structured surfaces. That
+#     is read from the summary's own validity rather than from its state word,
+#     which is a classification of the work and not of the read.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
 #
 # Compatibility: JSON is the primary machine-readable surface.
@@ -147,6 +149,8 @@ JSON is the stable machine-readable output contract.
 validated registered-home handoff. It is local-only, skips nested secondmate
 aggregation, and marks inventory contradictions or unavailable child state invalid.
 Its invalidity object names the normalized failure kind and affected ids.
+An unreadable child costs strict validity but keeps every state word the readable
+children positively support; it never lets the home claim no active child work.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, and plural blocker fields for downstream
 projections. A captain hold is actionable only when every blocker is Done.
@@ -602,11 +606,13 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     --argjson decisions_n "$FM_SNAPSHOT_SECONDMATE_DECISIONS" \
     --argjson landed_n "$FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME" \
     --arg usage_limited "$FM_CLASSIFY_USAGE_LIMITED_STATE" \
+    --argjson active_states "$(fm_classify_active_states_json)" \
     --argjson backlog "$1" \
     --argjson tasks "$2" '
     def trunc($n):
       tostring | gsub("\\s+"; " ")
       | if length > $n then .[:$n] + "…" else . end;
+    def is_active: . as $s | $active_states | index($s) != null;
     ([ $backlog.records[]?
        | select((.state == "in_flight" or .state == "queued") and (.structured | not)) ]) as $unstructured_current
     | ([ $backlog.records[]? | select(.state == "in_flight" and .structured) ]) as $owned_in_flight
@@ -615,7 +621,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
              (.state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
-                    | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $queued_all
+                    | any($tasks[]; .id == $id and (.current_state.state | is_active)) | not)))) ]) as $queued_all
     | ([ $queued_all[]
          | select(.captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
@@ -660,7 +666,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     | ([ $owned_in_flight[] as $work
          | select($work.current_role != "program")
          | $tasks[]
-         | select(.id == $work.id and .current_state.state == "working")
+         | select(.id == $work.id and (.current_state.state | is_active))
          | {id,kind,state:.current_state.state,source:.current_state.source,
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
     | ($captain_holds_all
@@ -693,10 +699,25 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     | (if ($strict_invalidities | length) > 0 then $strict_invalidities[0] | del(.reason)
        elif ($unknown_children | length) > 0 then {kind:"child_current_unavailable",ids:($unknown_children | map(.id))}
        else {kind:null,ids:[]} end) as $invalidity
-    | (if $valid | not then "unknown"
+    # One child whose current state could not be read is a hole in the inventory,
+    # not proof the rest of it is wrong: the backlog still parses, every other
+    # child still reports, and the decisions, active work and holds derived from
+    # them are all still true. So an unreadable child costs the summary its strict
+    # validity - $valid, $reason and $invalidity above keep saying exactly which
+    # child and why, and the parent read downgrades its trust accordingly - but it
+    # does NOT collapse the state word to `unknown` and take the readable rest of
+    # the home down with it. Only a contradiction that makes the inventory itself
+    # untrustworthy ($strict_invalidities) does that.
+    # The three POSITIVE answers stay true whatever an unreadable sibling is
+    # doing: work that was read is work that exists. The NEGATIVE one is the
+    # exception, because "no active child work" is a claim about every child, and
+    # a home cannot make it while holding a child it could not read - that is the
+    # same unknown-read-as-a-definite-state answer this reader exists to refuse.
+    | (if ($strict_invalidities | length) > 0 then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
        elif ($active_all | length) > 0 then "active_child_work"
        elif ($holds_all | length) > 0 then "externally_held"
+       elif ($unknown_children | length) > 0 then "unknown"
        else "no_active_work" end) as $state
     | {
         schema:"fm-secondmate-home-summary.v1",
@@ -1273,7 +1294,7 @@ secondmate_landed_from_current_json() {  # <secondmate-current-json>
        | select(.current.state == "unknown" and .provenance.selected != "structured-home")
        | .home // ("<" + .id + ": unavailable>")],
      partial:[ $current.records[]
-       | select(.current.state == "unknown" and .provenance.selected == "structured-home")
+       | select(.provenance.selected == "structured-home" and .provenance.summary_valid == false)
        | .home // ("<" + .id + ": partial>")]}
     | .records |= sort_by([(.completion.date // ""), .id]) | .records |= reverse'
 }

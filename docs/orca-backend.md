@@ -64,6 +64,8 @@ It never raw-deletes an Orca worktree.
 ## Active limits
 
 - Orca is macOS-only and explicit-only.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- Orca has no agent-liveness classifier, so only that table's liveness-unknown column is reachable here.
 - The app must be running and report ready.
 - Secondmate spawns are unsupported.
 - Escape is unsupported.

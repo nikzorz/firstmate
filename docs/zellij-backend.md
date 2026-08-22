@@ -90,6 +90,9 @@ Real test cleanup uses only an isolated non-`firstmate` session and the guard in
 ## Active limits
 
 - Zellij is experimental and explicit-only.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- Zellij has no agent-liveness classifier, so only that table's liveness-unknown column is reachable for a crew window here.
+- A secondmate home is never probed for liveness, so a paused Zellij secondmate still waits quietly on the bounded recheck cadence.
 - All homes share one session and tab bar; scoped titles prevent cross-home identity collisions but do not create per-home visual containers.
 - There is no native busy or push-event signal, so supervision uses capture/hash and busy-regex polling.
 - There is no verified agent-process liveness signal, so a dead Zellij secondmate is reported inconclusive rather than auto-respawned.

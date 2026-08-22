@@ -885,10 +885,171 @@ EOF
   pass "a home summary with a usage-limited child reads as externally held, not no-active-work"
 }
 
+# A crew whose run has stopped advancing reads `stalled` from the run-step, and
+# that is the moment the captain most needs it in front of them. The home summary
+# folds child state into active work, so a fold that only knows the word `working`
+# drops the crew: the home computes no_active_work and the crew survives only as
+# an endpoints row. A real worktree on the run's branch plus a fake `axi status`
+# carrying the active_steps table is what makes the reader report stalled here.
+make_stalled_fakebin() {  # <dir> <branch>
+  local fb head
+  fb=$(fm_fakebin "$1")
+  head=$(git -C "$1/projects/stalled-wt" rev-parse HEAD)
+  cat > "$fb/no-mistakes" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-} \${2:-}" in
+  "axi status")
+    cat <<'TOON'
+run:
+  id: "01RUN"
+  branch: $2
+  status: running
+  head: "$head"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,20h53m,"quiet 20h52m ago: log: reviewing","424242",round 1
+TOON
+    ;;
+esac
+exit 0
+SH
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  list-windows) sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta ;;
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf 'codex\n' ;;
+      *) printf '%%1\n' ;;
+    esac ;;
+  capture-pane) printf 'all quiet\n> \n' ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  printf '%s\n' "$fb"
+}
+
+test_stalled_child_is_active_work_not_no_active_work() {
+  local home fakebin out
+  home=$(make_home stalled-home-summary)
+  mkdir -p "$home/projects/stalled-wt"
+  fm_git_identity fmtest fmtest@example.invalid
+  git -C "$home/projects/stalled-wt" init -q
+  git -C "$home/projects/stalled-wt" commit -q --allow-empty -m init
+  git -C "$home/projects/stalled-wt" checkout -q -b fm/stalled-task
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] stalled-task - Stalled Task (repo: alpha) (kind: ship) (since 2026-08-20)
+EOF
+  fm_write_meta "$home/state/stalled-task.meta" \
+    "window=firstmate:fm-stalled-task" \
+    "worktree=$home/projects/stalled-wt" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  printf 'working: implementing\n' > "$home/state/stalled-task.status"
+  fakebin=$(make_stalled_fakebin "$home" fm/stalled-task)
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "stalled-task") | .current_state.state == "stalled"
+  ' >/dev/null || fail "the fixture must produce a stalled child: $out"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .state == "active_child_work"
+      and ((.active_children // []) | any(.id == "stalled-task" and .state == "stalled"))
+  ' >/dev/null || fail "a stalled child must stay active child work: $out"
+  pass "a home summary with a stalled child reads as active child work, not no-active-work"
+}
+
+# The default arms now route more crews to `unknown`, so one unreadable child
+# must not take the readable rest of a home down with it. The summary still says
+# which child it could not read and still loses its strict validity; what it must
+# not do is answer `unknown` for a home whose backlog, decisions and other
+# children all read fine.
+test_unreadable_child_does_not_collapse_the_home_state() {
+  local home fakebin out
+  home=$(make_home unreadable-child-home)
+  mkdir -p "$home/projects/limit-wt3"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] limit-task - Limit Task (repo: alpha) (kind: ship) (since 2026-07-29)
+- [ ] gone-task - Gone Task (repo: alpha) (kind: ship) (since 2026-07-29)
+EOF
+  fm_write_meta "$home/state/limit-task.meta" \
+    "window=firstmate:fm-limit-task" \
+    "worktree=$home/projects/limit-wt3" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'working: implementing\n' > "$home/state/limit-task.status"
+  # No worktree and no endpoint, so this child's current state is unreadable.
+  fm_write_meta "$home/state/gone-task.meta" \
+    "window=firstmate:fm-gone-task" \
+    "worktree=$home/projects/torn-down" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  fakebin=$(make_limit_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .state == "externally_held"
+      and .valid == false
+      and .invalidity == {kind:"child_current_unavailable",ids:["gone-task"]}
+      and (.reason | test("child current state unavailable: gone-task"))
+      and ((.holds // []) | any(.id == "limit-task"))
+  ' >/dev/null || fail "one unreadable child must not collapse the readable rest of the home: $out"
+  pass "an unreadable child costs strict validity without collapsing the home state"
+}
+
+# The corner the case above cannot reach, because its readable sibling supplies a
+# hold: a home whose ONLY in-flight child is the unreadable one. Every positive
+# answer is empty, so the summary would otherwise answer `no_active_work` - an
+# affirmative claim about every child, made while holding one it could not read,
+# which is the same unknown-read-as-a-definite-state answer this whole reader
+# exists to refuse.
+test_unreadable_only_home_does_not_claim_no_active_work() {
+  local home fakebin out
+  home=$(make_home unreadable-only-home)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] gone-task - Gone Task (repo: alpha) (kind: ship) (since 2026-07-29)
+EOF
+  fm_write_meta "$home/state/gone-task.meta" \
+    "window=firstmate:fm-gone-task" \
+    "worktree=$home/projects/torn-down" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  fakebin=$(make_limit_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .state == "unknown"
+      and (.reason | test("child current state unavailable: gone-task"))
+      and (.active_children | length) == 0
+      and (.holds | length) == 0
+      and (.decisions_open | length) == 0
+  ' >/dev/null || fail "a home holding only an unreadable child claimed no active work: $out"
+  pass "a home whose only child is unreadable does not claim no active child work"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
+test_stalled_child_is_active_work_not_no_active_work
+test_unreadable_child_does_not_collapse_the_home_state
+test_unreadable_only_home_does_not_claim_no_active_work
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

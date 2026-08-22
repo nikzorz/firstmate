@@ -92,6 +92,36 @@ The caller-facing label remains `fm-<id>`, but the actual cmux workspace title i
 Test cleanup must use the guarded path in [`docs/cmux-backend.md`](cmux-backend.md#current-operation-and-safety), never enumerate-and-close every workspace.
 The `config/backend` file is not inherited by secondmate homes.
 
+### Declared-pause absorb, by verdict and endpoint liveness
+
+When a crew declares a bounded external wait, the stale path decides from two inputs: the authoritative current-state verdict for that crew, and what the runtime backend can prove about its endpoint.
+`bin/fm-watch.sh`'s `pause_state_class` owns that decision; this table is the single statement of its outcomes, and the backend guides point here rather than each restating it.
+
+| Current-state verdict | Endpoint `alive` | Endpoint `dead` | Liveness `unknown` |
+|---|---|---|---|
+| `working` from a run step | long pause cadence | ordinary wedge timer | ordinary wedge timer |
+| `working` from the pane only | ordinary wedge timer | ordinary wedge timer | ordinary wedge timer |
+| `failed` from a run step | ordinary wedge timer | long pause cadence | immediate wake |
+| `paused` from the status log | immediate wake | long pause cadence | immediate wake |
+| anything else | immediate wake | long pause cadence | immediate wake |
+
+Long pause cadence means absorbed, rechecked once per `FM_PAUSE_RESURFACE_SECS` window or at a recorded one-shot deadline, whichever comes first.
+Ordinary wedge timer means absorbed now and escalated once the pane stays idle past `FM_STALE_ESCALATE_SECS`.
+Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
+
+Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
+On `zellij`, `orca` and `cmux` the liveness-unknown column is the only reachable one.
+That is a deliberate supported-surface limit: classifiers for three experimental backends this fleet does not run are not built, and the work reopens on its own merits if a home adopts one.
+
+A secondmate window is never probed for liveness, so its reading is always unknown, but the two gates that force the unknown column are themselves skipped for a secondmate.
+A declared pause on a secondmate is therefore absorbed on the long pause cadence on every backend, this table's unknown column included.
+
+`working` from a run step means the run is non-terminal AND still advancing.
+Past its inactivity budget the reader reports `stalled`, which takes the last row instead.
+The older behaviour, where a run that had stopped advancing still held the long cadence, survives only where no elapsed figure is available at all: the coarse runs-list fallback, an absent `active_steps` table, and a `last_activity` of `unknown`.
+
+The health ordering in the `paused` row is inverted, and this change does not fix it: a confidently dead endpoint earns the long cadence while a confirmed-live one is surfaced.
+
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
 The `/afk` sub-supervisor injects escalation digests into firstmate's own pane independently of where new task endpoints are spawned.
@@ -411,6 +441,9 @@ FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
 FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
+FM_CREW_STATE_AGENT_QUIET_SECS=1800   # seconds an agent-driven run step may be quiet before fm-crew-state.sh reports stalled
+FM_CREW_STATE_REMOTE_QUIET_SECS=7200  # the same budget for a step that only monitors remote checks
+FM_CREW_STATE_REMOTE_STEPS=ci   # space-delimited step names that draw the remote budget; bin/fm-crew-state.sh owns why the two differ
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
 FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usage-limit prompt
 FM_CLAUDE_LIMIT_FOOTER_TAIL_SLACK=2   # non-blank lines allowed below that prompt's confirm row before the match is rejected
@@ -448,7 +481,7 @@ FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE; seconds a live watche
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
-FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless the crew declared the pause verb, whose handling bin/fm-watch.sh's pause_state_class owns
+FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless the crew declared the pause verb or finished with an armed merge poll, both of which bin/fm-watch.sh's stale triage owns
 FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log

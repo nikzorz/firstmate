@@ -2,7 +2,7 @@
 
 Audience: maintainer verification.
 
-This record supports current session-start, turn-end, watcher-continuity, and wedge-alarm guarantees.
+This record supports current session-start, turn-end, watcher-continuity, wedge-alarm, and run-inactivity guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
 
@@ -281,3 +281,31 @@ A short bounding window whose `resetsAt` or `percentRemaining` the provider does
 Every unreadable, unparseable, provider-stale, or not-`known` input reports `unknown` with no recheck time, which authorizes neither recovery nor a settled wait; `tests/fm-limit-resume.test.sh` covers each of those inputs without touching a real account.
 A readable window whose reset time is absent or unparseable is still a good `exhausted` verdict - only the scheduling refinement is lost, and the supervisors fall back to `FM_PAUSE_RESURFACE_SECS` exactly as before.
 If the provider ever renames any of the four fields, that fallback is what happens silently, so this record is the thing to re-run when a quota-axi upgrade lands.
+
+## Run inactivity budget
+
+This record supports the `active_steps` half of the stalled-run detection in `bin/fm-crew-state.sh`.
+The budget arithmetic and the unrecognised-status arms are covered without a real run by `tests/fm-crew-state.test.sh`; what needs live evidence is the surface those figures are read from, because field presence in an external CLI is evidence rather than a contract.
+
+Measured on 2026-08-21 against the installed no-mistakes v1.45.4, reading a run record through `NM_HOME` pointed at a copy of the state database so nothing live was touched.
+
+```sh
+NM_HOME=<copy> no-mistakes axi status --run <run-id>
+```
+
+The table and all three `last_activity` renderings it produces:
+
+```
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,7h7m,"5s ago: log: I'll review the branch changes now.","424242",round 3
+    ci,running,4h20m,"quiet 20h52m ago: log: all CI checks passed - still monitoring until merged or closed","",round 1
+    ci,running,4h21m,unknown,"",round 1
+```
+
+Three facts the reader depends on are visible here.
+The elapsed figure leads the `last_activity` value, so only the first whitespace-delimited token has to parse and the log prose after it is never scanned for digits.
+The `quiet ` prefix no-mistakes adds past its own `step_quiet_warning` sits before that token rather than replacing it, so stripping the prefix is enough.
+A step with no recorded activity renders the bare word `unknown`, which is the case that must not manufacture a stall.
+Durations render as `30s`, `1h0m`, `20h52m`, and `3d11h`, all of which the token parser accepts.
+
+Columns are located by name from the table header rather than by position, so this record pins the field names, not their order.

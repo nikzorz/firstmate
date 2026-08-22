@@ -79,6 +79,8 @@ Ambiguous pending text never receives the busy-queue conversion.
 ## Limits and regression entry points
 
 - tmux is the reference path and supports secondmate homes.
+- The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
+- tmux is one of the two backends that implement `agent_state`, so it can produce the `alive` and `dead` readings that table's first two columns need.
 - Existing Pi agent-process liveness is inconclusive, while an authoritatively missing Pi window can trigger recovery.
 - The OpenCode busy-queue exception is tmux-specific; Herdr retains its separately documented gap.
 

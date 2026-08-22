@@ -283,6 +283,28 @@ run:
 EOF
 }
 
+# A run object carrying the `active_steps` table `axi status` publishes for a
+# running or fixing run. Captured verbatim from no-mistakes v1.45.4 against a
+# real run record, including the quoted last_activity, the `quiet ` prefix the
+# CLI adds past its own step_quiet_warning, and the bare `unknown` it emits when
+# no activity has been recorded at all.
+run_with_active_step() {  # <branch> <step> <last_activity-cell> [<status>]
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ${4-running}
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    $2,${4-running},0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    $2,${4-running},7h7m,$3,"424242",round 3
+EOF
+}
+
 # The branch_sync block no-mistakes appends to `axi status` when the checked-out
 # branch is bound to the reported run. Its local.head is read from the crew's
 # own worktree, so it binds a run whose head is a commit only no-mistakes' own
@@ -424,6 +446,27 @@ run:
 EOF
 }
 
+# The same ci-monitor run, plus the active_steps row that says how long the ci
+# step has been quiet. An overnight wait on the captain reaches this shape.
+run_ci_monitoring_quiet() {  # <branch> <last_activity-cell>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/2"
+  findings: none
+  steps[4]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    push,completed,0,0
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,20h53m,$2,"",round 1
+EOF
+}
+
 run_fixing_ci_running() {  # <branch>
   cat <<EOF
 run:
@@ -462,6 +505,272 @@ EOF
 # (l) claude usage-limit prompt. The 2026-07-29 regression pair: the prompt is
 # its own state and OUTRANKS an active run, and ordinary worker output that
 # merely discusses limits never reaches it.
+# --- arm B: a run that has stopped advancing is not a healthy run -----------
+#
+# Before this, no script in bin/ read `last_activity` at all, so a run that
+# logged four seconds ago and one parked for 20h52m produced a byte-identical
+# `working / run-step` verdict.
+
+test_advancing_agent_step_stays_working() {
+  reset_fakes
+  local d; d=$(new_case advancing)
+  make_repo_on_branch "$d/wt" fm/feat-adv
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/adv.meta" "window=fm:fm-adv" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-adv review '"5s ago: log: I will review the branch changes now."')"
+  local out; out=$(run_crew_state "$d" adv)
+  assert_contains "$out" "state: working" "an advancing review step is working"
+  pass "an advancing agent step stays working"
+}
+
+test_hung_agent_step_reports_stalled() {
+  reset_fakes
+  local d; d=$(new_case hung-agent)
+  make_repo_on_branch "$d/wt" fm/feat-hung
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/hung.meta" "window=fm:fm-hung" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-hung review '"quiet 20h52m ago: log: I will review the branch changes now."')"
+  local out; out=$(run_crew_state "$d" hung)
+  assert_contains "$out" "state: stalled" "a review step quiet for 20h52m is not working"
+  assert_contains "$out" "review step quiet" "the stalled detail names the step"
+  pass "a hung agent step reports stalled"
+}
+
+# A zero-padded duration component is an invalid octal constant in bash
+# arithmetic, and that is a fatal expansion error rather than a bad term, so an
+# unguarded parse would kill the elapsed read and drop the step from the budget
+# with no verdict change to show for it. The installed formatter does not pad, so
+# this pins the guard rather than a rendering anyone has seen.
+test_zero_padded_duration_still_reaches_the_budget() {
+  reset_fakes
+  local d; d=$(new_case padded-duration)
+  make_repo_on_branch "$d/wt" fm/feat-pad
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/pad.meta" "window=fm:fm-pad" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-pad review '"quiet 3d09h ago: log: reviewing"')"
+  local out err
+  err="$d/pad.err"
+  out=$(run_crew_state "$d" pad 2>"$err")
+  assert_contains "$out" "state: stalled" "a padded 3d09h must still be measured against the budget"
+  [ ! -s "$err" ] || fail "the padded duration left an arithmetic error on stderr: $(cat "$err")"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-pad review '"quiet 0h08m ago: log: reviewing"')"
+  out=$(run_crew_state "$d" pad 2>"$err")
+  assert_contains "$out" "state: working" "a padded 0h08m is inside the agent budget, not a parse failure"
+  [ ! -s "$err" ] || fail "the padded minute component left an arithmetic error on stderr: $(cat "$err")"
+  pass "a zero-padded duration component still reaches the inactivity budget"
+}
+
+# The same 45m silence is a breach on an agent-driven step and inside budget on
+# a remote-check one, which is the whole reason the two budgets are separate.
+test_quiet_remote_check_step_keeps_the_looser_budget() {
+  reset_fakes
+  local d; d=$(new_case quiet-ci)
+  make_repo_on_branch "$d/wt" fm/feat-ci
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/qci.meta" "window=fm:fm-qci" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-ci ci '"quiet 45m0s ago: log: all CI checks passed"')"
+  FM_FAKE_CI_LOGS="no CI checks reported yet, waiting for checks to register..."
+  local out; out=$(run_crew_state "$d" qci)
+  assert_contains "$out" "state: working" "45m of remote-check quiet is inside its budget"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-ci review '"quiet 45m0s ago: log: reviewing"')"
+  out=$(run_crew_state "$d" qci)
+  assert_contains "$out" "state: stalled" "45m of agent-step quiet is past its budget"
+  pass "the remote-check step keeps its own looser budget"
+}
+
+test_hung_remote_check_step_reports_stalled() {
+  reset_fakes
+  local d; d=$(new_case hung-ci)
+  make_repo_on_branch "$d/wt" fm/feat-hci
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/hci.meta" "window=fm:fm-hci" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-hci ci '"quiet 20h52m ago: log: all CI checks passed"')"
+  FM_FAKE_CI_LOGS="no CI checks reported yet, waiting for checks to register..."
+  local out; out=$(run_crew_state "$d" hci)
+  assert_contains "$out" "state: stalled" "a ci step quiet for 20h52m is past even the looser budget"
+  pass "a hung remote-check step reports stalled"
+}
+
+# The budget must not eat the one wait it was never about. A crew that appended
+# `done: PR <url> checks green` and stopped is quiet BECAUSE it finished, and the
+# captain owns how long the merge takes; the ci step goes quiet with it, easily
+# past the remote budget overnight. The hard part is the ci log tail: when the
+# bounded `axi logs` call times out or its tail carries no recognized marker
+# there is no checks-green evidence from the run at all, and only the crew's own
+# report says the PR is ready. That report must still win, or the exact wake the
+# landing absorb exists to silence comes back on every new pane hash.
+test_quiet_ci_monitor_with_checks_green_report_stays_done() {
+  reset_fakes
+  local d; d=$(new_case quiet-ci-ready)
+  make_repo_on_branch "$d/wt" fm/feat-cirq
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cirq.meta" "window=fm:fm-cirq" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/cirq.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring_quiet fm/feat-cirq '"quiet 20h52m ago: log: waiting"')"
+  FM_FAKE_CI_LOGS=""
+  local out; out=$(run_crew_state "$d" cirq)
+  assert_contains "$out" "state: done" "an unreadable ci log tail must not turn the merge wait into a stall"
+  assert_contains "$out" "source: status-log" "the crew's own checks-green report stays the source"
+  assert_contains "$out" "run still monitoring PR" "the detail still names the monitoring run"
+  assert_not_contains "$out" "state: stalled" "a crew waiting out the captain is never stalled"
+  pass "a quiet ci monitor with a checks-green report stays done"
+}
+
+# The other direction, so the placement above cannot be mistaken for exempting
+# the ci step from the budget: with the ci log tail reporting checks NOT green,
+# the stale checks-green report no longer explains the silence and the same run
+# is stalled.
+test_quiet_ci_monitor_without_green_checks_still_stalls() {
+  reset_fakes
+  local d; d=$(new_case quiet-ci-relapse)
+  make_repo_on_branch "$d/wt" fm/feat-cirl
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cirl.meta" "window=fm:fm-cirl" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/cirl.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring_quiet fm/feat-cirl '"quiet 20h52m ago: log: waiting"')"
+  FM_FAKE_CI_LOGS="CI checks running, waiting for results..."
+  local out; out=$(run_crew_state "$d" cirl)
+  assert_contains "$out" "state: stalled" "a stale checks-green report must not exempt a hung ci step"
+  assert_contains "$out" "ci step quiet" "the stalled detail names the ci step"
+  pass "a quiet ci monitor without green checks still stalls"
+}
+
+# An absent table and an `unknown` cell both carry no elapsed figure. Neither may
+# invent a breach; this is the stated limit of the budget.
+test_missing_activity_figure_leaves_the_verdict_alone() {
+  reset_fakes
+  local d; d=$(new_case no-activity)
+  make_repo_on_branch "$d/wt" fm/feat-na
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/na.meta" "window=fm:fm-na" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-na review unknown)"
+  local out; out=$(run_crew_state "$d" na)
+  assert_contains "$out" "state: working" "an unknown last_activity does not manufacture a stall"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-na)"
+  out=$(run_crew_state "$d" na)
+  assert_contains "$out" "state: working" "a run with no active_steps table stays working"
+  pass "a missing activity figure leaves the verdict alone"
+}
+
+# The same active_steps table under an arbitrary column layout, so the header is
+# proved to be what locates the fields. A reader that counted positions instead
+# would read the wrong cell - or none - the first time no-mistakes reorders the
+# table or adds a column of its own, and would then report a hung run healthy
+# again with nothing to show for it.
+run_with_active_step_layout() {  # <branch> <header-columns> <row>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+  active_steps[1]{$2}:
+    $3
+EOF
+}
+
+test_active_step_columns_are_located_by_name() {
+  reset_fakes
+  local d; d=$(new_case column-layout)
+  make_repo_on_branch "$d/wt" fm/feat-cols
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cols.meta" "window=fm:fm-cols" "worktree=$d/wt" "kind=ship"
+  local quiet='"quiet 20h52m ago: log: I will review the branch changes now."' out
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'step,status,active_for,last_activity,agent_pid,round' \
+    "review,running,20h53m,$quiet,\"424242\",round 1")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "the layout published today must reach the budget"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'last_activity,status,active_for,agent_pid,round,step' \
+    "$quiet,running,20h53m,\"424242\",round 1,review")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "a reordered table must still be read by column name"
+
+  FM_FAKE_AXI_STATUS="$(run_with_active_step_layout fm/feat-cols \
+    'worker,step,status,active_for,last_activity,agent_pid,round' \
+    "worker-9,review,running,20h53m,$quiet,\"424242\",round 1")"
+  out=$(run_crew_state "$d" cols)
+  assert_contains "$out" "review step quiet 20h52m" "a new leading column must not shift the read"
+  pass "active_steps columns are located by name, not by position"
+}
+
+# The budgets are tuning constants, changeable without editing logic.
+test_inactivity_budgets_are_configurable() {
+  reset_fakes
+  local d; d=$(new_case budget-knob)
+  make_repo_on_branch "$d/wt" fm/feat-knob
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/knob.meta" "window=fm:fm-knob" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-knob review '"quiet 40m0s ago: log: reviewing"')"
+  local out
+  out=$(FM_CREW_STATE_AGENT_QUIET_SECS=7200 run_crew_state "$d" knob)
+  assert_contains "$out" "state: working" "a raised budget absorbs the same silence"
+  out=$(FM_CREW_STATE_AGENT_QUIET_SECS=60 run_crew_state "$d" knob)
+  assert_contains "$out" "state: stalled" "a lowered budget escalates the same silence"
+  pass "the inactivity budgets are configurable without editing logic"
+}
+
+# --- arm B: an unknown run status is not a healthy run ----------------------
+
+test_unrecognized_run_status_is_not_working() {
+  reset_fakes
+  local d; d=$(new_case weird-status)
+  make_repo_on_branch "$d/wt" fm/feat-weird
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/weird.meta" "window=fm:fm-weird" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-weird review '"5s ago: log: x"' weirdstate)"
+  local out; out=$(run_crew_state "$d" weird)
+  assert_contains "$out" "state: unknown" "a future status word is not read as a healthy run"
+  assert_contains "$out" "unrecognized run status: weirdstate" "the unknown word is named"
+  pass "an unrecognized run status is not working"
+}
+
+test_empty_run_status_is_not_working() {
+  reset_fakes
+  local d; d=$(new_case empty-status)
+  make_repo_on_branch "$d/wt" fm/feat-empty
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/empty.meta" "window=fm:fm-empty" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/feat-empty
+  head: \"${FM_FAKE_RUN_HEAD:-abc1234}\"
+  pr: \"\"
+  findings: none"
+  local out; out=$(run_crew_state "$d" empty)
+  assert_contains "$out" "state: unknown" "an empty run status is not read as a healthy run"
+  assert_contains "$out" "run reported no status" "the empty status is named"
+  pass "an empty run status is not working"
+}
+
+# The absorb classifier must not treat either as positive evidence of health.
+test_stalled_and_unknown_are_not_provably_working() {
+  reset_fakes
+  local d; d=$(new_case stalled-absorb)
+  make_repo_on_branch "$d/wt" fm/feat-sa
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/sa.meta" "window=fm:fm-sa" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-sa review '"quiet 20h52m ago: log: reviewing"')"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_BIN="$CREW_STATE" \
+    crew_is_provably_working sa \
+    && fail "a stalled run was treated as provably working"
+  FM_FAKE_AXI_STATUS="$(run_with_active_step fm/feat-sa review '"5s ago: log: reviewing"')"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_BIN="$CREW_STATE" \
+    crew_is_provably_working sa \
+    || fail "an advancing run was not treated as provably working"
+  pass "a stalled run is not provably working, an advancing one still is"
+}
+
 test_usage_limit_prompt_outranks_active_run() {
   reset_fakes
   local d; d=$(new_case usage-limit-active-run)
@@ -1724,6 +2033,19 @@ test_branch_sync_after_local_work_past_submitted_head_does_not_attribute
 test_branch_sync_before_run_object_still_reads_run_fields
 test_branch_sync_before_run_object_does_not_attribute_foreign_run
 test_missing_run_head_falls_back_to_current_state
+test_advancing_agent_step_stays_working
+test_hung_agent_step_reports_stalled
+test_zero_padded_duration_still_reaches_the_budget
+test_quiet_remote_check_step_keeps_the_looser_budget
+test_hung_remote_check_step_reports_stalled
+test_quiet_ci_monitor_with_checks_green_report_stays_done
+test_quiet_ci_monitor_without_green_checks_still_stalls
+test_missing_activity_figure_leaves_the_verdict_alone
+test_active_step_columns_are_located_by_name
+test_inactivity_budgets_are_configurable
+test_unrecognized_run_status_is_not_working
+test_empty_run_status_is_not_working
+test_stalled_and_unknown_are_not_provably_working
 test_usage_limit_prompt_outranks_active_run
 test_usage_limit_prompt_exhausted_window
 test_usage_limit_unreadable_quota_is_unknown

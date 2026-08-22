@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared wake classifier: the common source of truth for captain-relevant status
-# tests, declared-external-wait vocabulary, and the working/paused absorb
-# classification that makes no-verb signal and stale-pane wakes safe to absorb.
+# tests, declared-external-wait vocabulary, and the absorb classification that
+# makes no-verb signal and stale-pane wakes safe to absorb.
 # Sourced by BOTH the always-on watcher
 # (bin/fm-watch.sh) and the away-mode daemon (bin/fm-supervise-daemon.sh) so the
 # overlapping triage policy lives in one place instead of two copies that can
@@ -18,7 +18,8 @@
 # working/paused wrappers. It is NOT a pure status-file read: it reuses
 # bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide whether
 # a crew that just stopped its turn or went stale is working, deliberately paused,
-# unreliable (a verdict that is evidence of nothing either way), or none of those.
+# finished with a landing route, unreliable (a verdict that is evidence of nothing
+# either way), or none of those.
 # Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
 # never on every wake, so the per-wake triage stays cheap. A caller that keeps
 # absorbing the same unchanged pane across polls - today only bin/fm-watch.sh's
@@ -159,6 +160,24 @@ pause_deadline_reached() {  # <state-dir> <id>
 # and consumer drift.
 FM_CLASSIFY_USAGE_LIMITED_STATE='usage-limited'
 FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
+
+# The bin/fm-crew-state.sh current-state words that mean a crew is still holding
+# its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
+# task with its run no longer advancing, which is work that needs attention
+# rather than work that ended or work that was never there. Every reader asking
+# "is this task live right now" must ask about the whole set, or a crew drops out
+# of the fleet's active view at exactly the moment its run stops moving - the
+# opposite of what reporting the distinct state is for. One definition here, for
+# the same reason the usage-limit token above has one: the words are produced and
+# consumed entirely inside firstmate's own scripts, so a second copy could only
+# drift. fm_classify_active_states_json is the form the snapshot readers' jq
+# projections take, so a new word is taught to every consumer by editing the list.
+FM_CLASSIFY_ACTIVE_STATES='working stalled'
+fm_classify_active_states_json() {
+  local st out=''
+  for st in $FM_CLASSIFY_ACTIVE_STATES; do out="$out,\"$st\""; done
+  printf '[%s]' "${out#,}"
+}
 
 # The resolution verb and durable-backlog-transfer verb that CLOSE a keyed
 # status decision opened by needs-decision or blocked. See status_open_decisions
@@ -409,6 +428,53 @@ signal_reason_is_actionable() {  # <file> ...
   return 1
 }
 
+# --- landing route -----------------------------------------------------------
+#
+# A crew that appended `done: PR <url> checks green` and stopped did exactly what
+# its instructions ask. There is nothing left for it to do, so its endpoint goes
+# idle, and until this class existed the stale path read that idle endpoint as a
+# possible wedge and surfaced it every escalation window for as long as the
+# captain took to answer the PR - overnight included. A terminal `done` is the
+# strongest positive evidence available that the crew is not wedged: it is the
+# crew's own declaration that it finished.
+#
+# It earns the absorb only when the work has somewhere to land AND something
+# other than the stale timer will wake firstmate when it does. That is exactly a
+# recorded `pr=` plus an armed merge poll, and the merge poll is then the only
+# thing that wakes firstmate for the task. A `done` with no landing route
+# recorded is a crew that stopped with nowhere to go, which firstmate must see,
+# so it keeps surfacing.
+#
+# The armed test is bin/fm-pr-lib.sh's own fm_pr_poll_artifacts_valid, the same
+# predicate the watcher's check dispatcher uses to decide the poll may run:
+# absorbing on a weaker test could silence a task whose poll the dispatcher will
+# then refuse, leaving nothing at all to wake firstmate. It runs in a SUBSHELL so
+# this read-only probe can never clobber the FM_PR_* globals a caller is using
+# for the very poll under test.
+
+# The state directory this library's task-file reads resolve against, matching
+# bin/fm-crew-state.sh's own resolution order.
+_fm_classify_state_dir() {
+  if [ -n "${STATE:-}" ]; then printf '%s' "$STATE"; return; fi
+  if [ -n "${FM_STATE_OVERRIDE:-}" ]; then printf '%s' "$FM_STATE_OVERRIDE"; return; fi
+  printf '%s/state' "${FM_HOME:-$_FM_CLASSIFY_LIB_DIR/..}"
+}
+
+fm_classify_landing_route_armed() {  # <id>
+  local id=$1 state
+  [ -n "$id" ] || return 1
+  state=$(_fm_classify_state_dir)
+  [ -n "$state" ] || return 1
+  grep -q '^pr=..*' "$state/$id.meta" 2>/dev/null || return 1
+  [ -f "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" ] || return 1
+  [ -f "$_FM_CLASSIFY_LIB_DIR/fm-pr-poll.sh" ] || return 1
+  (
+    # shellcheck source=bin/fm-pr-lib.sh
+    . "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" \
+      && fm_pr_poll_artifacts_valid "$state" "$id" "$_FM_CLASSIFY_LIB_DIR/fm-pr-poll.sh"
+  ) >/dev/null 2>&1
+}
+
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). crew_absorb_verdict is the primitive
@@ -418,14 +484,26 @@ signal_reason_is_actionable() {  # <file> ...
 #                pane; the crew is legitimately mid-work on a static-looking pane
 #                (e.g. waiting on CI);
 #   paused     - the crew's authoritative current state is a declared external-wait
-#                pause (paused:), which is EXPECTED to idle;
+#                pause (paused:), which is EXPECTED to idle. Whether a consumer may
+#                act on it depends on the runtime backend: bin/fm-watch.sh's
+#                declared-pause path additionally requires a confirmed-live
+#                endpoint, which only tmux and herdr can report - see that
+#                function and docs/configuration.md's "Runtime backend" section;
+#   landing    - the crew's authoritative current state is a terminal `done` AND
+#                the task carries a recorded landing route with an armed merge
+#                poll (fm_classify_landing_route_armed above). The work is
+#                finished and the merge poll owns the next wake, so the stale
+#                timer must not keep raising the same idle pane while the
+#                captain takes their time over the PR;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
 #                path - may treat it as "no contrary evidence" instead of proof the
 #                crew stopped; every other consumer treats it exactly like none;
-#   none       - none of those, so the wake must surface (a stopped/finished/parked/
-#                torn-down/unknown crew, or an unreadable verdict). A crew parked on
+#   none       - none of those, so the wake must surface (a stopped/parked/
+#                torn-down/unknown crew, a run that has stopped advancing
+#                (stalled), a `done` with no landing route recorded, or an
+#                unreadable verdict). A crew parked on
 #                Claude Code's usage-limit prompt lands here too, deliberately: it is
 #                genuinely stopped, so it must reach firstmate once instead of being
 #                absorbed. crew_usage_limit_class below distinguishes it, and once
@@ -478,6 +556,9 @@ crew_absorb_verdict() {  # <id>
   if [ "$state" = paused ]; then printf 'paused %s' "$src"; return; fi
   if [ "$state" = working ]; then
     case "$src" in run-step|pane) printf 'working %s' "$src"; return ;; esac
+  fi
+  if [ "$state" = "done" ] && fm_classify_landing_route_armed "$id"; then
+    printf 'landing %s' "$src"; return
   fi
   if [ "$state" = failed ] && [ "$src" = run-step ]; then printf 'unreliable %s' "$src"; return; fi
   printf 'none %s' "$src"
