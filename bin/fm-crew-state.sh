@@ -866,23 +866,6 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
   fi
 
-  # A non-terminal run that has stopped advancing is not a working one. Checked
-  # after the ci-green override above, so a green PR still waiting on merge -
-  # legitimately quiet, and already reported `done` - is never called stalled.
-  # Only the full `axi status` path can answer this: the coarse runs list
-  # publishes no per-step activity.
-  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ]; then
-    STALLED=$(nm_stalled_step)
-    if [ -n "$STALLED" ]; then
-      STALL_STEP=${STALLED%% *}
-      STALL_REST=${STALLED#* }
-      STALL_SECS=${STALL_REST%% *}
-      STALL_BUDGET=${STALL_REST##* }
-      RUN_STATE=stalled
-      RUN_DETAIL="run stopped advancing: $STALL_STEP step quiet $(nm_secs_human "$STALL_SECS"), past its $(nm_secs_human "$STALL_BUDGET") budget"
-    fi
-  fi
-
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
@@ -897,6 +880,29 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+    fi
+  fi
+
+  # A non-terminal run that has stopped advancing is not a working one. This is
+  # the LAST of the working-state overrides, which is what the budget needs to
+  # stay honest in both directions. Every route by which a PR whose checks are
+  # already green has been reported `done` - the ci step's own log marker above,
+  # and the crew's own checks-green status log - has already emitted by here, so
+  # a crew waiting out the captain on a merge is never called stalled no matter
+  # how long that wait runs or whether the ci log tail could be read at all.
+  # What does reach here is a run still claiming to validate with no checks-green
+  # evidence from either source, and that claim is exactly what the elapsed
+  # figure is allowed to contradict. Only the full `axi status` path can answer
+  # it: the coarse runs list publishes no per-step activity.
+  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ]; then
+    STALLED=$(nm_stalled_step)
+    if [ -n "$STALLED" ]; then
+      STALL_STEP=${STALLED%% *}
+      STALL_REST=${STALLED#* }
+      STALL_SECS=${STALL_REST%% *}
+      STALL_BUDGET=${STALL_REST##* }
+      RUN_STATE=stalled
+      RUN_DETAIL="run stopped advancing: $STALL_STEP step quiet $(nm_secs_human "$STALL_SECS"), past its $(nm_secs_human "$STALL_BUDGET") budget"
     fi
   fi
 

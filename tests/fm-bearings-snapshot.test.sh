@@ -744,6 +744,68 @@ EOF
   pass "nonprogressing child states are explicit and inconsistent terminal rows invalidate"
 }
 
+# A crew whose run has stopped advancing reads `stalled`, which is work that
+# needs attention rather than work that ended. The captain's in-flight list folds
+# a secondmate home in only when that home reports active child work, so a fold
+# that recognises only `working` makes exactly the crew the state was added to
+# expose disappear from the one view the captain reads.
+test_stalled_child_stays_in_the_captains_in_flight_view() {
+  local home mate fakebin head json
+  home=$(make_home stalled-child-in-flight)
+  mate="$TMP_ROOT/stalled-child-home"
+  make_valid_secondmate_home stalls "$mate"
+  append_secondmate_registry "$home" stalls "$mate"
+  mkdir -p "$mate/projects/hung"
+  fm_git_identity fmtest fmtest@example.invalid
+  git -C "$mate/projects/hung" init -q
+  git -C "$mate/projects/hung" commit -q --allow-empty -m init
+  git -C "$mate/projects/hung" checkout -q -b fm/hung-child
+  head=$(git -C "$mate/projects/hung" rev-parse HEAD)
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] hung-child - Hung child (repo: sample) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  fm_write_meta "$mate/state/hung-child.meta" \
+    "window=firstmate:fm-hung-child" "worktree=$mate/projects/hung" "project=sample" \
+    "harness=codex" "kind=ship" "mode=no-mistakes"
+  printf 'working: implementing\n' > "$mate/state/hung-child.status"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/no-mistakes" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-} \${2:-}" in
+  "axi status")
+    cat <<'TOON'
+run:
+  id: "01RUN"
+  branch: fm/hung-child
+  status: running
+  head: "$head"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,20h53m,"quiet 20h52m ago: log: reviewing","424242",round 1
+TOON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/no-mistakes"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.in_flight | any(.id == "stalls" and .state == "active_child_work"
+                      and (.doing | contains("hung-child"))))
+  ' >/dev/null || fail "a stalled child dropped out of the captain in-flight view: $json"
+  pass "a home whose only child is stalled stays in the captain in-flight view"
+}
+
 test_registry_unavailability_and_bounds_are_explicit() {
   local home fakebin json canonical id mate boundary
   home=$(make_home registry-unavailable)
@@ -1623,7 +1685,7 @@ EOF
           and [.queued[].id] == ["production-observation"]
           and [.holds[].id] == ["production-observation"])
       and (.secondmate_current.records[] | select(.id == "sshhip")
-        | .current.state == "unknown"
+        | .current.state == "captain_decision"
           and (.current.reason | contains("child current state unavailable: unreadable-child"))
           and .provenance.selected == "structured-home"
           and .provenance.summary_valid == false
@@ -1660,7 +1722,7 @@ EOF
         and .reason == "documented no live worker"))
       and (.gates | any(.id == "captain-run" and .owner == "home-assistant"
         and .blocked_by == "prep,security"))
-      and (.secondmates | any(.id == "sshhip" and .state == "unknown"
+      and (.secondmates | any(.id == "sshhip" and .state == "captain_decision"
         and (.reason | contains("unreadable-child"))))
   ' >/dev/null || fail "end-to-end mixed-domain projection was wrong: $json"
 
@@ -1901,6 +1963,7 @@ test_secondmate_and_child_bounds_are_disclosed
 test_parent_decision_is_untrusted_contradiction_only
 test_parent_evidence_reconciles_by_verb_and_key
 test_nonprogressing_child_states_are_explicit
+test_stalled_child_stays_in_the_captains_in_flight_view
 test_registry_unavailability_and_bounds_are_explicit
 test_current_landed_baseline_is_repeatable_and_prior_report_independent
 test_default_is_bounded_and_local_only

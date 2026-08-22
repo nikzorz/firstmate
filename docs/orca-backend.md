@@ -64,7 +64,7 @@ It never raw-deletes an Orca worktree.
 ## Active limits
 
 - Orca is macOS-only and explicit-only.
-- The declared-pause absorb is unsupported here. It requires a confirmed-live endpoint, and Orca has no agent-liveness classifier, so a crew that declared a bounded external wait is escalated as a possible wedge instead of waiting quietly; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
+- The declared-pause absorb is unsupported here. Both of its routes need a definite agent-liveness answer, confirmed-live for the pipeline handoff and confidently dead for a plain declared pause, and Orca has no agent-liveness classifier that can return either, so a crew that declared a bounded external wait raises a wake the first time each new idle pane signature is seen instead of waiting quietly; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
 - The app must be running and report ready.
 - Secondmate spawns are unsupported.
 - Escape is unsupported.

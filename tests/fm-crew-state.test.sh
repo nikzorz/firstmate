@@ -446,6 +446,27 @@ run:
 EOF
 }
 
+# The same ci-monitor run, plus the active_steps row that says how long the ci
+# step has been quiet. An overnight wait on the captain reaches this shape.
+run_ci_monitoring_quiet() {  # <branch> <last_activity-cell>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/2"
+  findings: none
+  steps[4]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    push,completed,0,0
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,20h53m,$2,"",round 1
+EOF
+}
+
 run_fixing_ci_running() {  # <branch>
   cat <<EOF
 run:
@@ -545,6 +566,50 @@ test_hung_remote_check_step_reports_stalled() {
   local out; out=$(run_crew_state "$d" hci)
   assert_contains "$out" "state: stalled" "a ci step quiet for 20h52m is past even the looser budget"
   pass "a hung remote-check step reports stalled"
+}
+
+# The budget must not eat the one wait it was never about. A crew that appended
+# `done: PR <url> checks green` and stopped is quiet BECAUSE it finished, and the
+# captain owns how long the merge takes; the ci step goes quiet with it, easily
+# past the remote budget overnight. The hard part is the ci log tail: when the
+# bounded `axi logs` call times out or its tail carries no recognized marker
+# there is no checks-green evidence from the run at all, and only the crew's own
+# report says the PR is ready. That report must still win, or the exact wake the
+# landing absorb exists to silence comes back on every new pane hash.
+test_quiet_ci_monitor_with_checks_green_report_stays_done() {
+  reset_fakes
+  local d; d=$(new_case quiet-ci-ready)
+  make_repo_on_branch "$d/wt" fm/feat-cirq
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cirq.meta" "window=fm:fm-cirq" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/cirq.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring_quiet fm/feat-cirq '"quiet 20h52m ago: log: waiting"')"
+  FM_FAKE_CI_LOGS=""
+  local out; out=$(run_crew_state "$d" cirq)
+  assert_contains "$out" "state: done" "an unreadable ci log tail must not turn the merge wait into a stall"
+  assert_contains "$out" "source: status-log" "the crew's own checks-green report stays the source"
+  assert_contains "$out" "run still monitoring PR" "the detail still names the monitoring run"
+  assert_not_contains "$out" "state: stalled" "a crew waiting out the captain is never stalled"
+  pass "a quiet ci monitor with a checks-green report stays done"
+}
+
+# The other direction, so the placement above cannot be mistaken for exempting
+# the ci step from the budget: with the ci log tail reporting checks NOT green,
+# the stale checks-green report no longer explains the silence and the same run
+# is stalled.
+test_quiet_ci_monitor_without_green_checks_still_stalls() {
+  reset_fakes
+  local d; d=$(new_case quiet-ci-relapse)
+  make_repo_on_branch "$d/wt" fm/feat-cirl
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/cirl.meta" "window=fm:fm-cirl" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/cirl.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring_quiet fm/feat-cirl '"quiet 20h52m ago: log: waiting"')"
+  FM_FAKE_CI_LOGS="CI checks running, waiting for results..."
+  local out; out=$(run_crew_state "$d" cirl)
+  assert_contains "$out" "state: stalled" "a stale checks-green report must not exempt a hung ci step"
+  assert_contains "$out" "ci step quiet" "the stalled detail names the ci step"
+  pass "a quiet ci monitor without green checks still stalls"
 }
 
 # An absent table and an `unknown` cell both carry no elapsed figure. Neither may
@@ -1897,6 +1962,8 @@ test_advancing_agent_step_stays_working
 test_hung_agent_step_reports_stalled
 test_quiet_remote_check_step_keeps_the_looser_budget
 test_hung_remote_check_step_reports_stalled
+test_quiet_ci_monitor_with_checks_green_report_stays_done
+test_quiet_ci_monitor_without_green_checks_still_stalls
 test_missing_activity_figure_leaves_the_verdict_alone
 test_inactivity_budgets_are_configurable
 test_unrecognized_run_status_is_not_working

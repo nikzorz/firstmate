@@ -160,6 +160,24 @@ pause_deadline_reached() {  # <state-dir> <id>
 FM_CLASSIFY_USAGE_LIMITED_STATE='usage-limited'
 FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
 
+# The bin/fm-crew-state.sh current-state words that mean a crew is still holding
+# its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
+# task with its run no longer advancing, which is work that needs attention
+# rather than work that ended or work that was never there. Every reader asking
+# "is this task live right now" must ask about the whole set, or a crew drops out
+# of the fleet's active view at exactly the moment its run stops moving - the
+# opposite of what reporting the distinct state is for. One definition here, for
+# the same reason the usage-limit token above has one: the words are produced and
+# consumed entirely inside firstmate's own scripts, so a second copy could only
+# drift. fm_classify_active_states_json is the form the snapshot readers' jq
+# projections take, so a new word is taught to every consumer by editing the list.
+FM_CLASSIFY_ACTIVE_STATES='working stalled'
+fm_classify_active_states_json() {
+  local st out=''
+  for st in $FM_CLASSIFY_ACTIVE_STATES; do out="$out,\"$st\""; done
+  printf '[%s]' "${out#,}"
+}
+
 # The resolution verb and durable-backlog-transfer verb that CLOSE a keyed
 # status decision opened by needs-decision or blocked. See status_open_decisions
 # below for the status-fold contract. The transfer verb is written only after

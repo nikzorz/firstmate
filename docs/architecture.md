@@ -45,6 +45,8 @@ There are two budgets because the two kinds of active step go quiet for differen
 Both are captain preferences and tuning constants owned by the script header, not derived limits, and a run that reports no elapsed figure at all keeps its previous verdict rather than inventing a breach.
 [`verification/supervision.md`](verification/supervision.md#run-inactivity-budget) records the live evidence for the pipeline surface those figures are read from.
 A run status word the reader does not recognize, and an empty one, report `unknown` rather than `working`, because an unrecognized future state is not evidence of a healthy run.
+A crew still waiting out the captain on a green pull request is never called stalled: every route by which its work is already reported done is decided before the budget is, so an overnight merge wait stays absorbable no matter how long it runs.
+The fleet views count `stalled` as live work alongside `working`, because a run that stopped advancing is work needing attention rather than work that ended, and the captain's in-flight list is where they have to meet it.
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.

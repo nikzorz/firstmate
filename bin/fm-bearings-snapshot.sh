@@ -61,6 +61,14 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 
+# Sourced for the current-state vocabulary alone (FM_CLASSIFY_ACTIVE_STATES): the
+# projection has to know which state words still mean live work, and reading that
+# from the same owner the canonical snapshot reads it from is what keeps the two
+# views from disagreeing about which crews are underway.
+# shellcheck source=bin/fm-classify-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+
 # Bounds (overridable for tests / large fleets).
 FM_BEARINGS_LANDED=${FM_BEARINGS_LANDED:-6}
 FM_BEARINGS_LANDED_PER_HOME=${FM_BEARINGS_LANDED_PER_HOME:-$FM_BEARINGS_LANDED}
@@ -279,6 +287,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --arg now "$NOW" \
   --arg prs "$PR_STATUS" \
   --arg fields "$FIELDS" \
+  --argjson active_states "$(fm_classify_active_states_json)" \
   --argjson landed_n "$FM_BEARINGS_LANDED" \
   --argjson landed_per_home_n "$FM_BEARINGS_LANDED_PER_HOME" \
   --argjson in_flight_n "$FM_BEARINGS_IN_FLIGHT" \
@@ -310,6 +319,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        | $groups[]
        | select(length > $i)
        | .[$i]][:$n];
+  def is_active: . as $s | $active_states | index($s) != null;
   ($fields | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $fl
   | (($fl | index("bodies")) != null) as $f_bodies
   | (($fl | index("paths")) != null) as $f_paths
@@ -328,7 +338,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | (if $all_landed == 1 then $landed_sorted else ($per_home_groups | round_robin_landed($landed_n)) end) as $done
   | ($done | map(.id)) as $done_ids
   | ([.tasks[] | select(.kind != "secondmate") | .id]) as $live_ids
-  | ([.tasks[] | select(.kind != "secondmate" and .current_state.state == "working") | .id]) as $working_ids
+  | ([.tasks[] | select(.kind != "secondmate" and (.current_state.state | is_active)) | .id]) as $active_ids
   | ($live_ids + $done_ids) as $rel_ids
   | ([ .tasks[]
        | select(.endpoint.exists == false or .endpoint.agent_alive == "dead")
@@ -372,7 +382,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | ([ .tasks[]
        | select(.kind != "secondmate")
        | select(.backlog.current_role != "program")
-       | select(.backlog.current_role != "held" or .current_state.state == "working")
+       | select(.backlog.current_role != "held" or (.current_state.state | is_active))
        | {id, kind,
         state: .current_state.state,
         doing: ((.current_state.detail // "") as $d
@@ -401,7 +411,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | . as $record
          | select(.structured and
              (.state == "queued" or
-              (.state == "in_flight" and .current_role == "held" and ($working_ids | index($record.id) | not))))
+              (.state == "in_flight" and .current_role == "held" and ($active_ids | index($record.id) | not))))
          | select(.captain_actionable != true)
          | select(($all_queued == 1)
                   or (((.body_excerpt // "") | test("SUPERSEDED|NOT REQUIRED|NOT-REQUIRED|DEFERRED"; "i")) | not))

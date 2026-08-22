@@ -64,8 +64,13 @@ The comment above that function in `bin/fm-backend.sh` is the single owner of it
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
 
 The declared-pause absorb is supported on `tmux` and `herdr` only.
-That absorb - the path that lets a crew which declared a bounded external wait idle quietly on a long recheck cadence instead of being escalated as a possible wedge - requires a confirmed-live endpoint, and only `tmux` and `herdr` implement the `agent_state` classifier that can produce one.
-`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown and the absorb never applies: an identical, healthy declared-pause verdict that waits quietly under tmux is escalated on the ordinary wedge threshold there instead.
+That absorb is the path that lets a crew which declared a bounded external wait idle quietly on a long recheck cadence instead of being raised as a possible wedge.
+It has two routes, and each of them needs a DEFINITE agent-liveness answer rather than merely a favourable one.
+The pipeline-handoff route needs a confirmed-live endpoint paired with a no-mistakes run step attributed to the crew's branch.
+The plain declared-pause route needs the opposite reading, a confidently dead endpoint, which is the inversion named at the end of this section.
+Only `tmux` and `herdr` implement the `agent_state` classifier that can return either answer.
+`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown, neither route is ever satisfied, and the absorb never applies.
+An identical, healthy declared-pause verdict that waits quietly under tmux therefore raises a wake on those three the first time each new idle pane signature is seen, without even the ordinary wedge threshold in front of it.
 This is a deliberate supported-surface limit rather than an unnoticed gap.
 Building and verifying liveness classifiers for three experimental backends nobody in this fleet runs would be machinery serving an unused path; the work reopens on its own merits if a home adopts one of them.
 Naming the limit is also not a claim that the behavior on the two supported backends is already right.
@@ -419,6 +424,9 @@ FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
 FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
+FM_CREW_STATE_AGENT_QUIET_SECS=1800   # seconds an agent-driven run step may be quiet before fm-crew-state.sh reports stalled
+FM_CREW_STATE_REMOTE_QUIET_SECS=7200  # the same budget for a step that only monitors remote checks
+FM_CREW_STATE_REMOTE_STEPS=ci   # space-delimited step names that draw the remote budget; bin/fm-crew-state.sh owns why the two differ
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
 FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usage-limit prompt
 FM_CLAUDE_LIMIT_FOOTER_TAIL_SLACK=2   # non-blank lines allowed below that prompt's confirm row before the match is rejected

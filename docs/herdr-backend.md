@@ -258,7 +258,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 ## Active limits
 
 - Herdr remains experimental.
-- Herdr is one of the two backends that support the declared-pause absorb, because it can report an agent confirmed-live; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit and what it does not settle.
+- Herdr is one of the two backends that support the declared-pause absorb, because it can return a definite agent-liveness answer, confirmed-live or confidently dead, and the absorb's two routes need one each; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit and what it does not settle.
 - Presentation ordering needs protocol 16 and Python and is best-effort only.
 - Mutable labels can collide; they are never destructive authority.
 - Ghost and placeholder recognition depends on ANSI de-emphasis and fails safely to pending when unavailable.

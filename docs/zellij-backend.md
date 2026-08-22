@@ -90,7 +90,7 @@ Real test cleanup uses only an isolated non-`firstmate` session and the guard in
 ## Active limits
 
 - Zellij is experimental and explicit-only.
-- The declared-pause absorb is unsupported here. It requires a confirmed-live endpoint, and Zellij has no agent-liveness classifier, so a crew that declared a bounded external wait is escalated as a possible wedge instead of waiting quietly; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
+- The declared-pause absorb is unsupported here. Both of its routes need a definite agent-liveness answer, confirmed-live for the pipeline handoff and confidently dead for a plain declared pause, and Zellij has no agent-liveness classifier that can return either, so a crew that declared a bounded external wait raises a wake the first time each new idle pane signature is seen instead of waiting quietly; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
 - All homes share one session and tab bar; scoped titles prevent cross-home identity collisions but do not create per-home visual containers.
 - There is no native busy or push-event signal, so supervision uses capture/hash and busy-regex polling.
 - There is no verified agent-process liveness signal, so a dead Zellij secondmate is reported inconclusive rather than auto-respawned.
