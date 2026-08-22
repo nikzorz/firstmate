@@ -30,6 +30,8 @@ Absorbed wakes advance their suppression markers, log to `state/.watch-triage.lo
 After each drain, `fm-wake-drain.sh` runs the same liveness guard as the supervision scripts, so a lapsed watcher chain surfaces even on a turn that only drains and handles queued wakes.
 Routine watcher polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
 A declared external wait trades that silence for one bounded recheck per pause window, so a forgotten pause cannot remain invisible indefinitely.
+A crew that finished and is only waiting on the captain to act on its pull request is absorbed outright rather than timed as a possible wedge, because its idle endpoint is the expected shape and the armed merge poll already owns the next wake for that task.
+That absorb is gated on the work actually having somewhere to land: a finished crew with no recorded pull request and no armed merge poll has stopped with nowhere to go, and still surfaces.
 Crew status files are append-only wake-event logs, not current-state fields.
 `bin/fm-crew-state.sh <id>` is the cheap current-state read for an actionable heartbeat review: it attributes a no-mistakes run, active or terminal, only when the pipeline's own published branch binding names this crew's branch, this worktree's head, and that same head as the one the run was submitted at, or the run head still matches the crew's current code identity, then keeps that run-step authoritative even if the pane has closed.
 The published binding is what holds once a healthy run has made its first auto-fix commit, because that commit exists only in the pipeline's own repository and the head rule can no longer resolve it.
@@ -37,6 +39,12 @@ The submitted head is what carries code identity there, and the binding outlives
 The script header owns the exact binding and run-head ancestry rules.
 During no-mistakes' `ci` monitor phase, it also reads the ci step log tail because `axi status` reports both "still waiting on checks" and "checks green, waiting on merge" as `ci,running`.
 The most recent recognized ci log marker wins, so checks-green monitoring reports done while a later re-arm, failed-check, or issue marker returns the crew to working.
+A non-terminal run is judged on whether it is still advancing, not only on whether it exists.
+The same `axi status` response publishes the active step's elapsed time since its last activity, so the reader compares that figure against a per-step inactivity budget and reports the distinct `stalled` state once a step is past it, which no absorb class treats as a healthy run.
+There are two budgets because the two kinds of active step go quiet for different reasons: an agent-driven step logs as it works, while the ci step only monitors a remote forge and logs sparsely by design.
+Both are captain preferences and tuning constants owned by the script header, not derived limits, and a run that reports no elapsed figure at all keeps its previous verdict rather than inventing a breach.
+[`verification/supervision.md`](verification/supervision.md#run-inactivity-budget) records the live evidence for the pipeline surface those figures are read from.
+A run status word the reader does not recognize, and an empty one, report `unknown` rather than `working`, because an unrecognized future state is not evidence of a healthy run.
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.

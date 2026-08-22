@@ -458,6 +458,153 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# --- landing route (a finished crew whose PR is waiting on the captain) -----
+#
+# Arms a REAL merge poll for <id> in the case's state dir through
+# bin/fm-pr-check.sh, so the landing-route predicate is tested against the exact
+# artifacts the watcher's own check dispatcher validates, not a hand-built
+# lookalike. The fake gh serves the head lookup only; nothing reaches a network.
+arm_landing_route() {  # <case-dir> <id> [<pr-url>]
+  local dir=$1 id=$2 url=${3:-https://github.com/example/repo/pull/7}
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid "*) printf '0123456789abcdef0123456789abcdef01234567\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/gh"
+  fm_write_meta "$dir/state/$id.meta" "window=test:fm-$id" "worktree=$dir/wt" "kind=ship"
+  chmod 0600 "$dir/state/$id.meta"
+  PATH="$dir/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
+    "$ROOT/bin/fm-pr-check.sh" "$id" "$url" >/dev/null \
+    || fail "could not arm a merge poll fixture for $id"
+}
+
+# A terminal `done` verdict absorbs ONLY when the work has somewhere to land and
+# an armed merge poll will report it landing. Both directions, because absorbing
+# a `done` with no landing route would hide a crew that stopped with nowhere to
+# go - the one thing this class must never do.
+test_landing_absorb_class_classifier() {
+  local dir state STATE
+  dir=$(make_case landing-class); state="$dir/state"
+  # Dynamically scoped for the classifier under test: fm-classify-lib.sh resolves
+  # its task-file reads against STATE first, exactly as the watcher sets it.
+  # shellcheck disable=SC2034 # Read by _fm_classify_state_dir in the callees below.
+  STATE=$state
+  export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: done · source: status-log · PR https://example.test/pr/7 checks green'
+
+  # No landing route at all: not even a recorded pr=.
+  fm_write_meta "$state/nowhere.meta" "window=test:fm-nowhere" "kind=ship"
+  [ "$(crew_absorb_class nowhere)" = none ] \
+    || fail "a done crew with no landing route was absorbed"
+
+  # Recorded pr= and an armed merge poll: the poll owns the next wake.
+  arm_landing_route "$dir" lands
+  grep -q '^pr=' "$state/lands.meta" || fail "the fixture recorded no pr="
+  [ -f "$state/lands.check.sh" ] || fail "the fixture armed no merge poll"
+  [ "$(crew_absorb_class lands)" = landing ] \
+    || fail "a finished crew with an armed merge poll was not classed landing"
+  [ "$(crew_absorb_verdict lands)" = "landing status-log" ] \
+    || fail "the landing verdict lost its evidence source"
+  crew_is_provably_working lands \
+    && fail "a landing crew was reported as provably working"
+  crew_is_paused lands && fail "a landing crew was reported as a declared pause"
+
+  # A recorded pr= whose poll is gone is a landing route with nothing left to
+  # report it, so it must surface again rather than stay silent forever.
+  rm -f "$state/lands.check.sh"
+  [ "$(crew_absorb_class lands)" = none ] \
+    || fail "a recorded pr= with no armed poll was still absorbed"
+
+  # Only a terminal done qualifies; the other verdicts keep their own classes.
+  arm_landing_route "$dir" other
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s)'
+  [ "$(crew_absorb_class other)" = none ] || fail "a parked run was classed landing"
+  FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+  [ "$(crew_absorb_class other)" = unreliable ] || fail "a failed run-step verdict was classed landing"
+  FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  [ "$(crew_absorb_class other)" = working ] || fail "an active run was classed landing"
+
+  unset FM_FAKE_CREW_STATE
+  pass "crew_absorb_class: a terminal done is landing only with a recorded route and an armed merge poll"
+}
+
+# --- stale pane, finished work awaiting merge: absorbed with NO wedge timer ---
+# Observed live 2026-08-20: the crew appended `done: PR <url> checks green` and
+# stopped, exactly as instructed. Its pane is therefore idle for as long as the
+# captain takes over the PR, and the stale path raised a wake every escalation
+# window - overnight included. The merge poll already covers this task, so the
+# stale timer must not run at all here.
+test_finished_awaiting_merge_absorbed_without_a_wedge_timer() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case landing-stale); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-landed"
+  printf 'PR opened, checks green' > "$capture_file"
+  arm_landing_route "$dir" landed
+  printf 'done: PR https://github.com/example/repo/pull/7 checks green\n' > "$state/landed.status"
+  sig=$(seen_sig "$state/landed.status"); printf '%s' "$sig" > "$state/.seen-landed_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "PR opened, checks green")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: status-log · PR https://github.com/example/repo/pull/7 checks green'
+
+  # A one-second escalation threshold: were a wedge timer started at all, the
+  # watcher would surface within a couple of polls.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 60; then
+    reap "$pid"; fail "watcher surfaced a finished crew whose PR is waiting on the captain: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "the finished-awaiting-merge absorb printed a wake reason"
+  [ ! -s "$state/.wake-queue" ] || fail "the finished-awaiting-merge absorb enqueued a wake"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] \
+    || fail "stale suppressor not advanced on the landing absorb"
+  [ ! -e "$state/.stale-since-$key" ] \
+    || fail "a wedge timer was started for work that is only waiting on the captain"
+  [ ! -e "$state/.hb-surfaced-landed" ] || fail "an absorbed wake marked the status line surfaced"
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a finished crew whose PR is waiting on the captain is absorbed, with no wedge timer"
+}
+
+# The other direction, and the reason the class is gated: a crew that stopped on
+# `done` with NO landing route recorded really has nowhere to go, and firstmate
+# must see it. Same status line, same idle pane, no pr= and no armed poll.
+test_finished_with_no_landing_route_still_surfaces() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case landing-stale-none); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stranded"
+  printf 'PR opened, checks green' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stranded.meta"
+  printf 'done: PR https://github.com/example/repo/pull/7 checks green\n' > "$state/stranded.status"
+  sig=$(seen_sig "$state/stranded.status"); printf '%s' "$sig" > "$state/.seen-stranded_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "PR opened, checks green")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: status-log · PR https://github.com/example/repo/pull/7 checks green'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "a finished crew with nowhere to land was not surfaced"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the stranded crew"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the stranded stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the stranded stale was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a finished crew with no landing route recorded still surfaces"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -1792,6 +1939,7 @@ test_classifier_primitives
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier
+test_landing_absorb_class_classifier
 test_signal_crew_provably_working_classifier
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
@@ -1799,6 +1947,8 @@ test_turn_ended_not_working_surfaced
 test_working_note_not_working_surfaced
 test_actionable_signal_surfaced
 test_terminal_stale_surfaced
+test_finished_awaiting_merge_absorbed_without_a_wedge_timer
+test_finished_with_no_landing_route_still_surfaces
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

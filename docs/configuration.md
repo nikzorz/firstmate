@@ -62,6 +62,14 @@ Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected un
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
+
+The declared-pause absorb is supported on `tmux` and `herdr` only.
+That absorb - the path that lets a crew which declared a bounded external wait idle quietly on a long recheck cadence instead of being escalated as a possible wedge - requires a confirmed-live endpoint, and only `tmux` and `herdr` implement the `agent_state` classifier that can produce one.
+`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown and the absorb never applies: an identical, healthy declared-pause verdict that waits quietly under tmux is escalated on the ordinary wedge threshold there instead.
+This is a deliberate supported-surface limit rather than an unnoticed gap.
+Building and verifying liveness classifiers for three experimental backends nobody in this fleet runs would be machinery serving an unused path; the work reopens on its own merits if a home adopts one of them.
+Naming the limit is also not a claim that the behavior on the two supported backends is already right.
+One known defect on that path is explicitly NOT addressed by this scoping: the health ordering is inverted for a crew whose authoritative state falls back to the declared pause in its status log, which is absorbed when its endpoint is confidently dead and surfaced when it is confirmed alive.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
 A cmux spawn additionally version-gates against the installed `cmux` binary's version, requires `jq`, and requires the control socket to be reachable and accessible (see [`docs/cmux-backend.md`](cmux-backend.md) "Setup" for the one-time socket-access configuration this needs; Automation mode is the recommended socket control mode, with Password mode supported via `config/cmux-socket-password`), refusing loudly and non-retryably on a `cmuxOnly`/unauthenticated socket.

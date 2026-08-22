@@ -112,6 +112,7 @@ Real tests share the captain's running app rather than creating an isolated cmux
 ## Active limits
 
 - cmux is experimental, macOS-only, GUI-first, and requires the app running.
+- The declared-pause absorb is unsupported here. It requires a confirmed-live endpoint, and cmux has no agent-liveness classifier, so a crew that declared a bounded external wait is escalated as a possible wedge instead of waiting quietly; see [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) for the supported limit.
 - Socket access requires a one-time manual Settings change.
 - Secondmate spawns are unsupported until a per-home lifecycle design is verified.
 - There is no native busy or push-event signal.

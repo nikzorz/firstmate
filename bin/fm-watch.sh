@@ -14,7 +14,10 @@
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          has a captain-relevant verb OR a no-verb signal's crew
 #                          is not provably working, unless afk is active
-#   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
+#   stale: <window>        a finished crew whose work has a recorded landing route
+#                          and an armed merge poll is absorbed outright, with no
+#                          wedge timer: the merge poll owns its next wake. A
+#                          provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
 #                          line, since the crew's own log gets no new entry once
@@ -406,6 +409,20 @@ clear_pause_tracking() {  # <window>
 #     long pause cadence either: it goes to the wedge timer, so a paused pane that
 #     really is frozen still escalates on the ordinary threshold.
 #
+# SUPPORTED BACKENDS. Requiring `alive` scopes this whole path to the backends
+# that can produce one, which today is tmux and herdr: those two implement
+# `agent_state` (bin/fm-backend.sh's fm_backend_agent_state), while zellij, orca
+# and cmux always answer `unverified`, so agent liveness there is permanently
+# unknown and every graded branch above falls to its conservative side. An
+# identical, healthy declared-pause verdict that waits quietly under tmux is
+# therefore wedge-escalated on those three. That is a recorded supported-surface
+# limit, not an oversight - docs/configuration.md's "Runtime backend" section is
+# its owner and states why classifiers for the three are deliberately not built.
+# Naming it settles nothing about the ordering above: a crew whose authoritative
+# state falls back to the declared pause in its status log is still absorbed on a
+# confidently DEAD endpoint and surfaced on a confirmed-live one, which is
+# inverted and is NOT fixed here.
+#
 # Both bounded-cadence routes memoize themselves in .paused-rechecked-<key>, whose
 # CONTENT names the endpoint reading that justified the cadence, so a repeat poll of
 # an unchanged pane can re-confirm it with the cheap liveness probe alone and never
@@ -432,6 +449,11 @@ pause_state_class() {  # <window> <task>
     # declared-pause path below may read "evidence of nothing" as anything else.
     class=$(crew_absorb_class "$task")
     [ "$class" = unreliable ] && class=none
+    # `landing` is owned entirely by the terminal-stale branch below, which is
+    # the only place a finished crew's captain-relevant status line is read. It
+    # carries no meaning for this pause-cadence decision, so it collapses to the
+    # plain not-working verdict a finished crew has always produced here.
+    [ "$class" = landing ] && class=none
     printf '%s' "$class"
     return
   fi
@@ -468,6 +490,9 @@ pause_state_class() {  # <window> <task>
   verdict=$(crew_absorb_verdict "$task")
   class=${verdict%% *}
   src=${verdict##* }
+  # See the note above: the landing class belongs to the terminal-stale branch,
+  # not to this one.
+  [ "$class" = landing ] && class=none
   case "$class" in
     working)
       if [ "$src" = run-step ] && [ "$agent_alive" = alive ]; then
@@ -1014,17 +1039,31 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
-              printf '%s' "$h" > "$sf"
-              date +%s > "$ssf"
-              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-            else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
-              wake "stale: $w"
-            fi
+            case "$(crew_absorb_class "$(window_to_task "$w" "$STATE")")" in
+              working)
+                printf '%s' "$h" > "$sf"
+                date +%s > "$ssf"
+                triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+                ;;
+              landing)
+                # The crew finished and its work has a recorded landing route
+                # with an armed merge poll, so that poll - not this timer - owns
+                # the next wake for this task. No wedge timer is started: there
+                # is nothing left for the crew to do, so an idle pane is the
+                # expected shape for as long as the PR waits, and timing it would
+                # re-raise the same finished task every escalation window.
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf" "$ewf"
+                triage_log "absorbed stale (finished, awaiting merge; the merge poll owns the next wake): $w"
+                ;;
+              *)
+                fm_wake_append stale "$w" "stale: $w" || exit 1
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf"
+                mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
+                wake "stale: $w"
+                ;;
+            esac
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a
             # wedge timer is running for it) - keep treating it that way
