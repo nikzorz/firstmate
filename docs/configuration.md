@@ -70,7 +70,9 @@ The pipeline-handoff route needs a confirmed-live endpoint paired with a no-mist
 The plain declared-pause route needs the opposite reading, a confidently dead endpoint, which is the inversion named at the end of this section.
 Only `tmux` and `herdr` implement the `agent_state` classifier that can return either answer.
 `zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown, neither route is ever satisfied for a crew window, and the absorb does not apply to one.
-An identical, healthy declared-pause verdict that waits quietly under tmux therefore raises a wake on those three the first time each new idle pane signature is seen, without even the ordinary wedge threshold in front of it.
+What a verdict that waits quietly under tmux costs on those three is two outcomes rather than one, because the two routes fall to different sides.
+A crew on the pipeline-handoff shape, whose attributed run step still reports a non-terminal status, fails only its liveness test, so it is still absorbed, but onto the ordinary wedge timer instead of the long pause cadence, and escalates once that ordinary threshold passes.
+A crew on the plain declared-pause shape, whose only evidence is the `paused:` line in its own status log, reaches neither the absorb nor that threshold: it raises a wake the first time each new idle pane signature is seen.
 A secondmate window is the exception, on every backend: this absorb never probes a secondmate's liveness at all, so a secondmate that declared a pause keeps the bounded recheck cadence where a crew window on the same backend would not.
 That distinction is live only on `zellij`, which accepts secondmate spawns; `orca` and `cmux` refuse them, so a crew window is the only kind either one has.
 This is a deliberate supported-surface limit rather than an unnoticed gap.

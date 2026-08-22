@@ -14,9 +14,10 @@
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          has a captain-relevant verb OR a no-verb signal's crew
 #                          is not provably working, unless afk is active
-#   stale: <window>        a finished crew whose work has a recorded landing route
-#                          and an armed merge poll is absorbed outright, with no
-#                          wedge timer: the merge poll owns its next wake. A
+#   stale: <window>        a finished crew whose own last status line is a terminal
+#                          done, and whose work has a recorded landing route with an
+#                          armed merge poll, is absorbed outright, with no wedge
+#                          timer: the merge poll owns its next wake. A
 #                          provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -409,15 +410,22 @@ clear_pause_tracking() {  # <window>
 #     long pause cadence either: it goes to the wedge timer, so a paused pane that
 #     really is frozen still escalates on the ordinary threshold.
 #
-# SUPPORTED BACKENDS. Requiring `alive` scopes this whole path to the backends
-# that can produce one, which today is tmux and herdr: those two implement
-# `agent_state` (bin/fm-backend.sh's fm_backend_agent_state), while zellij, orca
-# and cmux always answer `unverified`, so agent liveness there is permanently
-# unknown and every graded branch above falls to its conservative side. An
-# identical, healthy declared-pause verdict that waits quietly under tmux is
-# therefore wedge-escalated on those three. That is a recorded supported-surface
-# limit, not an oversight - docs/configuration.md's "Runtime backend" section is
-# its owner and states why classifiers for the three are deliberately not built.
+# SUPPORTED BACKENDS. Requiring `alive` scopes this whole path, for a CREW window,
+# to the backends that can produce one, which today is tmux and herdr: those two
+# implement `agent_state` (bin/fm-backend.sh's fm_backend_agent_state), while
+# zellij, orca and cmux always answer `unverified`, so agent liveness there is
+# permanently unknown and every graded branch above falls to its conservative side.
+# What a verdict that waits quietly under tmux costs on those three is TWO
+# outcomes, not one, because the two routes fall to different sides. A
+# handoff-shaped verdict fails only its `alive` test, so it is still absorbed, but
+# onto the ordinary wedge timer instead of the long pause cadence, and escalates
+# once that threshold passes. A plain declared-pause verdict reaches neither: it
+# returns `none` and the caller surfaces it on every new idle pane signature, with
+# no threshold in front of it. A secondmate window is outside all of this on every
+# backend, since it is never probed for liveness at all. That is a recorded
+# supported-surface limit, not an oversight - docs/configuration.md's "Runtime
+# backend" section is its owner and states why classifiers for the three are
+# deliberately not built.
 # Naming it settles nothing about the ordering above: a crew whose authoritative
 # state falls back to the declared pause in its status log is still absorbed on a
 # confidently DEAD endpoint and surfaced on a confirmed-live one, which is
