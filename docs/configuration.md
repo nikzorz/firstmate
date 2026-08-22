@@ -63,14 +63,16 @@ The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
 
-The declared-pause absorb is supported on `tmux` and `herdr` only.
+The declared-pause absorb is supported on `tmux` and `herdr` only, for ordinary crew windows.
 That absorb is the path that lets a crew which declared a bounded external wait idle quietly on a long recheck cadence instead of being raised as a possible wedge.
 It has two routes, and each of them needs a DEFINITE agent-liveness answer rather than merely a favourable one.
 The pipeline-handoff route needs a confirmed-live endpoint paired with a no-mistakes run step attributed to the crew's branch.
 The plain declared-pause route needs the opposite reading, a confidently dead endpoint, which is the inversion named at the end of this section.
 Only `tmux` and `herdr` implement the `agent_state` classifier that can return either answer.
-`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown, neither route is ever satisfied, and the absorb never applies.
+`zellij`, `orca`, and `cmux` always answer `unverified`, so agent liveness on those three is permanently unknown, neither route is ever satisfied for a crew window, and the absorb does not apply to one.
 An identical, healthy declared-pause verdict that waits quietly under tmux therefore raises a wake on those three the first time each new idle pane signature is seen, without even the ordinary wedge threshold in front of it.
+A secondmate window is the exception, on every backend: this absorb never probes a secondmate's liveness at all, so a secondmate that declared a pause keeps the bounded recheck cadence where a crew window on the same backend would not.
+That distinction is live only on `zellij`, which accepts secondmate spawns; `orca` and `cmux` refuse them, so a crew window is the only kind either one has.
 This is a deliberate supported-surface limit rather than an unnoticed gap.
 Building and verifying liveness classifiers for three experimental backends nobody in this fleet runs would be machinery serving an unused path; the work reopens on its own merits if a home adopts one of them.
 Naming the limit is also not a claim that the behavior on the two supported backends is already right.
