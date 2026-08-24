@@ -1076,9 +1076,50 @@ test_oversized_backlog_still_reports_every_record() {
   pass "a backlog past the single-argument limit is reported in full"
 }
 
+# The same per-argument ceiling applies to one externally written status-log
+# line, which reaches jq as crew_state_json's detail and as status_event_json's
+# raw and note. Losing it degrades quietly: the event and the whole status_log
+# pointer come back null while the snapshot still exits 0.
+test_oversized_status_line_still_reports_its_event() {
+  local home fakebin note line out rc raw_len note_len
+  home=$(make_home oversized-status)
+  mkdir -p "$home/projects/bulk-worktree"
+  fm_write_meta "$home/state/bulk-task.meta" \
+    "window=firstmate:fm-bulk-task" \
+    "worktree=$home/projects/bulk-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  note=$(head -c 200000 /dev/zero | tr '\0' 'n')
+  line="working: $note"
+  printf '%s\n' "$line" > "$home/state/bulk-task.status"
+  raw_len=${#line}
+  note_len=${#note}
+  [ "$raw_len" -gt 131072 ] \
+    || fail "fixture status line no longer exceeds the single-argument limit ($raw_len bytes)"
+
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized status line (rc=${rc:-0})"
+
+  printf '%s' "$out" | jq -e --argjson raw_len "$raw_len" --argjson note_len "$note_len" '
+    .tasks[] | select(.id == "bulk-task")
+    | .paths.status_log.present == true
+      and .paths.status_log.last_event.state == "working"
+      and (.paths.status_log.last_event.raw | length) == $raw_len
+      and (.paths.status_log.last_event.note | length) == $note_len
+      and (.hints.last_event_text | length) == $raw_len
+      and .current_state.source == "status-log"
+      and (.current_state.detail | length) == $note_len
+  ' >/dev/null || fail "oversized status line degraded instead of being reported in full"
+  pass "a status line past the single-argument limit is reported in full"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
+test_oversized_status_line_still_reports_its_event
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work
