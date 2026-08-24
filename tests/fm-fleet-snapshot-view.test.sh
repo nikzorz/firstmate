@@ -1043,8 +1043,42 @@ EOF
   pass "a home whose only child is unreadable does not claim no active child work"
 }
 
+# The reported defect: the whole backlog JSON rode jq's argument vector, and
+# Linux caps a single argv entry at MAX_ARG_STRLEN (131072 bytes) regardless of
+# the much larger total ARG_MAX. Every record must still be reported - a snapshot
+# that shrinks its own output to fit would trade a loud failure for a quiet one.
+test_oversized_backlog_still_reports_every_record() {
+  local home rows i body out payload_bytes rc
+  home=$(make_home oversized-backlog)
+  rows=160
+  body=$(head -c 1200 /dev/zero | tr '\0' 'x')
+  {
+    printf '## Queued\n'
+    for ((i = 1; i <= rows; i++)); do
+      printf -- '- [ ] bulk-%03d - Bulk item %03d (repo: alpha) (kind: ship) (since 2026-08-24)\n' "$i" "$i"
+      printf '  %s\n' "$body"
+    done
+  } > "$home/data/backlog.md"
+
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized backlog (rc=${rc:-0})"
+
+  payload_bytes=$(printf '%s' "$out" | jq -c '.backlog' | LC_ALL=C wc -c | tr -d ' ')
+  [ "$payload_bytes" -gt 131072 ] \
+    || fail "fixture no longer exceeds the single-argument limit ($payload_bytes bytes); it cannot prove the regression"
+
+  printf '%s' "$out" | jq -e --argjson rows "$rows" '
+    .schema == "fm-fleet-snapshot.v1"
+      and ([.backlog.records[] | select(.structured)] | length) == $rows
+      and (.backlog.records[-1].id == "bulk-160")
+      and .main_inventory.unstructured_current_count == 0
+  ' >/dev/null || fail "oversized backlog lost records or inventory disclosure"
+  pass "a backlog past the single-argument limit is reported in full"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_oversized_backlog_still_reports_every_record
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work
