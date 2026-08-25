@@ -194,9 +194,32 @@ bool_json() {
 # A slurped payload that came back empty means its producer failed, so every
 # rebinding errors instead of resolving to null: a lost payload has to stay as
 # loud as the abort --argjson used to raise.
-# Booleans, counters, timestamps, configured bounds, filesystem paths, in-script
-# literals, and firstmate-written state/<id>.meta values still ride argv, none
-# of which can grow with external input.
+#
+# What still rides argv, and the concrete mechanism that bounds each one below
+# MAX_ARG_STRLEN. A category is never the reason; a cap is.
+#   - FM_SNAPSHOT_NOW, FM_HOME, FM_ROOT, STATE, DATA, CONFIG, PROJECTS: read
+#     from the environment, so the kernel already applied the same per-string
+#     ceiling to them when it exec'd this script.
+#   - Paths that were globbed, opened, or resolved before use ($STATE/*.meta,
+#     $DATA/backlog.md, $DATA/secondmates.md, a found report.md, a validated
+#     secondmate home): PATH_MAX, because they name a real filesystem object.
+#   - A task or report id: basename of one of those paths, so NAME_MAX.
+#   - In-script literal reasons, provenance and freshness words, pr_source,
+#     FM_CLASSIFY_USAGE_LIMITED_STATE, fm_classify_active_states_json, and
+#     fm_backend_agent_alive's three-word result: fixed text.
+#   - Counters, ages, bool_json output, and every validated FM_SNAPSHOT_* bound:
+#     integers and booleans.
+#
+# Retained WITHOUT a cap, pending a decision above this file: every value read
+# out of state/<id>.meta (kind, harness, mode, yolo, project, worktree, home,
+# projects, backend, target, and the {path,present} objects built from worktree
+# and home), plus a secondmate id or unvalidated home taken from
+# data/secondmates.md. fm_meta_get is `grep ^key= | cut -d= -f2-` and no writer
+# enforces a meta line length, so "firstmate writes it" is a convention, not a
+# bound; the registry pair is capped only by FM_SNAPSHOT_REGISTRY_BYTES, which
+# is env-overridable above the ceiling. Each one fails loudly at the task-row
+# guard below rather than corrupting output, which is why they are recorded here
+# instead of being swept in passing.
 
 path_present_json() {  # <path>
   local present=0
@@ -525,7 +548,7 @@ task_json_lines() {
       --arg projects "$projects" \
       --arg backend "$backend" \
       --arg target "$target" \
-      --arg pr "$pr" \
+      --rawfile pr <(printf '%s' "$pr") \
       --arg pr_source "$pr_source" \
       --arg agent_alive "$agent_alive" \
       --arg observed_at "$SNAPSHOT_NOW" \

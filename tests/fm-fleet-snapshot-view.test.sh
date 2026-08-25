@@ -1116,10 +1116,114 @@ test_oversized_status_line_still_reports_its_event() {
   pass "a status line past the single-argument limit is reported in full"
 }
 
+# first_pr_url_in_file greps the whole status log for a URL with no length cap,
+# so the recorded PR pointer is externally written and can exceed the ceiling on
+# its own, independently of the line that carries it.
+test_oversized_pr_url_still_reports_the_task() {
+  local home fakebin url out rc url_len
+  home=$(make_home oversized-pr)
+  mkdir -p "$home/projects/pr-worktree"
+  fm_write_meta "$home/state/pr-task.meta" \
+    "window=firstmate:fm-pr-task" \
+    "worktree=$home/projects/pr-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  url="https://github.com/o/$(head -c 140000 /dev/zero | tr '\0' 'r')/pull/7"
+  printf 'done: shipped %s\n' "$url" > "$home/state/pr-task.status"
+  url_len=${#url}
+  [ "$url_len" -gt 131072 ] \
+    || fail "fixture PR URL no longer exceeds the single-argument limit ($url_len bytes)"
+
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized PR URL (rc=${rc:-0})"
+
+  printf '%s' "$out" | jq -e --argjson url_len "$url_len" '
+    .tasks[] | select(.id == "pr-task")
+    | .pr.source == "status_event"
+      and (.pr.url | length) == $url_len
+  ' >/dev/null || fail "oversized PR URL degraded instead of being reported in full"
+  pass "a PR URL past the single-argument limit is reported in full"
+}
+
+# Injects a jq failure at the one call site whose argument vector carries a
+# value this fixture chose, so what gets asserted is the snapshot's own handling
+# of a payload its producer never delivered.
+make_failing_jq() {  # <fakebin> <argv-glob>
+  local fakebin=$1 pattern=$2 real
+  real=$(command -v jq)
+  cat > "$fakebin/jq" <<SH
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    $pattern) exit 1 ;;
+  esac
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fakebin/jq"
+}
+
+# --slurpfile skips a blank line, so a record builder that dies leaves the
+# secondmate silently absent while the count beside it still claims it.
+test_dropped_secondmate_record_fails_loudly() {
+  local home fakebin out rc err
+  home=$(make_home dropped-record)
+  printf -- '- zzpoisonmate (home: %s/absent-home; projects: alpha)\n' "$home" \
+    > "$home/data/secondmates.md"
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*zzpoisonmate*'
+
+  err="$home/dropped-record.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "a dropped secondmate record must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed aggregation must not print a partial snapshot: $out"
+  assert_contains "$(cat "$err")" "secondmate record stream returned 0 records for 1 rows" \
+    "the diagnostic must name the record/row mismatch"
+  assert_contains "$(cat "$err")" "registered secondmate aggregation failed" \
+    "the mismatch must reach the snapshot's own exit path"
+  pass "a secondmate record lost by its builder fails loudly instead of vanishing"
+}
+
+# An empty --slurpfile binds [], so an undelivered payload would otherwise read
+# as a legitimate null and ship a task row with no status_log at all.
+test_missing_status_log_payload_fails_loudly() {
+  local home fakebin out rc err
+  home=$(make_home missing-payload)
+  mkdir -p "$home/projects/zzpoison-worktree"
+  fm_write_meta "$home/state/zzpoisontask.meta" \
+    "window=firstmate:fm-zzpoisontask" \
+    "worktree=$home/projects/zzpoison-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'working: still going\n' > "$home/state/zzpoisontask.status"
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*zzpoisontask.status'
+
+  err="$home/missing-payload.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "an undelivered status_log payload must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed task snapshot must not print a partial snapshot: $out"
+  assert_contains "$(cat "$err")" "missing status_log payload" \
+    "the diagnostic must name the payload that never arrived"
+  assert_contains "$(cat "$err")" "task snapshot failed" \
+    "the missing payload must reach the snapshot's own exit path"
+  pass "a task payload that never arrived fails loudly instead of reading as null"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
 test_oversized_status_line_still_reports_its_event
+test_oversized_pr_url_still_reports_the_task
+test_dropped_secondmate_record_fails_loudly
+test_missing_status_log_payload_fails_loudly
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work
