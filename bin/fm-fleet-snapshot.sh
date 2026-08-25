@@ -210,16 +210,16 @@ bool_json() {
 #   - Counters, ages, bool_json output, and every validated FM_SNAPSHOT_* bound:
 #     integers and booleans.
 #
-# Retained WITHOUT a cap, pending a decision above this file: every value read
-# out of state/<id>.meta (kind, harness, mode, yolo, project, worktree, home,
-# projects, backend, target, and the {path,present} objects built from worktree
-# and home), plus a secondmate id or unvalidated home taken from
-# data/secondmates.md. fm_meta_get is `grep ^key= | cut -d= -f2-` and no writer
-# enforces a meta line length, so "firstmate writes it" is a convention, not a
-# bound; the registry pair is capped only by FM_SNAPSHOT_REGISTRY_BYTES, which
-# is env-overridable above the ceiling. Each one fails loudly at the task-row
-# guard below rather than corrupting output, which is why they are recorded here
-# instead of being swept in passing.
+# Settled 2026-08-24: the values read out of state/<id>.meta (kind, harness,
+# mode, yolo, project, worktree, home, projects, backend, target, and the
+# {path,present} objects built from worktree and home), plus the id and home
+# taken from data/secondmates.md, stay on the argument vector with no length
+# cap; FM_SNAPSHOT_REGISTRY_BYTES bounds the registry pair only until it is
+# overridden. The payloads above were moved because they scale with content that
+# grows in ordinary use, which is how the backlog reached the ceiling. These are
+# file paths and window names instead, which no ordinary operation grows that
+# far, and one that did would refuse completely at exit 1 with no output rather
+# than degrade quietly.
 
 path_present_json() {  # <path>
   local present=0
