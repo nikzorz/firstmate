@@ -210,7 +210,7 @@ bool_json() {
 #   - Counters, ages, bool_json output, and every validated FM_SNAPSHOT_* bound:
 #     integers and booleans.
 #
-# Settled 2026-08-24: the values read out of state/<id>.meta (kind, harness,
+# Settled: the values read out of state/<id>.meta (kind, harness,
 # mode, yolo, project, worktree, home, projects, backend, target, and the
 # {path,present} objects built from worktree and home), plus the id and home
 # taken from data/secondmates.md, stay on the argument vector with no length
