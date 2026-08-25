@@ -1217,6 +1217,38 @@ test_missing_status_log_payload_fails_loudly() {
   pass "a task payload that never arrived fails loudly instead of reading as null"
 }
 
+# The row loop's exit status is the LAST iteration's, so a lost payload on any
+# earlier task would leave the pipeline reading clean and ship a snapshot that
+# is simply missing a crew, at exit 0.
+test_lost_payload_on_an_earlier_task_fails_loudly() {
+  local home fakebin id out rc err
+  home=$(make_home earlier-payload)
+  for id in aaa-poisoned mmm-later zzz-last; do
+    mkdir -p "$home/projects/$id-worktree"
+    fm_write_meta "$home/state/$id.meta" \
+      "window=firstmate:fm-$id" \
+      "worktree=$home/projects/$id-worktree" \
+      "project=alpha" \
+      "harness=codex" \
+      "kind=ship" \
+      "mode=ship"
+    printf 'working: still going\n' > "$home/state/$id.status"
+  done
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*aaa-poisoned.status'
+
+  err="$home/earlier-payload.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "a lost payload on a non-final task must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed task snapshot must not print the surviving rows: $out"
+  assert_contains "$(cat "$err")" "missing status_log payload" \
+    "the diagnostic must name the payload that never arrived"
+  assert_contains "$(cat "$err")" "task snapshot failed" \
+    "an earlier row's failure must still reach the snapshot's own exit path"
+  pass "a lost payload on a task the loop passes over early fails loudly"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
@@ -1224,6 +1256,7 @@ test_oversized_status_line_still_reports_its_event
 test_oversized_pr_url_still_reports_the_task
 test_dropped_secondmate_record_fails_loudly
 test_missing_status_log_payload_fails_loudly
+test_lost_payload_on_an_earlier_task_fails_loudly
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work
