@@ -1043,8 +1043,220 @@ EOF
   pass "a home whose only child is unreadable does not claim no active child work"
 }
 
+# The reported defect: the whole backlog JSON rode jq's argument vector, and
+# Linux caps a single argv entry at MAX_ARG_STRLEN (131072 bytes) regardless of
+# the much larger total ARG_MAX. Every record must still be reported - a snapshot
+# that shrinks its own output to fit would trade a loud failure for a quiet one.
+test_oversized_backlog_still_reports_every_record() {
+  local home rows i body out payload_bytes rc
+  home=$(make_home oversized-backlog)
+  rows=160
+  body=$(head -c 1200 /dev/zero | tr '\0' 'x')
+  {
+    printf '## Queued\n'
+    for ((i = 1; i <= rows; i++)); do
+      printf -- '- [ ] bulk-%03d - Bulk item %03d (repo: alpha) (kind: ship) (since 2026-08-24)\n' "$i" "$i"
+      printf '  %s\n' "$body"
+    done
+  } > "$home/data/backlog.md"
+
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized backlog (rc=${rc:-0})"
+
+  payload_bytes=$(printf '%s' "$out" | jq -c '.backlog' | LC_ALL=C wc -c | tr -d ' ')
+  [ "$payload_bytes" -gt 131072 ] \
+    || fail "fixture no longer exceeds the single-argument limit ($payload_bytes bytes); it cannot prove the regression"
+
+  printf '%s' "$out" | jq -e --argjson rows "$rows" '
+    .schema == "fm-fleet-snapshot.v1"
+      and ([.backlog.records[] | select(.structured)] | length) == $rows
+      and (.backlog.records[-1].id == "bulk-160")
+      and .main_inventory.unstructured_current_count == 0
+  ' >/dev/null || fail "oversized backlog lost records or inventory disclosure"
+  pass "a backlog past the single-argument limit is reported in full"
+}
+
+# The same per-argument ceiling applies to one externally written status-log
+# line, which reaches jq as crew_state_json's detail and as status_event_json's
+# raw and note. Losing it degrades quietly: the event and the whole status_log
+# pointer come back null while the snapshot still exits 0.
+test_oversized_status_line_still_reports_its_event() {
+  local home fakebin note line out rc raw_len note_len
+  home=$(make_home oversized-status)
+  mkdir -p "$home/projects/bulk-worktree"
+  fm_write_meta "$home/state/bulk-task.meta" \
+    "window=firstmate:fm-bulk-task" \
+    "worktree=$home/projects/bulk-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  note=$(head -c 200000 /dev/zero | tr '\0' 'n')
+  line="working: $note"
+  printf '%s\n' "$line" > "$home/state/bulk-task.status"
+  raw_len=${#line}
+  note_len=${#note}
+  [ "$raw_len" -gt 131072 ] \
+    || fail "fixture status line no longer exceeds the single-argument limit ($raw_len bytes)"
+
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized status line (rc=${rc:-0})"
+
+  printf '%s' "$out" | jq -e --argjson raw_len "$raw_len" --argjson note_len "$note_len" '
+    .tasks[] | select(.id == "bulk-task")
+    | .paths.status_log.present == true
+      and .paths.status_log.last_event.state == "working"
+      and (.paths.status_log.last_event.raw | length) == $raw_len
+      and (.paths.status_log.last_event.note | length) == $note_len
+      and (.hints.last_event_text | length) == $raw_len
+      and .current_state.source == "status-log"
+      and (.current_state.detail | length) == $note_len
+  ' >/dev/null || fail "oversized status line degraded instead of being reported in full"
+  pass "a status line past the single-argument limit is reported in full"
+}
+
+# first_pr_url_in_file greps the whole status log for a URL with no length cap,
+# so the recorded PR pointer is externally written and can exceed the ceiling on
+# its own, independently of the line that carries it.
+test_oversized_pr_url_still_reports_the_task() {
+  local home fakebin url out rc url_len
+  home=$(make_home oversized-pr)
+  mkdir -p "$home/projects/pr-worktree"
+  fm_write_meta "$home/state/pr-task.meta" \
+    "window=firstmate:fm-pr-task" \
+    "worktree=$home/projects/pr-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  url="https://github.com/o/$(head -c 140000 /dev/zero | tr '\0' 'r')/pull/7"
+  printf 'done: shipped %s\n' "$url" > "$home/state/pr-task.status"
+  url_len=${#url}
+  [ "$url_len" -gt 131072 ] \
+    || fail "fixture PR URL no longer exceeds the single-argument limit ($url_len bytes)"
+
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json) || rc=$?
+  [ "${rc:-0}" -eq 0 ] || fail "snapshot failed on an oversized PR URL (rc=${rc:-0})"
+
+  printf '%s' "$out" | jq -e --argjson url_len "$url_len" '
+    .tasks[] | select(.id == "pr-task")
+    | .pr.source == "status_event"
+      and (.pr.url | length) == $url_len
+  ' >/dev/null || fail "oversized PR URL degraded instead of being reported in full"
+  pass "a PR URL past the single-argument limit is reported in full"
+}
+
+# Injects a jq failure at the one call site whose argument vector carries a
+# value this fixture chose, so what gets asserted is the snapshot's own handling
+# of a payload its producer never delivered.
+make_failing_jq() {  # <fakebin> <argv-glob>
+  local fakebin=$1 pattern=$2 real
+  real=$(command -v jq)
+  cat > "$fakebin/jq" <<SH
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    $pattern) exit 1 ;;
+  esac
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fakebin/jq"
+}
+
+# --slurpfile skips a blank line, so a record builder that dies leaves the
+# secondmate silently absent while the count beside it still claims it.
+test_dropped_secondmate_record_fails_loudly() {
+  local home fakebin out rc err
+  home=$(make_home dropped-record)
+  printf -- '- zzpoisonmate (home: %s/absent-home; projects: alpha)\n' "$home" \
+    > "$home/data/secondmates.md"
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*zzpoisonmate*'
+
+  err="$home/dropped-record.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "a dropped secondmate record must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed aggregation must not print a partial snapshot: $out"
+  assert_contains "$(cat "$err")" "secondmate record stream returned 0 records for 1 rows" \
+    "the diagnostic must name the record/row mismatch"
+  assert_contains "$(cat "$err")" "registered secondmate aggregation failed" \
+    "the mismatch must reach the snapshot's own exit path"
+  pass "a secondmate record lost by its builder fails loudly instead of vanishing"
+}
+
+# An empty --slurpfile binds [], so an undelivered payload would otherwise read
+# as a legitimate null and ship a task row with no status_log at all.
+test_missing_status_log_payload_fails_loudly() {
+  local home fakebin out rc err
+  home=$(make_home missing-payload)
+  mkdir -p "$home/projects/zzpoison-worktree"
+  fm_write_meta "$home/state/zzpoisontask.meta" \
+    "window=firstmate:fm-zzpoisontask" \
+    "worktree=$home/projects/zzpoison-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'working: still going\n' > "$home/state/zzpoisontask.status"
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*zzpoisontask.status'
+
+  err="$home/missing-payload.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "an undelivered status_log payload must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed task snapshot must not print a partial snapshot: $out"
+  assert_contains "$(cat "$err")" "missing status_log payload" \
+    "the diagnostic must name the payload that never arrived"
+  assert_contains "$(cat "$err")" "task snapshot failed" \
+    "the missing payload must reach the snapshot's own exit path"
+  pass "a task payload that never arrived fails loudly instead of reading as null"
+}
+
+# The row loop's exit status is the LAST iteration's, so a lost payload on any
+# earlier task would leave the pipeline reading clean and ship a snapshot that
+# is simply missing a crew, at exit 0.
+test_lost_payload_on_an_earlier_task_fails_loudly() {
+  local home fakebin id out rc err
+  home=$(make_home earlier-payload)
+  for id in aaa-poisoned mmm-later zzz-last; do
+    mkdir -p "$home/projects/$id-worktree"
+    fm_write_meta "$home/state/$id.meta" \
+      "window=firstmate:fm-$id" \
+      "worktree=$home/projects/$id-worktree" \
+      "project=alpha" \
+      "harness=codex" \
+      "kind=ship" \
+      "mode=ship"
+    printf 'working: still going\n' > "$home/state/$id.status"
+  done
+  fakebin=$(make_fakebin "$home")
+  make_failing_jq "$fakebin" '*aaa-poisoned.status'
+
+  err="$home/earlier-payload.err"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>"$err") || rc=$?
+  [ "${rc:-0}" -ne 0 ] \
+    || fail "a lost payload on a non-final task must fail the snapshot, got rc 0 and: $out"
+  [ -z "$out" ] || fail "a failed task snapshot must not print the surviving rows: $out"
+  assert_contains "$(cat "$err")" "missing status_log payload" \
+    "the diagnostic must name the payload that never arrived"
+  assert_contains "$(cat "$err")" "task snapshot failed" \
+    "an earlier row's failure must still reach the snapshot's own exit path"
+  pass "a lost payload on a task the loop passes over early fails loudly"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_oversized_backlog_still_reports_every_record
+test_oversized_status_line_still_reports_its_event
+test_oversized_pr_url_still_reports_the_task
+test_dropped_secondmate_record_fails_loudly
+test_missing_status_log_payload_fails_loudly
+test_lost_payload_on_an_earlier_task_fails_loudly
 test_usage_limited_crew_keeps_its_open_decision
 test_usage_limited_child_is_an_external_hold_not_no_active_work
 test_stalled_child_is_active_work_not_no_active_work

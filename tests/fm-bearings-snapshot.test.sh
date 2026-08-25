@@ -1139,6 +1139,51 @@ test_per_repository_pr_cap_is_disclosed() {
   pass "per-repository open-PR caps are disclosed with an expansion knob"
 }
 
+# Live PR rows accumulate across repositories, so the candidate set crosses the
+# single-argument ceiling (MAX_ARG_STRLEN, 131072 bytes) long before any total
+# argument-list limit is in sight. Every fetched row has to survive that.
+test_oversized_pr_row_set_reports_every_row() {
+  local home fakebin json rows payload_bytes repo_bytes fixture_bytes
+  home=$(make_home pr-row-volume); write_large_fixture "$home" 5
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+echo "gh $*" >> "$NET_LOG"
+branch=$(head -c 3000 /dev/zero | tr '\0' 'b')
+printf '['
+i=1
+while [ "$i" -le 20 ]; do
+  [ "$i" -gt 1 ] && printf ','
+  printf '{"number":%d,"title":"T%d","url":"https://github.com/acme/repo/pull/%d","headRefName":"fm/%s-%d","reviewDecision":"APPROVED","mergeable":"MERGEABLE","statusCheckRollup":[]}' \
+    "$i" "$i" "$i" "$branch" "$i"
+  i=$((i + 1))
+done
+printf ']\n'
+SH
+  chmod +x "$fakebin/gh"
+  # Measured from the stub rather than from the snapshot's own output: a fixture
+  # precondition that reads the product it guards cannot tell "the fixture shrank"
+  # apart from "the product dropped rows", and would report a regression as its
+  # own vacuity.
+  repo_bytes=$(NET_LOG=/dev/null "$fakebin/gh" pr list | LC_ALL=C wc -c | tr -d ' ')
+  fixture_bytes=$((repo_bytes * 5))
+  [ "$fixture_bytes" -gt 131072 ] \
+    || fail "fixture no longer exceeds the single-argument limit ($fixture_bytes bytes); it cannot prove the regression"
+
+  json=$(FM_BEARINGS_PR_LIMIT=20 run "$home" "$fakebin" --include-prs --all-pr-repos --json) \
+    || fail "bearings failed on a candidate PR set past the single-argument limit"
+  rows=$(printf '%s' "$json" | jq '.candidate_prs | length')
+  [ "$rows" = 100 ] || fail "expected every fetched PR row, got $rows"
+  payload_bytes=$(printf '%s' "$json" | jq -c '.candidate_prs' | LC_ALL=C wc -c | tr -d ' ')
+  [ "$payload_bytes" -gt 131072 ] \
+    || fail "the reported candidate set was truncated to $payload_bytes bytes, under the single-argument limit"
+  printf '%s' "$json" | jq -e '
+    (.prs | test("checked \\(5 repos, 100 open\\)"))
+      and ([.omitted[] | select(.surface | startswith("candidate_prs showing"))] | length) == 0
+  ' >/dev/null || fail "the PR status line or omission disclosure lost rows: $(printf '%s' "$json" | jq -c .prs)"
+  pass "a candidate PR set past the single-argument limit keeps every row"
+}
+
 install_failing_jq() {  # <fakebin> <model|toon>
   local fakebin=$1 phase=$2 real
   real=$(command -v jq)
@@ -1992,6 +2037,7 @@ test_include_prs_is_the_only_fetch_path
 test_partial_github_failure_degrades
 test_perl_fallback_bounds_github_call
 test_section_caps_and_expansion_flags
+test_oversized_pr_row_set_reports_every_row
 test_pr_repository_cap_and_expansion
 test_per_repository_pr_cap_is_disclosed
 test_projection_and_toon_fail_closed

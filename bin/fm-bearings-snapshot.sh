@@ -186,7 +186,11 @@ HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[
 
 # --- optional live PR enrichment (the ONLY network path) --------------------
 PR_STATUS='not_requested (run: /bearings include PRs)'
-CANDIDATE_PRS='[]'
+# Newline-delimited per-repository row arrays, concatenated once at projection
+# time. A `$a + $b` fold would re-serialize every prior row on each repository
+# and hand the growing array to jq on the argument vector, which Linux caps at
+# MAX_ARG_STRLEN (131072 bytes) per entry regardless of the total ARG_MAX.
+CANDIDATE_PR_CHUNKS=''
 PR_REPOS_TOTAL=0
 PR_REPOS_SHOWN=0
 PR_ROWS_CAPPED=0
@@ -234,7 +238,7 @@ $(printf '%s' "$SNAP" | jq -r '.tasks[] | select(.kind != "secondmate") | .paths
 EOF
 
     for repo in $repos; do PR_REPOS_TOTAL=$((PR_REPOS_TOTAL + 1)); done
-    nrepos=0; npr=0; nwarn=0; ncapped=0; rows='[]'
+    nrepos=0; npr=0; nwarn=0; ncapped=0
     pr_fetch_limit=$((FM_BEARINGS_PR_LIMIT + 1))
     for repo in $repos; do
       if [ "$ALL_PR_REPOS" != 1 ] && [ "$nrepos" -ge "$FM_BEARINGS_PR_REPOS" ]; then break; fi
@@ -263,12 +267,12 @@ EOF
       cnt=$(printf '%s' "$repo_rows" | jq 'length')
       [ "$returned" -gt "$FM_BEARINGS_PR_LIMIT" ] && ncapped=$((ncapped + 1))
       npr=$((npr + cnt))
-      rows=$(jq -n --argjson a "$rows" --argjson b "$repo_rows" '$a + $b')
+      CANDIDATE_PR_CHUNKS="$CANDIDATE_PR_CHUNKS$repo_rows
+"
     done
     PR_REPOS_SHOWN=$nrepos
     PR_ROWS_CAPPED=$ncapped
     PR_ROWS_MIN_TOTAL=$((npr + ncapped))
-    CANDIDATE_PRS=$rows
     warnnote=""
     [ "$nwarn" -gt 0 ] && warnnote="; ${nwarn} repo(s) unavailable"
     cappednote=""
@@ -310,7 +314,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_repos_shown "$PR_REPOS_SHOWN" \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
-  --argjson candidate_prs "$CANDIDATE_PRS" '
+  --slurpfile candidate_pr_chunks <(printf '%s' "$CANDIDATE_PR_CHUNKS") '
+  (($candidate_pr_chunks | add) // []) as $candidate_prs |
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def round_robin_landed($n):
