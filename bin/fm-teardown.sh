@@ -122,16 +122,17 @@
 # (default 2, 0 disables the arm) waiting FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS
 # (defaults to the lock retry wait) between attempts, re-proving before every retry and
 # abandoning the moment the proof stops holding. When it does not hold - the worktree
-# still has work, or no proof is available, as for a returned secondmate home - the
-# original loud abort stands unchanged, so the refusal that protects unlanded work keeps
-# its full stopping power.
+# still has work, or no proof is available, as for a returned secondmate home - the loud
+# abort stands, reporting which observation denied the proof when one was derived at all,
+# so the refusal that protects unlanded work keeps its full stopping power.
 #
-# Every failed attempt also records what the return target ref (origin/HEAD, else
-# origin/main or origin/master) resolved to before and after it. A ref that moved across
-# the attempt is direct evidence that a concurrent ref update raced the return, which is
-# otherwise invisible behind the swallowed error body. That is recorded evidence, not the
-# gate: a transient failure over a steady ref must still be recognized, or the failure it
-# explains simply returns.
+# Every attempt that fails with no lock in evidence also records what the return target
+# ref (origin/HEAD, else origin/main or origin/master) resolved to before and after it,
+# the first failure included; a lock-race failure is already classified and records none.
+# A ref that moved across the attempt is direct evidence that a concurrent ref update
+# raced the return, which is otherwise invisible behind the swallowed error body. That is
+# recorded evidence, not the gate: a transient failure over a steady ref must still be
+# recognized, or the failure it explains simply returns.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
