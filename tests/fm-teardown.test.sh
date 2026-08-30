@@ -356,6 +356,28 @@ begin_fake_treehouse() {
   local case_dir=$1 counter=${2:-}
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+# The destructive half of a real `treehouse return`: hard-checkout the worktree to the
+# ref the return targets. Teardown deletes the task branch before calling the return,
+# so anything not reachable from another ref is gone after this runs.
+fake_treehouse_hard_return() {
+  local dir=$1 target short
+  short=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$short" ]; then
+    target="refs/remotes/$short"
+  elif git -C "$dir" show-ref --verify --quiet refs/remotes/origin/main; then
+    target=refs/remotes/origin/main
+  elif git -C "$dir" show-ref --verify --quiet refs/heads/main; then
+    target=refs/heads/main
+  else
+    return 0
+  fi
+  git -C "$dir" checkout --detach --force "$target" >/dev/null 2>&1
+  # A returned worktree goes back to the pool pristine, so the return also discards
+  # staged and untracked leftovers. This is what makes a wrongly-retried return lose
+  # uncommitted straggler work rather than quietly leaving it on disk.
+  git -C "$dir" reset -q --hard "$target" >/dev/null 2>&1
+  git -C "$dir" clean -qfd >/dev/null 2>&1
+}
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -496,6 +518,7 @@ add_transient_no_lock_treehouse() {
     echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
     exit 1
   fi
+  fake_treehouse_hard_return "$wt"
 SH
   end_fake_treehouse "$case_dir"
 }
@@ -524,6 +547,12 @@ SH
 # checkout would destroy, standing in for a straggler crew process that writes after
 # the pre-return safety check already passed. The second argument selects whether it
 # leaves an uncommitted change or a commit that exists nowhere else.
+#
+# Any attempt after the first performs the real hard checkout a `treehouse return`
+# does and then succeeds. Teardown has already deleted the task branch by this point,
+# so that checkout is what actually destroys the straggler work - which is what gives
+# the callers' work-preservation assertions teeth. A guard that wrongly retries here
+# reaches that checkout and loses the work, and the assertion fails.
 add_work_leaving_failing_treehouse() {
   local case_dir=$1 leaves=$2
   begin_fake_treehouse "$case_dir" count
@@ -536,9 +565,11 @@ add_work_leaving_failing_treehouse() {
       echo straggler > "\$wt/straggler.txt"
       git -C "\$wt" add straggler.txt
     fi
+    echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+    exit 1
   fi
-  echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
-  exit 1
+  fake_treehouse_hard_return "\$wt"
+  exit 0
 SH
   end_fake_treehouse "$case_dir"
 }
@@ -1449,6 +1480,10 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work()
   rc=$?
   set -e
 
+  # Checked first and deliberately: a wrongly-retried return hard-checks-out the
+  # worktree, so this file is what disappears. The safety property fails by name.
+  [ -f "$case_dir/wt/straggler.txt" ] \
+    || fail "straggler-dirty: teardown destroyed the uncommitted work it should have preserved"
   expect_code 1 "$rc" "straggler-dirty: teardown must abort when the worktree holds uncommitted work"
   assert_grep "no git lock is present" "$case_dir/stderr" \
     "straggler-dirty: teardown did not distinguish the failure from a lock race"
@@ -1462,8 +1497,6 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work()
     || fail "straggler-dirty: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   [ -f "$case_dir/state/task-x1.meta" ] \
     || fail "straggler-dirty: teardown completed despite the failed return"
-  [ -f "$case_dir/wt/straggler.txt" ] \
-    || fail "straggler-dirty: teardown destroyed the uncommitted work it should have preserved"
   pass "a return failure is never retried once the worktree holds uncommitted work again"
 }
 
@@ -1488,6 +1521,9 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
   rc=$?
   set -e
 
+  # Checked first and deliberately: see straggler-dirty. A retry loses this commit.
+  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "straggler commit" \
+    || fail "straggler-commit: teardown destroyed the unlanded commit it should have preserved"
   expect_code 1 "$rc" "straggler-commit: teardown must abort when the worktree holds an unlanded commit"
   assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
     "straggler-commit: teardown did not say why the retry arm did not apply"
@@ -1495,8 +1531,6 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
     || fail "straggler-commit: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   [ -f "$case_dir/state/task-x1.meta" ] \
     || fail "straggler-commit: teardown completed despite the failed return"
-  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "straggler commit" \
-    || fail "straggler-commit: teardown destroyed the unlanded commit it should have preserved"
   pass "a return failure is never retried once the worktree holds a commit missing from every remote"
 }
 
@@ -1599,8 +1633,12 @@ test_no_remote_retry_is_eligible_and_the_work_survives() {
     "no-remote-retry: teardown did not state the proof that authorized the retry"
   [ "$(cat "$attempt_file")" = 2 ] \
     || fail "no-remote-retry: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
-  # The point of the proof: nothing was lost. The commit the retry allowed a hard
-  # checkout over is still reachable from the local default branch afterwards.
+  # The retry here allows a real hard checkout (the fake performs one on success), and
+  # the commit is still reachable from the local default branch afterwards. Containment
+  # in refs/heads/<default> is exactly what makes that survivable with no remote in
+  # play. This check cannot fail while the work is contained, by construction - the
+  # refusal proof that CAN fail is
+  # test_no_remote_refuses_retry_for_work_absent_from_the_local_default below.
   git -C "$case_dir/project" merge-base --is-ancestor "$head_before" refs/heads/main \
     || fail "no-remote-retry: the retried teardown lost work that only refs/heads/main held"
   pass "with no remote, the nothing-to-lose proof rests on the local default branch and the work survives"
@@ -1629,13 +1667,16 @@ test_no_remote_refuses_retry_for_work_absent_from_the_local_default() {
   rc=$?
   set -e
 
+  # Checked first and deliberately: if the guard wrongly retried, the fake's second
+  # attempt hard-checked-out the worktree and this commit is gone, so this assertion
+  # is what fails - the safety property by name, not merely the exit code.
+  git -C "$case_dir/wt" log --oneline -1 | grep -q "straggler commit" \
+    || fail "no-remote-straggler: teardown destroyed the unlanded commit it should have preserved"
   expect_code 1 "$rc" "no-remote-straggler: teardown must abort over work absent from the local default branch"
   assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
     "no-remote-straggler: teardown did not say why the retry arm did not apply"
   [ "$(cat "$attempt_file")" = 1 ] \
     || fail "no-remote-straggler: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
-  git -C "$case_dir/wt" log --oneline -1 | grep -q "straggler commit" \
-    || fail "no-remote-straggler: teardown destroyed the unlanded commit it should have preserved"
   pass "with no remote, the proof still refuses work that the local default branch does not contain"
 }
 

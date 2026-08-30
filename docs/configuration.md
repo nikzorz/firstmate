@@ -528,7 +528,8 @@ FM_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 
 `fm-teardown.sh` retries a failed `treehouse return` up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times, but only when it classifies the failure as a transient git index.lock race.
 Three signals classify it: the worktree's index.lock is present after the failure, an index.lock was present when the attempt started and has since cleared, or the return output carries Git's `Unable to create '...index.lock': File exists` text.
-Teardown prints which signal it saw, and any other return failure aborts on the first attempt saying no git lock is present.
+Teardown prints which signal it saw.
+Any other return failure aborts on the first attempt saying no git lock is present, except the benign-transient arm described below.
 `bin/fm-teardown.sh`'s header owns the full contract, including why the return tool's error text alone cannot be relied on.
 `FM_TREEHOUSE_RETURN_LOCK_RETRIES` accepts a nonnegative integer, and an unset, blank, or invalid value uses the default of 3.
 `FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS` accepts nonnegative whole or fractional seconds between attempts.

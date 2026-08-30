@@ -74,7 +74,7 @@
 # error text carries git's lock signature. Teardown prints which signal it saw, so an
 # operator reading an empty-bodied error can still tell a lock race from a genuine
 # failure. Every other return failure aborts immediately and loudly, saying that no git
-# lock is present.
+# lock is present, except the benign-transient arm described below.
 #
 # On a lock race only, teardown_treehouse_return:
 #   1. Retries up to FM_TREEHOUSE_RETURN_LOCK_RETRIES times (default 3), waiting
@@ -83,7 +83,8 @@
 #      attempts. A retry also continues while any of those three signals still holds, so
 #      neither a lock that self-clears mid-check nor a swallowed git message ends the
 #      patience window early.
-#   2. Other treehouse return failures still abort immediately and loudly (no retry).
+#   2. Other treehouse return failures still abort immediately and loudly (no retry),
+#      except the benign-transient arm described below.
 #   3. If the lock race persists across every retry and the lock remains, it is removed
 #      and the return tried once more ONLY when the lock is provably stale per
 #      bin/fm-lock-lib.sh's fm_lock_is_provably_stale, passing the worktree dir as the
@@ -742,8 +743,8 @@ cleanup_stale_lock_for_safety_check() {
 # check supplied, or the worktree still holding work - the failure keeps the original
 # loud abort, because that refusal is what protects unlanded work.
 teardown_transient_return_retry() {
-  local dir=$1 cd_dir=$2 label=$3 retry_safety_check=$4 ref_name=$5 ref_oid=$6
-  local attempt=0 max_transient
+  local dir=$1 cd_dir=$2 label=$3 retry_safety_check=$4 ref_name=$5
+  local attempt=0 max_transient ref_oid
 
   if [ -z "$retry_safety_check" ]; then
     echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race" >&2
@@ -763,20 +764,20 @@ teardown_transient_return_retry() {
 
   while [ "$attempt" -lt "$max_transient" ]; do
     attempt=$(( attempt + 1 ))
-    echo "teardown: $label return failed with no git lock present, and $dir independently proves it holds nothing to lose; waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s and retrying ($attempt/${max_transient})" >&2
+    echo "teardown: $label return failed with no git lock present; waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s and re-deriving $dir's nothing-to-lose proof before retry ($attempt/${max_transient})" >&2
     sleep "$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS"
 
     if ! "$retry_safety_check"; then
       echo "teardown: $label return retry abandoned: $dir now holds uncommitted or unlanded work" >&2
       return 1
     fi
+    echo "teardown: $label retrying the return: $dir independently proves it holds nothing to lose ($attempt/${max_transient})" >&2
     ref_oid=$(treehouse_return_target_ref_oid "$dir" "$ref_name") || ref_oid=""
     if treehouse_return_attempt "$dir" "$cd_dir"; then
       echo "teardown: $label return succeeded on retry after a transient failure" >&2
       return 0
     fi
     report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_oid"
-    ref_oid=$TREEHOUSE_RETURN_REF_OID_AFTER
   done
 
   echo "teardown: $label return failed: a non-lock failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each) even though $dir held nothing to lose; aborting" >&2
@@ -822,7 +823,7 @@ teardown_treehouse_return() {
   else
     report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_before_oid"
     teardown_transient_return_retry "$dir" "$cd_dir" "$label" "$retry_safety_check" \
-      "$ref_name" "$TREEHOUSE_RETURN_REF_OID_AFTER"
+      "$ref_name"
     return $?
   fi
 
