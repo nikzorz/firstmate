@@ -13,12 +13,16 @@
 #   - Identity: only when THIS session owns state/.lock - its harness ancestor
 #     IS the recorded pid, or the recorded owner launched this session under a
 #     new pid (a fork, resume, or background move, which is the shape Claude
-#     Code produces; bin/fm-session-lock-lib.sh owns that rule). When an
-#     existing numeric owner fails the shared harness-liveness predicate, the
-#     hook delegates guarded recovery to bin/fm-lock.sh and then re-verifies
-#     ownership. A DIFFERENT live owner, missing lock, malformed lock, or
-#     unresolved ancestry remains inert, so a competing session never arms or
-#     rewakes.
+#     Code produces; bin/fm-session-lock-lib.sh owns that rule). A DIFFERENT
+#     live owner, missing lock, malformed lock, or unresolved ancestry remains
+#     inert, so a competing session never arms or rewakes.
+#   - Sole ownership: a lock held by descent, and a lock whose owner is no
+#     longer a live harness, are both claimed through bin/fm-lock.sh before
+#     anything arms, and every path then re-verifies that the lock names THIS
+#     session. Descent alone would leave the still-live recorded owner arming
+#     the same home from its own Stop, and a home cannot survive two watcher
+#     owners: killing watchers broadly is unsafe because sibling homes run the
+#     same watcher, so an operator who found two would have no blunt remedy.
 #   - AFK: while state/.afk exists the away daemon owns the watcher and triage;
 #     this hook exits 0 and NEVER rewakes the primary (checked again at
 #     translation time so a mid-cycle AFK transition is honored).
@@ -76,20 +80,19 @@ cat >/dev/null 2>&1 || true
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
 # --- identity: only the lock-owning session's hooks may arm ------------------
-# A prior session may have died after leaving its numeric harness pid in .lock.
-# Use the shared liveness predicate to recognize only that stale-owner case.
-# Defer the mutating claim until after the unchanged AFK and need gates, so an
-# idle or away home remains byte-for-byte inert. Missing or malformed locks are
-# uncertainty rather than stale-owner evidence and remain inert.
-RECOVER_SESSION_LOCK=0
-if ! fm_session_lock_owned_by_self "$STATE"; then
-  LOCK_PID=$(cat "$STATE/.lock" 2>/dev/null || true)
-  case "$LOCK_PID" in
-    ''|*[!0-9]*) exit 0 ;;
-  esac
-  fm_harness_pid_alive "$LOCK_PID" && exit 0
-  RECOVER_SESSION_LOCK=1
-fi
+# Read-only classification first, so a session with no claim to this home never
+# touches the owner lock and never blocks the session that does have one. Both
+# a descent grant and a dead recorded owner need the lock re-pointed at this
+# session before it supervises: descent because the recorded owner is still
+# live and would otherwise arm the same home from its own Stop, stale because
+# nothing owns the home yet. Missing, malformed, and unresolvable locks are
+# uncertainty rather than a claim, and stay inert.
+CLAIM_SESSION_LOCK=0
+case "$(fm_session_lock_class "$STATE")" in
+  self) ;;
+  descent|stale) CLAIM_SESSION_LOCK=1 ;;
+  *) exit 0 ;;
+esac
 
 # --- AFK: the away daemon owns the watcher and triage; never rewake ----------
 [ -e "$STATE/.afk" ] && exit 0
@@ -100,21 +103,24 @@ need_supervision() {
 }
 need_supervision || exit 0
 
-# --- stale session-lock recovery ---------------------------------------------
-# Delegate the claim to fm-lock.sh so its live-owner refusal and write semantics
-# remain the single acquisition owner, then re-verify current-session identity
-# before touching any auto-arm state.
-if [ "$RECOVER_SESSION_LOCK" -eq 1 ]; then
-  "$SCRIPT_DIR/fm-lock.sh" >/dev/null 2>&1 || exit 0
-  fm_session_lock_owned_by_self "$STATE" || exit 0
-fi
-
 # --- single-flight owner claim ------------------------------------------------
 # Claude runs one background process per firing with no dedupe. Exactly one
 # owner foregrounds the arm and translates its close; every other firing exits
 # 0 so one watcher cycle maps to at most one exit-2 rewake.
 fm_lock_try_acquire "$OWNER_LOCK" || exit 0
 trap 'fm_lock_release "$OWNER_LOCK"' EXIT
+
+# --- sole session ownership ---------------------------------------------------
+# Under the home-scoped owner lock, so two firings can never claim at once and
+# the session that arms is the one that proved sole ownership. Delegate the
+# claim to fm-lock.sh: its live-owner refusal and write semantics remain the
+# single acquisition owner. Then demand "self" rather than mere ownership, in
+# every path - that is the assertion that no second live session can still read
+# this home as its own, and a claim someone else won in the meantime fails it.
+if [ "$CLAIM_SESSION_LOCK" -eq 1 ]; then
+  "$SCRIPT_DIR/fm-lock.sh" >/dev/null 2>&1 || exit 0
+fi
+[ "$(fm_session_lock_class "$STATE")" = self ] || exit 0
 
 write_epoch() {  # <outcome>
   local outcome=$1 seq tmp

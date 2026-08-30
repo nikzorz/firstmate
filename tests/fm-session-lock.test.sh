@@ -15,6 +15,12 @@
 #     protection from a copy and proves that refusal then stops happening, so
 #     the refusal case cannot pass for an unrelated reason.
 #
+# Descent pulls against the second half too, because the recorded owner stays
+# alive and keeps reading the home as its own. So the ownership CLASS is pinned
+# here, not merely that ownership was granted: a claim on descent must leave the
+# recorded owner reading the home as another session's, or two live sessions
+# still supervise it.
+#
 # Process shapes are built from a fake harness (a bash symlink named "claude",
 # the same trick tests/fm-claude-stop-autoarm.test.sh uses) so no real harness,
 # lock, or fleet state is touched. Every fake-harness body has two statements so
@@ -64,8 +70,8 @@ set -u
 # shellcheck source=/dev/null
 . "$FM_HOME/bin/fm-session-lock-lib.sh"
 case "${1:-}" in
-  owned)
-    if fm_session_lock_owned_by_self "$FM_HOME/state"; then echo "owned=yes"; else echo "owned=no"; fi
+  class)
+    echo "class=$(fm_session_lock_class "$FM_HOME/state")"
     ;;
   harness-pid)
     fm_harness_ancestry_pid || echo NONE
@@ -98,10 +104,10 @@ HOME_SELF=$(make_home "$TMP_ROOT/self")
 out=$(FM_HOME="$HOME_SELF" "$FAKE_CLAUDE" -c '
   RC=0
   printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-  "$PROBE" owned || RC=$?
+  "$PROBE" class || RC=$?
   exit "$RC"
 ' 2>&1)
-assert_contains "$out" "owned=yes" "the session whose own harness pid is recorded lost ownership of its lock"
+assert_contains "$out" "class=self" "a session holding its own recorded pid must classify as the sole owner"
 pass "recorded owner's own session owns its lock"
 
 # --- 2. a forked session under a new pid claims its own home ----------------
@@ -115,11 +121,11 @@ out=$(FM_HOME="$HOME_FORK" "$FAKE_CLAUDE" -c '
   RC=0
   printf "%s\n" "$$" > "$FM_HOME/state/.lock"
   printf "parent=%s\n" "$$"
-  "$FAKE_CLAUDE" -c '"'"'RC=0; printf "fork=%s\n" "$$"; "$PROBE" owned || RC=$?; exit "$RC"'"'"' || RC=$?
+  "$FAKE_CLAUDE" -c '"'"'RC=0; printf "fork=%s\n" "$$"; "$PROBE" class || RC=$?; exit "$RC"'"'"' || RC=$?
   exit "$RC"
 ' 2>&1)
 assert_distinct_fixture_pids "$out"
-assert_contains "$out" "owned=yes" "a forked session under a new pid was refused its own home's lock"
+assert_contains "$out" "class=descent" "ownership granted while the recorded owner is still live must be reported as descent, not as sole ownership"
 pass "forked session under a new pid claims its own home"
 
 # --- 3. a forked session's claim re-points the lock at the live session ------
@@ -141,6 +147,38 @@ parent_pid=$(printf '%s\n' "$out" | sed -n 's/^parent=//p')
 written=$(cat "$LOCK_FORK")
 [ "$written" = "$fork_pid" ] || fail "fm-lock.sh left the lock on '$written'; the forked session's own pid $fork_pid must own it (parent was $parent_pid)"
 pass "forked session's claim re-points the lock at the session executing turns"
+
+# --- 3b. the claim leaves ONE owner while the parent is still alive ----------
+#
+# Case 3 shows the lock moving. This shows what that is for: the session it
+# moved away from must stop reading the home as its own, or both keep
+# supervising it. The fork is held alive across the parent's own check, which
+# is exactly the window where the two-owner state existed.
+
+HOME_ONE=$(make_home "$TMP_ROOT/one-owner")
+RELEASE="$HOME_ONE/state/release-fork"
+out=$(FM_HOME="$HOME_ONE" RELEASE="$RELEASE" "$FAKE_CLAUDE" -c '
+  RC=0
+  printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+  printf "parent=%s\n" "$$"
+  "$FAKE_CLAUDE" -c '"'"'
+     printf "fork=%s\n" "$$"
+     "$FM_HOME/bin/fm-lock.sh" >/dev/null
+     touch "$FM_HOME/state/fork-claimed"
+     i=0
+     while [ ! -e "$RELEASE" ] && [ "$i" -lt 100 ]; do sleep 0.2; i=$((i + 1)); done
+     exit 0
+  '"'"' &
+  i=0
+  while [ ! -e "$FM_HOME/state/fork-claimed" ] && [ "$i" -lt 100 ]; do sleep 0.2; i=$((i + 1)); done
+  "$PROBE" class || RC=$?
+  touch "$RELEASE"
+  wait
+  exit "$RC"
+' 2>&1)
+assert_distinct_fixture_pids "$out"
+assert_contains "$out" "class=other" "after a fork claimed the home, its still-live parent kept reading the home as its own; two sessions would supervise it"
+pass "a descent claim collapses the home to exactly one owner"
 
 # --- 4. a genuinely different live session is still refused -----------------
 #
@@ -174,10 +212,10 @@ printf '%s\n' "$OTHER_PID" > "$HOME_OTHER/state/.lock"
 
 out=$(FM_HOME="$HOME_OTHER" "$FAKE_CLAUDE" -c '
   RC=0
-  "$PROBE" owned || RC=$?
+  "$PROBE" class || RC=$?
   exit "$RC"
 ' 2>&1)
-assert_contains "$out" "owned=no" "a genuinely different live session was admitted as the lock owner"
+assert_contains "$out" "class=other" "a genuinely different live session was admitted as the lock owner"
 
 rc=0
 out=$(FM_HOME="$HOME_OTHER" "$FAKE_CLAUDE" -c '
@@ -240,10 +278,10 @@ pass "dead recorded owner is still reclaimable"
 HOME_RECYCLED=$(make_home "$TMP_ROOT/recycled")
 out=$(FM_HOME="$HOME_RECYCLED" "$FAKE_CLAUDE" -c '
   RC=0
-  /bin/bash -c '"'"'RC=0; printf "%s\n" "$$" > "$FM_HOME/state/.lock"; "$PROBE" owned || RC=$?; exit "$RC"'"'"' || RC=$?
+  /bin/bash -c '"'"'RC=0; printf "%s\n" "$$" > "$FM_HOME/state/.lock"; "$PROBE" class || RC=$?; exit "$RC"'"'"' || RC=$?
   exit "$RC"
 ' 2>&1)
-assert_contains "$out" "owned=no" "a non-harness ancestor holding the recorded pid was accepted as the owning session"
+assert_contains "$out" "class=stale" "a non-harness ancestor holding the recorded pid was accepted as the owning session"
 pass "recycled pid on a non-harness ancestor is not the owning session"
 
 # --- 8. a version-named harness binary resolves to its own session ----------

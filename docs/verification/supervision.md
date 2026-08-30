@@ -73,6 +73,7 @@ The direct and passive mechanisms were validated across all five harnesses on 20
 
 The secondmate-home scope and manual-repair wake path were measured with Claude Code 2.1.207 on 2026-07-12, when a native background completion re-invoked the idle model with no human input.
 The current Stop-owned main/secondmate inclusion and child-worktree exclusion are covered deterministically by `tests/fm-claude-stop-autoarm.test.sh`.
+A live session and a fork descending from it resolve to a single owner of one home: `tests/fm-session-lock.test.sh` pins the ownership classification and the claim that collapses it, and `tests/fm-claude-stop-autoarm.test.sh` measures the outcome through the real arm and watcher as exactly one watcher cycle started for the home while both sessions live.
 
 The Claude product live path ran with Claude Code 2.1.219 on 2026-07-24:
 
@@ -126,6 +127,7 @@ tests/fm-pi-watch-extension.test.sh
 tests/fm-watcher-lock.test.sh
 tests/fm-subagent-pretool-check.test.sh
 tests/fm-claude-stop-autoarm.test.sh
+tests/fm-session-lock.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 

@@ -10,9 +10,10 @@ Each adapter starts the next arm before delivering the wake prompt, checks curre
 A failed follow-up never cancels continuity restoration.
 Claude's `.claude/settings.json` Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns routine tokenless re-arm.
 The hook fires on every Stop, and an eligible primary with supervision need admits one home-scoped owner that foregrounds `bin/fm-watch-arm.sh` inside the hook-owned process tree.
-A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` before auto-arm state changes, while a live owner belonging to a different session, an absent lock, or a malformed lock keeps the competing hook inert.
+A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh`, while a live owner belonging to a different session, an absent lock, or a malformed lock keeps the competing hook inert.
 A live owner that launched this session - the forked, resumed, or backgrounded session running under a new pid - is the same session reclaiming its own home rather than a competitor, so it arms; `bin/fm-session-lock-lib.sh` owns that rule.
-The stale-owner claim occurs only after the existing AFK and supervision-need gates pass.
+That owner is still live, so descent is a title to claim rather than a second standing ownership: the hook re-points the lock at itself on descent exactly as it does for a dead owner, and every path then re-verifies that the lock names this session before anything arms.
+Both claims occur only after the existing AFK and supervision-need gates pass, and under the home-scoped auto-arm owner lock, so one home ends every Stop with one watcher owner.
 While supervision is still needed and away mode remains inactive, an actionable close or typed failure wakes the idle session through exit 2.
 A delivered close counts as actionable there, because its wake already reached the durable queue and still needs a handling turn.
 
