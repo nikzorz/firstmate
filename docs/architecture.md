@@ -36,7 +36,9 @@ Two gates gate that absorb, and a crew that fails either one still surfaces: the
 The supported ending for that absorb is a merge, because `bin/fm-pr-poll.sh` wakes only on `merged`, so a pull request closed without merging draws no further stale wake for that finished crew.
 That limit is accepted rather than overlooked: the crew's own `done:` line is captain-relevant and normally reached firstmate through the signal path already, and the absorb leaves that line unsurfaced so the heartbeat backstop still carries it once if it did not.
 A crew whose validation run is parked at a gate on a decision only firstmate or the captain can answer is absorbed the same way and for the same reason: it cannot proceed until the answer arrives, so its idle endpoint is the expected shape for as long as the answer takes.
-Two gates gate that absorb as well.
+Three gates gate that absorb as well.
+The park must come from an attributed no-mistakes run and its gate must be one the crew cannot answer itself, since an absorb needs evidence strong enough to correlate the wait with what is being waited for.
+A park at a worker-owned gate such as a fix review, and the run-less fallback that reads `parked` straight off the crew's own `needs-decision:` line, both stay outside that limit deliberately and keep surfacing, because neither is evidence that anyone else owes this crew an answer and absorbing on them could silence a wedged worker indefinitely.
 The status stream must still carry the decision open, since a decision already closed by a `resolved:` line or a verified captain-held transfer means an idle pane is a worker that failed to act on the answer, and a parked run with nothing open is a crew waiting on something firstmate has no record of.
 The crew's own last status line must itself be that `needs-decision:`, since anything else captain-relevant appended after it is newer than the decision and absorbing it would silence the newer line.
 The decision's first `needs-decision:` line is captain-relevant and reaches firstmate through the signal path exactly as before, so this absorb only removes the repeat stale wakes that followed it.

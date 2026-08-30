@@ -574,11 +574,14 @@ test_landing_probe_does_not_clobber_a_callers_pr_globals() {
 # safety property: absorbing a parked crew whose decision has already been
 # answered would hide a worker that failed to act on the answer.
 #
-# This gate is only assertable at this level. In the watcher, a parked crew is
-# reached through the terminal-stale branch, whose own gate requires the crew's
-# last line to be the `needs-decision` it is parked on - and a last line with
-# that verb always leaves a decision open, so the closed-decision case cannot be
-# constructed there. The watcher tests below own that second gate instead.
+# The CLOSED-decision direction is only assertable at this level. In the watcher,
+# a parked crew reaches the deciding arm only through the terminal-stale branch,
+# whose own gate requires the crew's last line to be the `needs-decision` it is
+# parked on - and a last line with that verb always leaves a decision open, so
+# the answered case cannot be constructed there at all. The watcher tests below
+# own the gates that ARE reachable there instead: a newer captain-relevant line,
+# a park at a gate the worker itself must answer, and the run-less status-log
+# `parked` fallback.
 test_deciding_absorb_class_classifier() {
   local dir state STATE
   dir=$(make_case deciding-class); state="$dir/state"
@@ -625,19 +628,39 @@ test_deciding_absorb_class_classifier() {
   [ "$(crew_absorb_class missing)" = none ] \
     || fail "a parked crew with no status file at all was absorbed"
 
+  # Correlation. The fold records a decision for the whole TASK while the park is
+  # a fact about ONE gate, so an open key on its own must not absorb: this crew
+  # keeps its decision open throughout, and only the parked line changes.
+  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/correlate.status"
+  [ "$(crew_absorb_class correlate)" = deciding ] || fail "the correlation fixture did not start absorbable"
+
+  # A gate the WORKER itself must answer carries no ask-user marker, so nothing
+  # here says anyone else owes this crew an answer.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at fix_review: 3 finding(s)'
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "a park at a worker-owned gate was absorbed as an outstanding decision"
+
+  # The run-less fallback derives `parked` from the very `needs-decision:` line
+  # this fold reads, so it correlates nothing with nothing. Its detail is the
+  # crew's own note, spelled here to repeat the marker verbatim: that is exactly
+  # why the source is gated rather than the marker alone.
+  FM_FAKE_CREW_STATE='state: parked · source: status-log · review escalated an (ask-user: authority decision) finding'
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "a status-log parked fallback was absorbed as an outstanding decision"
+
   # An open decision does not make any OTHER verdict absorbable: the class is
-  # `parked` plus the record, never the record alone.
+  # a correlated `parked` plus the record, never the record alone.
   FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
-  [ "$(crew_absorb_class held)" = none ] || fail "an open decision made a done crew absorbable"
+  [ "$(crew_absorb_class correlate)" = none ] || fail "an open decision made a done crew absorbable"
   FM_FAKE_CREW_STATE='state: stalled · source: run-step · review step quiet for 40m'
-  [ "$(crew_absorb_class held)" = none ] || fail "an open decision made a stalled run absorbable"
+  [ "$(crew_absorb_class correlate)" = none ] || fail "an open decision made a stalled run absorbable"
   FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
-  [ "$(crew_absorb_class held)" = unreliable ] || fail "an open decision reclassed a failed run-step verdict"
+  [ "$(crew_absorb_class correlate)" = unreliable ] || fail "an open decision reclassed a failed run-step verdict"
   FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-  [ "$(crew_absorb_class held)" = working ] || fail "an open decision reclassed an active run"
+  [ "$(crew_absorb_class correlate)" = working ] || fail "an open decision reclassed an active run"
 
   unset FM_FAKE_CREW_STATE
-  pass "crew_absorb_class: a parked run is deciding only while its decision is on record as open"
+  pass "crew_absorb_class: a parked run is deciding only while an authority decision it is parked on is open"
 }
 
 # --- stale pane, finished work awaiting merge: absorbed with NO wedge timer ---
@@ -825,36 +848,71 @@ test_parked_crew_with_a_newer_captain_line_still_surfaces() {
   pass "a captain-relevant line newer than the decision still surfaces on a parked crew"
 }
 
-# And the answered case end to end: once the crew records that the decision came
-# back, its idle pane is a worker that failed to act on it, so the watcher
-# surfaces it again.
-test_parked_after_the_decision_is_answered_still_surfaces() {
+# The correlation gate end to end, and the regression for an absorb that could
+# otherwise go silent for good: everything the deciding arm reads about the TASK
+# is satisfied - the run is parked, a decision is open, and the crew's last line
+# is that `needs-decision:` - but the gate the run stopped at is one the WORKER
+# itself must answer, so nobody else owes this crew anything and a wedge here has
+# no other wake owner. It must surface.
+test_parked_at_a_worker_owned_gate_still_surfaces() {
   local dir state fakebin out drain_out capture_file window key pane_hash pid
-  dir=$(make_case deciding-stale-answered); state="$dir/state"; fakebin="$dir/fakebin"
+  dir=$(make_case deciding-stale-worker-gate); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
-  window="test:fm-answered"
+  window="test:fm-worker-gate"
   printf 'awaiting a decision on 2 findings' > "$capture_file"
-  printf 'window=%s\nkind=ship\n' "$window" > "$state/answered.meta"
-  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\nresolved [key=seat-scope]: captain chose per-tenant\n' \
-    > "$state/answered.status"
-  printf '%s' "$(seen_sig "$state/answered.status")" > "$state/.seen-answered_status"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/worker-gate.meta"
+  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/worker-gate.status"
+  printf '%s' "$(seen_sig "$state/worker-gate.status")" > "$state/.seen-worker-gate_status"
   key=$(printf '%s' "$window" | tr ':/.' '___')
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at fix_review: 3 finding(s)'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
-  wait_for_exit "$pid" 40 || fail "a parked crew whose decision was answered was absorbed"
-  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the answered crew"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the answered stale failed"
-  grep -F "$window" "$drain_out" >/dev/null || fail "the answered stale was not queued"
+  wait_for_exit "$pid" 40 || fail "a crew parked at a worker-owned gate was absorbed"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the worker-owned gate"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the worker-gate stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the worker-gate stale was not queued"
   unset FM_FAKE_CREW_STATE
-  pass "a parked crew whose decision has been answered still surfaces"
+  pass "a crew parked at a gate it must answer itself still surfaces"
+}
+
+# The other half of the same gate: a crew with no run attributed at all, whose
+# `parked` is read straight off the very `needs-decision:` line the fold then
+# calls open. The verdict's detail is the crew's own note, spelled here to repeat
+# the marker verbatim, so this case can only surface because the SOURCE is gated.
+test_parked_from_the_status_log_fallback_still_surfaces() {
+  local dir state fakebin out drain_out capture_file window key pane_hash pid
+  dir=$(make_case deciding-stale-log-source); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-log-parked"
+  printf 'awaiting a decision on 2 findings' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/log-parked.meta"
+  printf 'needs-decision [key=seat-scope]: review escalated an (ask-user: authority decision) finding\n' \
+    > "$state/log-parked.status"
+  printf '%s' "$(seen_sig "$state/log-parked.status")" > "$state/.seen-log-parked_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "awaiting a decision on 2 findings")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: parked · source: status-log · review escalated an (ask-user: authority decision) finding'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "a status-log parked fallback was absorbed"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the status-log fallback"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the status-log stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the status-log fallback stale was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a crew whose parked verdict comes from its own status log still surfaces"
 }
 
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
@@ -2206,7 +2264,8 @@ test_finished_with_no_landing_route_still_surfaces
 test_post_run_decision_on_a_landing_route_still_surfaces
 test_parked_on_open_decision_absorbed_without_a_wedge_timer
 test_parked_crew_with_a_newer_captain_line_still_surfaces
-test_parked_after_the_decision_is_answered_still_surfaces
+test_parked_at_a_worker_owned_gate_still_surfaces
+test_parked_from_the_status_log_fallback_still_surfaces
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

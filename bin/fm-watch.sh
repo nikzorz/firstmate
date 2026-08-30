@@ -22,9 +22,10 @@
 #                          done, and whose work has a recorded landing route with an
 #                          armed merge poll, is absorbed outright, with no wedge
 #                          timer: the merge poll owns its next wake. A crew whose
-#                          run is parked at a gate, whose own last status line is
-#                          the needs-decision it is parked on, and whose status
-#                          stream still carries that decision open, is absorbed
+#                          run is parked at a gate only firstmate or the captain
+#                          can answer (the `deciding` verdict, which owns that
+#                          correlation), and whose own last status line is the
+#                          still-open needs-decision it is parked on, is absorbed
 #                          the same way: the answer owns its next wake, and the
 #                          absorb ends as soon as the decision is closed. A
 #                          provably-working stale is ALWAYS absorbed (with a wedge
