@@ -696,7 +696,7 @@ worktree_dirty_from_status() {
 # report what was actually observed instead of asserting work that was never seen. The
 # verdict itself is unchanged: every one of these conditions still refuses the retry.
 worktree_return_retry_is_safe() {
-  local status_raw ahead default
+  local status_raw ahead default compared_against
   local -a excluded=(--not --remotes)
   WORKTREE_RETRY_PROOF_REASON=
   if ! inspectable_git_worktree "$WT"; then
@@ -711,15 +711,23 @@ worktree_return_retry_is_safe() {
     WORKTREE_RETRY_PROOF_REASON="$WT holds uncommitted changes"
     return 1
   fi
+  compared_against="every remote"
   if default=$(default_branch) && git -C "$WT" show-ref --verify --quiet "refs/heads/$default"; then
     excluded+=("refs/heads/$default")
+    compared_against="every remote and the local default branch"
+  elif [ -z "$(git -C "$WT" for-each-ref --count=1 --format='%(refname)' refs/remotes 2>/dev/null)" ]; then
+    compared_against=""
   fi
   if ! ahead=$(git -C "$WT" log --oneline HEAD "${excluded[@]}" -- 2>/dev/null); then
     WORKTREE_RETRY_PROOF_REASON="the commits in $WT could not be listed, so it could not be inspected for work"
     return 1
   fi
   if [ -n "$ahead" ]; then
-    WORKTREE_RETRY_PROOF_REASON="$WT holds commits missing from every remote and from the local default branch"
+    if [ -n "$compared_against" ]; then
+      WORKTREE_RETRY_PROOF_REASON="$WT holds commits missing from $compared_against"
+    else
+      WORKTREE_RETRY_PROOF_REASON="$WT holds commits and nothing remains to prove containment against, with no remote-tracking ref and no resolvable default branch"
+    fi
     return 1
   fi
 }
@@ -796,11 +804,13 @@ teardown_transient_return_retry() {
     report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_oid"
   done
 
-  # No lock was present when this arm was entered, but the window is never re-probed,
-  # so a lock race that began mid-window would look identical from here. Say what was
-  # actually observed rather than asserting a non-lock cause: a confidently wrong label
-  # is what points an operator at --force, which is the failure this arm exists to end.
-  echo "teardown: $label return failed: the failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each) while $dir held nothing to lose; no git lock was present when the retries began and none was re-checked during the window, so a lock race starting mid-window would not have been noticed; aborting" >&2
+  # Two things are deliberately NOT asserted here. The proof is re-derived before each
+  # retry but never after the last one, so the final attempt may have left work behind
+  # that was never observed. And no lock is re-probed during the window, so a lock race
+  # that began mid-window would look identical from here. Report both as unknown rather
+  # than asserting either: a confidently wrong label is what points an operator at
+  # --force, which is the failure this arm exists to end.
+  echo "teardown: $label return failed: the failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each); $dir last proved it held nothing to lose before the final attempt and was not re-proved after it, and no git lock was present when the retries began nor re-checked during the window, so neither work left by that last attempt nor a lock race starting mid-window would have been noticed; aborting" >&2
   return 1
 }
 
