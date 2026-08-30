@@ -117,8 +117,9 @@ A secondmate window is never probed for liveness, so its reading is always unkno
 A declared pause on a secondmate is therefore absorbed on the long pause cadence on every backend, this table's unknown column included.
 
 `working` from a run step means the run is non-terminal AND still advancing.
-Past its inactivity budget the reader reports `stalled`, which takes the last row instead.
-The older behaviour, where a run that had stopped advancing still held the long cadence, survives only where no elapsed figure is available at all: the coarse runs-list fallback, an absent `active_steps` table, and a `last_activity` of `unknown`.
+A run the reader can show has stopped advancing reports `stalled`, which takes the last row instead.
+The older behaviour, where a run that had stopped advancing still held the long cadence, survives wherever no such evidence is available: the coarse runs-list fallback, an absent `active_steps` table, a `last_activity` of `unknown`, and every case where the forge gives no answer about a monitoring ci step.
+`bin/fm-crew-state.sh` owns what counts as advancing.
 
 The health ordering in the `paused` row is inverted, and this change does not fix it: a confidently dead endpoint earns the long cadence while a confirmed-live one is surfaced.
 
@@ -444,6 +445,8 @@ FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi sta
 FM_CREW_STATE_AGENT_QUIET_SECS=1800   # seconds an agent-driven run step may be quiet before fm-crew-state.sh reports stalled
 FM_CREW_STATE_REMOTE_QUIET_SECS=7200  # the same budget for a step that only monitors remote checks
 FM_CREW_STATE_REMOTE_STEPS=ci   # space-delimited step names that draw the remote budget; bin/fm-crew-state.sh owns why the two differ
+FM_CREW_STATE_FORGE_PROBE=1   # 1 lets fm-crew-state.sh ask the forge whether what a monitoring ci step waits for can still arrive; anything else switches off its only outbound call
+FM_CREW_STATE_FORGE_TIMEOUT=10   # seconds allowed for that forge query
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
 FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usage-limit prompt
 FM_CLAUDE_LIMIT_FOOTER_TAIL_SLACK=2   # non-blank lines allowed below that prompt's confirm row before the match is rejected

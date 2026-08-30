@@ -302,8 +302,8 @@ Require the matching `resolved` event, forbid `--yes`, and require the worker to
 Resume fleet supervision immediately after the decision lands.
 
 Judge validation by the current-code-matched run step through `bin/fm-crew-state.sh`, not by shell liveness or the last status event.
-Running, fixing, or CI states remain working while the active step is still advancing, and read `stalled` once it has been quiet past its inactivity budget; parked approval or fix-review states require the worker to follow the active gate help; passed or checks-passed is done; failed or cancelled is failed.
-A `stalled` run needs attention rather than waiting out, and an empty or unrecognised run status reads `unknown`, which is never evidence of a healthy run; that script's header owns the budgets and their env knobs.
+Running, fixing, or CI states remain working while the active step is still advancing, and read `stalled` once the active step has stopped advancing; parked approval or fix-review states require the worker to follow the active gate help; passed or checks-passed is done; failed or cancelled is failed.
+A `stalled` run needs attention rather than waiting out, and an empty or unrecognised run status reads `unknown`, which is never evidence of a healthy run; that script's header owns what counts as advancing and the env knobs behind it.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
 

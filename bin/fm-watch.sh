@@ -390,13 +390,15 @@ clear_pause_tracking() {  # <window>
 #     case the pause verb exists for: the crew declared a wait, its endpoint is still
 #     there, and a no-mistakes run step attributed to its branch is both non-terminal
 #     (running/fixing/ci) and still advancing. That second half is what `working`
-#     from a run step now means: past its inactivity budget fm-crew-state.sh reports
-#     `stalled` instead, so a hung run never reaches this arm at all. The old
-#     reading, where a non-terminal status alone earned the cadence because nothing
-#     compared it against a prior observation, survives only where no elapsed figure
-#     exists to compare: the coarse runs-list fallback, an absent active_steps table,
-#     and a `last_activity` of `unknown`. This case gets the bounded
-#     pause cadence. Before this, that combination went to the wedge timer and
+#     from a run step now means: a run fm-crew-state.sh can show has stopped
+#     advancing reports `stalled` instead, so a hung run never reaches this arm at
+#     all - that script's header owns what counts as advancing, of which the
+#     inactivity budget is one of two showings. The old reading, where a
+#     non-terminal status alone earned the cadence because nothing contradicted it,
+#     survives wherever no such evidence exists: the coarse runs-list fallback, an
+#     absent active_steps table, a `last_activity` of `unknown`, and every case
+#     where the forge gives no answer about a monitoring ci step. This case gets
+#     the bounded pause cadence. Before this, that combination went to the wedge timer and
 #     escalated as a possible wedge every STALE_ESCALATE_SECS - so the crew with the
 #     STRONGEST evidence of health (declared pause + live endpoint + an attributed
 #     non-terminal run step) was alarmed on four times harder than a declared pause
