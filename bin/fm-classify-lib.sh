@@ -475,6 +475,42 @@ fm_classify_landing_route_armed() {  # <id>
   ) >/dev/null 2>&1
 }
 
+# --- outstanding decision ----------------------------------------------------
+#
+# The landing route above is one instance of a wider shape: a crew is idle
+# because it is correctly waiting on somebody else, and firstmate already knows
+# what it is waiting for. A crew parked at a no-mistakes gate on an ask-user
+# finding is the other instance. It did exactly what its instructions ask -
+# appended `needs-decision:` and stopped - and the answer has to come from
+# firstmate or the captain, so its endpoint stays idle for as long as that takes
+# and the stale timer re-raised it every escalation window, overnight included.
+#
+# The asymmetry that makes this safe is the same one the landing route uses. A
+# parked run absorbs only while the decision it is parked on is RECORDED as
+# still open, and stops absorbing the moment that decision is closed - because an
+# idle pane after the answer landed is a worker that failed to act on it, which
+# firstmate must see. Never absorb a crew that is waiting for nothing.
+#
+# status_open_decisions above is that record and the only one consulted: it folds
+# the whole append-only status stream, so a decision stays open across later
+# unrelated events and is closed only by an explicit `resolved:` or a verified
+# captain-held backlog transfer for its key. Note what that means for a crew's
+# first `needs-decision:` line - it is captain-relevant, so it still surfaces
+# once through the signal path exactly as before. This class only silences the
+# repeat stale wakes that follow it.
+#
+# `blocked:` opens a decision in the same fold but is deliberately NOT absorbed
+# here: `parked` is the run's own report that it cannot proceed without an
+# outside answer, while `blocked:` is a crew asking firstmate to act, and a
+# request for action that nobody has acted on is worth repeating.
+fm_classify_decision_outstanding() {  # <id>
+  local id=$1 state
+  [ -n "$id" ] || return 1
+  state=$(_fm_classify_state_dir)
+  [ -n "$state" ] || return 1
+  [ -n "$(status_open_decisions "$state/$id.status")" ]
+}
+
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). crew_absorb_verdict is the primitive
@@ -495,6 +531,12 @@ fm_classify_landing_route_armed() {  # <id>
 #                finished and the merge poll owns the next wake, so the stale
 #                timer must not keep raising the same idle pane while the
 #                captain takes their time over the PR;
+#   deciding   - the crew's authoritative current state is a run `parked` at a
+#                gate AND the task's status stream still carries an open keyed
+#                decision (fm_classify_decision_outstanding above). The crew
+#                cannot proceed until that decision is answered, so the stale
+#                timer must not keep raising the same idle pane while it is
+#                outstanding;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
@@ -502,7 +544,8 @@ fm_classify_landing_route_armed() {  # <id>
 #                crew stopped; every other consumer treats it exactly like none;
 #   none       - none of those, so the wake must surface (a stopped/parked/
 #                torn-down/unknown crew, a run that has stopped advancing
-#                (stalled), a `done` with no landing route recorded, or an
+#                (stalled), a `done` with no landing route recorded, a `parked`
+#                run with no decision left open, or an
 #                unreadable verdict). A crew parked on
 #                Claude Code's usage-limit prompt lands here too, deliberately: it is
 #                genuinely stopped, so it must reach firstmate once instead of being
@@ -523,9 +566,9 @@ fm_classify_landing_route_armed() {  # <id>
 # both runs share the branch and the head that nm_run_head_matches_worktree binds on.
 # Folding that into `none` made a verdict that is evidence of nothing outrank a
 # crew's own declared pause.
-# Only `failed` from `run-step` qualifies: `parked` means the run is waiting on the
-# crew to answer a gate, and `done`/`unknown` cover genuinely finished and
-# genuinely torn-down crews, all of which really must surface.
+# Only `failed` from `run-step` qualifies for `unreliable`. `parked` is waiting on an
+# answer, which the `deciding` class above weighs against its own record, and
+# `done`/`unknown` cover genuinely finished and genuinely torn-down crews.
 #
 # The <source> field is fm-crew-state.sh's own source token (run-step, pane,
 # status-log, or none) passed through verbatim, and `none` when the line could not
@@ -559,6 +602,9 @@ crew_absorb_verdict() {  # <id>
   fi
   if [ "$state" = "done" ] && fm_classify_landing_route_armed "$id"; then
     printf 'landing %s' "$src"; return
+  fi
+  if [ "$state" = parked ] && fm_classify_decision_outstanding "$id"; then
+    printf 'deciding %s' "$src"; return
   fi
   if [ "$state" = failed ] && [ "$src" = run-step ]; then printf 'unreliable %s' "$src"; return; fi
   printf 'none %s' "$src"
