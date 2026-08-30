@@ -633,6 +633,71 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# The scaffold's only {TASK} occurrences must be standalone fill sites, never a
+# reference inside prose. AGENTS.md section 11 tells firstmate to replace every
+# {TASK} placeholder, so any prose that quotes the token is spliced full of task
+# text by that documented global fill.
+test_task_placeholder_appears_only_as_a_fill_site() {
+  local home brief id total standalone
+  home="$TMP_ROOT/placeholder-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-ship alpha >/dev/null 2>&1
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-lab alpha --herdr-lab >/dev/null 2>&1
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-scout alpha --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-mate --secondmate --no-projects >/dev/null 2>&1
+
+  for id in ph-ship ph-lab ph-scout ph-mate; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    total=$(grep -o -F '{TASK}' "$brief" | wc -l | tr -d ' ')
+    standalone=$(grep -c '^{TASK}$' "$brief" | tr -d ' ')
+    [ "$total" = "$standalone" ] \
+      || fail "$id: $total {TASK} occurrences but only $standalone standalone fill sites; prose must never quote the placeholder"
+  done
+  for id in ph-ship ph-lab ph-scout; do
+    standalone=$(grep -c '^{TASK}$' "$home/data/$id/brief.md" | tr -d ' ')
+    [ "$standalone" = 1 ] || fail "$id: expected exactly 1 {TASK} fill site, found $standalone"
+  done
+  pass "fm-brief.sh: {TASK} appears only as a standalone fill site"
+}
+
+# The documented global fill must land the task body exactly once and leave the
+# unguarded Herdr gate whole. This performs the fill AGENTS.md section 11
+# prescribes rather than trusting the scaffold by eye.
+test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate() {
+  local home id flag brief filled raw task_body
+  home="$TMP_ROOT/fill-home"
+  mkdir -p "$home/data"
+  task_body='Fix the widget.
+
+## Finish line for this task
+Commit on your branch and stop.'
+
+  for spec in "fill-ship:" "fill-scout:--scout"; do
+    id=${spec%%:*}
+    flag=${spec#*:}
+    # shellcheck disable=SC2086  # an empty flag must expand to no argument at all
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" "$id" alpha $flag >/dev/null 2>&1 \
+      || fail "$id: scaffold exited non-zero"
+    brief="$home/data/$id/brief.md"
+    filled="$home/data/$id/filled.md"
+    raw=$(cat "$brief")
+    printf '%s\n' "${raw//\{TASK\}/$task_body}" > "$filled"
+
+    expect_code 1 "$(grep -c '^# Task$' "$filled")" \
+      "$id: the task heading must survive the fill exactly once"
+    expect_code 1 "$(grep -c '^## Finish line for this task$' "$filled")" \
+      "$id: the task body must land exactly once, not once per placeholder"
+    assert_grep '# Herdr lifecycle declaration - NOT ENABLED' "$filled" \
+      "$id: the fill destroyed the unguarded Herdr declaration heading"
+    assert_grep 'HARD SAFETY GATE' "$filled" "$id: the Herdr gate lost its safety marker"
+    grep -A3 '^# Herdr lifecycle declaration - NOT ENABLED$' "$filled" \
+      | grep -qF 'Do not add Herdr lifecycle commands to this unguarded brief by hand.' \
+      || fail "$id: the fill separated the Herdr gate body from its heading"
+  done
+  pass "fm-brief.sh: the documented {TASK} fill lands once and leaves the Herdr gate whole"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -672,3 +737,5 @@ test_secondmate_marked_request_reporting_contract
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_task_placeholder_appears_only_as_a_fill_site
+test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate
