@@ -40,9 +40,10 @@ Before peeking, read `bin/fm-crew-state.sh <id>`.
 A `usage-limited` state means the crew is parked on Claude Code's usage-limit prompt, which never self-resumes; that is a known condition with its own owner, so load `harness-adapters` and follow its claude usage-limit stall entry instead of the generic escalation below.
 Do not interrupt, exit, or relaunch such a crew: its work, worktree, and any in-flight validation run are intact and only need the prompt cleared once the account window has reset.
 
-A `stalled` state means an attributed validation run has stopped advancing past its inactivity budget, which is a stopped pipeline step rather than a wedged crewmate.
-The detail names the step and how long it has been silent; read the run's own logs for that step before touching the pane, and do not interrupt, exit, or relaunch the crew on this state alone.
-Report it to the captain as a validation that stopped making progress, with the step and the elapsed silence as the evidence.
+A `stalled` state means an attributed validation run has stopped advancing, which is a stopped pipeline step rather than a wedged crewmate.
+The detail names the step and why it is not advancing - either how long it has been silent, or what the forge says the step is waiting on that cannot arrive.
+Read the run's own logs for that step before touching the pane, and do not interrupt, exit, or relaunch the crew on this state alone.
+Report it to the captain as a validation that stopped making progress, with that detail as the evidence.
 
 Escalate in order:
 

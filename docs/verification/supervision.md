@@ -309,3 +309,66 @@ A step with no recorded activity renders the bare word `unknown`, which is the c
 Durations render as `30s`, `1h0m`, `20h52m`, and `3d11h`, all of which the token parser accepts.
 
 Columns are located by name from the table header rather than by position, so this record pins the field names, not their order.
+
+## Forge probe for a monitoring ci step
+
+This record supports the forge half of the stalled-run detection in `bin/fm-crew-state.sh`: the arm that settles a ci step which keeps logging while what it waits for cannot arrive.
+Two external surfaces carry that arm, and field presence in an external CLI is evidence rather than a contract, so both are measured rather than assumed.
+Every branch of the arm itself, including each way the forge can fail to answer, is covered without a network call by `tests/fm-crew-state.test.sh`.
+
+### Step logs carry no timestamps
+
+This is why the arm asks the forge rather than measuring repetition.
+Measured 2026-08-30 against the installed no-mistakes v1.60.2.
+
+The stored log is bare prose separated by blank lines:
+
+```sh
+head -c 200 ~/.no-mistakes/logs/<run-id>/ci.log | cat -A
+```
+
+```
+monitoring CI for PR #368 (timeout: 168h0m0s)...$
+$
+issues detected: merge conflict - auto-fixing (attempt 1/3)...$
+$
+running agent to fix CI issues...$
+```
+
+The CLI's own view adds a header and quotes each line, and no time either:
+
+```sh
+no-mistakes axi logs --step ci --run <run-id>
+```
+
+```
+step: ci
+run: "<run-id>"
+lines: 40 of 82 total (tail)
+log[40]{line}:
+  "fix already attempted for these issues, waiting for CI re-run..."
+  ""
+```
+
+With no time attached to any line, "how long has this step been repeating itself" cannot be answered from the response the reader already pays for.
+Answering it would mean comparing samples across polls, and every consumer calls `bin/fm-crew-state.sh` as a pure read.
+The elapsed figure the budget uses lives in `active_steps`, recorded in the section above, and it measures silence only.
+
+### The forge answers both questions in one query
+
+Measured 2026-08-30 against gh 2.96.0.
+
+```sh
+gh pr view <pr-url> --json mergeable,statusCheckRollup \
+  -q '((.mergeable // "UNKNOWN") + "\t" + ((.statusCheckRollup // []) | length | tostring))' | cat -A
+```
+
+```
+UNKNOWN^I10$
+```
+
+Three facts the reader depends on are visible here.
+Both fields are selectable on `gh pr view --json` (they appear in its own field list), so one query answers both questions and no second call is needed.
+The projection returns exactly one tab-separated line, which is the whole parse.
+And this capture is of a MERGED pull request, which reports `UNKNOWN` mergeability rather than a value: GitHub computes mergeability lazily and reports `UNKNOWN` whenever it has not, so `UNKNOWN` is a routine answer and never evidence of a conflict.
+Only the definite `CONFLICTING` value escalates.

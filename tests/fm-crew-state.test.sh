@@ -140,7 +140,19 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/quota-axi"
+  # The forge probe's only outward call. It is created for EVERY case, not only
+  # the probe's own, so a fixture carrying a pull-request url can never reach
+  # the real github.com from a test; serving nothing is the "forge had no
+  # answer" shape, which must leave every other verdict exactly as it was.
+  cat > "$fb/gh" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ -n "${FM_FAKE_GH_CALLS:-}" ] && printf '%s\n' "$*" >> "$FM_FAKE_GH_CALLS"
+[ "${FM_FAKE_GH_FAILS:-0}" = 1 ] && exit 1
+printf '%s\n' "${FM_FAKE_GH_OUT:-}"
+exit 0
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/quota-axi" "$fb/gh"
   printf '%s\n' "$fb"
 }
 
@@ -183,9 +195,14 @@ reset_fakes() {
   FM_FAKE_PANE_FILE=""
   FM_FAKE_QUOTA_JSON=""
   FM_FAKE_QUOTA_FAILS=0
+  FM_FAKE_GH_OUT=""
+  FM_FAKE_GH_FAILS=0
+  FM_FAKE_GH_CALLS=""
+  FM_CREW_STATE_FORGE_PROBE=1
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
   export FM_FAKE_PANE_FILE FM_FAKE_QUOTA_JSON FM_FAKE_QUOTA_FAILS
+  export FM_FAKE_GH_OUT FM_FAKE_GH_FAILS FM_FAKE_GH_CALLS FM_CREW_STATE_FORGE_PROBE
 }
 
 # --- claude usage-limit fixtures --------------------------------------------
@@ -467,6 +484,28 @@ run:
 EOF
 }
 
+# The 2026-08-29 shape: the ci step is monitoring, its activity is SECONDS old,
+# and it is repeating one line because what it waits for cannot arrive. Every
+# figure the inactivity budget reads calls this healthy.
+run_ci_spinning() {  # <branch> <last_activity-cell>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ci
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/368"
+  findings: none
+  steps[4]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    push,completed,0,0
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,45m0s,$2,"",round 1
+EOF
+}
+
 run_fixing_ci_running() {  # <branch>
   cat <<EOF
 run:
@@ -702,6 +741,132 @@ test_active_step_columns_are_located_by_name() {
   out=$(run_crew_state "$d" cols)
   assert_contains "$out" "review step quiet 20h52m" "a new leading column must not shift the read"
   pass "active_steps columns are located by name, not by position"
+}
+
+# --- arm C: a step that keeps logging while nothing progresses -------------
+#
+# Observed 2026-08-29: the ci step appended one identical line every ten seconds
+# for forty minutes while the pull request sat unmergeable behind two sibling
+# branches that had landed, so the forge produced no checks for its head and the
+# re-run the step asked for could never arrive. last_activity stayed seconds old
+# the whole time, so both budgets above call this run healthy - it is not
+# silence, it is repetition, and the discriminator is outside the run's own
+# figures.
+
+# What the ci step logged during that spin, newest last.
+CI_LOG_AWAITING_RERUN='base branch advanced (680a001d..f5979b18), re-arming CI monitor timeout
+fix already attempted for these issues, waiting for CI re-run...
+fix already attempted for these issues, waiting for CI re-run...'
+
+test_spinning_ci_step_on_a_conflicting_pr_reports_stalled() {
+  reset_fakes
+  local d; d=$(new_case spin-conflict)
+  make_repo_on_branch "$d/wt" fm/feat-spin
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/spin.meta" "window=fm:fm-spin" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-spin '"5s ago: log: fix already attempted for these issues, waiting for CI re-run..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t7'
+  local out; out=$(run_crew_state "$d" spin)
+  assert_contains "$out" "state: working" "a mergeable pull request with checks is still a working run"
+
+  FM_FAKE_GH_OUT=$'CONFLICTING\t0'
+  out=$(run_crew_state "$d" spin)
+  assert_contains "$out" "state: stalled" "a run waiting on checks a conflicting pull request cannot get is not working"
+  assert_contains "$out" "merge conflicts" "the detail names why the wait cannot end"
+  pass "a spinning ci step on a conflicting pull request reports stalled"
+}
+
+test_empty_check_list_only_counts_while_a_rerun_is_awaited() {
+  reset_fakes
+  local d; d=$(new_case spin-nochecks)
+  make_repo_on_branch "$d/wt" fm/feat-nck
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/nck.meta" "window=fm:fm-nck" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-nck '"5s ago: log: fix already attempted for these issues, waiting for CI re-run..."')"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0'
+
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+  local out; out=$(run_crew_state "$d" nck)
+  assert_contains "$out" "state: stalled" "checks the step has already seen once cannot come back from an empty list"
+  assert_contains "$out" "no checks for the pull request head" "the detail names the missing checks"
+
+  # The same empty list on a repository whose checks have simply not registered
+  # yet is not evidence of anything, and no-mistakes says so in its own words.
+  FM_FAKE_CI_LOGS="no CI checks reported yet, waiting for checks to register..."
+  out=$(run_crew_state "$d" nck)
+  assert_contains "$out" "state: working" "an empty check list before any re-run was asked for is not a stall"
+  pass "an empty check list only counts while a re-run is awaited"
+}
+
+# Every way the forge can fail to answer must leave the verdict exactly where it
+# was. GitHub reports UNKNOWN mergeability while it is still computing one, so
+# treating that as a conflict would wake the captain on ordinary latency.
+test_an_absent_forge_answer_never_manufactures_a_stall() {
+  reset_fakes
+  local d; d=$(new_case spin-noanswer)
+  make_repo_on_branch "$d/wt" fm/feat-na2
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/na2.meta" "window=fm:fm-na2" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-na2 '"5s ago: log: fix already attempted for these issues, waiting for CI re-run..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+  local out
+
+  FM_FAKE_GH_OUT=$'UNKNOWN\t7'
+  out=$(run_crew_state "$d" na2)
+  assert_contains "$out" "state: working" "an uncomputed mergeability is not a conflict"
+
+  FM_FAKE_GH_OUT=$'CONFLICTING\t0'
+  FM_FAKE_GH_FAILS=1
+  out=$(run_crew_state "$d" na2)
+  assert_contains "$out" "state: working" "a forge query that fails leaves the verdict alone"
+
+  FM_FAKE_GH_FAILS=0
+  FM_FAKE_GH_OUT=""
+  out=$(run_crew_state "$d" na2)
+  assert_contains "$out" "state: working" "an empty forge answer leaves the verdict alone"
+  pass "an absent forge answer never manufactures a stall"
+}
+
+# The probe is the only outward call this reader makes, so it must be possible
+# to switch off, and it must not be reached at all once a cheaper source has
+# already settled the verdict.
+test_the_forge_is_asked_nothing_it_need_not_answer() {
+  reset_fakes
+  local d; d=$(new_case spin-noask)
+  make_repo_on_branch "$d/wt" fm/feat-nask
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/nask.meta" "window=fm:fm-nask" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_GH_OUT=$'CONFLICTING\t0'
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  local out
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-nask '"5s ago: log: fix already attempted for these issues, waiting for CI re-run..."')"
+  FM_CREW_STATE_FORGE_PROBE=0
+  out=$(run_crew_state "$d" nask)
+  assert_contains "$out" "state: working" "the switched-off probe behaves as if it did not exist"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the switched-off probe still called the forge"
+  FM_CREW_STATE_FORGE_PROBE=1
+
+  # A step already past its own inactivity budget keeps the direct detail and
+  # buys no query with it.
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring_quiet fm/feat-nask '"quiet 20h52m ago: log: waiting"')"
+  out=$(run_crew_state "$d" nask)
+  assert_contains "$out" "state: stalled" "the budget still settles a step that went quiet"
+  assert_contains "$out" "ci step quiet" "the budget breach keeps its own detail"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "a run already stalled on its own figures still called the forge"
+
+  # And a crew that reported checks green is waiting out the captain on a merge,
+  # not stalled, however the forge feels about the branch by now.
+  printf 'done: PR https://github.com/o/r/pull/368 checks green\n' > "$d/state/nask.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-nask '"5s ago: log: still monitoring"')"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  out=$(run_crew_state "$d" nask)
+  assert_contains "$out" "state: done" "a finished crew waiting on a merge is not stalled"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "a crew waiting out the captain on a merge was probed anyway"
+  pass "the forge is asked nothing it need not answer"
 }
 
 # The budgets are tuning constants, changeable without editing logic.
@@ -2041,6 +2206,10 @@ test_hung_remote_check_step_reports_stalled
 test_quiet_ci_monitor_with_checks_green_report_stays_done
 test_quiet_ci_monitor_without_green_checks_still_stalls
 test_missing_activity_figure_leaves_the_verdict_alone
+test_spinning_ci_step_on_a_conflicting_pr_reports_stalled
+test_empty_check_list_only_counts_while_a_rerun_is_awaited
+test_an_absent_forge_answer_never_manufactures_a_stall
+test_the_forge_is_asked_nothing_it_need_not_answer
 test_active_step_columns_are_located_by_name
 test_inactivity_budgets_are_configurable
 test_unrecognized_run_status_is_not_working
