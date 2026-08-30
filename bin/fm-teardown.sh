@@ -111,6 +111,12 @@
 # to be inspectable, to have no uncommitted change, and to hold no commit missing from
 # both every remote and the local default branch. It is deliberately narrower than
 # validate_worktree_teardown_safety, which also clears unpushed work whose PR landed.
+# The comparison spans every remote AND the local default branch, so a project with no
+# remote at all stays eligible exactly when refs/heads/<default> already contains HEAD;
+# a worktree checkout never moves that ref, so containment in it proves as much as
+# containment in a remote-tracking ref does.
+# Where neither a remote-tracking ref nor a resolvable default branch exists, nothing is
+# left to prove containment against, so the proof cannot stand and the retry is refused.
 # When it holds, the return is retried up to FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES times
 # (default 2, 0 disables the arm) waiting FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS
 # (defaults to the lock retry wait) between attempts, re-proving before every retry and
@@ -764,6 +770,7 @@ teardown_transient_return_retry() {
       echo "teardown: $label return retry abandoned: $dir now holds uncommitted or unlanded work" >&2
       return 1
     fi
+    ref_oid=$(treehouse_return_target_ref_oid "$dir" "$ref_name") || ref_oid=""
     if treehouse_return_attempt "$dir" "$cd_dir"; then
       echo "teardown: $label return succeeded on retry after a transient failure" >&2
       return 0

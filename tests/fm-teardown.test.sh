@@ -65,6 +65,9 @@
 #   (ag) no lock, a straggler left an unlanded commit         -> abort, no retry
 #   (ah) no lock, --force over work that lives nowhere else   -> abort, no retry
 #   (ai) no lock, failure never clears                        -> abort after the window
+#   (aj) no lock, no remote, HEAD in the local default branch -> retry ALLOW
+#   (ak) no lock, no remote, HEAD absent from that branch     -> abort, no retry
+#   (al) no lock, no remote and no default branch at all      -> abort, no retry
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -141,6 +144,50 @@ SH
   # Fresh watcher beacon so fm-guard stays quiet.
   touch "$case_dir/state/.last-watcher-beat"
 
+  printf '%s\n' "$case_dir"
+}
+
+# A sandbox with NO remote at all: the project is a plain local repo with a local
+# default branch, so the retry proof has no remote-tracking ref to lean on and must
+# stand on refs/heads/<default> alone. Same fakebin and state layout as make_case.
+make_local_case() {
+  local name=$1 case_dir fakebin
+  case_dir="$TMP_ROOT/$name"
+  fakebin="$case_dir/fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' "count: 0 (showing first 0)" "pull_requests[]: []" ; exit 0 ;;
+  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+esac
+exit 0
+SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh"
+
+  git init -q "$case_dir/project"
+  git -C "$case_dir/project" -c user.email=t@t -c user.name=t \
+    commit -q --allow-empty -m "local baseline"
+  git -C "$case_dir/project" branch -M main
+  git -C "$case_dir/project" worktree add -q -b fm/task-x1 "$case_dir/wt" main
+
+  touch "$case_dir/state/.last-watcher-beat"
   printf '%s\n' "$case_dir"
 }
 
@@ -1517,6 +1564,115 @@ test_persistent_transient_return_failure_exhausts_its_window_and_refuses() {
   pass "a non-lock return failure that never recovers still aborts loudly after a bounded window"
 }
 
+# Merge the worktree's task branch into the project's local default branch, which is
+# how local-only work lands when there is no remote anywhere.
+land_on_local_main() {
+  local case_dir=$1
+  git -C "$case_dir/project" merge -q --no-ff -m "land task" fm/task-x1
+}
+
+test_no_remote_retry_is_eligible_and_the_work_survives() {
+  local case_dir rc head_before attempt_file
+  case_dir=$(make_local_case no-remote-retry)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_local_main "$case_dir"
+  head_before=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  add_transient_no_lock_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  [ -z "$(git -C "$case_dir/project" remote)" ] \
+    || fail "no-remote-retry: the sandbox was supposed to have no remote at all"
+  expect_code 0 "$rc" "no-remote-retry: teardown should recover with no remote present"
+  assert_grep "independently proves it holds nothing to lose" "$case_dir/stderr" \
+    "no-remote-retry: teardown did not state the proof that authorized the retry"
+  [ "$(cat "$attempt_file")" = 2 ] \
+    || fail "no-remote-retry: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
+  # The point of the proof: nothing was lost. The commit the retry allowed a hard
+  # checkout over is still reachable from the local default branch afterwards.
+  git -C "$case_dir/project" merge-base --is-ancestor "$head_before" refs/heads/main \
+    || fail "no-remote-retry: the retried teardown lost work that only refs/heads/main held"
+  pass "with no remote, the nothing-to-lose proof rests on the local default branch and the work survives"
+}
+
+test_no_remote_refuses_retry_for_work_absent_from_the_local_default() {
+  local case_dir rc attempt_file
+  case_dir=$(make_local_case no-remote-straggler)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_local_main "$case_dir"
+
+  # Pre-return safety passes (the work is in local main). The failing return then
+  # leaves a commit that exists nowhere but this worktree, so with no remote-tracking
+  # ref in play the proof must still catch it.
+  add_work_leaving_failing_treehouse "$case_dir" commit
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "no-remote-straggler: teardown must abort over work absent from the local default branch"
+  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
+    "no-remote-straggler: teardown did not say why the retry arm did not apply"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "no-remote-straggler: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  git -C "$case_dir/wt" log --oneline -1 | grep -q "straggler commit" \
+    || fail "no-remote-straggler: teardown destroyed the unlanded commit it should have preserved"
+  pass "with no remote, the proof still refuses work that the local default branch does not contain"
+}
+
+test_no_remote_and_no_default_branch_refuses_retry() {
+  local case_dir rc attempt_file
+  case_dir=$(make_local_case no-remote-no-default)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  # Remove every ref the default-branch resolver can find, so the proof has neither a
+  # remote-tracking ref nor a local default branch to compare against. The project's
+  # own checkout has to let go of the branch before it can be deleted.
+  git -C "$case_dir/project" checkout -q --detach
+  git -C "$case_dir/project" branch -D main >/dev/null
+  ! git -C "$case_dir/project" show-ref --verify --quiet refs/heads/main \
+    || fail "no-remote-no-default: the sandbox still has a resolvable default branch"
+
+  add_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "no-remote-no-default: teardown must abort when nothing can prove containment"
+  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
+    "no-remote-no-default: teardown did not say why the retry arm did not apply"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "no-remote-no-default: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "with neither a remote nor a resolvable default branch the proof cannot stand and the retry is refused"
+}
+
 test_index_lock_signature_without_lock_file_is_retried() {
   local case_dir rc lock attempt_file
   case_dir=$(make_case signature-without-lock)
@@ -1886,6 +2042,9 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work
 test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
 test_forced_teardown_of_unlanded_work_still_refuses_a_transient_retry
 test_persistent_transient_return_failure_exhausts_its_window_and_refuses
+test_no_remote_retry_is_eligible_and_the_work_survives
+test_no_remote_refuses_retry_for_work_absent_from_the_local_default
+test_no_remote_and_no_default_branch_refuses_retry
 test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
