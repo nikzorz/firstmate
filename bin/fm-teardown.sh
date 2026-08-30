@@ -98,6 +98,33 @@
 # is present; teardown clears only a provably stale lock, then re-runs the safety
 # checks before any destructive return. Teardown output notes every wait, retry, and
 # removal so the operator can see what happened.
+#
+# Benign transient return failure (teardown-empty-return-error): a return can also fail
+# with no git lock in evidence at all, while the worktree is clean and already detached
+# at the right commit and an unchanged retry succeeds at once. Aborting there printed
+# "this is not a lock race", which reads as a genuine fault and invites the one move
+# that is forbidden when the message might instead mean unlanded work: --force. So this
+# arm is classified from teardown's own evidence too, not from the return tool's text.
+#
+# The gate is a positive proof re-derived at the moment it is asked, never carried over
+# from the pre-return safety check: worktree_return_retry_is_safe requires the worktree
+# to be inspectable, to have no uncommitted change, and to hold no commit missing from
+# both every remote and the local default branch. It is deliberately narrower than
+# validate_worktree_teardown_safety, which also clears unpushed work whose PR landed.
+# When it holds, the return is retried up to FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES times
+# (default 2, 0 disables the arm) waiting FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS
+# (defaults to the lock retry wait) between attempts, re-proving before every retry and
+# abandoning the moment the proof stops holding. When it does not hold - the worktree
+# still has work, or no proof is available, as for a returned secondmate home - the
+# original loud abort stands unchanged, so the refusal that protects unlanded work keeps
+# its full stopping power.
+#
+# Every failed attempt also records what the return target ref (origin/HEAD, else
+# origin/main or origin/master) resolved to before and after it. A ref that moved across
+# the attempt is direct evidence that a concurrent ref update raced the return, which is
+# otherwise invisible behind the swallowed error body. That is recorded evidence, not the
+# gate: a transient failure over a steady ref must still be recognized, or the failure it
+# explains simply returns.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -534,6 +561,14 @@ if ! retry_wait_secs_is_valid "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"; then
   echo "teardown: invalid treehouse return lock retry wait '$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS'; using 1s" >&2
   TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1
 fi
+# Second, narrower patience window: a return failure with no lock anywhere, over a
+# worktree that re-proves it holds nothing a hard checkout could destroy.
+TREEHOUSE_RETURN_TRANSIENT_RETRIES=${FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES:-2}
+TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=${FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS:-$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS}
+if ! retry_wait_secs_is_valid "$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS"; then
+  echo "teardown: invalid treehouse return transient retry wait '$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS'; using 1s" >&2
+  TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=1
+fi
 # Compatibility alias used by the safety-check wait path and older call sites.
 STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
 TEARDOWN_TREEHOUSE_LOCK_REFUSED=2
@@ -577,6 +612,95 @@ worktree_git_lock_present() {
 # Teardown passes the worktree dir as the companion directory and its own
 # STALE_WORKTREE_LOCK_AGE_SECS threshold.
 
+# One `treehouse return --force` attempt. Prints the tool's output on the stream
+# that matches the outcome and leaves it in TREEHOUSE_RETURN_LAST_OUT so callers
+# can classify the failure without re-running anything.
+treehouse_return_attempt() {
+  local dir=$1 cd_dir=$2
+  if TREEHOUSE_RETURN_LAST_OUT=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+    if [ -n "$TREEHOUSE_RETURN_LAST_OUT" ]; then
+      printf '%s\n' "$TREEHOUSE_RETURN_LAST_OUT"
+    fi
+    return 0
+  fi
+  if [ -n "$TREEHOUSE_RETURN_LAST_OUT" ]; then
+    printf '%s\n' "$TREEHOUSE_RETURN_LAST_OUT" >&2
+  fi
+  return 1
+}
+
+# The remote-tracking ref `treehouse return` checks a worktree out to.
+treehouse_return_target_ref() {
+  local dir=$1 short ref
+  short=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$short" ]; then
+    printf 'refs/remotes/%s\n' "$short"
+    return 0
+  fi
+  for ref in refs/remotes/origin/main refs/remotes/origin/master; do
+    if git -C "$dir" show-ref --verify --quiet "$ref"; then
+      printf '%s\n' "$ref"
+      return 0
+    fi
+  done
+  return 1
+}
+
+treehouse_return_target_ref_oid() {
+  local dir=$1 ref=$2
+  [ -n "$ref" ] || return 1
+  git -C "$dir" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null
+}
+
+# Print what the return target ref resolved to on both sides of a failed attempt and
+# leave the post-failure value in TREEHOUSE_RETURN_REF_OID_AFTER. A ref that moved
+# across the attempt is the evidence that a concurrent ref update raced the return,
+# which is otherwise invisible behind an error body the return tool swallowed. It is
+# recorded evidence, never the classification gate: a transient failure that leaves
+# the ref steady must still be recognized, or the failure it explains comes back.
+report_treehouse_return_ref_delta() {
+  local dir=$1 label=$2 ref=$3 before=$4 after
+  TREEHOUSE_RETURN_REF_OID_AFTER=
+  if [ -z "$ref" ]; then
+    echo "teardown: $label return target ref does not resolve in $dir; no ref-movement evidence available" >&2
+    return 0
+  fi
+  after=$(treehouse_return_target_ref_oid "$dir" "$ref") || after=""
+  TREEHOUSE_RETURN_REF_OID_AFTER=$after
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+    echo "teardown: $label return target $ref moved from $before to $after across the failed attempt" >&2
+  elif [ -n "$after" ] && [ "$before" = "$after" ]; then
+    echo "teardown: $label return target $ref held steady at $after across the failed attempt" >&2
+  else
+    echo "teardown: $label return target $ref resolved to '${before:-none}' before and '${after:-none}' after the failed attempt" >&2
+  fi
+}
+
+# The single definition of which `git status --porcelain` lines count as the crew's
+# uncommitted work. Untracked harness scaffolding teardown removes itself is not work.
+worktree_dirty_from_status() {
+  printf '%s\n' "$1" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true
+}
+
+# Re-derived, positive proof that the task worktree holds nothing a hard checkout can
+# destroy: no uncommitted change, and no commit missing from both every remote and the
+# local default branch. Deliberately narrower than validate_worktree_teardown_safety,
+# which also clears unpushed work whose PR landed - this proof must stand on the
+# worktree's own state at the moment it is asked, carrying nothing over from an earlier
+# check, because it is what authorizes retrying a destructive return.
+worktree_return_retry_is_safe() {
+  local status_raw ahead default
+  local -a excluded=(--not --remotes)
+  inspectable_git_worktree "$WT" || return 1
+  status_raw=$(git -C "$WT" status --porcelain 2>/dev/null) || return 1
+  [ -z "$(worktree_dirty_from_status "$status_raw")" ] || return 1
+  if default=$(default_branch) && git -C "$WT" show-ref --verify --quiet "refs/heads/$default"; then
+    excluded+=("refs/heads/$default")
+  fi
+  ahead=$(git -C "$WT" log --oneline HEAD "${excluded[@]}" -- 2>/dev/null) || return 1
+  [ -z "$ahead" ] || return 1
+}
+
 worktree_safety_blocked_by_lock() {
   local reason=$1 lock
   lock=$(worktree_git_lock_present "$WT") || return 1
@@ -606,24 +730,72 @@ cleanup_stale_lock_for_safety_check() {
   return "$TEARDOWN_TREEHOUSE_LOCK_REFUSED"
 }
 
+# The benign-transient arm: a return failure with no git lock anywhere in evidence.
+# It retries only while retry_safety_check re-proves, from the worktree's own state at
+# that moment, that a hard checkout there can destroy nothing. Without that proof - no
+# check supplied, or the worktree still holding work - the failure keeps the original
+# loud abort, because that refusal is what protects unlanded work.
+teardown_transient_return_retry() {
+  local dir=$1 cd_dir=$2 label=$3 retry_safety_check=$4 ref_name=$5 ref_oid=$6
+  local attempt=0 max_transient
+
+  if [ -z "$retry_safety_check" ]; then
+    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race" >&2
+    return 1
+  fi
+  if ! "$retry_safety_check"; then
+    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race, and $dir still holds uncommitted or unlanded work" >&2
+    return 1
+  fi
+
+  max_transient=$TREEHOUSE_RETURN_TRANSIENT_RETRIES
+  case "$max_transient" in ''|*[!0-9]*) max_transient=2 ;; esac
+  if [ "$max_transient" -eq 0 ]; then
+    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race, and the transient retry window is disabled" >&2
+    return 1
+  fi
+
+  while [ "$attempt" -lt "$max_transient" ]; do
+    attempt=$(( attempt + 1 ))
+    echo "teardown: $label return failed with no git lock present, and $dir independently proves it holds nothing to lose; waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s and retrying ($attempt/${max_transient})" >&2
+    sleep "$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS"
+
+    if ! "$retry_safety_check"; then
+      echo "teardown: $label return retry abandoned: $dir now holds uncommitted or unlanded work" >&2
+      return 1
+    fi
+    if treehouse_return_attempt "$dir" "$cd_dir"; then
+      echo "teardown: $label return succeeded on retry after a transient failure" >&2
+      return 0
+    fi
+    report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_oid"
+    ref_oid=$TREEHOUSE_RETURN_REF_OID_AFTER
+  done
+
+  echo "teardown: $label return failed: a non-lock failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each) even though $dir held nothing to lose; aborting" >&2
+  return 1
+}
+
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
 teardown_treehouse_return() {
-  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-}
+  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} retry_safety_check=${5:-}
   local out lock lock_before attempt=0 max_retries lock_desc
+  local ref_name ref_before_oid
 
   # A lock the dying process releases during the failing attempt is invisible to
   # both the post-failure probe and a swallowed error message; only this
   # pre-attempt observation can still prove that race.
   lock_before=$(worktree_git_lock_present "$dir") || lock_before=""
+  ref_name=$(treehouse_return_target_ref "$dir") || ref_name=""
+  ref_before_oid=$(treehouse_return_target_ref_oid "$dir" "$ref_name") || ref_before_oid=""
 
   # Capture stdout+stderr so non-lock failures stay visible and the error text
   # stays available as the third classification signal.
-  if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
-    [ -n "$out" ] && printf '%s\n' "$out"
+  if treehouse_return_attempt "$dir" "$cd_dir"; then
     return 0
   fi
-  [ -n "$out" ] && printf '%s\n' "$out" >&2
+  out=$TREEHOUSE_RETURN_LAST_OUT
 
   # The return tool's error text is not teardown's to own: it may pass git's
   # "Unable to create ...index.lock: File exists" through, or wrap the failed git
@@ -641,8 +813,10 @@ teardown_treehouse_return() {
     lock_desc="index.lock"
     echo "teardown: $label return failed with a git index.lock error whose lock is already gone; treating it as a transient lock race" >&2
   else
-    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race" >&2
-    return 1
+    report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_before_oid"
+    teardown_transient_return_retry "$dir" "$cd_dir" "$label" "$retry_safety_check" \
+      "$ref_name" "$TREEHOUSE_RETURN_REF_OID_AFTER"
+    return $?
   fi
 
   max_retries=$TREEHOUSE_RETURN_LOCK_RETRIES
@@ -654,12 +828,11 @@ teardown_treehouse_return() {
     sleep "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"
 
     lock_before=$(worktree_git_lock_present "$dir") || lock_before=""
-    if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
-      [ -n "$out" ] && printf '%s\n' "$out"
+    if treehouse_return_attempt "$dir" "$cd_dir"; then
       echo "teardown: $label return succeeded on retry; lock cleared on its own" >&2
       return 0
     fi
-    [ -n "$out" ] && printf '%s\n' "$out" >&2
+    out=$TREEHOUSE_RETURN_LAST_OUT
 
     if [ -z "$lock_before" ] \
        && ! treehouse_return_is_index_lock_error "$out" \
@@ -682,12 +855,10 @@ teardown_treehouse_return() {
           return 1
         fi
       fi
-      if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
-        [ -n "$out" ] && printf '%s\n' "$out"
+      if treehouse_return_attempt "$dir" "$cd_dir"; then
         echo "teardown: $label return succeeded after stale-lock cleanup" >&2
         return 0
       fi
-      [ -n "$out" ] && printf '%s\n' "$out" >&2
       echo "teardown: $label return still failing after stale-lock cleanup" >&2
       return 1
     fi
@@ -716,7 +887,7 @@ validate_worktree_teardown_safety() {
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
   fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
+  dirty=$(worktree_dirty_from_status "$dirty_raw")
 
   if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
     if worktree_safety_blocked_by_lock "commits not on a remote"; then
@@ -1187,7 +1358,8 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   if [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ]; then
     post_lock_cleanup_check=validate_worktree_teardown_safety
   fi
-  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
+  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" \
+    worktree_return_retry_is_safe || {
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }

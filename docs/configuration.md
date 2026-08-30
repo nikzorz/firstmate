@@ -491,6 +491,8 @@ FM_STALE_WORKTREE_LOCK_AGE_SECS=30       # min mtime age before fm-teardown.sh t
 FM_TREEHOUSE_RETURN_LOCK_RETRIES=3        # retries after a treehouse return fails on a transient git index.lock race
 FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before each of those retries
 FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS when the new variable is unset
+FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES=2   # retries after a treehouse return fails with no git lock in evidence, over a worktree that re-proves it holds nothing to lose; 0 disables that arm
+FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS= # seconds before each of those retries; unset defaults to FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
@@ -533,6 +535,13 @@ Teardown prints which signal it saw, and any other return failure aborts on the 
 When it is unset or blank, `FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS` remains a compatible fallback, and a blank fallback uses the 1-second default.
 An invalid nonblank wait falls back to 1 second rather than interrupting teardown.
 Teardown never removes a lock during the retry window, and after that window it attempts stale-lock cleanup only for a still-present lock that passes the configured age and live-holder checks.
+
+A return can also fail with no git lock in evidence at all while the worktree is clean and an unchanged retry succeeds immediately.
+Teardown classifies that arm from its own evidence too, gated on a proof re-derived at the moment of each retry: the worktree must be inspectable, carry no uncommitted change, and hold no commit missing from both every remote and the local default branch.
+That proof is deliberately narrower than the pre-return landed-work check, and nothing is carried over from it.
+While it holds, the return is retried up to `FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES` times (nonnegative integer; unset, blank, or invalid uses the default of 2, and 0 disables the arm) waiting `FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS` seconds (nonnegative whole or fractional; unset defaults to the lock retry wait, and an invalid nonblank value falls back to 1 second) between attempts.
+When the proof does not hold - the worktree still has work, or no proof is available, as for a returned secondmate home - the return failure keeps its original loud abort.
+Every failed attempt also records what the return target ref resolved to before and after it, so a return that raced a moving `origin/main` is visible in teardown's own output; that movement is recorded evidence, never the gate.
 
 `fm-fleet-sync.sh` applies the same shape to an orphaned `.git/packed-refs.lock`: it retries only Git's `Unable to create '...packed-refs.lock': File exists` fetch failure up to `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES` times (nonnegative integer; unset, blank, or invalid uses the default of 3), waiting `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS` seconds (nonnegative whole or fractional; invalid falls back to 1 second) before each.
 Only after those retries exhaust does it remove the lock, and only when it is provably stale - still present, mtime age at least `FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS` (default 30), and no `lsof` holder of the lock file or of the clone worktree itself (a live `git` keeps that as its cwd even in the window after it closes the lock and before it exits).
