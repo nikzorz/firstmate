@@ -18,6 +18,15 @@
 # different session is launched independently - from another terminal, another
 # login, another tool - and therefore never descends from the recorded owner,
 # so it is still refused exactly as before.
+#
+# ONE OWNER AT A TIME. Descent admits a second answer of "yes" for one home: the
+# recorded owner is still a live process, so it keeps passing pid equality while
+# the session that descends from it passes on descent, and both would supervise
+# the home. So descent is a title to CLAIM, never a standing second ownership -
+# a caller that acts on it re-points the lock at itself through fm-lock.sh, and
+# the recorded owner then reads the home as another session's on its next check.
+# The deepest session wins because it is the one executing turns; the process it
+# descends from is either an inert host or a superseded session.
 
 # Known harness command names; extend when a new adapter is verified. This is
 # the ONE list: every harness pattern in this file is derived from it, so a new
@@ -143,18 +152,46 @@ fm_session_lock_owner_is_other_session() {
   ! fm_pid_is_ancestor "$owner"
 }
 
-# True when state dir $1 holds a session lock owned by this process's session:
-# either the recorded pid IS this session's harness ancestor, or the recorded
-# owner launched this session under a new pid. A missing lock, a lock held by
-# a genuinely different live harness, or an ancestry that cannot be resolved
-# all fail closed.
-fm_session_lock_owned_by_self() {
+# Print how the session lock in state dir $1 stands relative to THIS process,
+# as exactly one word. A caller that only arms or refuses can read the yes/no
+# predicate below, but a caller that must leave the home with a single owner
+# needs the REASON ownership was granted, because only descent has a second
+# live session still answering yes - see ONE OWNER AT A TIME in this file's
+# header. Naming it here keeps that distinction from being re-derived, and
+# drifting, at each call site.
+#
+#   self    - the recorded pid IS this session's harness ancestor; nothing to
+#             collapse, because no other process can answer yes.
+#   descent - a live recorded owner launched this session under a new pid; this
+#             session's title is good but shared, so a caller acting on it must
+#             claim the lock before it supervises.
+#   other   - a live harness of a genuinely different session holds the lock.
+#   stale   - the recorded pid no longer names a live harness.
+#   none    - no lock, a malformed lock, or an ancestry this process cannot
+#             resolve, which is uncertainty rather than any claim to the home.
+fm_session_lock_class() {
   local state=$1 lock_pid my_pid
   lock_pid=$(cat "$state/.lock" 2>/dev/null || true)
   case "$lock_pid" in
-    ''|*[!0-9]*) return 1 ;;
+    ''|*[!0-9]*) echo none; return 0 ;;
   esac
-  my_pid=$(fm_harness_ancestry_pid) || return 1
-  [ "$my_pid" = "$lock_pid" ] && return 0
-  fm_session_lock_owner_launched_self "$lock_pid"
+  my_pid=$(fm_harness_ancestry_pid) || { echo none; return 0; }
+  if [ "$my_pid" = "$lock_pid" ]; then echo self; return 0; fi
+  if fm_session_lock_owner_launched_self "$lock_pid"; then echo descent; return 0; fi
+  if fm_session_lock_owner_is_other_session "$lock_pid"; then echo other; return 0; fi
+  echo stale
+}
+
+# True when state dir $1 holds a session lock this process's session may act on:
+# either the recorded pid IS this session's harness ancestor, or the recorded
+# owner launched this session under a new pid. A missing lock, a lock held by
+# a genuinely different live harness, or an ancestry that cannot be resolved
+# all fail closed. This answers "may I act", not "am I alone": a caller that
+# arms supervision must reach the single-owner state fm_session_lock_class
+# names "self" first.
+fm_session_lock_owned_by_self() {
+  case "$(fm_session_lock_class "$1")" in
+    self|descent) return 0 ;;
+  esac
+  return 1
 }

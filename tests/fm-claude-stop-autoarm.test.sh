@@ -278,8 +278,115 @@ test_arms_for_forked_session_under_new_pid() {
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm for a forked session that owns this home"
   assert_contains "$out" "stale: fixture-win actionable" "forked-session rewake must carry the arm's reason line"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "forked-session arm must record outcome=rewake"
-  [ "$owner_after" = "$parent_pid" ] || fail "hook rewrote a live owner it descends from: expected $parent_pid, got $owner_after"
-  pass "auto-arm: a forked session under a new pid arms its own home instead of deferring to its parent"
+  [ "$owner_after" = "$fork_pid" ] || fail "forked session armed without claiming the lock: expected $fork_pid, got $owner_after (the still-live $parent_pid would arm this home too)"
+  pass "auto-arm: a forked session under a new pid claims its own home instead of deferring to its parent"
+}
+
+test_only_one_of_parent_and_fork_arms() {
+  local dir out status parent_pid fork_pid arms owner_after
+  dir=$(make_primary_dir "$TMP_ROOT/one-owner")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" actionable
+  # Descent grants ownership without taking it away from the recorded owner, so
+  # both sessions could answer "this home is mine" and both could supervise it.
+  # An operator who found two watchers on one home would have no safe blunt
+  # remedy: killing watchers broadly reaches sibling homes running the same
+  # watcher. So the fork STAYS ALIVE here while its parent reaches Stop too,
+  # and exactly one of the two may arm.
+  out=$(printf '%s\n' '{"session_id":"one-owner"}' \
+    | FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+        RC=0
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        printf "%s\n" "$$" > "$FM_HOME/state/parent-pid"
+        "$FAKE_CLAUDE" -c '"'"'
+           printf "%s\n" "$$" > "$FM_HOME/state/fork-pid"
+           "$FM_HOME/bin/fm-claude-stop-autoarm.sh" >/dev/null 2>&1
+           printf "fork_rc=%s\n" "$?"
+           touch "$FM_HOME/state/fork-done"
+           i=0
+           while [ ! -e "$FM_HOME/state/release-fork" ] && [ "$i" -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+           exit 0
+        '"'"' &
+        i=0
+        while [ ! -e "$FM_HOME/state/fork-done" ] && [ "$i" -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+        printf "%s\n" "{}" | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" >/dev/null 2>&1
+        printf "parent_rc=%s\n" "$?"
+        touch "$FM_HOME/state/release-fork"
+        wait
+        exit "$RC"
+      ' 2>&1); status=$?
+  parent_pid=$(cat "$dir/state/parent-pid")
+  fork_pid=$(cat "$dir/state/fork-pid")
+  owner_after=$(cat "$dir/state/.lock")
+  arms=$(wc -l < "$dir/state/arm-ran" 2>/dev/null | tr -d '[:space:]')
+  [ "$parent_pid" != "$fork_pid" ] || fail "one-owner fixture collapsed onto one pid ($parent_pid): the two sessions must be separate processes for this case to mean anything"
+  expect_code 0 "$status" "one-owner fixture did not run to completion"
+  assert_contains "$out" "fork_rc=2" "the forked session must arm and rewake for the home it claimed"
+  assert_contains "$out" "parent_rc=0" "the session the fork descends from must go inert once the fork owns the home"
+  [ "${arms:-0}" = 1 ] || fail "two live sessions armed one home: ${arms:-0} arms (parent $parent_pid, fork $fork_pid)"
+  [ "$owner_after" = "$fork_pid" ] || fail "home did not end up owned by exactly the session that armed it: lock names $owner_after, fork is $fork_pid"
+  pass "auto-arm: a live parent and the fork that descends from it arm one home exactly once"
+}
+
+# The exclusivity case above counts arms, which is the hook's own observable.
+# This one counts what an operator would actually find: real watcher cycles
+# started for one home, through the REAL bin/fm-watch-arm.sh and bin/fm-watch.sh
+# rather than an arm fixture. The watcher singleton already stops two watchers
+# from running at the same instant, so the duplicate this proves absent is two
+# sessions each starting and owning a cycle of their own, one after the other,
+# for as long as both live.
+make_real_supervision_dir() {
+  local dir=$1
+  make_primary_dir "$dir" >/dev/null
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  # The watcher refuses to run any state check until the legacy PR-check
+  # migration is recorded complete; these fixture homes have no checks at all.
+  printf 'fm-pr-check-migration-scan-v1\n' > "$dir/state/.pr-check-migration-scan-v1"
+  printf 'fm-pr-check-migration-v1\n' > "$dir/state/.pr-check-migration-v1"
+  chmod 0600 "$dir/state/.pr-check-migration-scan-v1" "$dir/state/.pr-check-migration-v1"
+  printf '%s\n' "$dir"
+}
+
+test_one_real_watcher_cycle_across_parent_and_fork() {
+  local dir out status parent_pid fork_pid cycles owner_after
+  dir=$(make_real_supervision_dir "$TMP_ROOT/one-watcher")
+  printf 'window=w\n' > "$dir/state/task.meta"
+  # A status append is the wake that lets each armed cycle close quickly.
+  out=$(printf '%s\n' '{"session_id":"one-watcher"}' \
+    | FM_HOME="$dir" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+      FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=15 "$FAKE_CLAUDE" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        printf "%s\n" "$$" > "$FM_HOME/state/parent-pid"
+        "$FAKE_CLAUDE" -c '"'"'
+           printf "%s\n" "$$" > "$FM_HOME/state/fork-pid"
+           printf "blocked: fork round\n" >> "$FM_HOME/state/task.status"
+           "$FM_HOME/bin/fm-claude-stop-autoarm.sh" >/dev/null 2>&1
+           printf "fork_rc=%s\n" "$?"
+           touch "$FM_HOME/state/fork-done"
+           i=0
+           while [ ! -e "$FM_HOME/state/release-fork" ] && [ "$i" -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+           exit 0
+        '"'"' &
+        i=0
+        while [ ! -e "$FM_HOME/state/fork-done" ] && [ "$i" -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+        printf "blocked: parent round\n" >> "$FM_HOME/state/task.status"
+        printf "%s\n" "{}" | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" >/dev/null 2>&1
+        printf "parent_rc=%s\n" "$?"
+        touch "$FM_HOME/state/release-fork"
+        wait
+        exit 0
+      ' 2>&1); status=$?
+  parent_pid=$(cat "$dir/state/parent-pid")
+  fork_pid=$(cat "$dir/state/fork-pid")
+  owner_after=$(cat "$dir/state/.lock")
+  cycles=$(wc -l < "$dir/state/.watch-cycle-exits.log" 2>/dev/null | tr -d '[:space:]')
+  [ "$parent_pid" != "$fork_pid" ] || fail "real-watcher fixture collapsed onto one pid ($parent_pid)"
+  expect_code 0 "$status" "real-watcher fixture did not run to completion"
+  assert_contains "$out" "fork_rc=2" "the forked session must arm a real watcher cycle and rewake"
+  assert_contains "$out" "parent_rc=0" "the still-live parent session must arm no watcher once the fork owns the home"
+  [ "${cycles:-0}" = 1 ] || fail "one home got ${cycles:-0} watcher cycles from two live sessions:"$'\n'"$(sed 's/\t/ /g' "$dir/state/.watch-cycle-exits.log" 2>/dev/null)"
+  [ "$owner_after" = "$fork_pid" ] || fail "the session that owns the watcher must own the lock: lock names $owner_after, fork is $fork_pid"
+  pass "auto-arm: two live sessions on one home start exactly one real watcher cycle"
 }
 
 test_inert_when_afk() {
@@ -474,6 +581,8 @@ test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming
 test_inert_when_lock_held_by_other_harness
 test_arms_for_forked_session_under_new_pid
+test_only_one_of_parent_and_fork_arms
+test_one_real_watcher_cycle_across_parent_and_fork
 test_inert_when_afk
 test_stale_lock_recovery_preserves_afk_and_need_gates
 test_inert_when_fleet_idle
