@@ -69,13 +69,16 @@
 #      empty one, report `unknown` rather than `working`: an unrecognized future
 #      status is not evidence of a healthy run.
 #   2c. A step can also stop advancing WITHOUT going quiet, which no figure the
-#      run publishes can show. While the ci step is monitoring and has no
-#      checks-green evidence, one bounded read-only forge query asks whether
-#      what it waits for can still arrive: a pull request the forge calls
-#      CONFLICTING, or an empty check list while the step asks for a re-run of
-#      checks it has already seen, is also `stalled`. Every absent answer -
-#      probe off, no gh, no recorded pull request, an unread forge, a timeout,
-#      or GitHub's own UNKNOWN mergeability - leaves the verdict alone.
+#      run publishes can show. While the ci step is monitoring, has no
+#      checks-green evidence, and its own log asks for a re-run of checks it has
+#      already seen, one bounded read-only forge query asks whether that re-run
+#      can still arrive: a pull request the forge calls CONFLICTING, or an empty
+#      check list, is also `stalled`. Nothing short of that re-run wait is
+#      probed at all, because a conflict or an empty list on its own is the
+#      ordinary shape while the pipeline's own recovery is still working.
+#      Every absent answer - probe off, no gh, no recorded pull request, an
+#      unread forge, a timeout, or GitHub's own UNKNOWN mergeability - leaves
+#      the verdict alone.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -585,20 +588,23 @@ nm_secs_human() {  # <seconds>
 
 # The ci step's log tail, fetched at most once per invocation. Two readers ask
 # about it - the checks-green override below and the re-run wait the forge probe
-# needs - and the fetch is a bounded subprocess call, so the memo is what keeps
-# the second question free.
+# gates on - and the fetch is a bounded subprocess call on the watcher's hot
+# path, so the second question has to come out of the same read.
+#
+# That is why the load and the readers are split. Every reader below is called
+# through `$(...)`, and an assignment inside that fork dies with it, so the load
+# has to run in the PARENT shell before them; the readers only ever consult the
+# global. A caller that loads nothing therefore sees the empty tail an
+# unreadable log gives, which every reader already treats as no answer.
 CI_LOG_TAIL=""
-CI_LOG_TAIL_READ=0
-nm_ci_log_tail() {
+CI_LOG_TAIL_LOADED=0
+nm_ci_log_load() {
   local run_id
-  if [ "$CI_LOG_TAIL_READ" = 0 ]; then
-    CI_LOG_TAIL_READ=1
-    run_id=$(strip_quotes "$(nm_field id)")
-    if [ -n "$run_id" ]; then
-      CI_LOG_TAIL=$(nm_run axi logs --step ci --run "$run_id") || true
-    fi
-  fi
-  printf '%s' "$CI_LOG_TAIL"
+  [ "$CI_LOG_TAIL_LOADED" = 0 ] || return 0
+  CI_LOG_TAIL_LOADED=1
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ -n "$run_id" ] || return 0
+  CI_LOG_TAIL=$(nm_run axi logs --step ci --run "$run_id") || true
 }
 
 # Root cause of the PR #252 incident (2026-07): for a repo where merge is left
@@ -620,14 +626,14 @@ nm_ci_log_tail() {
 # nm_ci_marker isolates that scan because the forge probe below asks the same
 # tail a second question.
 nm_ci_marker() {
-  printf '%s\n' "$(nm_ci_log_tail)" \
+  printf '%s\n' "$CI_LOG_TAIL" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|waiting for CI re-run|base branch advanced.*re-arming CI monitor timeout' \
     | tail -1
 }
 
 nm_ci_checks_state() {
   local marker
-  [ -n "$(nm_ci_log_tail)" ] || { printf 'unknown'; return; }
+  [ -n "$CI_LOG_TAIL" ] || { printf 'unknown'; return; }
   marker=$(nm_ci_marker)
   case "$marker" in
     *"checks passed"*|*"no CI checks reported - still monitoring"*) printf 'green' ;;
@@ -656,6 +662,16 @@ nm_ci_checks_state() {
 # the pair the incident turned on: whether the forge still considers the pull
 # request mergeable, and whether it holds any checks for the head.
 #
+# The whole probe is gated on the step asking for a RE-RUN of checks it has
+# already seen, which is no-mistakes saying in its own words that its own fix
+# rounds are spent. Neither half of the pair is evidence without that. A
+# conflicting pull request is the ordinary shape while no-mistakes' own "merge
+# conflict - auto-fixing" recovery is still in play, and it resolves those
+# without help; an empty check list is the same shape a repository whose checks
+# have not registered yet reports while nothing is wrong. Escalating either on
+# its own would spend a captain interruption on a run the pipeline is still
+# handling, which is the same defect class this probe exists to close.
+#
 # Prints a short reason when the forge contradicts the wait, and nothing at all
 # otherwise. Nothing is also what every absent answer prints - the probe
 # switched off, no gh, no pull-request url recorded, a forge this probe does not
@@ -674,6 +690,7 @@ forge_ci_wait_blocker() {
   local url out mergeable='' checks=''
   [ "$FM_CREW_STATE_FORGE_PROBE" = 1 ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
+  nm_ci_awaits_rerun || return 0
   url=$(strip_quotes "$(nm_field pr)")
   case "$url" in https://github.com/*/pull/*) ;; *) return 0 ;; esac
   out=$(bounded_run "$FM_CREW_STATE_FORGE_TIMEOUT" gh pr view "$url" \
@@ -687,12 +704,7 @@ EOF
     return 0
   fi
   case "$checks" in ''|*[!0-9]*) return 0 ;; esac
-  # An empty check list is only evidence when the step is waiting for a re-run
-  # of checks it has already seen once. A repository whose checks have simply
-  # not registered yet, or that runs none for this branch, reports the same
-  # empty list while nothing is wrong, and no-mistakes says so in its own words
-  # rather than asking for a re-run.
-  if [ "$checks" = 0 ] && nm_ci_awaits_rerun; then
+  if [ "$checks" = 0 ]; then
     printf 'the forge holds no checks for the pull request head'
   fi
 }
@@ -964,6 +976,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         CI_STEP_STATUS=$(nm_effective_ci_step_status)
         case "$CI_STEP_STATUS" in
           running)
+            nm_ci_log_load
             CI_LOG_STATE=$(nm_ci_checks_state)
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
@@ -986,6 +999,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ "$RUN_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
     elif [ "$CI_STEP_STATUS" = running ] && [ -z "$CI_LOG_STATE" ]; then
+      nm_ci_log_load
       CI_LOG_STATE=$(nm_ci_checks_state)
     elif [ "$CI_STEP_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
@@ -1027,10 +1041,11 @@ if [ "$HAVE_RUN" = 1 ]; then
   # the captain on a merge is never probed either.
   if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ] \
      && [ "$CI_STEP_STATUS" = running ] && [ "$CI_LOG_STATE" != green ]; then
+    nm_ci_log_load
     CI_WAIT_BLOCKER=$(forge_ci_wait_blocker)
     if [ -n "$CI_WAIT_BLOCKER" ]; then
       RUN_STATE=stalled
-      RUN_DETAIL="run stopped advancing: ci step waiting on checks that cannot arrive, $CI_WAIT_BLOCKER"
+      RUN_DETAIL="run stopped advancing: ci step waiting on a check re-run that cannot arrive, $CI_WAIT_BLOCKER"
     fi
   fi
 

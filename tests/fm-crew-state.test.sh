@@ -67,6 +67,7 @@ make_fakebin() {  # <dir> -> echoes fakebin path
   cat > "$fb/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 set -u
+[ -n "${FM_FAKE_NM_CALLS:-}" ] && printf '%s\n' "$*" >> "$FM_FAKE_NM_CALLS"
 case "${1:-}" in
   axi)
     shift
@@ -198,11 +199,12 @@ reset_fakes() {
   FM_FAKE_GH_OUT=""
   FM_FAKE_GH_FAILS=0
   FM_FAKE_GH_CALLS=""
+  FM_FAKE_NM_CALLS=""
   FM_CREW_STATE_FORGE_PROBE=1
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
   export FM_FAKE_PANE_FILE FM_FAKE_QUOTA_JSON FM_FAKE_QUOTA_FAILS
-  export FM_FAKE_GH_OUT FM_FAKE_GH_FAILS FM_FAKE_GH_CALLS FM_CREW_STATE_FORGE_PROBE
+  export FM_FAKE_GH_OUT FM_FAKE_GH_FAILS FM_FAKE_GH_CALLS FM_FAKE_NM_CALLS FM_CREW_STATE_FORGE_PROBE
 }
 
 # --- claude usage-limit fixtures --------------------------------------------
@@ -758,6 +760,11 @@ CI_LOG_AWAITING_RERUN='base branch advanced (680a001d..f5979b18), re-arming CI m
 fix already attempted for these issues, waiting for CI re-run...
 fix already attempted for these issues, waiting for CI re-run...'
 
+# The same conflict one round earlier, while no-mistakes is still fixing it
+# itself and has not yet asked for a re-run of anything.
+CI_LOG_CONFLICT_AUTOFIXING='base branch advanced (680a001d..f5979b18), re-arming CI monitor timeout
+issues detected: merge conflict - auto-fixing (attempt 1/3)...'
+
 test_spinning_ci_step_on_a_conflicting_pr_reports_stalled() {
   reset_fakes
   local d; d=$(new_case spin-conflict)
@@ -776,6 +783,54 @@ test_spinning_ci_step_on_a_conflicting_pr_reports_stalled() {
   assert_contains "$out" "state: stalled" "a run waiting on checks a conflicting pull request cannot get is not working"
   assert_contains "$out" "merge conflicts" "the detail names why the wait cannot end"
   pass "a spinning ci step on a conflicting pull request reports stalled"
+}
+
+# The conflict half of the probe is gated on the same re-run wait the empty-list
+# half is. no-mistakes resolves its own merge conflicts, so a conflicting pull
+# request it has not finished with is a non-event, and waking the captain on one
+# spends an interruption on work already in hand.
+test_a_conflict_the_pipeline_is_still_fixing_is_not_a_stall() {
+  reset_fakes
+  local d; d=$(new_case spin-autofix)
+  make_repo_on_branch "$d/wt" fm/feat-afx
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/afx.meta" "window=fm:fm-afx" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-afx '"5s ago: log: issues detected: merge conflict - auto-fixing (attempt 1/3)..."')"
+  FM_FAKE_GH_OUT=$'CONFLICTING\t0'
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+
+  FM_FAKE_CI_LOGS="$CI_LOG_CONFLICT_AUTOFIXING"
+  local out; out=$(run_crew_state "$d" afx)
+  assert_contains "$out" "state: working" "a conflict no-mistakes is still auto-fixing is not a run that stopped advancing"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a conflict the pipeline had not finished with"
+
+  # One round later the step has spent its fix attempts and is asking for a
+  # re-run it can never get, and the same conflict now does escalate.
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+  out=$(run_crew_state "$d" afx)
+  assert_contains "$out" "state: stalled" "the same conflict escalates once the step is waiting on a re-run"
+  assert_contains "$out" "merge conflicts" "the detail names why the wait cannot end"
+  pass "a conflict the pipeline is still fixing is not a stall"
+}
+
+# Three readers ask about the ci log tail and fetching it is a bounded
+# subprocess call on the watcher's hot path, so one invocation may buy it once.
+test_the_ci_log_tail_is_bought_once_per_invocation() {
+  reset_fakes
+  local d; d=$(new_case spin-onefetch)
+  make_repo_on_branch "$d/wt" fm/feat-ofx
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/ofx.meta" "window=fm:fm-ofx" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-ofx '"5s ago: log: fix already attempted for these issues, waiting for CI re-run..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_RERUN"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t7'
+  FM_FAKE_NM_CALLS="$d/nm.calls"
+
+  local out; out=$(run_crew_state "$d" ofx)
+  assert_contains "$out" "state: working" "the checks-green override and the forge probe both ran on this fixture"
+  local fetches; fetches=$(grep -c 'axi logs' "$FM_FAKE_NM_CALLS" || true)
+  [ "$fetches" = 1 ] || fail "the ci log tail was fetched $fetches time(s), expected exactly 1"
+  pass "the ci log tail is bought once per invocation"
 }
 
 test_empty_check_list_only_counts_while_a_rerun_is_awaited() {
@@ -2207,6 +2262,8 @@ test_quiet_ci_monitor_with_checks_green_report_stays_done
 test_quiet_ci_monitor_without_green_checks_still_stalls
 test_missing_activity_figure_leaves_the_verdict_alone
 test_spinning_ci_step_on_a_conflicting_pr_reports_stalled
+test_a_conflict_the_pipeline_is_still_fixing_is_not_a_stall
+test_the_ci_log_tail_is_bought_once_per_invocation
 test_empty_check_list_only_counts_while_a_rerun_is_awaited
 test_an_absent_forge_answer_never_manufactures_a_stall
 test_the_forge_is_asked_nothing_it_need_not_answer

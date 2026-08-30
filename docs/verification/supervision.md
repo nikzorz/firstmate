@@ -371,4 +371,4 @@ Three facts the reader depends on are visible here.
 Both fields are selectable on `gh pr view --json` (they appear in its own field list), so one query answers both questions and no second call is needed.
 The projection returns exactly one tab-separated line, which is the whole parse.
 And this capture is of a MERGED pull request, which reports `UNKNOWN` mergeability rather than a value: GitHub computes mergeability lazily and reports `UNKNOWN` whenever it has not, so `UNKNOWN` is a routine answer and never evidence of a conflict.
-Only the definite `CONFLICTING` value escalates.
+Only the definite `CONFLICTING` value escalates, and only while the step's own log is asking for a re-run of checks it has already seen: no-mistakes resolves its own merge conflicts, so a conflict it has not finished with is a non-event rather than a wake.

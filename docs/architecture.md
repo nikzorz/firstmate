@@ -43,12 +43,15 @@ The script header owns the exact binding and run-head ancestry rules.
 During no-mistakes' `ci` monitor phase, it also reads the ci step log tail because `axi status` reports both "still waiting on checks" and "checks green, waiting on merge" as `ci,running`.
 The most recent recognized ci log marker wins, so checks-green monitoring reports done while a later re-arm, failed-check, or issue marker returns the crew to working.
 A non-terminal run is judged on whether it is still advancing, not only on whether it exists.
-The same `axi status` response publishes the active step's elapsed time since its last activity, so the reader compares that figure against a per-step inactivity budget and reports the distinct `stalled` state once a step is past it, which no absorb class treats as a healthy run.
+A run has two ways to show it has stopped advancing, and either reports the distinct `stalled` state, which no absorb class treats as a healthy run.
+The first is silence: the same `axi status` response publishes the active step's elapsed time since its last activity, so the reader compares that figure against a per-step inactivity budget and reports `stalled` once a step is past it.
 There are two budgets because the two kinds of active step go quiet for different reasons: an agent-driven step logs as it works, while the ci step only monitors a remote forge and logs sparsely by design.
 Both are captain preferences and tuning constants owned by the script header, not derived limits, and a run that reports no elapsed figure at all keeps its previous verdict rather than inventing a breach.
+The second is repetition, which no figure the run publishes can show: a ci step still asking for a re-run of checks it has already seen stays fresh by every elapsed reading, so one bounded read-only forge query asks whether that re-run can still arrive, and any absent forge answer leaves the verdict exactly where it was.
+`bin/fm-crew-state.sh`'s header owns what counts as advancing under both.
 [`verification/supervision.md`](verification/supervision.md#run-inactivity-budget) records the live evidence for the pipeline surface those figures are read from.
 A run status word the reader does not recognize, and an empty one, report `unknown` rather than `working`, because an unrecognized future state is not evidence of a healthy run.
-A crew still waiting out the captain on a green pull request is never called stalled: every route by which its work is already reported done is decided before the budget is, so an overnight merge wait stays absorbable no matter how long it runs.
+A crew still waiting out the captain on a green pull request is never called stalled: every route by which its work is already reported done is decided before either showing is, so an overnight merge wait stays absorbable no matter how long it runs and is never probed.
 The fleet views count `stalled` as live work alongside `working`, because a run that stopped advancing is work needing attention rather than work that ended, and the captain's in-flight list is where they have to meet it.
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
