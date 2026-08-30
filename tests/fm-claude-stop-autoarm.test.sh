@@ -24,6 +24,27 @@ ln -s /bin/bash "$FAKEBIN/claude"
 # inner shell only after the outer command word had already expanded.
 export FAKE_CLAUDE="$FAKEBIN/claude"
 
+# Fixtures that drive the REAL watcher read panes through tmux. Without a stub
+# on PATH those reads reach the host's live tmux server, so the watcher's pane
+# hash and busy verdict would come from whatever window happens to share the
+# fixture's name. Answers empty for every surface a hermetic home has none of,
+# so no case can be decided by a stray pane. Same shape as the fake tmux in
+# tests/wake-helpers.sh.
+cat > "$FAKEBIN/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  list-windows|capture-pane) exit 0 ;;
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf '\n'; exit 0 ;;
+    esac
+    ;;
+esac
+exit 1
+SH
+chmod +x "$FAKEBIN/tmux"
+
 # Copy the hook and its sourced dependencies into a fixture checkout.
 install_autoarm_scripts() {
   local dir=$1
@@ -353,7 +374,7 @@ test_one_real_watcher_cycle_across_parent_and_fork() {
   printf 'window=w\n' > "$dir/state/task.meta"
   # A status append is the wake that lets each armed cycle close quickly.
   out=$(printf '%s\n' '{"session_id":"one-watcher"}' \
-    | FM_HOME="$dir" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    | PATH="$FAKEBIN:$PATH" FM_HOME="$dir" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
       FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=15 "$FAKE_CLAUDE" -c '
         printf "%s\n" "$$" > "$FM_HOME/state/.lock"
         printf "%s\n" "$$" > "$FM_HOME/state/parent-pid"

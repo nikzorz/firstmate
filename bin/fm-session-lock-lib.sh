@@ -153,12 +153,12 @@ fm_session_lock_owner_is_other_session() {
 }
 
 # Print how the session lock in state dir $1 stands relative to THIS process,
-# as exactly one word. A caller that only arms or refuses can read the yes/no
-# predicate below, but a caller that must leave the home with a single owner
-# needs the REASON ownership was granted, because only descent has a second
-# live session still answering yes - see ONE OWNER AT A TIME in this file's
-# header. Naming it here keeps that distinction from being re-derived, and
-# drifting, at each call site.
+# as exactly one word. This is the ONE entry point for the ownership question,
+# and it deliberately answers with the REASON rather than yes/no: a caller that
+# must leave the home with a single owner cannot act on a bare yes, because only
+# descent has a second live session still answering yes - see ONE OWNER AT A
+# TIME in this file's header. Naming it here keeps that distinction from being
+# re-derived, and drifting, at each call site.
 #
 #   self    - the recorded pid IS this session's harness ancestor; nothing to
 #             collapse, because no other process can answer yes.
@@ -180,18 +180,4 @@ fm_session_lock_class() {
   if fm_session_lock_owner_launched_self "$lock_pid"; then echo descent; return 0; fi
   if fm_session_lock_owner_is_other_session "$lock_pid"; then echo other; return 0; fi
   echo stale
-}
-
-# True when state dir $1 holds a session lock this process's session may act on:
-# either the recorded pid IS this session's harness ancestor, or the recorded
-# owner launched this session under a new pid. A missing lock, a lock held by
-# a genuinely different live harness, or an ancestry that cannot be resolved
-# all fail closed. This answers "may I act", not "am I alone": a caller that
-# arms supervision must reach the single-owner state fm_session_lock_class
-# names "self" first.
-fm_session_lock_owned_by_self() {
-  case "$(fm_session_lock_class "$1")" in
-    self|descent) return 0 ;;
-  esac
-  return 1
 }
