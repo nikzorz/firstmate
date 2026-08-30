@@ -53,9 +53,23 @@
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
 #   (z) transient lock, return error text names no cause      -> retry ALLOW
 #   (z2) lock cleared mid-attempt, error text names no cause  -> retry ALLOW
-#   (aa) return failure with no lock present                  -> abort, no retry
 #   (ab) unlanded work while a lock is present                -> REFUSE before return
 #   (ac) git lock signature in the error text, no lock file   -> retry ALLOW
+#
+# And teardown-empty-return-error: a return failure with no lock in evidence anywhere,
+# classified from a proof re-derived at retry time rather than from the return tool's
+# swallowed error text.
+#   (ad) no lock, worktree clean and landed                   -> retry ALLOW
+#   (ae) no lock, return target ref moved across the attempt  -> movement recorded
+#   (af) no lock, a straggler left uncommitted work           -> abort, no retry
+#   (ag) no lock, a straggler left an unlanded commit         -> abort, no retry
+#   (ah) no lock, --force over work that lives nowhere else   -> abort, no retry
+#   (ai) no lock, failure never clears                        -> abort after the window
+#   (aj) no lock, no remote, HEAD in the local default branch -> retry ALLOW
+#   (ak) no lock, no remote, HEAD absent from that branch     -> abort, no retry
+#   (al) no lock, no remote and no default branch at all      -> abort, no retry
+#   (am) no lock, worktree unopenable after the failure       -> abort, named as uninspectable
+#   (an) no lock, the FINAL attempt leaves work behind         -> abort, gap reported not asserted
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -132,6 +146,50 @@ SH
   # Fresh watcher beacon so fm-guard stays quiet.
   touch "$case_dir/state/.last-watcher-beat"
 
+  printf '%s\n' "$case_dir"
+}
+
+# A sandbox with NO remote at all: the project is a plain local repo with a local
+# default branch, so the retry proof has no remote-tracking ref to lean on and must
+# stand on refs/heads/<default> alone. Same fakebin and state layout as make_case.
+make_local_case() {
+  local name=$1 case_dir fakebin
+  case_dir="$TMP_ROOT/$name"
+  fakebin="$case_dir/fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' "count: 0 (showing first 0)" "pull_requests[]: []" ; exit 0 ;;
+  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+esac
+exit 0
+SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh"
+
+  git init -q "$case_dir/project"
+  git -C "$case_dir/project" -c user.email=t@t -c user.name=t \
+    commit -q --allow-empty -m "local baseline"
+  git -C "$case_dir/project" branch -M main
+  git -C "$case_dir/project" worktree add -q -b fm/task-x1 "$case_dir/wt" main
+
+  touch "$case_dir/state/.last-watcher-beat"
   printf '%s\n' "$case_dir"
 }
 
@@ -300,6 +358,28 @@ begin_fake_treehouse() {
   local case_dir=$1 counter=${2:-}
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+# The destructive half of a real `treehouse return`: hard-checkout the worktree to the
+# ref the return targets. Teardown deletes the task branch before calling the return,
+# so anything not reachable from another ref is gone after this runs.
+fake_treehouse_hard_return() {
+  local dir=$1 target short
+  short=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$short" ]; then
+    target="refs/remotes/$short"
+  elif git -C "$dir" show-ref --verify --quiet refs/remotes/origin/main; then
+    target=refs/remotes/origin/main
+  elif git -C "$dir" show-ref --verify --quiet refs/heads/main; then
+    target=refs/heads/main
+  else
+    return 0
+  fi
+  git -C "$dir" checkout --detach --force "$target" >/dev/null 2>&1
+  # A returned worktree goes back to the pool pristine, so the return also discards
+  # staged and untracked leftovers. This is what makes a wrongly-retried return lose
+  # uncommitted straggler work rather than quietly leaving it on disk.
+  git -C "$dir" reset -q --hard "$target" >/dev/null 2>&1
+  git -C "$dir" clean -qfd >/dev/null 2>&1
+}
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -423,6 +503,87 @@ add_failing_treehouse() {
   local case_dir=$1
   begin_fake_treehouse "$case_dir" count
   cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+  exit 1
+SH
+  end_fake_treehouse "$case_dir"
+}
+
+# treehouse return that fails once with the observed swallowed message while no lock
+# ever exists, then succeeds. This is the benign transient failure the retry arm
+# exists for: nothing about the worktree is wrong, and an unchanged retry works.
+add_transient_no_lock_treehouse() {
+  local case_dir=$1
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  if [ "$count" -eq 1 ]; then
+    echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+    exit 1
+  fi
+  fake_treehouse_hard_return "$wt"
+SH
+  end_fake_treehouse "$case_dir"
+}
+
+# treehouse return that fails once with no lock while advancing origin/main in the
+# same attempt, so teardown's before/after reads of the return target ref straddle a
+# concurrent ref update. Used to assert the ref-movement evidence is recorded.
+add_ref_moving_treehouse() {
+  local case_dir=$1
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  if [ "$count" -eq 1 ]; then
+    git -C "$wt" -c user.email=t@t -c user.name=t \
+      commit -q --allow-empty -m "concurrent upstream landing"
+    git -C "$wt" push -q origin HEAD:main
+    git -C "$wt" fetch -q origin
+    git -C "$wt" reset -q --hard HEAD~1
+    echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+    exit 1
+  fi
+SH
+  end_fake_treehouse "$case_dir"
+}
+
+# treehouse return that fails with no lock and leaves the worktree holding work a hard
+# checkout would destroy, standing in for a straggler crew process that writes after
+# the pre-return safety check already passed. The second argument selects whether it
+# leaves an uncommitted change or a commit that exists nowhere else.
+#
+# Any attempt after the first performs the real hard checkout a `treehouse return`
+# does and then succeeds. Teardown has already deleted the task branch by this point,
+# so that checkout is what actually destroys the straggler work - which is what gives
+# the callers' work-preservation assertions teeth. A guard that wrongly retries here
+# reaches that checkout and loses the work, and the assertion fails.
+add_work_leaving_failing_treehouse() {
+  local case_dir=$1 leaves=$2
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<SH
+  if [ "\$count" -eq 1 ]; then
+    if [ "$leaves" = commit ]; then
+      git -C "\$wt" -c user.email=t@t -c user.name=t \\
+        commit -q --allow-empty -m "straggler commit after the safety check"
+    else
+      echo straggler > "\$wt/straggler.txt"
+      git -C "\$wt" add straggler.txt
+    fi
+    echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+    exit 1
+  fi
+  fake_treehouse_hard_return "\$wt"
+  exit 0
+SH
+  end_fake_treehouse "$case_dir"
+}
+
+# treehouse return that fails with no lock after leaving the worktree unopenable, the
+# partial-failure shape where teardown can no longer inspect what it would discard. The
+# files on disk are untouched, so only the admin pointer is gone.
+add_uninspectable_failing_treehouse() {
+  local case_dir=$1
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  rm -f "$wt/.git"
   echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
   exit 1
 SH
@@ -1253,9 +1414,175 @@ test_swallowed_lock_message_retries_when_lock_self_clears_mid_attempt() {
   pass "a lock that clears during the failing return is still recognized from the pre-attempt probe"
 }
 
-test_swallowed_message_without_lock_aborts_on_first_attempt() {
+test_transient_return_failure_over_clean_landed_worktree_retries() {
   local case_dir rc attempt_file
-  case_dir=$(make_case swallowed-no-lock)
+  case_dir=$(make_case transient-no-lock)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_transient_no_lock_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "transient-no-lock: teardown should recover from a benign return failure"
+  assert_grep "independently proves it holds nothing to lose" "$case_dir/stderr" \
+    "transient-no-lock: teardown did not state the proof that authorized the retry"
+  assert_grep "succeeded on retry after a transient failure" "$case_dir/stderr" \
+    "transient-no-lock: teardown did not retry the return"
+  assert_grep "return target refs/remotes/origin/main held steady" "$case_dir/stderr" \
+    "transient-no-lock: teardown did not record what the return target ref resolved to"
+  [ "$(cat "$attempt_file")" = 2 ] \
+    || fail "transient-no-lock: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
+  [ ! -f "$case_dir/state/task-x1.meta" ] \
+    || fail "transient-no-lock: teardown left the task record behind after a successful return"
+  pass "a benign return failure over a worktree with nothing to lose is retried instead of aborting"
+}
+
+test_transient_return_failure_records_a_moving_return_target_ref() {
+  local case_dir rc
+  case_dir=$(make_case transient-ref-move)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_ref_moving_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$case_dir/treehouse-attempts" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "transient-ref-move: teardown should recover from a return that raced a moving ref"
+  assert_grep "return target refs/remotes/origin/main moved from" "$case_dir/stderr" \
+    "transient-ref-move: teardown did not record that the return target ref moved across the attempt"
+  pass "a return target ref that moves across a failed attempt is recorded as evidence"
+}
+
+test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case straggler-dirty)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  # The pre-return safety check passes on this landed worktree; the failing return
+  # then leaves uncommitted work behind, so only a re-derived proof can catch it.
+  add_work_leaving_failing_treehouse "$case_dir" dirty
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  # Checked first and deliberately: a wrongly-retried return hard-checks-out the
+  # worktree, so this file is what disappears. The safety property fails by name.
+  [ -f "$case_dir/wt/straggler.txt" ] \
+    || fail "straggler-dirty: teardown destroyed the uncommitted work it should have preserved"
+  expect_code 1 "$rc" "straggler-dirty: teardown must abort when the worktree holds uncommitted work"
+  assert_grep "no git lock is present" "$case_dir/stderr" \
+    "straggler-dirty: teardown did not distinguish the failure from a lock race"
+  assert_grep "holds uncommitted changes" "$case_dir/stderr" \
+    "straggler-dirty: teardown did not name the condition it actually observed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "transient lock race" \
+    "straggler-dirty: teardown misreported a genuine failure as a lock race"
+  assert_not_contains "$(cat "$case_dir/stderr")" "nothing to lose" \
+    "straggler-dirty: teardown claimed the worktree had nothing to lose"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "straggler-dirty: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "straggler-dirty: teardown completed despite the failed return"
+  pass "a return failure is never retried once the worktree holds uncommitted work again"
+}
+
+test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case straggler-commit)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_work_leaving_failing_treehouse "$case_dir" commit
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  # Checked first and deliberately: see straggler-dirty. A retry loses this commit.
+  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "straggler commit" \
+    || fail "straggler-commit: teardown destroyed the unlanded commit it should have preserved"
+  expect_code 1 "$rc" "straggler-commit: teardown must abort when the worktree holds an unlanded commit"
+  assert_grep "holds commits missing from every remote and the local default branch" "$case_dir/stderr" \
+    "straggler-commit: teardown did not name the condition it actually observed"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "straggler-commit: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "straggler-commit: teardown completed despite the failed return"
+  pass "a return failure is never retried once the worktree holds a commit missing from every remote"
+}
+
+test_forced_teardown_of_unlanded_work_still_refuses_a_transient_retry() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case force-unlanded-no-retry)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" keep.txt "unlanded work" "work that lives nowhere else"
+
+  add_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  # --force skips the pre-return safety check, so the return is reached with work
+  # that exists nowhere else. The retry arm must still refuse to repeat a
+  # destructive return over it.
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "force-unlanded-no-retry: a failed return over unlanded work must abort"
+  assert_grep "holds commits missing from every remote and the local default branch" "$case_dir/stderr" \
+    "force-unlanded-no-retry: teardown did not name the condition it actually observed"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "force-unlanded-no-retry: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "explicit discard authority still does not buy a blind retry over unlanded work"
+}
+
+test_persistent_transient_return_failure_exhausts_its_window_and_refuses() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case transient-exhausted)
   write_meta "$case_dir" no-mistakes ship
   wt_commit "$case_dir" "shippable work"
   git -C "$case_dir/wt" push -q origin fm/task-x1
@@ -1269,22 +1596,222 @@ test_swallowed_message_without_lock_aborts_on_first_attempt() {
 
   set +e
   TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
-  FM_TREEHOUSE_RETURN_LOCK_RETRIES=2 \
-  FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
-  expect_code 1 "$rc" "swallowed-no-lock: a genuine return failure must still abort"
-  assert_grep "no git lock is present" "$case_dir/stderr" \
-    "swallowed-no-lock: teardown did not distinguish the failure from a lock race"
+  expect_code 1 "$rc" "transient-exhausted: a return that never recovers must still abort"
+  assert_grep "persisted across 2 retries" "$case_dir/stderr" \
+    "transient-exhausted: teardown did not report the exhausted retry window"
   assert_not_contains "$(cat "$case_dir/stderr")" "transient lock race" \
-    "swallowed-no-lock: teardown misreported a genuine failure as a lock race"
-  [ "$(cat "$attempt_file")" = 1 ] \
-    || fail "swallowed-no-lock: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+    "transient-exhausted: teardown misreported a non-lock failure as a lock race"
+  [ "$(cat "$attempt_file")" = 3 ] \
+    || fail "transient-exhausted: expected exactly 3 treehouse return attempts, got $(cat "$attempt_file")"
   [ -f "$case_dir/state/task-x1.meta" ] \
-    || fail "swallowed-no-lock: teardown completed despite the failed return"
-  pass "a genuine return failure with no git lock aborts immediately and says so"
+    || fail "transient-exhausted: teardown completed despite the failed return"
+  # The superseded wording claimed the worktree "held nothing to lose" outright. Both
+  # qualifiers below are absent from that claim, so asserting them is what discriminates.
+  assert_grep "last proved it held nothing to lose before the final attempt" "$case_dir/stderr" \
+    "transient-exhausted: teardown asserted a worktree state it never re-observed after the final attempt"
+  assert_grep "was not re-proved after it" "$case_dir/stderr" \
+    "transient-exhausted: teardown did not say the final attempt left the proof un-rederived"
+  pass "a non-lock return failure that never recovers still aborts loudly after a bounded window"
+}
+
+# The exhaustion line runs after the loop, so no proof is re-derived following the final
+# attempt. When that attempt is the one that leaves work behind, teardown must report the
+# gap rather than assert a state it never observed.
+test_exhaustion_message_never_asserts_a_state_the_final_attempt_left_unproved() {
+  local case_dir rc
+  case_dir=$(make_case transient-exhausted-final-dirt)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  # Every attempt fails; the LAST one also dirties the worktree, after the final
+  # re-derivation has already happened.
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  if [ "$count" -ge 3 ]; then
+    echo straggler > "$wt/late-straggler.txt"
+    git -C "$wt" add late-straggler.txt
+  fi
+  echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+  exit 1
+SH
+  end_fake_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$case_dir/treehouse-attempts" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES=2 \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "transient-exhausted-final-dirt: teardown must still abort"
+  [ -f "$case_dir/wt/late-straggler.txt" ] \
+    || fail "transient-exhausted-final-dirt: teardown destroyed work the final attempt left behind"
+  assert_grep "last proved it held nothing to lose before the final attempt" "$case_dir/stderr" \
+    "transient-exhausted-final-dirt: teardown did not qualify its nothing-to-lose claim to before the final attempt"
+  assert_grep "neither work left by that last attempt" "$case_dir/stderr" \
+    "transient-exhausted-final-dirt: teardown did not report that work left by the final attempt would go unnoticed"
+  pass "the exhaustion message reports the un-rederived final attempt instead of asserting the worktree was clean"
+}
+
+test_transient_return_failure_reports_an_uninspectable_worktree_instead_of_asserting_work() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case uninspectable-worktree)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_uninspectable_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "uninspectable-worktree: teardown must abort when it cannot inspect the worktree"
+  assert_grep "could not be opened as a git worktree" "$case_dir/stderr" \
+    "uninspectable-worktree: teardown did not report that inspection was what failed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "holds uncommitted changes" \
+    "uninspectable-worktree: teardown asserted uncommitted work it never observed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "holds commits missing from" \
+    "uninspectable-worktree: teardown asserted unlanded commits it never observed"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "uninspectable-worktree: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "a worktree teardown cannot open is reported as uninspectable, never as holding work"
+}
+
+# Merge the worktree's task branch into the project's local default branch, which is
+# how local-only work lands when there is no remote anywhere.
+land_on_local_main() {
+  local case_dir=$1
+  git -C "$case_dir/project" merge -q --no-ff -m "land task" fm/task-x1
+}
+
+test_no_remote_retry_is_eligible_and_the_work_survives() {
+  local case_dir rc head_before attempt_file
+  case_dir=$(make_local_case no-remote-retry)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_local_main "$case_dir"
+  head_before=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  add_transient_no_lock_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  [ -z "$(git -C "$case_dir/project" remote)" ] \
+    || fail "no-remote-retry: the sandbox was supposed to have no remote at all"
+  expect_code 0 "$rc" "no-remote-retry: teardown should recover with no remote present"
+  assert_grep "independently proves it holds nothing to lose" "$case_dir/stderr" \
+    "no-remote-retry: teardown did not state the proof that authorized the retry"
+  [ "$(cat "$attempt_file")" = 2 ] \
+    || fail "no-remote-retry: expected exactly 2 treehouse return attempts, got $(cat "$attempt_file")"
+  # The retry here allows a real hard checkout (the fake performs one on success), and
+  # the commit is still reachable from the local default branch afterwards. Containment
+  # in refs/heads/<default> is exactly what makes that survivable with no remote in
+  # play. This check cannot fail while the work is contained, by construction - the
+  # refusal proof that CAN fail is
+  # test_no_remote_refuses_retry_for_work_absent_from_the_local_default below.
+  git -C "$case_dir/project" merge-base --is-ancestor "$head_before" refs/heads/main \
+    || fail "no-remote-retry: the retried teardown lost work that only refs/heads/main held"
+  pass "with no remote, the nothing-to-lose proof rests on the local default branch and the work survives"
+}
+
+test_no_remote_refuses_retry_for_work_absent_from_the_local_default() {
+  local case_dir rc attempt_file
+  case_dir=$(make_local_case no-remote-straggler)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_local_main "$case_dir"
+
+  # Pre-return safety passes (the work is in local main). The failing return then
+  # leaves a commit that exists nowhere but this worktree, so with no remote-tracking
+  # ref in play the proof must still catch it.
+  add_work_leaving_failing_treehouse "$case_dir" commit
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  # Checked first and deliberately: if the guard wrongly retried, the fake's second
+  # attempt hard-checked-out the worktree and this commit is gone, so this assertion
+  # is what fails - the safety property by name, not merely the exit code.
+  git -C "$case_dir/wt" log --oneline -1 | grep -q "straggler commit" \
+    || fail "no-remote-straggler: teardown destroyed the unlanded commit it should have preserved"
+  expect_code 1 "$rc" "no-remote-straggler: teardown must abort over work absent from the local default branch"
+  assert_grep "holds commits missing from every remote and the local default branch" "$case_dir/stderr" \
+    "no-remote-straggler: teardown did not name the condition it actually observed"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "no-remote-straggler: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "with no remote, the proof still refuses work that the local default branch does not contain"
+}
+
+test_no_remote_and_no_default_branch_refuses_retry() {
+  local case_dir rc attempt_file
+  case_dir=$(make_local_case no-remote-no-default)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  # Remove every ref the default-branch resolver can find, so the proof has neither a
+  # remote-tracking ref nor a local default branch to compare against. The project's
+  # own checkout has to let go of the branch before it can be deleted.
+  git -C "$case_dir/project" checkout -q --detach
+  git -C "$case_dir/project" branch -D main >/dev/null
+  ! git -C "$case_dir/project" show-ref --verify --quiet refs/heads/main \
+    || fail "no-remote-no-default: the sandbox still has a resolvable default branch"
+
+  add_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "no-remote-no-default: teardown must abort when nothing can prove containment"
+  assert_grep "nothing remains to prove containment against" "$case_dir/stderr" \
+    "no-remote-no-default: teardown did not name the condition it actually observed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "the local default branch" \
+    "no-remote-no-default: teardown named a default-branch comparison that never happened"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "no-remote-no-default: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "with neither a remote nor a resolvable default branch the proof cannot stand and the retry is refused"
 }
 
 test_index_lock_signature_without_lock_file_is_retried() {
@@ -1649,8 +2176,18 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_swallowed_lock_message_still_retries_and_succeeds
 test_swallowed_lock_message_retries_when_lock_self_clears_mid_attempt
-test_swallowed_message_without_lock_aborts_on_first_attempt
 test_index_lock_signature_without_lock_file_is_retried
+test_transient_return_failure_over_clean_landed_worktree_retries
+test_transient_return_failure_records_a_moving_return_target_ref
+test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work
+test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
+test_forced_teardown_of_unlanded_work_still_refuses_a_transient_retry
+test_persistent_transient_return_failure_exhausts_its_window_and_refuses
+test_exhaustion_message_never_asserts_a_state_the_final_attempt_left_unproved
+test_transient_return_failure_reports_an_uninspectable_worktree_instead_of_asserting_work
+test_no_remote_retry_is_eligible_and_the_work_survives
+test_no_remote_refuses_retry_for_work_absent_from_the_local_default
+test_no_remote_and_no_default_branch_refuses_retry
 test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
