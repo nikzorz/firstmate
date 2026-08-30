@@ -68,6 +68,7 @@
 #   (aj) no lock, no remote, HEAD in the local default branch -> retry ALLOW
 #   (ak) no lock, no remote, HEAD absent from that branch     -> abort, no retry
 #   (al) no lock, no remote and no default branch at all      -> abort, no retry
+#   (am) no lock, worktree unopenable after the failure       -> abort, named as uninspectable
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -570,6 +571,20 @@ add_work_leaving_failing_treehouse() {
   fi
   fake_treehouse_hard_return "\$wt"
   exit 0
+SH
+  end_fake_treehouse "$case_dir"
+}
+
+# treehouse return that fails with no lock after leaving the worktree unopenable, the
+# partial-failure shape where teardown can no longer inspect what it would discard. The
+# files on disk are untouched, so only the admin pointer is gone.
+add_uninspectable_failing_treehouse() {
+  local case_dir=$1
+  begin_fake_treehouse "$case_dir" count
+  cat >> "$case_dir/fakebin/treehouse" <<'SH'
+  rm -f "$wt/.git"
+  echo "failed to return worktree: git checkout --detach --force refs/remotes/origin/main:" >&2
+  exit 1
 SH
   end_fake_treehouse "$case_dir"
 }
@@ -1487,8 +1502,8 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work()
   expect_code 1 "$rc" "straggler-dirty: teardown must abort when the worktree holds uncommitted work"
   assert_grep "no git lock is present" "$case_dir/stderr" \
     "straggler-dirty: teardown did not distinguish the failure from a lock race"
-  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
-    "straggler-dirty: teardown did not say why the retry arm did not apply"
+  assert_grep "holds uncommitted changes" "$case_dir/stderr" \
+    "straggler-dirty: teardown did not name the condition it actually observed"
   assert_not_contains "$(cat "$case_dir/stderr")" "transient lock race" \
     "straggler-dirty: teardown misreported a genuine failure as a lock race"
   assert_not_contains "$(cat "$case_dir/stderr")" "nothing to lose" \
@@ -1525,8 +1540,8 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
   git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "straggler commit" \
     || fail "straggler-commit: teardown destroyed the unlanded commit it should have preserved"
   expect_code 1 "$rc" "straggler-commit: teardown must abort when the worktree holds an unlanded commit"
-  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
-    "straggler-commit: teardown did not say why the retry arm did not apply"
+  assert_grep "holds commits missing from every remote and from the local default branch" "$case_dir/stderr" \
+    "straggler-commit: teardown did not name the condition it actually observed"
   [ "$(cat "$attempt_file")" = 1 ] \
     || fail "straggler-commit: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   [ -f "$case_dir/state/task-x1.meta" ] \
@@ -1557,8 +1572,8 @@ test_forced_teardown_of_unlanded_work_still_refuses_a_transient_retry() {
   set -e
 
   expect_code 1 "$rc" "force-unlanded-no-retry: a failed return over unlanded work must abort"
-  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
-    "force-unlanded-no-retry: teardown did not say why the retry arm did not apply"
+  assert_grep "holds commits missing from every remote and from the local default branch" "$case_dir/stderr" \
+    "force-unlanded-no-retry: teardown did not name the condition it actually observed"
   [ "$(cat "$attempt_file")" = 1 ] \
     || fail "force-unlanded-no-retry: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   pass "explicit discard authority still does not buy a blind retry over unlanded work"
@@ -1596,6 +1611,40 @@ test_persistent_transient_return_failure_exhausts_its_window_and_refuses() {
   [ -f "$case_dir/state/task-x1.meta" ] \
     || fail "transient-exhausted: teardown completed despite the failed return"
   pass "a non-lock return failure that never recovers still aborts loudly after a bounded window"
+}
+
+
+test_transient_return_failure_reports_an_uninspectable_worktree_instead_of_asserting_work() {
+  local case_dir rc attempt_file
+  case_dir=$(make_case uninspectable-worktree)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_uninspectable_failing_treehouse "$case_dir"
+  add_lsof_no_holder "$case_dir"
+
+  attempt_file="$case_dir/treehouse-attempts"
+  : > "$attempt_file"
+
+  set +e
+  TREEHOUSE_ATTEMPT_FILE="$attempt_file" \
+  FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS=0 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "uninspectable-worktree: teardown must abort when it cannot inspect the worktree"
+  assert_grep "could not be opened as a git worktree" "$case_dir/stderr" \
+    "uninspectable-worktree: teardown did not report that inspection was what failed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "holds uncommitted changes" \
+    "uninspectable-worktree: teardown asserted uncommitted work it never observed"
+  assert_not_contains "$(cat "$case_dir/stderr")" "holds commits missing from" \
+    "uninspectable-worktree: teardown asserted unlanded commits it never observed"
+  [ "$(cat "$attempt_file")" = 1 ] \
+    || fail "uninspectable-worktree: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
+  pass "a worktree teardown cannot open is reported as uninspectable, never as holding work"
 }
 
 # Merge the worktree's task branch into the project's local default branch, which is
@@ -1673,8 +1722,8 @@ test_no_remote_refuses_retry_for_work_absent_from_the_local_default() {
   git -C "$case_dir/wt" log --oneline -1 | grep -q "straggler commit" \
     || fail "no-remote-straggler: teardown destroyed the unlanded commit it should have preserved"
   expect_code 1 "$rc" "no-remote-straggler: teardown must abort over work absent from the local default branch"
-  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
-    "no-remote-straggler: teardown did not say why the retry arm did not apply"
+  assert_grep "holds commits missing from every remote and from the local default branch" "$case_dir/stderr" \
+    "no-remote-straggler: teardown did not name the condition it actually observed"
   [ "$(cat "$attempt_file")" = 1 ] \
     || fail "no-remote-straggler: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   pass "with no remote, the proof still refuses work that the local default branch does not contain"
@@ -1707,8 +1756,8 @@ test_no_remote_and_no_default_branch_refuses_retry() {
   set -e
 
   expect_code 1 "$rc" "no-remote-no-default: teardown must abort when nothing can prove containment"
-  assert_grep "still holds uncommitted or unlanded work" "$case_dir/stderr" \
-    "no-remote-no-default: teardown did not say why the retry arm did not apply"
+  assert_grep "holds commits missing from every remote and from the local default branch" "$case_dir/stderr" \
+    "no-remote-no-default: teardown did not name the condition it actually observed"
   [ "$(cat "$attempt_file")" = 1 ] \
     || fail "no-remote-no-default: expected exactly 1 treehouse return attempt, got $(cat "$attempt_file")"
   pass "with neither a remote nor a resolvable default branch the proof cannot stand and the retry is refused"
@@ -2083,6 +2132,7 @@ test_transient_return_failure_refuses_when_a_straggler_leaves_uncommitted_work
 test_transient_return_failure_refuses_when_a_straggler_leaves_an_unlanded_commit
 test_forced_teardown_of_unlanded_work_still_refuses_a_transient_retry
 test_persistent_transient_return_failure_exhausts_its_window_and_refuses
+test_transient_return_failure_reports_an_uninspectable_worktree_instead_of_asserting_work
 test_no_remote_retry_is_eligible_and_the_work_survives
 test_no_remote_refuses_retry_for_work_absent_from_the_local_default
 test_no_remote_and_no_default_branch_refuses_retry

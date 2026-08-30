@@ -659,21 +659,18 @@ treehouse_return_target_ref_oid() {
   git -C "$dir" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null
 }
 
-# Print what the return target ref resolved to on both sides of a failed attempt and
-# leave the post-failure value in TREEHOUSE_RETURN_REF_OID_AFTER. A ref that moved
-# across the attempt is the evidence that a concurrent ref update raced the return,
-# which is otherwise invisible behind an error body the return tool swallowed. It is
-# recorded evidence, never the classification gate: a transient failure that leaves
-# the ref steady must still be recognized, or the failure it explains comes back.
+# Print what the return target ref resolved to on both sides of a failed attempt. A ref
+# that moved across the attempt is the evidence that a concurrent ref update raced the
+# return, which is otherwise invisible behind an error body the return tool swallowed.
+# It is recorded evidence, never the classification gate: a transient failure that
+# leaves the ref steady must still be recognized, or the failure it explains comes back.
 report_treehouse_return_ref_delta() {
   local dir=$1 label=$2 ref=$3 before=$4 after
-  TREEHOUSE_RETURN_REF_OID_AFTER=
   if [ -z "$ref" ]; then
     echo "teardown: $label return target ref does not resolve in $dir; no ref-movement evidence available" >&2
     return 0
   fi
   after=$(treehouse_return_target_ref_oid "$dir" "$ref") || after=""
-  TREEHOUSE_RETURN_REF_OID_AFTER=$after
   if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
     echo "teardown: $label return target $ref moved from $before to $after across the failed attempt" >&2
   elif [ -n "$after" ] && [ "$before" = "$after" ]; then
@@ -695,17 +692,36 @@ worktree_dirty_from_status() {
 # which also clears unpushed work whose PR landed - this proof must stand on the
 # worktree's own state at the moment it is asked, carrying nothing over from an earlier
 # check, because it is what authorizes retrying a destructive return.
+# WORKTREE_RETRY_PROOF_REASON records which condition denied the proof, so callers can
+# report what was actually observed instead of asserting work that was never seen. The
+# verdict itself is unchanged: every one of these conditions still refuses the retry.
 worktree_return_retry_is_safe() {
   local status_raw ahead default
   local -a excluded=(--not --remotes)
-  inspectable_git_worktree "$WT" || return 1
-  status_raw=$(git -C "$WT" status --porcelain 2>/dev/null) || return 1
-  [ -z "$(worktree_dirty_from_status "$status_raw")" ] || return 1
+  WORKTREE_RETRY_PROOF_REASON=
+  if ! inspectable_git_worktree "$WT"; then
+    WORKTREE_RETRY_PROOF_REASON="$WT could not be opened as a git worktree, so it could not be inspected for work"
+    return 1
+  fi
+  if ! status_raw=$(git -C "$WT" status --porcelain 2>/dev/null); then
+    WORKTREE_RETRY_PROOF_REASON="the working-tree status of $WT could not be read, so it could not be inspected for work"
+    return 1
+  fi
+  if [ -n "$(worktree_dirty_from_status "$status_raw")" ]; then
+    WORKTREE_RETRY_PROOF_REASON="$WT holds uncommitted changes"
+    return 1
+  fi
   if default=$(default_branch) && git -C "$WT" show-ref --verify --quiet "refs/heads/$default"; then
     excluded+=("refs/heads/$default")
   fi
-  ahead=$(git -C "$WT" log --oneline HEAD "${excluded[@]}" -- 2>/dev/null) || return 1
-  [ -z "$ahead" ] || return 1
+  if ! ahead=$(git -C "$WT" log --oneline HEAD "${excluded[@]}" -- 2>/dev/null); then
+    WORKTREE_RETRY_PROOF_REASON="the commits in $WT could not be listed, so it could not be inspected for work"
+    return 1
+  fi
+  if [ -n "$ahead" ]; then
+    WORKTREE_RETRY_PROOF_REASON="$WT holds commits missing from every remote and from the local default branch"
+    return 1
+  fi
 }
 
 worktree_safety_blocked_by_lock() {
@@ -751,7 +767,7 @@ teardown_transient_return_retry() {
     return 1
   fi
   if ! "$retry_safety_check"; then
-    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race, and $dir still holds uncommitted or unlanded work" >&2
+    echo "teardown: $label return failed and no git lock is present in $dir; this is not a lock race, and the retry is refused because ${WORKTREE_RETRY_PROOF_REASON:-$dir could not be proved free of uncommitted or unlanded work}" >&2
     return 1
   fi
 
@@ -768,7 +784,7 @@ teardown_transient_return_retry() {
     sleep "$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS"
 
     if ! "$retry_safety_check"; then
-      echo "teardown: $label return retry abandoned: $dir now holds uncommitted or unlanded work" >&2
+      echo "teardown: $label return retry abandoned because ${WORKTREE_RETRY_PROOF_REASON:-$dir could no longer be proved free of uncommitted or unlanded work}" >&2
       return 1
     fi
     echo "teardown: $label retrying the return: $dir independently proves it holds nothing to lose ($attempt/${max_transient})" >&2
@@ -780,7 +796,11 @@ teardown_transient_return_retry() {
     report_treehouse_return_ref_delta "$dir" "$label" "$ref_name" "$ref_oid"
   done
 
-  echo "teardown: $label return failed: a non-lock failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each) even though $dir held nothing to lose; aborting" >&2
+  # No lock was present when this arm was entered, but the window is never re-probed,
+  # so a lock race that began mid-window would look identical from here. Say what was
+  # actually observed rather than asserting a non-lock cause: a confidently wrong label
+  # is what points an operator at --force, which is the failure this arm exists to end.
+  echo "teardown: $label return failed: the failure persisted across ${max_transient} retries (waiting ${TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS}s each) while $dir held nothing to lose; no git lock was present when the retries began and none was re-checked during the window, so a lock race starting mid-window would not have been noticed; aborting" >&2
   return 1
 }
 
