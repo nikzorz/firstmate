@@ -18,8 +18,9 @@
 # working/paused wrappers. It is NOT a pure status-file read: it reuses
 # bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide whether
 # a crew that just stopped its turn or went stale is working, deliberately paused,
-# finished with a landing route, unreliable (a verdict that is evidence of nothing
-# either way), or none of those.
+# finished with a landing route, parked on a decision only firstmate or the
+# captain can answer, unreliable (a verdict that is evidence of nothing either
+# way), or none of those.
 # Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
 # never on every wake, so the per-wake triage stays cheap. A caller that keeps
 # absorbing the same unchanged pane across polls - today only bin/fm-watch.sh's

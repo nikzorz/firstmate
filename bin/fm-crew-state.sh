@@ -48,17 +48,17 @@
 #      invalidates attribution.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed. A `parked`
-#      detail additionally publishes WHO owns the gate, because the two parks
-#      are different waits: nm_gate_needs_authority below owns that rule and
-#      appends the marker only for a gate the crew may not answer itself. Every
-#      other park whose findings carry an ask-user action gets the operator note
-#      beside it instead, which reports the finding without naming an owner.
-#      EXCEPT: while
+#      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
 #      green, so a green PR is never silently read as still-validating.
+#      A `parked` detail additionally publishes WHO owns the gate, because the
+#      two parks are different waits: nm_gate_needs_authority below owns that
+#      rule and appends the marker only for a gate the crew may not answer
+#      itself. Every other park whose findings carry an ask-user action gets the
+#      operator note beside it instead, which reports the finding without naming
+#      an owner.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
 #      `last_activity` names how long the active step has been quiet, so a run
