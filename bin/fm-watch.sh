@@ -6,8 +6,10 @@
 # is absorbed only when the crew shows POSITIVE evidence it is still working (an
 # actively-running no-mistakes step, or a backend busy signal), and surfaced
 # otherwise, so a crew that stops without a current working signal is never
-# silently swallowed. The stale path's landing absorb below is the one exception,
-# and it hands the wake to an armed merge poll rather than dropping it. A declared
+# silently swallowed. The stale path's two idle-for-a-known-reason absorbs below
+# are the exceptions, and each hands the wake to something other than this timer:
+# the landing absorb to an armed merge poll, and the deciding absorb to the
+# recorded open decision firstmate is already carrying. A declared
 # external-wait pause is the separate idle absorb case and re-surfaces only on its
 # long bounded cadence, although its initial no-verb status signal still surfaces
 # in normal mode.
@@ -19,7 +21,13 @@
 #   stale: <window>        a finished crew whose own last status line is a terminal
 #                          done, and whose work has a recorded landing route with an
 #                          armed merge poll, is absorbed outright, with no wedge
-#                          timer: the merge poll owns its next wake. A
+#                          timer: the merge poll owns its next wake. A crew whose
+#                          run is parked at a gate only firstmate or the captain
+#                          can answer (the `deciding` verdict, which owns that
+#                          correlation), and whose own last status line is the
+#                          still-open needs-decision it is parked on, is absorbed
+#                          the same way: the answer owns its next wake, and the
+#                          absorb ends as soon as the decision is closed. A
 #                          provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -457,12 +465,12 @@ pause_state_class() {  # <window> <task>
     # declared-pause path below may read "evidence of nothing" as anything else.
     class=$(crew_absorb_class "$task")
     [ "$class" = unreliable ] && class=none
-    # `landing` is owned entirely by the terminal-stale branch below, the only
-    # place a finished crew's own captain-relevant line is weighed against that
-    # verdict. It carries no meaning for this pause-cadence decision, so it
-    # collapses to the plain not-working verdict a finished crew has always
-    # produced here.
-    [ "$class" = landing ] && class=none
+    # `landing` and `deciding` are owned entirely by the terminal-stale branch
+    # below, the only place a crew's own captain-relevant line is weighed against
+    # that verdict. Neither carries meaning for this pause-cadence decision, so
+    # both collapse to the plain not-working verdict a finished or gate-parked
+    # crew has always produced here.
+    case "$class" in landing|deciding) class=none ;; esac
     printf '%s' "$class"
     return
   fi
@@ -499,9 +507,9 @@ pause_state_class() {  # <window> <task>
   verdict=$(crew_absorb_verdict "$task")
   class=${verdict%% *}
   src=${verdict##* }
-  # See the note above: the landing class belongs to the terminal-stale branch,
-  # not to this one.
-  [ "$class" = landing ] && class=none
+  # See the note above: the landing and deciding classes belong to the
+  # terminal-stale branch, not to this one.
+  case "$class" in landing|deciding) class=none ;; esac
   case "$class" in
     working)
       if [ "$src" = run-step ] && [ "$agent_alive" = alive ]; then
@@ -1058,6 +1066,13 @@ EOF
             # to say `done` too - $last, already read at the top of this loop and
             # the same line stale_is_terminal judged, so this costs no new read.
             [ "$stale_class" = landing ] && [ "$(status_line_verb "$last")" != "done" ] && stale_class=none
+            # `deciding` is the same weighing for a run parked on an answer: the
+            # run being parked is not enough, the crew's own last line has to be
+            # the decision it is parked on. A crew that has since said something
+            # else captain-relevant - it finished, it failed, it is asking for
+            # help on a different thing - is not waiting quietly on that answer,
+            # and absorbing it would silence the newer line instead.
+            [ "$stale_class" = deciding ] && [ "$(status_line_verb "$last")" != "needs-decision" ] && stale_class=none
             case "$stale_class" in
               working)
                 printf '%s' "$h" > "$sf"
@@ -1074,6 +1089,20 @@ EOF
                 printf '%s' "$h" > "$sf"
                 rm -f "$ssf" "$ewf"
                 triage_log "absorbed stale (finished, awaiting merge; the merge poll owns the next wake): $w"
+                ;;
+              deciding)
+                # The crew is parked on a decision that is still recorded as
+                # open, so the answer - not this timer - is what moves it next.
+                # No wedge timer, for the same reason as landing: there is
+                # nothing the crew can do until the answer arrives, so an idle
+                # pane is the expected shape for as long as it is outstanding,
+                # and timing it would re-raise the same waiting task every
+                # escalation window. The decision itself is already firstmate's
+                # to carry, and closing it (a `resolved:` line, or a verified
+                # captain-held transfer) drops this class on the next sighting.
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf" "$ewf"
+                triage_log "absorbed stale (parked on an open decision; the answer owns the next wake): $w"
                 ;;
               *)
                 fm_wake_append stale "$w" "stale: $w" || exit 1

@@ -422,6 +422,60 @@ steps[3]{step,status,findings,duration_ms}:
 EOF
 }
 
+# An approval gate whose findings header omits the `line` column, so the `action`
+# column sits at a different index than every other fixture here.
+run_parked_action_column_shifted() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: awaiting_approval
+  awaiting_agent: parked 2m10s
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings[1]{id,severity,file,action,description}:
+    r1,error,b.go,ask-user,changes product behavior
+gate: review
+EOF
+}
+
+# An approval gate whose only mention of the token is inside a description, plus
+# the same token in unrelated prose outside the findings table.
+run_parked_ask_user_only_in_prose() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: awaiting_approval
+  awaiting_agent: parked 2m10s
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  note: "reviewer left an ask-user comment on an earlier run"
+  findings[1]{id,severity,file,line,action,description}:
+    r1,error,b.go,,auto-fix,rename this before anyone files it as ask-user
+gate: review
+EOF
+}
+
+# An approval gate whose status word is resolvable only from the steps table,
+# the second of nm_gate_status's two probes.
+run_parked_steps_row_approval() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings[1]{id,severity,file,line,action,description}:
+    r1,error,b.go,,ask-user,changes product behavior
+steps[3]{step,status,findings,duration_ms}:
+  intent,completed,0,0
+  review,awaiting_approval,1,0
+  test,pending,0,0
+EOF
+}
+
 run_passed() {  # <branch>
   cat <<EOF
 run:
@@ -1199,9 +1253,117 @@ test_genuine_parked_not_superseded() {
   assert_contains "$out" "state: parked" "genuine parked run -> parked"
   assert_contains "$out" "source: run-step" "parked -> run-step source"
   assert_contains "$out" "2 finding(s)" "parked includes gate finding count"
-  assert_contains "$out" "ask-user" "parked surfaces ask-user finding"
+  # The literal, not the bare token: bin/fm-classify-lib.sh owns the spelling and
+  # the watcher's `deciding` absorb matches on it, so a producer reword that this
+  # suite did not notice would silently turn every such absorb back into a wake.
+  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" "an approval gate on an ask-user finding publishes the authority-gate marker"
   assert_not_contains "$out" "superseded" "agreeing parked+needs-decision not flagged stale"
   pass "genuine parked run is not flagged superseded"
+}
+
+# --- gate ownership: who the park is actually waiting on ---------------------
+#
+# The marker means the gate is one the crew may NOT answer itself, which is the
+# whole basis of the watcher's `deciding` absorb. These four pin the rule as a
+# fact about the gate rather than as a search for a token anywhere in the run
+# output, which is what it used to be: an `ask-user` row on a worker-owned gate,
+# and the token in prose, both used to publish it.
+test_worker_owned_fix_review_gate_publishes_no_authority_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-fix-review)
+  make_repo_on_branch "$d/wt" fm/feat-go1
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go1.meta" "window=fm:fm-feat-go1" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go1.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_in_gate_block fm/feat-go1)"
+  local out; out=$(run_crew_state "$d" feat-go1)
+  assert_contains "$out" "state: parked" "a fix-review gate still reports parked"
+  assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "a fix-review gate carrying an ask-user row published the authority-gate marker"
+  # This gate's owner WAS read and is the worker, so the note must report the
+  # finding without naming an owner: firstmate reads this line to decide whether
+  # to escalate, and a note claiming the owner is unknown argues for the
+  # escalation the rule above just ruled out.
+  assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
+    "a fix-review gate with an ask-user row lost or reworded its operator note"
+  assert_not_contains "$out" "unread" \
+    "the operator note claims the gate owner is unread on a gate whose owner was read"
+  pass "a gate the worker itself must answer publishes no authority-gate marker"
+}
+
+test_authority_marker_reads_the_action_column_by_name() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-column)
+  make_repo_on_branch "$d/wt" fm/feat-go2
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go2.meta" "window=fm:fm-feat-go2" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go2.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_action_column_shifted fm/feat-go2)"
+  local out; out=$(run_crew_state "$d" feat-go2)
+  assert_contains "$out" "state: parked" "a shifted-column approval gate still reports parked"
+  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "the action column was not located by name in the findings header"
+  pass "the authority-gate marker locates the action column by header name"
+}
+
+test_steps_row_approval_gate_publishes_the_authority_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-steps-row)
+  make_repo_on_branch "$d/wt" fm/feat-go4
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go4.meta" "window=fm:fm-feat-go4" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go4.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_steps_row_approval fm/feat-go4)"
+  local out; out=$(run_crew_state "$d" feat-go4)
+  assert_contains "$out" "state: parked" "a steps-row approval gate still reports parked"
+  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "an approval gate resolved from the steps table did not publish the authority-gate marker"
+  pass "an approval gate resolved from the steps table publishes the authority-gate marker"
+}
+
+# A park whose gate status word neither probe can read. It cannot earn the token,
+# because nothing here says who owns the gate, so it keeps surfacing. What it
+# does keep is the operator note, which reports what the findings table shows
+# and claims no ownership. The two strings must stay disjoint: were the note to
+# contain the token, this park would read as authority-owned in the classifier
+# and be absorbed - see test_the_operator_note_is_inert_to_the_absorb_classifier
+# in tests/fm-watch-triage.test.sh for the other half of that guard.
+test_unreadable_gate_status_keeps_the_note_without_the_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-no-status)
+  make_repo_on_branch "$d/wt" fm/feat-go5
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go5.meta" "window=fm:fm-feat-go5" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go5.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_scalar_gate_running fm/feat-go5)"
+  local out; out=$(run_crew_state "$d" feat-go5)
+  assert_contains "$out" "state: parked" "an unreadable-status gate still reports parked"
+  assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "a park whose gate status word cannot be read published the authority-gate marker"
+  # The same note the fix-review park gets, because once the token is withheld
+  # the two shapes are indistinguishable and the note must not guess which.
+  assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
+    "an unreadable-status park lost or reworded its operator note"
+  case "$out" in
+    *"$FM_CLASSIFY_AUTHORITY_GATE_MARKER"*)
+      fail "the operator note contains the ownership token, so this park reads as authority-owned" ;;
+  esac
+  pass "a park with an unreadable gate status keeps the operator note but not the ownership token"
+}
+
+test_ask_user_in_prose_does_not_publish_the_authority_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-prose)
+  make_repo_on_branch "$d/wt" fm/feat-go3
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go3.meta" "window=fm:fm-feat-go3" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go3.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_ask_user_only_in_prose fm/feat-go3)"
+  local out; out=$(run_crew_state "$d" feat-go3)
+  assert_contains "$out" "state: parked" "an approval gate with no ask-user action still reports parked"
+  assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "a description and a note mentioning ask-user published the authority-gate marker"
+  pass "only an ask-user action column publishes the authority-gate marker"
 }
 
 test_scalar_gate_parked_not_superseded() {
@@ -2279,5 +2441,10 @@ test_usage_limit_ignores_ordinary_limit_prose
 test_usage_limit_only_for_recorded_claude
 test_usage_limit_unreadable_pane_falls_through
 test_usage_limit_classifier_over_real_helper
+test_worker_owned_fix_review_gate_publishes_no_authority_marker
+test_authority_marker_reads_the_action_column_by_name
+test_steps_row_approval_gate_publishes_the_authority_marker
+test_unreadable_gate_status_keeps_the_note_without_the_marker
+test_ask_user_in_prose_does_not_publish_the_authority_marker
 
 echo "all fm-crew-state tests passed"

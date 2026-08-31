@@ -53,6 +53,12 @@
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
 #      green, so a green PR is never silently read as still-validating.
+#      A `parked` detail additionally publishes WHO owns the gate, because the
+#      two parks are different waits: nm_gate_needs_authority below owns that
+#      rule and appends the marker only for a gate the crew may not answer
+#      itself. Every other park whose findings carry an ask-user action gets the
+#      operator note beside it instead, which reports the finding without naming
+#      an owner.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
 #      `last_activity` names how long the active step has been quiet, so a run
@@ -403,6 +409,92 @@ nm_gate_findings_count() {
   rest=${rest%%|*}
   case "$rest" in ''|*[!0-9]*) return 0 ;; esac
   printf '%s' "$rest"
+}
+# Operator-facing note for a parked gate whose findings carry an ask-user action
+# but which nm_gate_needs_authority below did not confirm as authority-owned. It
+# exists because the ownership rule is narrower than the old whole-output search
+# it replaced, and without it those parks lost a hint an operator reads.
+#
+# It says only those two things, because they are the only two this reader
+# established, and they arise from two DIFFERENT situations it cannot tell apart
+# after the fact: a `fix_review` gate, whose owner was read and is the worker,
+# and a gate whose status word neither probe could read, whose owner is genuinely
+# unknown. Both get this note. It must never claim which, because firstmate reads
+# this line to decide whether to escalate, and naming the wrong one argues for an
+# escalation the ownership rule just ruled out.
+#
+# It is deliberately NOT the ownership token and must never become it. The two
+# strings have to stay textually DISJOINT - neither a substring of the other -
+# because bin/fm-classify-lib.sh's crew_absorb_verdict matches the ownership
+# token as a plain substring of this whole line, so any overlap would make a
+# gate this reader refused to call authority-owned read as authority-owned
+# there, silently absorbing exactly the parks that must keep surfacing. This
+# note is display text only: nothing consumes it, it is not published as a
+# shared constant, and it must not become one.
+NM_GATE_ASK_USER_NOTE='[ask-user finding, authority gate unconfirmed]'
+
+# 0 when the gate's own findings table carries a row whose `action` column is
+# exactly `ask-user`, the action AGENTS.md reserves to firstmate or the captain
+# because the implementation worker never answers its own finding. The column is
+# located by NAME in the table header, because that header's column set
+# genuinely varies by step and version, and only rows indented under that header
+# are read. A finding whose description merely mentions the token, and any other
+# prose in the output, therefore contribute nothing. Both the ownership token
+# and the operator note above read the table through here, so they can disagree
+# about who owns the gate but never about what the table says.
+nm_gate_has_ask_user_action() {
+  [ -n "$(printf '%s\n' "$RUN_OUT" | awk -v want=ask-user -v want_col=action '
+    {
+      n = match($0, /[^ ]/)
+      if (n == 0) next
+      indent = n - 1
+      body = substr($0, n)
+      if (intab && indent <= ind) intab = 0
+      if (intab) {
+        if (col > 0 && split(body, f, ",") >= ncol) {
+          v = f[col]
+          gsub(/^[ \t"]+/, "", v); gsub(/[ \t"]+$/, "", v)
+          if (v == want) { found = 1; exit }
+        }
+      } else if (body ~ /^findings\[[0-9]+\]\{[^}]*\}[ \t]*:/) {
+        hdr = body
+        sub(/^findings\[[0-9]+\]\{/, "", hdr)
+        sub(/\}[ \t]*:.*$/, "", hdr)
+        ncol = split(hdr, cols, ",")
+        col = 0
+        for (i = 1; i <= ncol; i++) {
+          c = cols[i]
+          gsub(/^[ \t]+/, "", c); gsub(/[ \t]+$/, "", c)
+          if (c == want_col) col = i
+        }
+        ind = indent
+        intab = 1
+      }
+    }
+    END { if (found) print "yes" }
+  ')" ]
+}
+
+# 0 when the gate the run stopped at is one the crew may not answer itself, the
+# fact FM_CLASSIFY_AUTHORITY_GATE_MARKER publishes (rule owned here, literal
+# owned by bin/fm-classify-lib.sh). It takes the two facts rather than gathering
+# them, because the parked branch below has already resolved both and neither
+# probe is worth running twice; this owns only how they combine. Both must hold:
+#
+#   - the gate status word must be `awaiting_approval`, the state in which the
+#     run is asking for a DECISION, not `fix_review`, where it is asking the
+#     worker to review fixes it has already made (AGENTS.md's Validate section
+#     owns which of those the worker answers);
+#   - the gate's findings table must carry an ask-user action row
+#     (nm_gate_has_ask_user_action above).
+#
+# A gate whose status word could not be read is not evidence of anything and
+# reports 1, so such a park surfaces rather than absorbs, exactly as a
+# `fix_review` gate does. Either way the park keeps the operator note above
+# instead of the token. docs/verification/supervision.md records what real
+# parked runs published when this rule was measured.
+nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
+  [ "$1" = awaiting_approval ] && [ "$2" = yes ]
 }
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
@@ -955,8 +1047,12 @@ if [ "$HAVE_RUN" = 1 ]; then
       RUN_DETAIL="parked at $gate"
       fcount=$(nm_gate_findings_count)
       [ -n "$fcount" ] && RUN_DETAIL="$RUN_DETAIL: $fcount finding(s)"
-      if printf '%s\n' "$RUN_OUT" | grep -q 'ask-user'; then
-        RUN_DETAIL="$RUN_DETAIL (ask-user: authority decision)"
+      ask_user_row=no
+      nm_gate_has_ask_user_action && ask_user_row=yes
+      if nm_gate_needs_authority "$gate_status" "$ask_user_row"; then
+        RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
+      elif [ "$ask_user_row" = yes ]; then
+        RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi
     else
       case "$status" in

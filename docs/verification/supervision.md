@@ -312,6 +312,46 @@ Durations render as `30s`, `1h0m`, `20h52m`, and `3d11h`, all of which the token
 
 Columns are located by name from the table header rather than by position, so this record pins the field names, not their order.
 
+## Gate status word on a parked run
+
+This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word reads `awaiting_approval`.
+That rule is worth measuring because a parked run whose status word neither probe can read never earns the token and so is never absorbed, and whether that shape occurs in practice is evidence rather than a contract.
+The rule itself, both probes, and every exclusion are covered without a real run by `tests/fm-crew-state.test.sh`.
+
+Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), over the three real parked gates captured from review rounds one through three of this branch's own validation run: one `awaiting_approval` and two `fix_review`.
+
+The predicate checked against each captured `axi status` response was the pair of probes `nm_gate_status` uses, in its own order:
+
+```sh
+grep -E '^[[:space:]]*(status|state):[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*$'
+grep -E '^[[:space:]]*[^,]+,[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*,'
+```
+
+Every one of the three published a resolvable gate status word, and both probes matched on all three: each response carried the scalar `status:`/`state:` line form and the steps-table row form together.
+So the unreadable shape drew no observation at all here, and it is modelled only by the defensive fixture `run_parked_scalar_gate_running` in `tests/fm-crew-state.test.sh`.
+A later reader should re-run those two probes against a newer no-mistakes before relying on that, because a response shape that drops either form would move real parks into the never-absorbed exclusion without any test failing.
+
+## Ask-user action row on a parked gate
+
+This record supports the other half of that same gate-ownership rule, which appends the ownership token only when the gate's findings table carries a row whose `action` column is exactly `ask-user`.
+That half is the structurally stricter of the two and the one that actually gates the absorb, because it depends on the table being present, on its header naming an `action` column, on the rows being indented under that header, and on the cell holding that exact value.
+The rule itself and every way it can refuse are covered without a real run by `tests/fm-crew-state.test.sh`, but every fixture there hard-codes the table, so whether real output renders it that way is evidence rather than a contract.
+
+Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
+The subject was five real `axi status` gate responses captured from this branch's own validation run, one per review round over review rounds one through five, covering one `awaiting_approval` gate and four `fix_review` gates.
+The predicate checked was `nm_gate_has_ask_user_action` in `bin/fm-crew-state.sh`, its own awk run verbatim against each captured response rather than a copy here that would drift from it.
+
+All five rendered their gate findings as a `findings[N]{id,severity,file,action,description}` table carrying a literal `action` column, with `ask-user` present as an exact cell value in that column, and the predicate returned its match token for all five.
+The single `awaiting_approval` capture is the one that matters most, and it matched: `fix_review` is excluded from the ownership token by design, so an `awaiting_approval` park is the only shape that can earn the token and therefore the only shape that can produce a `deciding` absorb.
+
+This is evidence that this version renders the table this way, not proof that every version will.
+A future response shape that drops the table, renames the column, or reports the finding count without a table would make the predicate return false, which moves a real park into the never-absorbed exclusion with no test failing, because every fixture in the suite hard-codes the table.
+That failure runs in the same benign direction the record above states for the status word: the absorb simply does not fire, firstmate keeps getting the wake exactly as it does today, and nothing is silenced.
+That benign direction is a property of the measured header shape rather than of the predicate.
+`nm_gate_has_ask_user_action` locates the `action` column by name but reads its cell with a bare comma split that does not honour the quoting of the TOON table it is splitting, which is safe only while every column before `action` is comma-free, as it is in the measured `findings[N]{id,severity,file,action,description}` shape whose single free-text column is last.
+A future header that places a quoted free-text column before `action` breaks that reading: a comma inside such a cell shifts the split, so a row carrying some other action can be read as `ask-user`, publishing the ownership token for a gate that has no ask-user row and absorbing a park that should have surfaced.
+That is the one direction the safety asymmetry forbids, so a reader who meets such a header shape can no longer rely on the benign-direction claim above.
+
 ## Forge probe for a monitoring ci step
 
 This record supports the forge half of the stalled-run detection in `bin/fm-crew-state.sh`: the arm that settles a ci step which keeps logging while what it waits for cannot arrive.
