@@ -642,6 +642,14 @@ test_deciding_absorb_class_classifier() {
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a park at a worker-owned gate was absorbed as an outstanding decision"
 
+  # A park whose gate ownership bin/fm-crew-state.sh could not establish carries
+  # its operator note instead of the ownership token. The note reports what the
+  # findings table shows and claims nothing about who answers, so it must leave
+  # this verdict exactly where the bare line above left it.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, gate owner unread]'
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "the operator ask-user note was read as the gate-ownership token"
+
   # The run-less fallback derives `parked` from the very `needs-decision:` line
   # this fold reads, so it correlates nothing with nothing. Its detail is the
   # crew's own note, spelled here to repeat the ownership token verbatim: that is
@@ -885,6 +893,41 @@ test_parked_at_a_worker_owned_gate_still_surfaces() {
   grep -F "$window" "$drain_out" >/dev/null || fail "the worker-gate stale was not queued"
   unset FM_FAKE_CREW_STATE
   pass "a crew parked at a gate it must answer itself still surfaces"
+}
+
+# The guard on the operator note bin/fm-crew-state.sh puts on a park whose gate
+# ownership it could not establish. That note and the ownership token must stay
+# textually disjoint, because this verdict matches the token as a plain
+# substring of the whole line: were the note ever to contain it, every park the
+# producer deliberately refused to call authority-owned would absorb here
+# instead. This drives the real watcher end to end so the guard is behavioural
+# rather than a reading of the two literals.
+test_the_operator_note_is_inert_to_the_absorb_classifier() {
+  local dir state fakebin out drain_out capture_file window key pane_hash pid
+  dir=$(make_case deciding-stale-operator-note); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-note-only"
+  printf 'awaiting a decision on 2 findings' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/note-only.meta"
+  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/note-only.status"
+  printf '%s' "$(seen_sig "$state/note-only.status")" > "$state/.seen-note-only_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "awaiting a decision on 2 findings")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, gate owner unread]'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "a park carrying only the operator ask-user note was absorbed"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "no stale wake was printed for the operator-note park"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the operator-note stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the operator-note stale was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "the operator ask-user note never earns the absorb the ownership token earns"
 }
 
 # The other half of the same gate: a crew with no run attributed at all, whose
@@ -2271,6 +2314,7 @@ test_post_run_decision_on_a_landing_route_still_surfaces
 test_parked_on_open_decision_absorbed_without_a_wedge_timer
 test_parked_crew_with_a_newer_captain_line_still_surfaces
 test_parked_at_a_worker_owned_gate_still_surfaces
+test_the_operator_note_is_inert_to_the_absorb_classifier
 test_parked_from_the_status_log_fallback_still_surfaces
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated

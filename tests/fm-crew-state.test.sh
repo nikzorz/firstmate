@@ -457,6 +457,25 @@ gate: review
 EOF
 }
 
+# An approval gate whose status word is resolvable only from the steps table,
+# the second of nm_gate_status's two probes.
+run_parked_steps_row_approval() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings[1]{id,severity,file,line,action,description}:
+    r1,error,b.go,,ask-user,changes product behavior
+steps[3]{step,status,findings,duration_ms}:
+  intent,completed,0,0
+  review,awaiting_approval,1,0
+  test,pending,0,0
+EOF
+}
+
 run_passed() {  # <branch>
   cat <<EOF
 run:
@@ -1277,6 +1296,48 @@ test_authority_marker_reads_the_action_column_by_name() {
   assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "the action column was not located by name in the findings header"
   pass "the authority-gate marker locates the action column by header name"
+}
+
+test_steps_row_approval_gate_publishes_the_authority_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-steps-row)
+  make_repo_on_branch "$d/wt" fm/feat-go4
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go4.meta" "window=fm:fm-feat-go4" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go4.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_steps_row_approval fm/feat-go4)"
+  local out; out=$(run_crew_state "$d" feat-go4)
+  assert_contains "$out" "state: parked" "a steps-row approval gate still reports parked"
+  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "an approval gate resolved from the steps table did not publish the authority-gate marker"
+  pass "an approval gate resolved from the steps table publishes the authority-gate marker"
+}
+
+# A park whose gate status word neither probe can read. It cannot earn the token,
+# because nothing here says who owns the gate, so it keeps surfacing. What it
+# does keep is the operator note, which reports what the findings table shows
+# and claims no ownership. The two strings must stay disjoint: were the note to
+# contain the token, this park would read as authority-owned in the classifier
+# and be absorbed - see test_the_operator_note_is_inert_to_the_absorb_classifier
+# in tests/fm-watch-triage.test.sh for the other half of that guard.
+test_unreadable_gate_status_keeps_the_note_without_the_marker() {
+  reset_fakes
+  local d; d=$(new_case gate-owner-no-status)
+  make_repo_on_branch "$d/wt" fm/feat-go5
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go5.meta" "window=fm:fm-feat-go5" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go5.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_scalar_gate_running fm/feat-go5)"
+  local out; out=$(run_crew_state "$d" feat-go5)
+  assert_contains "$out" "state: parked" "an unreadable-status gate still reports parked"
+  assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "a park whose gate status word cannot be read published the authority-gate marker"
+  assert_contains "$out" "ask-user finding" "an ask-user action row left no operator note at all"
+  case "$out" in
+    *"$FM_CLASSIFY_AUTHORITY_GATE_MARKER"*)
+      fail "the operator note contains the ownership token, so this park reads as authority-owned" ;;
+  esac
+  pass "a park with an unreadable gate status keeps the operator note but not the ownership token"
 }
 
 test_ask_user_in_prose_does_not_publish_the_authority_marker() {
@@ -2371,6 +2432,8 @@ test_usage_limit_unreadable_pane_falls_through
 test_usage_limit_classifier_over_real_helper
 test_worker_owned_fix_review_gate_publishes_no_authority_marker
 test_authority_marker_reads_the_action_column_by_name
+test_steps_row_approval_gate_publishes_the_authority_marker
+test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
 
 echo "all fm-crew-state tests passed"

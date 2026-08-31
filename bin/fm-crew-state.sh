@@ -51,7 +51,9 @@
 #      passed/checks-passed -> done, failed/cancelled -> failed. A `parked`
 #      detail additionally publishes WHO owns the gate, because the two parks
 #      are different waits: nm_gate_needs_authority below owns that rule and
-#      appends the marker only for a gate the crew may not answer itself.
+#      appends the marker only for a gate the crew may not answer itself. Every
+#      other park whose findings carry an ask-user action gets the operator note
+#      beside it instead, which claims nothing about ownership.
 #      EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
@@ -408,27 +410,32 @@ nm_gate_findings_count() {
   case "$rest" in ''|*[!0-9]*) return 0 ;; esac
   printf '%s' "$rest"
 }
-# 0 when the gate the run stopped at is one the crew may not answer itself, the
-# fact FM_CLASSIFY_AUTHORITY_GATE_MARKER publishes (rule owned here, literal
-# owned by bin/fm-classify-lib.sh). Both halves must hold, and both are read
-# from the run output already captured:
+# Operator-facing note for a parked gate whose findings include an ask-user
+# action but whose ownership this reader could not establish, which is every
+# parked shape nm_gate_needs_authority below turns down. It exists because the
+# ownership rule is narrower than the old whole-output search it replaced, and
+# without it those shapes lost a hint an operator reads.
 #
-#   - the gate status word must be `awaiting_approval`, the state in which the
-#     run is asking for a DECISION, not `fix_review`, where it is asking the
-#     worker to review fixes it has already made (AGENTS.md's Validate section
-#     owns which of those the worker answers);
-#   - the gate's own findings table must carry a row whose `action` column is
-#     exactly `ask-user`, the action AGENTS.md reserves to firstmate or the
-#     captain because the implementation worker never answers its own finding.
-#
-# The column is located by NAME in the table header, because that header's
-# column set genuinely varies by step and version, and only rows indented under
-# that header are read. A finding whose description merely mentions the token,
-# and any other prose in the output, therefore contributes nothing. A gate whose
-# status word cannot be read at all is not evidence of anything and reports 1,
-# so an unreadable shape surfaces rather than absorbs.
-nm_gate_needs_authority() {
-  [ "$(nm_gate_status)" = awaiting_approval ] || return 1
+# It is deliberately NOT the ownership token and must never become it. The two
+# strings have to stay textually DISJOINT - neither a substring of the other -
+# because bin/fm-classify-lib.sh's crew_absorb_verdict matches the ownership
+# token as a plain substring of this whole line, so any overlap would make a
+# gate this reader refused to call authority-owned read as authority-owned
+# there, silently absorbing exactly the parks that must keep surfacing. This
+# note is display text only: nothing consumes it, it is not published as a
+# shared constant, and it must not become one.
+NM_GATE_ASK_USER_NOTE='[ask-user finding, gate owner unread]'
+
+# 0 when the gate's own findings table carries a row whose `action` column is
+# exactly `ask-user`, the action AGENTS.md reserves to firstmate or the captain
+# because the implementation worker never answers its own finding. The column is
+# located by NAME in the table header, because that header's column set
+# genuinely varies by step and version, and only rows indented under that header
+# are read. A finding whose description merely mentions the token, and any other
+# prose in the output, therefore contribute nothing. Both the ownership token
+# and the operator note above read the table through here, so they can disagree
+# about who owns the gate but never about what the table says.
+nm_gate_has_ask_user_action() {
   [ -n "$(printf '%s\n' "$RUN_OUT" | awk -v want=ask-user -v want_col=action '
     {
       n = match($0, /[^ ]/)
@@ -459,6 +466,28 @@ nm_gate_needs_authority() {
     }
     END { if (found) print "yes" }
   ')" ]
+}
+
+# 0 when the gate the run stopped at is one the crew may not answer itself, the
+# fact FM_CLASSIFY_AUTHORITY_GATE_MARKER publishes (rule owned here, literal
+# owned by bin/fm-classify-lib.sh). Both halves must hold, and both are read
+# from the run output already captured:
+#
+#   - the gate status word must be `awaiting_approval`, the state in which the
+#     run is asking for a DECISION, not `fix_review`, where it is asking the
+#     worker to review fixes it has already made (AGENTS.md's Validate section
+#     owns which of those the worker answers);
+#   - the gate's findings table must carry an ask-user action row
+#     (nm_gate_has_ask_user_action above).
+#
+# A gate whose status word cannot be read at all is not evidence of anything and
+# reports 1, so such a park surfaces rather than absorbs. That shape keeps the
+# operator note above instead, which says what the table shows without claiming
+# the ownership the token would. docs/verification/supervision.md records what
+# real parked runs published when this rule was measured.
+nm_gate_needs_authority() {
+  [ "$(nm_gate_status)" = awaiting_approval ] || return 1
+  nm_gate_has_ask_user_action
 }
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
@@ -1013,6 +1042,8 @@ if [ "$HAVE_RUN" = 1 ]; then
       [ -n "$fcount" ] && RUN_DETAIL="$RUN_DETAIL: $fcount finding(s)"
       if nm_gate_needs_authority; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
+      elif nm_gate_has_ask_user_action; then
+        RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi
     else
       case "$status" in

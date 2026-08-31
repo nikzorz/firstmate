@@ -312,6 +312,25 @@ Durations render as `30s`, `1h0m`, `20h52m`, and `3d11h`, all of which the token
 
 Columns are located by name from the table header rather than by position, so this record pins the field names, not their order.
 
+## Gate status word on a parked run
+
+This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word reads `awaiting_approval`.
+That rule is worth measuring because a parked run whose status word neither probe can read never earns the token and so is never absorbed, and whether that shape occurs in practice is evidence rather than a contract.
+The rule itself, both probes, and every exclusion are covered without a real run by `tests/fm-crew-state.test.sh`.
+
+Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), over three real parked gates observed that day: one `awaiting_approval` and two `fix_review`.
+
+The predicate checked against each captured `axi status` response was the pair of probes `nm_gate_status` uses, in its own order:
+
+```sh
+grep -E '^[[:space:]]*(status|state):[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*$'
+grep -E '^[[:space:]]*[^,]+,[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*,'
+```
+
+Every one of the three published a resolvable gate status word, and both probes matched on all three: each response carried the scalar `status:`/`state:` line form and the steps-table row form together.
+So the unreadable shape drew no observation at all here, and it is modelled only by the defensive fixture `run_parked_scalar_gate_running` in `tests/fm-crew-state.test.sh`.
+A later reader should re-run those two probes against a newer no-mistakes before relying on that, because a response shape that drops either form would move real parks into the never-absorbed exclusion without any test failing.
+
 ## Forge probe for a monitoring ci step
 
 This record supports the forge half of the stalled-run detection in `bin/fm-crew-state.sh`: the arm that settles a ci step which keeps logging while what it waits for cannot arrive.
