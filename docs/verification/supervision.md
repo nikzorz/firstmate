@@ -331,6 +331,23 @@ Every one of the three published a resolvable gate status word, and both probes 
 So the unreadable shape drew no observation at all here, and it is modelled only by the defensive fixture `run_parked_scalar_gate_running` in `tests/fm-crew-state.test.sh`.
 A later reader should re-run those two probes against a newer no-mistakes before relying on that, because a response shape that drops either form would move real parks into the never-absorbed exclusion without any test failing.
 
+## Ask-user action row on a parked gate
+
+This record supports the other half of that same gate-ownership rule, which appends the ownership token only when the gate's findings table carries a row whose `action` column is exactly `ask-user`.
+That half is the structurally stricter of the two and the one that actually gates the absorb, because it depends on the table being present, on its header naming an `action` column, on the rows being indented under that header, and on the cell holding that exact value.
+The rule itself and every way it can refuse are covered without a real run by `tests/fm-crew-state.test.sh`, but every fixture there hard-codes the table, so whether real output renders it that way is evidence rather than a contract.
+
+Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
+The subject was five real `axi status` gate responses captured from this branch's own validation run, one per review round, covering one `awaiting_approval` gate and four `fix_review` gates.
+The predicate checked was `nm_gate_has_ask_user_action` in `bin/fm-crew-state.sh`, its own awk run verbatim against each captured response rather than a copy here that would drift from it.
+
+All five rendered their gate findings as a `findings[N]{id,severity,file,action,description}` table carrying a literal `action` column, with `ask-user` present as an exact cell value in that column, and the predicate returned its match token for all five.
+The single `awaiting_approval` capture is the one that matters most, and it matched: `fix_review` is excluded from the ownership token by design, so an `awaiting_approval` park is the only shape that can earn the token and therefore the only shape that can produce a `deciding` absorb.
+
+This is evidence that this version renders the table this way, not proof that every version will.
+A future response shape that drops the table, renames the column, or reports the finding count without a table would make the predicate return false, which moves a real park into the never-absorbed exclusion with no test failing, because every fixture in the suite hard-codes the table.
+That failure runs in the same benign direction the record above states for the status word: the absorb simply does not fire, firstmate keeps getting the wake exactly as it does today, and nothing is silenced.
+
 ## Forge probe for a monitoring ci step
 
 This record supports the forge half of the stalled-run detection in `bin/fm-crew-state.sh`: the arm that settles a ci step which keeps logging while what it waits for cannot arrive.
