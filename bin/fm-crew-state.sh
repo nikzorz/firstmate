@@ -48,7 +48,11 @@
 #      invalidates attribution.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
+#      passed/checks-passed -> done, failed/cancelled -> failed. A `parked`
+#      detail additionally publishes WHO owns the gate, because the two parks
+#      are different waits: nm_gate_needs_authority below owns that rule and
+#      appends the marker only for a gate the crew may not answer itself.
+#      EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
@@ -403,6 +407,58 @@ nm_gate_findings_count() {
   rest=${rest%%|*}
   case "$rest" in ''|*[!0-9]*) return 0 ;; esac
   printf '%s' "$rest"
+}
+# 0 when the gate the run stopped at is one the crew may not answer itself, the
+# fact FM_CLASSIFY_AUTHORITY_GATE_MARKER publishes (rule owned here, literal
+# owned by bin/fm-classify-lib.sh). Both halves must hold, and both are read
+# from the run output already captured:
+#
+#   - the gate status word must be `awaiting_approval`, the state in which the
+#     run is asking for a DECISION, not `fix_review`, where it is asking the
+#     worker to review fixes it has already made (AGENTS.md's Validate section
+#     owns which of those the worker answers);
+#   - the gate's own findings table must carry a row whose `action` column is
+#     exactly `ask-user`, the action AGENTS.md reserves to firstmate or the
+#     captain because the implementation worker never answers its own finding.
+#
+# The column is located by NAME in the table header, because that header's
+# column set genuinely varies by step and version, and only rows indented under
+# that header are read. A finding whose description merely mentions the token,
+# and any other prose in the output, therefore contributes nothing. A gate whose
+# status word cannot be read at all is not evidence of anything and reports 1,
+# so an unreadable shape surfaces rather than absorbs.
+nm_gate_needs_authority() {
+  [ "$(nm_gate_status)" = awaiting_approval ] || return 1
+  [ -n "$(printf '%s\n' "$RUN_OUT" | awk -v want=ask-user -v want_col=action '
+    {
+      n = match($0, /[^ ]/)
+      if (n == 0) next
+      indent = n - 1
+      body = substr($0, n)
+      if (intab && indent <= ind) intab = 0
+      if (intab) {
+        if (col > 0 && split(body, f, ",") >= ncol) {
+          v = f[col]
+          gsub(/^[ \t"]+/, "", v); gsub(/[ \t"]+$/, "", v)
+          if (v == want) { found = 1; exit }
+        }
+      } else if (body ~ /^findings\[[0-9]+\]\{[^}]*\}[ \t]*:/) {
+        hdr = body
+        sub(/^findings\[[0-9]+\]\{/, "", hdr)
+        sub(/\}[ \t]*:.*$/, "", hdr)
+        ncol = split(hdr, cols, ",")
+        col = 0
+        for (i = 1; i <= ncol; i++) {
+          c = cols[i]
+          gsub(/^[ \t]+/, "", c); gsub(/[ \t]+$/, "", c)
+          if (c == want_col) col = i
+        }
+        ind = indent
+        intab = 1
+      }
+    }
+    END { if (found) print "yes" }
+  ')" ]
 }
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
@@ -955,8 +1011,8 @@ if [ "$HAVE_RUN" = 1 ]; then
       RUN_DETAIL="parked at $gate"
       fcount=$(nm_gate_findings_count)
       [ -n "$fcount" ] && RUN_DETAIL="$RUN_DETAIL: $fcount finding(s)"
-      if printf '%s\n' "$RUN_OUT" | grep -q 'ask-user'; then
-        RUN_DETAIL="$RUN_DETAIL (ask-user: authority decision)"
+      if nm_gate_needs_authority; then
+        RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
       fi
     else
       case "$status" in

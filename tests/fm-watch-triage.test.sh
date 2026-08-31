@@ -628,22 +628,24 @@ test_deciding_absorb_class_classifier() {
   [ "$(crew_absorb_class missing)" = none ] \
     || fail "a parked crew with no status file at all was absorbed"
 
-  # Correlation. The fold records a decision for the whole TASK while the park is
-  # a fact about ONE gate, so an open key on its own must not absorb: this crew
+  # Gate ownership. The fold records a decision for the whole TASK while the park
+  # is a fact about ONE gate, so an open key on its own must not absorb: this crew
   # keeps its decision open throughout, and only the parked line changes.
   printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/correlate.status"
-  [ "$(crew_absorb_class correlate)" = deciding ] || fail "the correlation fixture did not start absorbable"
+  [ "$(crew_absorb_class correlate)" = deciding ] || fail "the ownership fixture did not start absorbable"
 
-  # A gate the WORKER itself must answer carries no ask-user marker, so nothing
-  # here says anyone else owes this crew an answer.
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at fix_review: 3 finding(s)'
+  # A gate the WORKER itself must answer carries no ownership token, so nothing
+  # here says anyone else owes this crew an answer. The line is what
+  # bin/fm-crew-state.sh emits for a fix-review park, including one whose
+  # findings carry an ask-user row; tests/fm-crew-state.test.sh owns that half.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s)'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a park at a worker-owned gate was absorbed as an outstanding decision"
 
   # The run-less fallback derives `parked` from the very `needs-decision:` line
   # this fold reads, so it correlates nothing with nothing. Its detail is the
-  # crew's own note, spelled here to repeat the marker verbatim: that is exactly
-  # why the source is gated rather than the marker alone.
+  # crew's own note, spelled here to repeat the ownership token verbatim: that is
+  # exactly why the source is gated rather than the token alone.
   FM_FAKE_CREW_STATE='state: parked · source: status-log · review escalated an (ask-user: authority decision) finding'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a status-log parked fallback was absorbed as an outstanding decision"
@@ -848,12 +850,15 @@ test_parked_crew_with_a_newer_captain_line_still_surfaces() {
   pass "a captain-relevant line newer than the decision still surfaces on a parked crew"
 }
 
-# The correlation gate end to end, and the regression for an absorb that could
+# The gate-ownership gate end to end, and the regression for an absorb that could
 # otherwise go silent for good: everything the deciding arm reads about the TASK
 # is satisfied - the run is parked, a decision is open, and the crew's last line
 # is that `needs-decision:` - but the gate the run stopped at is one the WORKER
 # itself must answer, so nobody else owes this crew anything and a wedge here has
-# no other wake owner. It must surface.
+# no other wake owner. It must surface. Whether a given run shape earns the
+# ownership token is bin/fm-crew-state.sh's rule and is asserted against the real
+# producer in tests/fm-crew-state.test.sh, including the fix-review gate whose
+# findings carry an ask-user row; this pins what the watcher does without it.
 test_parked_at_a_worker_owned_gate_still_surfaces() {
   local dir state fakebin out drain_out capture_file window key pane_hash pid
   dir=$(make_case deciding-stale-worker-gate); state="$dir/state"; fakebin="$dir/fakebin"
@@ -867,7 +872,7 @@ test_parked_at_a_worker_owned_gate_still_surfaces() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at fix_review: 3 finding(s)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s)'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -885,7 +890,8 @@ test_parked_at_a_worker_owned_gate_still_surfaces() {
 # The other half of the same gate: a crew with no run attributed at all, whose
 # `parked` is read straight off the very `needs-decision:` line the fold then
 # calls open. The verdict's detail is the crew's own note, spelled here to repeat
-# the marker verbatim, so this case can only surface because the SOURCE is gated.
+# the ownership token verbatim, so this case can only surface because the SOURCE
+# is gated.
 test_parked_from_the_status_log_fallback_still_surfaces() {
   local dir state fakebin out drain_out capture_file window key pane_hash pid
   dir=$(make_case deciding-stale-log-source); state="$dir/state"; fakebin="$dir/fakebin"

@@ -161,13 +161,14 @@ pause_deadline_reached() {  # <state-dir> <id>
 FM_CLASSIFY_USAGE_LIMITED_STATE='usage-limited'
 FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
 
-# The marker bin/fm-crew-state.sh appends to a `parked` detail when the gate the
-# run stopped at is one the crew cannot answer itself, so the wait belongs to
-# firstmate or the captain rather than to the worker. That script owns the rule
-# for when it is written; this is only the literal both sides must spell the
-# same way, and it carries no per-home override for the same reason the
-# usage-limit tokens above carry none.
-FM_CLASSIFY_ASK_USER_MARKER='(ask-user: authority decision)'
+# The token bin/fm-crew-state.sh appends to a `parked` detail to publish WHO
+# owns the gate the run stopped at: present means the answer belongs to
+# firstmate or the captain rather than to the worker. nm_gate_needs_authority
+# there owns the rule for when it is written and is the only place that rule is
+# stated; this is only the literal both sides must spell the same way, and it
+# carries no per-home override for the same reason the usage-limit tokens above
+# carry none. The producer reads it from here rather than repeating the text.
+FM_CLASSIFY_AUTHORITY_GATE_MARKER='(ask-user: authority decision)'
 
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
@@ -507,18 +508,31 @@ fm_classify_landing_route_armed() {  # <id>
 # once through the signal path exactly as before. This class only silences the
 # repeat stale wakes that follow it.
 #
-# An open decision on its own is not enough, because the fold is a record about
-# the whole TASK while the park is a fact about ONE gate, and nothing ties them
-# together. A key left open before validation even started, plus a later park at
-# a gate the worker itself must answer, would otherwise read as "correctly
-# waiting on somebody else" for as long as that worker stayed wedged - an absorb
-# with no timer and no other wake owner, which is strictly worse than the wake
-# noise it replaces. So crew_absorb_verdict below demands the correlation too,
-# and only the run-step path can supply it: the parked line must carry
-# FM_CLASSIFY_ASK_USER_MARKER, written exactly when the gate is one the crew
-# cannot answer itself, and the status-log `parked` fallback is rejected because
-# it derives the park from the very needs-decision line being folded here, which
-# correlates nothing with nothing.
+# An open decision on its own is not enough. The fold is a record about the whole
+# TASK while the park is a fact about ONE gate, so an open key left behind before
+# validation even started, plus a later park at a gate the WORKER must answer,
+# would read as "correctly waiting on somebody else" for as long as that worker
+# stayed wedged - an absorb with no timer and no other wake owner, which is
+# strictly worse than the wake noise it replaces. So crew_absorb_verdict below
+# also requires FM_CLASSIFY_AUTHORITY_GATE_MARKER on the parked line, and only
+# the run-step path can carry it: the status-log `parked` fallback derives the
+# park from the very needs-decision line being folded here, so it correlates
+# nothing with nothing.
+#
+# Be exact about what that token buys, because it is less than a correlation.
+# It proves WHO OWNS the gate this run is parked at - firstmate or the captain,
+# not the worker. It does NOT prove the open key the fold reports is the answer
+# this particular park is waiting on, and nothing available here can: the fold
+# is keyed per task and the park names no key. So the class rests on two
+# separate facts that agree in the observed incidents rather than on one that
+# implies the other.
+#
+# The residual that leaves, stated rather than hidden: a task carrying an
+# unrelated key that was answered in-pane but never closed with `resolved:`,
+# whose run then parks at an authority-owned gate, and whose worker then wedges,
+# stays absorbed for as long as the key stays open. The gate is narrower than
+# before - a worker-owned park no longer reaches the class at all - but it is
+# not closed, and the stale timer is not what closes it. Closing the key does.
 #
 # The fold is verb-blind, so a key opened by `blocked:` counts as open here just
 # as a `needs-decision:` one does. What keeps a crew asking firstmate to ACT
@@ -555,16 +569,14 @@ fm_classify_decision_outstanding() {  # <id>
 #                timer must not keep raising the same idle pane while the
 #                captain takes their time over the PR;
 #   deciding   - the crew's authoritative current state is a `run-step` `parked`
-#                whose detail carries FM_CLASSIFY_ASK_USER_MARKER AND the task's
-#                status stream still carries an open keyed decision
-#                (fm_classify_decision_outstanding above). The crew cannot
-#                proceed until firstmate or the captain answers, so the stale
-#                timer must not keep raising the same idle pane while that
-#                answer is outstanding. A park at a gate the worker itself must
+#                whose detail carries FM_CLASSIFY_AUTHORITY_GATE_MARKER, so the
+#                gate is one firstmate or the captain owns, AND the task's status
+#                stream still carries an open keyed decision
+#                (fm_classify_decision_outstanding above). Those are two separate
+#                facts, not one implying the other - see the residual named in
+#                the section above. A park at a gate the worker itself must
 #                answer, and the run-less status-log `parked` fallback, are both
-#                deliberately left out: an absorb needs evidence correlating the
-#                wait with what is being waited FOR, and neither is that
-#                evidence;
+#                deliberately left out;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
@@ -633,7 +645,7 @@ crew_absorb_verdict() {  # <id>
   fi
   if [ "$state" = parked ] && [ "$src" = run-step ]; then
     case "$line" in
-      *"$FM_CLASSIFY_ASK_USER_MARKER"*)
+      *"$FM_CLASSIFY_AUTHORITY_GATE_MARKER"*)
         if fm_classify_decision_outstanding "$id"; then printf 'deciding %s' "$src"; return; fi
         ;;
     esac
