@@ -1280,6 +1280,14 @@ test_worker_owned_fix_review_gate_publishes_no_authority_marker() {
   assert_contains "$out" "state: parked" "a fix-review gate still reports parked"
   assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a fix-review gate carrying an ask-user row published the authority-gate marker"
+  # This gate's owner WAS read and is the worker, so the note must report the
+  # finding without naming an owner: firstmate reads this line to decide whether
+  # to escalate, and a note claiming the owner is unknown argues for the
+  # escalation the rule above just ruled out.
+  assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
+    "a fix-review gate with an ask-user row lost or reworded its operator note"
+  assert_not_contains "$out" "unread" \
+    "the operator note claims the gate owner is unread on a gate whose owner was read"
   pass "a gate the worker itself must answer publishes no authority-gate marker"
 }
 
@@ -1332,7 +1340,10 @@ test_unreadable_gate_status_keeps_the_note_without_the_marker() {
   assert_contains "$out" "state: parked" "an unreadable-status gate still reports parked"
   assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a park whose gate status word cannot be read published the authority-gate marker"
-  assert_contains "$out" "ask-user finding" "an ask-user action row left no operator note at all"
+  # The same note the fix-review park gets, because once the token is withheld
+  # the two shapes are indistinguishable and the note must not guess which.
+  assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
+    "an unreadable-status park lost or reworded its operator note"
   case "$out" in
     *"$FM_CLASSIFY_AUTHORITY_GATE_MARKER"*)
       fail "the operator note contains the ownership token, so this park reads as authority-owned" ;;

@@ -646,7 +646,7 @@ test_deciding_absorb_class_classifier() {
   # its operator note instead of the ownership token. The note reports what the
   # findings table shows and claims nothing about who answers, so it must leave
   # this verdict exactly where the bare line above left it.
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, gate owner unread]'
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, authority gate unconfirmed]'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "the operator ask-user note was read as the gate-ownership token"
 
@@ -915,7 +915,7 @@ test_the_operator_note_is_inert_to_the_absorb_classifier() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, gate owner unread]'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) [ask-user finding, authority gate unconfirmed]'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \

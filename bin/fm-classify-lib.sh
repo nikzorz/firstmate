@@ -514,8 +514,16 @@ fm_classify_landing_route_armed() {  # <id>
 # would read as "correctly waiting on somebody else" for as long as that worker
 # stayed wedged - an absorb with no timer and no other wake owner, which is
 # strictly worse than the wake noise it replaces. So crew_absorb_verdict below
-# also requires FM_CLASSIFY_AUTHORITY_GATE_MARKER on the parked line, and only
-# the run-step path can carry it: the status-log `parked` fallback derives the
+# also requires FM_CLASSIFY_AUTHORITY_GATE_MARKER on the parked line, and
+# separately requires the source to be `run-step`.
+#
+# The source check is NOT redundant with the token match, and deleting it as
+# such is the mistake to avoid here. A status-log `parked` line's detail is the
+# crew's own unconstrained prose, so a crew that writes `needs-decision: review
+# escalated an (ask-user: authority decision) finding` produces a parked line
+# carrying the literal verbatim, and the token means nothing on that path. Only
+# a run-step line's detail comes from bin/fm-crew-state.sh's own gate reading.
+# The fallback is worthless as evidence for a second reason too: it derives the
 # park from the very needs-decision line being folded here, so it correlates
 # nothing with nothing.
 #

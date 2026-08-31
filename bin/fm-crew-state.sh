@@ -53,7 +53,7 @@
 #      are different waits: nm_gate_needs_authority below owns that rule and
 #      appends the marker only for a gate the crew may not answer itself. Every
 #      other park whose findings carry an ask-user action gets the operator note
-#      beside it instead, which claims nothing about ownership.
+#      beside it instead, which reports the finding without naming an owner.
 #      EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
@@ -410,11 +410,18 @@ nm_gate_findings_count() {
   case "$rest" in ''|*[!0-9]*) return 0 ;; esac
   printf '%s' "$rest"
 }
-# Operator-facing note for a parked gate whose findings include an ask-user
-# action but whose ownership this reader could not establish, which is every
-# parked shape nm_gate_needs_authority below turns down. It exists because the
-# ownership rule is narrower than the old whole-output search it replaced, and
-# without it those shapes lost a hint an operator reads.
+# Operator-facing note for a parked gate whose findings carry an ask-user action
+# but which nm_gate_needs_authority below did not confirm as authority-owned. It
+# exists because the ownership rule is narrower than the old whole-output search
+# it replaced, and without it those parks lost a hint an operator reads.
+#
+# It says only those two things, because they are the only two this reader
+# established, and they arise from two DIFFERENT situations it cannot tell apart
+# after the fact: a `fix_review` gate, whose owner was read and is the worker,
+# and a gate whose status word neither probe could read, whose owner is genuinely
+# unknown. Both get this note. It must never claim which, because firstmate reads
+# this line to decide whether to escalate, and naming the wrong one argues for an
+# escalation the ownership rule just ruled out.
 #
 # It is deliberately NOT the ownership token and must never become it. The two
 # strings have to stay textually DISJOINT - neither a substring of the other -
@@ -424,7 +431,7 @@ nm_gate_findings_count() {
 # there, silently absorbing exactly the parks that must keep surfacing. This
 # note is display text only: nothing consumes it, it is not published as a
 # shared constant, and it must not become one.
-NM_GATE_ASK_USER_NOTE='[ask-user finding, gate owner unread]'
+NM_GATE_ASK_USER_NOTE='[ask-user finding, authority gate unconfirmed]'
 
 # 0 when the gate's own findings table carries a row whose `action` column is
 # exactly `ask-user`, the action AGENTS.md reserves to firstmate or the captain
@@ -470,8 +477,9 @@ nm_gate_has_ask_user_action() {
 
 # 0 when the gate the run stopped at is one the crew may not answer itself, the
 # fact FM_CLASSIFY_AUTHORITY_GATE_MARKER publishes (rule owned here, literal
-# owned by bin/fm-classify-lib.sh). Both halves must hold, and both are read
-# from the run output already captured:
+# owned by bin/fm-classify-lib.sh). It takes the two facts rather than gathering
+# them, because the parked branch below has already resolved both and neither
+# probe is worth running twice; this owns only how they combine. Both must hold:
 #
 #   - the gate status word must be `awaiting_approval`, the state in which the
 #     run is asking for a DECISION, not `fix_review`, where it is asking the
@@ -480,14 +488,13 @@ nm_gate_has_ask_user_action() {
 #   - the gate's findings table must carry an ask-user action row
 #     (nm_gate_has_ask_user_action above).
 #
-# A gate whose status word cannot be read at all is not evidence of anything and
-# reports 1, so such a park surfaces rather than absorbs. That shape keeps the
-# operator note above instead, which says what the table shows without claiming
-# the ownership the token would. docs/verification/supervision.md records what
-# real parked runs published when this rule was measured.
-nm_gate_needs_authority() {
-  [ "$(nm_gate_status)" = awaiting_approval ] || return 1
-  nm_gate_has_ask_user_action
+# A gate whose status word could not be read is not evidence of anything and
+# reports 1, so such a park surfaces rather than absorbs, exactly as a
+# `fix_review` gate does. Either way the park keeps the operator note above
+# instead of the token. docs/verification/supervision.md records what real
+# parked runs published when this rule was measured.
+nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
+  [ "$1" = awaiting_approval ] && [ "$2" = yes ]
 }
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
@@ -1040,9 +1047,11 @@ if [ "$HAVE_RUN" = 1 ]; then
       RUN_DETAIL="parked at $gate"
       fcount=$(nm_gate_findings_count)
       [ -n "$fcount" ] && RUN_DETAIL="$RUN_DETAIL: $fcount finding(s)"
-      if nm_gate_needs_authority; then
+      ask_user_row=no
+      nm_gate_has_ask_user_action && ask_user_row=yes
+      if nm_gate_needs_authority "$gate_status" "$ask_user_row"; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
-      elif nm_gate_has_ask_user_action; then
+      elif [ "$ask_user_row" = yes ]; then
         RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi
     else
