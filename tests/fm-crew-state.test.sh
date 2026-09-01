@@ -58,17 +58,6 @@ make_repo_on_branch() {  # <dir> <branch>
   export FM_FAKE_RUN_HEAD
 }
 
-# Set <file>'s mtime <seconds> into the past. Both touch dialects accept the
-# -t CCYYMMDDhhmm form, so only the epoch-rendering date flag differs; GNU date
-# is probed first because BSD's -r would read that argument as a file name on a
-# system where -d works.
-age_file() {  # <file> <seconds-ago>
-  local when stamp
-  when=$(( $(date +%s) - $2 ))
-  stamp=$(date -d "@$when" +%Y%m%d%H%M 2>/dev/null) || stamp=$(date -r "$when" +%Y%m%d%H%M)
-  touch -t "$stamp" "$1"
-}
-
 # A fakebin with a fake `no-mistakes` (serves the env-driven run output) and a
 # fake `tmux` (serves a busy or idle pane). The fake no-mistakes mirrors the real
 # command surface the helper uses: `axi status`, `axi status --run <id>` (the
@@ -403,6 +392,36 @@ gate: review
 EOF
 }
 
+# The park identity as the classifier slices it out, for tests that compare one
+# published identity against another.
+park_identity_of() {  # <current-state-line>
+  local v=$1
+  case "$v" in *"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"*) ;; *) return 0 ;; esac
+  v=${v#*"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"}
+  printf '%s' "${v%%)*}"
+}
+
+# crew_absorb_class over the real producer, with this case's state dir and fake
+# no-mistakes in place, so the sighting record lands where teardown would find it.
+absorb_class_in() {  # <case-dir> <id>
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" crew_absorb_class "$2"
+}
+
+# A parked gate with neither a run head nor a findings table, so the gate name is
+# all that is left to identify the park with.
+run_parked_headless_findingless() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: fix_review
+  awaiting_agent: parked 2m10s
+  head: ""
+  pr: ""
+gate: review
+EOF
+}
+
 run_parked_scalar_gate_running() {  # <branch>
   cat <<EOF
 run:
@@ -438,19 +457,20 @@ EOF
 }
 
 # A fix-review gate carrying an ask-user finding, the shape most real escalation
-# parks take, together with the park clock no-mistakes publishes for the episode
-# the run is currently sitting in.
-run_parked_fix_review() {  # <branch> [<parked-duration>]
+# parks take. The optional second argument names the finding, which is what a new
+# review round actually changes and therefore what moves the park identity: pass
+# a different one to model the run having been answered and re-parked.
+run_parked_fix_review() {  # <branch> [<finding-id>]
   cat <<EOF
 run:
   id: "01RUN"
   branch: $1
   status: fix_review
-  awaiting_agent: parked ${2:-2m10s}
+  awaiting_agent: parked 2m10s
   head: "${FM_FAKE_RUN_HEAD:-abc1234}"
   pr: ""
   findings[1]{id,severity,file,line,action,description}:
-    r1,error,b.go,,ask-user,changes product behavior
+    ${2:-r1},error,b.go,,ask-user,changes product behavior
 gate: review
 EOF
 }
@@ -1318,10 +1338,9 @@ test_fix_review_gate_with_an_ask_user_row_publishes_the_authority_marker() {
   assert_contains "$out" "state: parked" "a fix-review gate still reports parked"
   assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a fix-review gate carrying an ask-user row published no authority-gate marker"
-  # The crew wrote its decision at this park, so the second token is published
-  # too - the pair is what the absorb reads.
-  assert_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
-    "a crew that wrote its status at this park published no park-current marker"
+  # The park identity is published beside it - the pair is what the absorb reads.
+  assert_contains "$out" "$FM_CLASSIFY_PARK_IDENTITY_PREFIX" \
+    "a fix-review park published no park identity"
   assert_not_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
     "a confirmed authority gate also carried the unconfirmed-owner operator note"
   pass "a fix-review gate carrying an ask-user row publishes the authority-gate marker"
@@ -1402,7 +1421,7 @@ test_ask_user_in_prose_does_not_publish_the_authority_marker() {
   pass "only an ask-user action column publishes the authority-gate marker"
 }
 
-# --- which park episode the crew's record belongs to --------------------------
+# --- which park episode the crew's decision belongs to ------------------------
 #
 # The ownership token says who owns the gate; it cannot say whether the decision
 # the status fold still reports open is about THIS park. The shape that makes
@@ -1410,99 +1429,63 @@ test_ask_user_in_prose_does_not_publish_the_authority_marker() {
 # pipeline fixes, the run parks again, and the worker wedges before writing
 # anything about the new gate. Its old `needs-decision:` line stands over a park
 # it never announced, and absorbing that would silence it with no timer and no
-# other wake owner left. The park clock restarts with each episode, so a status
-# record older than the episode is a record about a previous one.
+# other wake owner left.
 #
-# Every way the clock can fail to establish that withholds the token too, and the
-# cases below pin each one: no evidence is not evidence, so such a park surfaces
-# exactly as it did before this rule existed rather than being absorbed on a fact
-# nothing established.
-test_a_park_the_crew_never_wrote_about_publishes_no_park_marker() {
+# What tells them apart is an IDENTITY for the park, compared across two
+# sightings of the same task. bin/fm-crew-state.sh composes and publishes it;
+# bin/fm-classify-lib.sh remembers the last one and owns the comparison, so these
+# cases pin the producer half and the end-to-end cases below pin the rest.
+test_a_park_publishes_an_identity_that_moves_with_the_round() {
   reset_fakes
-  local d; d=$(new_case gate-park-stale-status)
+  local d first second; d=$(new_case gate-park-identity)
   make_repo_on_branch "$d/wt" fm/feat-go6
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-go6.meta" "window=fm:fm-feat-go6" "worktree=$d/wt" "kind=ship"
   printf 'needs-decision: review gate\n' > "$d/state/feat-go6.status"
-  touch -t 200001010000 "$d/state/feat-go6.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go6 5m0s)"
-  local out; out=$(run_crew_state "$d" feat-go6)
-  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
-    "the gate ownership token depends on the crew's status age"
-  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
-    "a decision written long before this park episode published the park-current marker"
-  pass "a park the crew never wrote about publishes no park-current marker"
+
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go6 round-one-finding)"
+  first=$(park_identity_of "$(run_crew_state "$d" feat-go6)")
+  [ -n "$first" ] || fail "a fix-review park published no park identity at all"
+
+  # The same response read again names the same park: an identity that moved on
+  # its own would surface every absorbable park forever.
+  [ "$(park_identity_of "$(run_crew_state "$d" feat-go6)")" = "$first" ] \
+    || fail "one unchanged park response produced two different identities"
+
+  # The round is answered and the pipeline raises the next one. The gate word and
+  # the step are the same; only the finding is new, which is what a real round
+  # changes, and that alone must move the identity.
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go6 round-two-finding)"
+  second=$(park_identity_of "$(run_crew_state "$d" feat-go6)")
+  [ -n "$second" ] || fail "the second round published no park identity"
+  [ "$second" != "$first" ] \
+    || fail "a re-park at the same gate with new findings reused the first park's identity"
+  pass "a park publishes an identity that is stable within a round and moves with the next"
 }
 
-# No published clock is no evidence, not a fresh park: the field is omitted
-# unless the run is parked for the agent, and a response shape that stopped
-# rendering it must move parks into the never-absorbed side rather than the
-# absorbed one. The cost of that direction is that such an installation gets no
-# absorb at all, which is the deliberate price of never swallowing a park.
-test_a_park_with_no_published_clock_publishes_no_park_marker() {
+# Nothing to fingerprint is no evidence: a response with neither a run head nor a
+# findings table leaves only the gate name, which repeats across rounds, so an
+# identity built from it would read a stale decision as this park's.
+test_a_park_with_nothing_to_identify_it_publishes_no_identity() {
   reset_fakes
-  local d; d=$(new_case gate-park-no-clock)
+  local d; d=$(new_case gate-park-no-identity)
   make_repo_on_branch "$d/wt" fm/feat-go7
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-go7.meta" "window=fm:fm-feat-go7" "worktree=$d/wt" "kind=ship"
   printf 'needs-decision: review gate\n' > "$d/state/feat-go7.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_in_gate_block fm/feat-go7)"
+  FM_FAKE_AXI_STATUS="$(run_parked_headless_findingless fm/feat-go7)"
   local out; out=$(run_crew_state "$d" feat-go7)
-  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
-    "a fix-review gate resolved from a gate block published no authority-gate marker"
-  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
-    "a park publishing no clock at all published the park-current marker"
-  pass "a park with no published clock publishes no park-current marker"
+  assert_contains "$out" "state: parked" "a park with no identifying material stopped the park read"
+  assert_not_contains "$out" "$FM_CLASSIFY_PARK_IDENTITY_PREFIX" \
+    "a park with only a gate name to go on published an identity anyway"
+  pass "a park with nothing to identify it publishes no identity"
 }
 
-# A token that does not parse is the same absence, and must not be read as a
-# zero-length park - which would make every stale status record look current.
-# The status file here is FRESH, so it would earn the token under any parseable
-# clock; only the unparseable token withholds it.
-test_an_unparseable_park_clock_publishes_no_park_marker() {
-  reset_fakes
-  local d; d=$(new_case gate-park-bad-clock)
-  make_repo_on_branch "$d/wt" fm/feat-go8
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-go8.meta" "window=fm:fm-feat-go8" "worktree=$d/wt" "kind=ship"
-  printf 'needs-decision: review gate\n' > "$d/state/feat-go8.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go8 "a while")"
-  local out; out=$(run_crew_state "$d" feat-go8)
-  assert_contains "$out" "state: parked" "an unparseable park clock stopped the park read"
-  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
-    "an unparseable park clock published the park-current marker"
-  pass "an unparseable park clock publishes no park-current marker"
-}
-
-# The published clock is TRUNCATED, and coarsely so once a wait passes a day:
-# `parked 3d11h` covers anything up to 3d11h59m59s. The comparison is lenient by
-# exactly one rendered unit for that reason, because the overnight waits this
-# absorb exists for are the ones the render rounds hardest, and a strict bound
-# would refuse the ordinary shape - a crew that wrote its decision moments after
-# arriving at the gate.
-test_a_coarse_park_clock_does_not_refuse_a_decision_written_at_it() {
-  reset_fakes
-  local d; d=$(new_case gate-park-coarse-clock)
-  make_repo_on_branch "$d/wt" fm/feat-go9
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-go9.meta" "window=fm:fm-feat-go9" "worktree=$d/wt" "kind=ship"
-  printf 'needs-decision: review gate\n' > "$d/state/feat-go9.status"
-  # The run has been parked 3d11h30m and the crew wrote its decision at the top
-  # of that episode; the render can only say `3d11h`.
-  age_file "$d/state/feat-go9.status" $(( 3 * 86400 + 11 * 3600 + 30 * 60 ))
-  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go9 3d11h)"
-  local out; out=$(run_crew_state "$d" feat-go9)
-  assert_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
-    "the truncated park clock refused a decision written at the park it names"
-  pass "a coarse park clock does not refuse a decision written at that park"
-}
-
-# The deciding absorb end to end over the REAL producer, not a canned verdict
-# line: the majority park shape - `fix_review`, with an ask-user finding at the
-# gate - reaching the classifier and being absorbed, and the same crew surfacing
-# once its status record no longer belongs to the park in front of it. This is
-# the pair the two-part chain above only implies; tests/fm-watch-triage.test.sh
-# owns what the watcher then does with each verdict.
+# The deciding absorb end to end over the REAL producer and the REAL classifier,
+# not a canned verdict line: the majority park shape - `fix_review`, with an
+# ask-user finding at the gate - reaching the classifier, and each of the three
+# sighting cases the rule turns on. tests/fm-watch-triage.test.sh owns what the
+# watcher then does with each verdict.
 test_deciding_class_over_the_real_helper() {
   reset_fakes
   local d out; d=$(new_case deciding-real-helper)
@@ -1511,20 +1494,49 @@ test_deciding_class_over_the_real_helper() {
   fm_write_meta "$d/state/feat-dr.meta" "window=fm:fm-feat-dr" "worktree=$d/wt" "kind=ship"
   printf 'needs-decision [key=review-2]: round 2 raised two ask-user findings\n' \
     > "$d/state/feat-dr.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-dr 41m22s)"
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-dr round-one-finding)"
 
-  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_absorb_class feat-dr)
+  # First sighting: nothing recorded, so nothing can be said about which episode
+  # the open decision belongs to, and the park surfaces.
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "a park seen for the first time was absorbed with nothing to compare it against: $out"
+
+  # Second sighting of the SAME park with the crew silent since: the decision it
+  # announced is the decision in front of it, so the answer owns the next wake.
+  out=$(absorb_class_in "$d" feat-dr)
   [ "$out" = deciding ] \
     || fail "a fix-review park on a decision firstmate already knows about was not absorbed: $out"
 
-  # The compensating gate, over the real producer: the same run, the same open
-  # decision, the same last line - but written before this park episode began, so
-  # the crew never said a word about the gate it is sitting at now.
-  touch -t 200001010000 "$d/state/feat-dr.status"
-  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_absorb_class feat-dr)
+  # The compensating gate, the whole reason this rule exists. Firstmate answered
+  # in the pane without the crew closing the key, the worker responded, the
+  # pipeline fixed, and the run parked again at a NEW round - and the crew wedged
+  # without writing a word about it. Same open key, same last line, same gate
+  # word; only the park moved.
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-dr round-two-finding)"
+  out=$(absorb_class_in "$d" feat-dr)
   [ "$out" = none ] \
     || fail "a park the crew never wrote about was absorbed over the real helper: $out"
-  pass "crew_absorb_class absorbs a fix-review park the crew announced and surfaces one it did not"
+
+  # And it STAYS surfaced. Adopting the new park as a fresh baseline would absorb
+  # it from here on, which is the silence-forever shape with extra steps.
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "a park the crew never wrote about was absorbed on the sighting after: $out"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "the never-announced verdict decayed after three sightings: $out"
+
+  # The crew finally speaks about the park it is at, so the wait is legible again.
+  printf 'needs-decision [key=review-3]: round 3 raised another ask-user finding\n' \
+    >> "$d/state/feat-dr.status"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "the sighting that first saw the crew speak absorbed before it could be placed: $out"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = deciding ] \
+    || fail "a crew that spoke about the park it is at was never absorbed again: $out"
+  pass "crew_absorb_class absorbs a park the crew announced and surfaces one it re-parked into silently"
 }
 
 test_scalar_gate_parked_not_superseded() {
@@ -2607,10 +2619,8 @@ test_authority_marker_reads_the_action_column_by_name
 test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
-test_a_park_the_crew_never_wrote_about_publishes_no_park_marker
-test_a_park_with_no_published_clock_publishes_no_park_marker
-test_an_unparseable_park_clock_publishes_no_park_marker
-test_a_coarse_park_clock_does_not_refuse_a_decision_written_at_it
+test_a_park_publishes_an_identity_that_moves_with_the_round
+test_a_park_with_nothing_to_identify_it_publishes_no_identity
 test_deciding_class_over_the_real_helper
 
 echo "all fm-crew-state tests passed"

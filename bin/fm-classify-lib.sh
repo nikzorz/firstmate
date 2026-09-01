@@ -172,28 +172,123 @@ FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
 FM_CLASSIFY_AUTHORITY_GATE_MARKER='(ask-user: authority decision)'
 
 # The second token bin/fm-crew-state.sh appends to a `parked` detail, beside the
-# one above: the crew's own status record was written during THIS park episode
-# rather than carried over from an earlier one. nm_park_holds_current_status
-# there owns the rule and is the only place it is stated; this is only the
-# literal both sides must spell the same way, and it carries no per-home
-# override for the same reason the token above carries none.
+# one above: an opaque IDENTITY for the park episode the run is stopped at,
+# written as this prefix, the identity, and a closing parenthesis.
+# nm_park_identity there owns what goes into it and is the only place that rule
+# is stated; this is only the literal both sides must spell the same way, and it
+# carries no per-home override for the same reason the token above carries none.
+#
+# The identity is meaningless on its own - it is compared against the LAST one
+# seen for the same task, recorded below, and only the comparison carries
+# meaning. That is the whole point: a park has no readable start time, but two
+# sightings of one task can say whether the run re-parked between them, and that
+# is exactly the fact the absorb needs.
 #
 # It must stay textually DISJOINT from the ownership token and from that
-# script's operator note - neither a substring of another - because
-# crew_absorb_verdict matches all of them as plain substrings of one line.
+# script's operator note - no one of the three a substring of another - because
+# crew_absorb_verdict matches the ownership token as a plain substring of the
+# same line it slices this one out of.
+FM_CLASSIFY_PARK_IDENTITY_PREFIX='(park '
+
+# Slice the park identity out of a current-state line. Refuses anything that is
+# not the fixed alphabet nm_park_identity emits, so a crew's own prose cannot
+# forge one; the run-step source check in crew_absorb_verdict is what keeps such
+# prose off this path in the first place, and this is the second lock.
+_fm_classify_park_identity() {  # <line>
+  local v=$1
+  case "$v" in *"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"*) ;; *) return 1 ;; esac
+  v=${v#*"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"}
+  v=${v%%)*}
+  case "$v" in ''|*[!0-9a-f]*) return 1 ;; esac
+  printf '%s' "$v"
+}
+
+# Per-task record of the last park sighting: one line, "<park-identity>
+# <status-fingerprint>", meaning "when this task was last seen parked at
+# <park-identity>, the crew's status file stood at <status-fingerprint>".
 #
-# Its LENGTH is a constraint too, and this spelling is as terse as it is for that
-# reason alone. bin/fm-bearings-snapshot.sh renders the same detail as a crew's
-# `doing` field through a fixed truncation, and the parked detail already carries
-# a gate name, a finding count and the token above, so a wordier spelling here
-# pushes the ordinary absorbable park past that budget and shows the captain a
-# mid-token ellipsis. Nothing reads either token out of the bearings JSON, so the
-# cost is display only. This spelling clears the budget for every gate name a
-# real gate line has carried; the unobserved arm that names the park after the
-# run status word still exceeds it, and that residual is accepted rather than
-# paid for by widening a budget this rule does not own.
-# docs/verification/supervision.md records the measured lengths.
-FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER='(status at this park)'
+# This library owns it for the same reason it owns the pause deadline above: the
+# supervisors both consult the absorb from here, and bin/fm-crew-state.sh is
+# documented read-only and side-effect free, so the reader that supplies the
+# identity must not be the one that remembers it. bin/fm-teardown.sh removes it
+# with the rest of a task's state, and AGENTS.md section 2 lists it.
+FM_CLASSIFY_PARK_SIGHTING_SUFFIX='.park-sighting'
+
+park_sighting_file() {  # <state-dir> <id>
+  printf '%s/%s%s' "$1" "$2" "$FM_CLASSIFY_PARK_SIGHTING_SUFFIX"
+}
+
+# A fingerprint of everything the crew has said, so "has the crew spoken since
+# the last sighting" is answered from the file's CONTENT rather than its mtime.
+# The status file is append-only, so any new word changes this; a touch by
+# something that appended nothing does not, which an mtime comparison could not
+# tell apart.
+_fm_classify_status_fingerprint() {  # <status-file>
+  local sum
+  [ -f "$1" ] || return 1
+  sum=$(cksum < "$1" 2>/dev/null) || return 1
+  sum=${sum%% *}
+  case "$sum" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$sum"
+}
+
+# 0 when nothing shows the crew's open decision to belong to an EARLIER park than
+# the one the run is stopped at now. Reads the record above, decides, and updates
+# it - the one place the sighting is both consulted and written, because the
+# verdict and the update are one step and splitting them would let a caller take
+# the verdict without advancing the evidence behind it.
+#
+# The three cases, and why the update rule is what it is:
+#
+#   - NO RECORD. This task has never been seen parked, so nothing can be said
+#     about which episode its open decision belongs to. Report 1 and escalate,
+#     which is this home's standing answer that unknown is not unannounced, and
+#     write the baseline so the NEXT sighting has something to compare against.
+#     A crash, a restart, a cleared state directory, and a task older than this
+#     rule all land here and all cost exactly one notification.
+#   - THE CREW HAS SPOKEN since the record was written. Write the new baseline,
+#     but answer from the record as it stood, because a word appended somewhere
+#     between two sightings cannot be placed on either side of a re-park that
+#     happened in the same window.
+#   - THE CREW HAS NOT SPOKEN. Do NOT write. This is the case the whole rule
+#     turns on: if the identity also matches, the crew's last word was already
+#     its last word when this same park was seen before, so the park it announced
+#     is the park in front of it and the wait absorbs. If the identity has
+#     CHANGED, the run re-parked and the crew has said nothing since - its open
+#     decision belongs to an episode already answered, which is the silence-
+#     forever shape. Leaving the record untouched is what makes that verdict
+#     STICK: every later sighting re-derives it from the same unmoved evidence,
+#     rather than adopting the new park as a baseline and absorbing on the next
+#     look.
+#
+# An unreadable status file reports 1 for the same reason a missing record does.
+fm_classify_park_announced() {  # <id> <park-identity>
+  local id=$1 park=$2 state f word seen_park='' seen_word=''
+  [ -n "$id" ] && [ -n "$park" ] || return 1
+  state=$(_fm_classify_state_dir)
+  [ -n "$state" ] || return 1
+  word=$(_fm_classify_status_fingerprint "$state/$id.status") || return 1
+  f=$(park_sighting_file "$state" "$id")
+  # Tested before reading, and `|| true` on the read: an absent record is the
+  # ordinary first-sighting case rather than an error, and a final line with no
+  # newline still populates both fields while read reports failure. Both are
+  # exactly what pause_deadline_reached above relies on.
+  if [ -f "$f" ]; then
+    read -r seen_park seen_word < "$f" 2>/dev/null || true
+  fi
+  case "$seen_park" in ''|*[!0-9a-f]*) seen_park='' ;; esac
+  case "$seen_word" in ''|*[!0-9]*) seen_word='' ;; esac
+  if [ -z "$seen_park" ] || [ -z "$seen_word" ]; then
+    printf '%s %s\n' "$park" "$word" > "$f" 2>/dev/null || true
+    return 1
+  fi
+  if [ "$word" != "$seen_word" ]; then
+    printf '%s %s\n' "$park" "$word" > "$f" 2>/dev/null || true
+    [ "$park" = "$seen_park" ]
+    return
+  fi
+  [ "$park" = "$seen_park" ]
+}
 
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
@@ -557,28 +652,28 @@ fm_classify_landing_route_armed() {  # <id>
 #   - FM_CLASSIFY_AUTHORITY_GATE_MARKER says WHO OWNS the gate this run is
 #     parked at - firstmate or the captain, not the worker. On its own it says
 #     nothing about which episode the open key belongs to.
-#   - FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER says the crew wrote its status
-#     record DURING THIS park episode. That is what ties the fold's open key to
-#     the park in front of it, because the alternative shape - firstmate answers,
-#     the worker responds to the gate, the pipeline fixes, the run parks again,
-#     and the worker wedges before saying anything about the new gate - leaves
-#     the old decision open over a park it never announced. The park clock
-#     no-mistakes publishes restarts with each episode, so a status record older
-#     than this episode is a record about a previous one.
+#   - FM_CLASSIFY_PARK_IDENTITY_PREFIX carries an identity for the park episode,
+#     which fm_classify_park_announced above weighs against the last one recorded
+#     for this task. That is what ties the fold's open key to the park in front
+#     of it, because the alternative shape - firstmate answers, the worker
+#     responds to the gate, the pipeline fixes, the run parks again, and the
+#     worker wedges before saying anything about the new gate - leaves the old
+#     decision open over a park it never announced. A run that re-parked while
+#     the crew stayed silent is exactly what two sightings of one task can show.
 #
 # What this still does not prove, stated rather than hidden: that the open key
 # names the FINDING at this gate. Nothing available here can, because the fold
 # is keyed per task and the park names no key. What the pair DOES establish is
 # narrower than it reads at a glance, and is worth stating exactly: that
-# firstmate owes an answer at a gate of this kind, and that the crew appended
-# something to its status record during this park episode. The second token is
-# an mtime test, so it dates the crew's last append and says nothing about what
-# that append was - a crew that wrote `working: rerunning tests` at this park
-# while an older key stayed open satisfies it just as a fresh `needs-decision:`
-# would. Narrowing that to a decision line is a SEPARATE gate that does not live
-# here: bin/fm-watch.sh additionally requires the crew's last status line to be
-# the `needs-decision` it is parked on, and it is today's only consumer of this
-# class. A second consumer would have to make that check for itself.
+# firstmate owes an answer at a gate of this kind, and that the run has not
+# re-parked since the crew last spoke. The second fact is a comparison of two
+# sightings, so it says nothing about WHAT the crew said - a crew that wrote
+# `working: rerunning tests` and then sat at one unchanging park satisfies it
+# just as a fresh `needs-decision:` would. Narrowing that to a decision line is
+# a SEPARATE gate that does not live here: bin/fm-watch.sh additionally requires
+# the crew's last status line to be the `needs-decision` it is parked on, and it
+# is today's only consumer of this class. A second consumer would have to make
+# that check for itself.
 #
 # A crew that opened a key, was answered in the pane rather than through a
 # `resolved:` line, and then stayed silent through a whole further park episode
@@ -586,11 +681,12 @@ fm_classify_landing_route_armed() {  # <id>
 # reaches, which is what its own status-reporting contract asks of it, is
 # absorbed.
 #
-# Both residuals the second token leaves are stated where its rule lives, in
-# nm_park_holds_current_status: past a day of waiting the published park clock
-# resolves to whole hours, so a decision written up to an hour before this
-# episode began still reads as written at it; and a run that publishes no clock
-# can never earn the token, so it never reaches this class at all.
+# The residuals the second fact leaves are stated where its rule lives, in
+# fm_classify_park_announced above: a task with no recorded sighting yet cannot
+# be judged and escalates once, so a crew already wedged in that shape when
+# firstmate first records it is absorbed from the sighting after; and a park
+# whose identity could not be composed publishes no token and never reaches this
+# class at all.
 #
 # The fold is verb-blind, so a key opened by `blocked:` counts as open here just
 # as a `needs-decision:` one does. What keeps a crew asking firstmate to ACT
@@ -636,14 +732,15 @@ _fm_classify_line_carries() {  # <line> <token>
 #   deciding   - the crew's authoritative current state is a `run-step` `parked`
 #                whose detail carries FM_CLASSIFY_AUTHORITY_GATE_MARKER, so the
 #                gate is one firstmate or the captain owns, AND
-#                FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER, so the crew's status
-#                record was written at this park episode rather than an earlier
-#                one, AND the task's status stream still carries an open keyed
+#                FM_CLASSIFY_PARK_IDENTITY_PREFIX naming a park episode that
+#                fm_classify_park_announced weighs as the one the crew last spoke
+#                at, AND the task's status stream still carries an open keyed
 #                decision (fm_classify_decision_outstanding above). Those are
 #                three separate facts, not one implying the others - see the
 #                section above. A park whose gate ownership could not be read, a
-#                park the crew never wrote about, and the run-less status-log
-#                `parked` fallback are all deliberately left out;
+#                park the crew never wrote about, a park seen for the first time,
+#                and the run-less status-log `parked` fallback are all
+#                deliberately left out;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
@@ -692,7 +789,7 @@ _fm_classify_line_carries() {  # <line> <token>
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_verdict() {  # <id>
-  local id=$1 line state src
+  local id=$1 line state src park
   [ -n "$id" ] || { printf 'none none'; return; }
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
   case "$line" in state:*) ;; *) printf 'none none'; return ;; esac
@@ -712,7 +809,8 @@ crew_absorb_verdict() {  # <id>
   fi
   if [ "$state" = parked ] && [ "$src" = run-step ] \
      && _fm_classify_line_carries "$line" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
-     && _fm_classify_line_carries "$line" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+     && park=$(_fm_classify_park_identity "$line") \
+     && fm_classify_park_announced "$id" "$park" \
      && fm_classify_decision_outstanding "$id"; then
     printf 'deciding %s' "$src"; return
   fi

@@ -353,11 +353,12 @@ That benign direction is a property of the measured header shape rather than of 
 A future header that places a quoted free-text column before `action` breaks that reading: a comma inside such a cell shifts the split, so a row carrying some other action can be read as `ask-user`, publishing the ownership token for a gate that has no ask-user row and absorbing a park that should have surfaced.
 That is the one direction the safety asymmetry forbids, so a reader who meets such a header shape can no longer rely on the benign-direction claim above.
 
-## Park clock on a parked run
+## Awaiting-agent field on a parked run
 
-This record supports the park-episode half of the parked detail in `bin/fm-crew-state.sh`: `nm_park_age_bounds` reads the `awaiting_agent: parked <duration>` line, and `nm_park_holds_current_status` compares it against the crew status file's mtime to decide whether the crew's record was written at the episode the run is sitting in now.
-Three things about that line are evidence rather than contract - that it is rendered at all for a parked run, that its figure restarts per park episode, and how coarsely it is truncated - and the truncation is what the comparison's leniency is sized from.
-The rule itself, both directions, and every way the line can be missing or unparseable are covered without a real run by `tests/fm-crew-state.test.sh`.
+This record supports one narrow thing the parked branch of `bin/fm-crew-state.sh` relies on: that a run stopped for the agent renders an `awaiting_agent:` line at all, which is one of the signals that branch treats as "this run is parked right now".
+Nothing reads a QUANTITY out of that line any more.
+An earlier revision of this rule derived the park's age from the printed duration and compared it against the crew status file's mtime; that comparison is gone, because the printed figure is truncated and every bound built on it carried a slack window in which a stale decision read as a current one.
+What replaced it is a park IDENTITY compared across two sightings, recorded in `state/<id>.park-sighting`, which has no resolution to lose.
 
 Measured on 2026-08-31 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
 Nothing live was touched: `NM_HOME` pointed at a copy of the state database, and the copy's own `runs` row was moved into a parked state so the field would render.
@@ -366,61 +367,39 @@ Nothing live was touched: `NM_HOME` pointed at a copy of the state database, and
 no-mistakes axi status --run <run-id>
 ```
 
-The row's `awaiting_agent_since` was set to a series of known offsets from the present, and every rendering the reader parses was produced:
-
-```
-      5 ->   awaiting_agent: parked 5s
-     70 ->   awaiting_agent: parked 1m10s
-   3725 ->   awaiting_agent: parked 1h2m
-  45000 ->   awaiting_agent: parked 12h30m
-  86399 ->   awaiting_agent: parked 23h59m
-  90000 ->   awaiting_agent: parked 1d1h
- 300000 ->   awaiting_agent: parked 3d11h
-```
-
-Four facts the reader depends on are visible here.
-The figure is always TRUNCATED, never rounded: 300000 seconds is 3d11h20m and renders `3d11h`, so the true age is at least the published one and less than one further unit of the smallest rendered unit.
-That smallest unit is named by the token's own trailing character, and it coarsens as the wait grows - seconds below an hour, minutes below a day, whole hours past a day - which is why the comparison is lenient by exactly one such unit and why the residual it leaves matters only past a day of waiting.
-The field renders for both parked words, so it is available for the `fix_review` shape most escalation parks take and not only for the approval one:
+The field rendered for both parked words, so it is available for the `fix_review` shape most escalation parks take and not only for the approval one:
 
 ```
 awaiting_approval  ->   status: awaiting_approval   awaiting_agent: parked 12h30m
 fix_review         ->   status: fix_review   awaiting_agent: parked 12h30m
 ```
 
-Nothing else in the response carries the park's start: the API struct's own `awaiting_agent_since` field is not rendered by this surface, so the truncated duration is the only handle and its precision is the rule's precision.
-
-Per-episode restart is not observable from a single response, so it is taken from the schema this version writes rather than from a rendering: the `runs` table's `awaiting_agent_since` column is set when a run stops for the agent and set back to `NULL` when the agent responds, with the elapsed time accumulated into a separate `parked_ms` column.
-A run that has parked, been answered, and parked again therefore reports only the latest episode, which is exactly the property the comparison rests on.
-
-An absent line, an unparseable token, an unreadable status-file mtime and a missing status file all withhold the token, so a park this reader cannot date surfaces exactly as it did before the rule existed.
-The price of that direction is worth naming where a reader meets it: on an installation whose no-mistakes never renders this line, no park can ever earn the token, so none is absorbed and that installation keeps the whole notification volume the absorb exists to remove.
-Nothing in the response carries a version or capability marker, so such an installation cannot be recognised and given different treatment; failing toward surfacing is the deliberate choice over absorbing a park on evidence nobody has.
-A future version that kept the column across a response is the failure this record cannot detect, because the comparison would then read one episode's clock against another episode's record; one that stopped rendering the line moves real parks to the never-absorbed side instead.
+The column behind it is `omitempty`, so a run this reader calls parked can also render with no `awaiting_agent` line at all - the gate word then comes from the scalar status line, the `gate:` block or the parked steps row instead.
+That is why the branch treats the field as one signal among several rather than as the definition of a park, and why nothing in the absorb depends on the line being present.
 
 ## Parked detail length against the bearings display budget
 
-This record supports the SPELLING of `FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER` in `bin/fm-classify-lib.sh`, which is as terse as it is because of a budget enforced in a different script.
-`bin/fm-bearings-snapshot.sh` renders a crew's `current_state.detail` as the bearings `doing` field through a 90-character truncation, and the parked detail is the longest one `bin/fm-crew-state.sh` produces, so a token appended there can push the ordinary absorbable park past the cut and show the captain a mid-token ellipsis.
-The effect is display only: nothing reads either marker out of the bearings JSON, because the absorb matches them on the raw current-state line from `bin/fm-crew-state.sh` directly.
+This record supports the SPELLING of the two tokens `bin/fm-crew-state.sh` appends to a parked detail, which are as terse as they are because of a budget enforced in a different script.
+`bin/fm-bearings-snapshot.sh` renders a crew's `current_state.detail` as the bearings `doing` field through a 90-character truncation, and the parked detail is the longest one `bin/fm-crew-state.sh` produces, so a token appended there can push a park past the cut and show the captain a mid-token ellipsis.
+The effect is display only: nothing reads either token out of the bearings JSON, because the absorb reads them from the raw current-state line directly.
 
 Measured on 2026-09-01 by composing the detail exactly as that script's parked branch does and taking its length.
-Besides the finding count the only variable part is the gate name, and its resolution order is what an earlier reading of this got wrong: the parked branch takes the `gate:` line's name, then the parked steps row's step name, then the RUN STATUS WORD, then the literal `gate`.
-That status-word arm is what makes the worst case `awaiting_approval` at 17 characters, rather than `fix_review` at 10 or the longest step name `document` at 8.
+Besides the finding count the only variable part is the gate name, and its resolution order is worth stating because an earlier reading of this got it wrong: the parked branch takes the `gate:` line's name when a gate line is present, and ONLY when one is absent does it fall through to the reader that consults the parked steps row; failing both, it uses the RUN STATUS WORD, and failing that the literal `gate`.
+So the status-word arm is reached whenever no name can be read, which includes a `gate:` block carrying no name inside it even though a parked steps row is present and would have supplied one.
+That arm is what makes the worst case `awaiting_approval` at 17 characters, rather than `fix_review` at 10 or the longest step name `document` at 8.
 
 ```
-gate name              base   + '(status written at this park)'   + '(status at this park)'
-review                   61                                  91                         83
-document                 63                                  93                         85
-fix_review               65                                  95                         87
-awaiting_approval        72                                 102                         94
-awaiting_approval        73                                 103                         95   two-digit finding count
+gate name              base   + '(ask-user: authority decision) (park a1b2c3d4)'
+review                   30                                                  77
+document                 32                                                  79
+fix_review               34                                                  81
+awaiting_approval        41                                                  88
+awaiting_approval        42                                                  89   two-digit finding count
 ```
 
-The shortened spelling clears the budget for every gate name a real gate line or steps row can supply, since both of those arms yield a step name and the longest is `document`.
-It does not clear the status-word arm, which stays over at 94 and 95 and truncates exactly as the longer spelling did.
-That arm is reached only by a response carrying no `gate:` line AND no parked steps row, and all three real captures in the gate-status record above carried the steps-row form, which is itself the source of a step name.
-So the shape that still truncates is modelled rather than observed, and the residual is accepted rather than removed, because raising that truncation is a bearings decision rather than this rule's to make.
+Every shape clears the budget, including the status-word arm, so the detail no longer truncates for any park this reader can produce.
+That was not true of an earlier spelling, which carried a sentence where the second token now carries a fixed eight-character identity: it measured 91 to 103 and truncated the ordinary absorbable park.
+The margin is one character at the worst case, so a third token, or a longer identity, would put the status-word arm back over the cut.
 
 ## Forge probe for a monitoring ci step
 

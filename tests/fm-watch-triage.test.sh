@@ -590,11 +590,21 @@ test_deciding_absorb_class_classifier() {
   # shellcheck disable=SC2034 # Read by _fm_classify_state_dir in the callees below.
   STATE=$state
   export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
+
+  # The FIRST sighting of any park has no earlier one to compare against, so it
+  # surfaces by design and every case below records one before asserting what the
+  # next sighting does. The rule itself is pinned over the real producer in
+  # tests/fm-crew-state.test.sh; this is the setup it forces here.
+  prime_park() {  # <id>
+    [ "$(crew_absorb_class "$1")" = none ] \
+      || fail "the first sighting of a park was absorbed with nothing to compare it against"
+  }
 
   # Parked with the decision still open: the answer owns the next wake.
   printf 'working: implementing\nneeds-decision [key=seat-scope]: per-tenant or per-seat billing\n' \
     > "$state/waiting.status"
+  prime_park waiting
   [ "$(crew_absorb_class waiting)" = deciding ] \
     || fail "a run parked on an open decision was not classed deciding"
   [ "$(crew_absorb_verdict waiting)" = "deciding run-step" ] \
@@ -609,6 +619,7 @@ test_deciding_absorb_class_classifier() {
 
   # A verified captain-held backlog transfer closes it the same way.
   printf 'needs-decision [key=route]: which forge to target\n' > "$state/held.status"
+  prime_park held
   [ "$(crew_absorb_class held)" = deciding ] || fail "a keyed open decision was not classed deciding"
   printf 'captain-held [key=route]: tracked by task-decision-route\n' >> "$state/held.status"
   [ "$(crew_absorb_class held)" = none ] \
@@ -616,6 +627,7 @@ test_deciding_absorb_class_classifier() {
 
   # The historical unkeyed form folds on the default key, both ways.
   printf 'needs-decision: which forge to target\n' > "$state/bare.status"
+  prime_park bare
   [ "$(crew_absorb_class bare)" = deciding ] || fail "an unkeyed open decision was not classed deciding"
   printf 'resolved: captain chose GitHub\n' >> "$state/bare.status"
   [ "$(crew_absorb_class bare)" = none ] || fail "an unkeyed resolved line did not close the decision"
@@ -632,6 +644,7 @@ test_deciding_absorb_class_classifier() {
   # is a fact about ONE gate, so an open key on its own must not absorb: this crew
   # keeps its decision open throughout, and only the parked line changes.
   printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/correlate.status"
+  prime_park correlate
   [ "$(crew_absorb_class correlate)" = deciding ] || fail "the ownership fixture did not start absorbable"
 
   # A gate whose findings carry no ask-user row at all is one the worker answers,
@@ -640,20 +653,42 @@ test_deciding_absorb_class_classifier() {
   # rule; tests/fm-crew-state.test.sh owns that half. The park token is spelled
   # here deliberately - the producer never emits it alone, and this pins that
   # even if one did, it would earn nothing without the ownership token.
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) (status at this park)'
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) (park deadbeef)'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a park at a worker-owned gate was absorbed as an outstanding decision"
 
   # The park-episode gate, the one that keeps a widened ownership rule from
   # reopening the silence-forever path. Everything about the TASK is satisfied -
-  # the run is parked, the gate is authority-owned, the decision is open - but
-  # the crew's status record was not written at THIS park, so the open decision
-  # belongs to an episode already answered and the crew never said a word about
-  # the gate it is sitting at now. Absorbing that leaves no timer and no other
-  # wake owner.
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision)'
+  # the run is parked, the gate is authority-owned, the decision is open, and the
+  # crew's status file has not changed by a byte - but the run is at a DIFFERENT
+  # park than the one last seen, so firstmate was answered, the pipeline moved on,
+  # and the crew never said a word about the gate it is sitting at now. Its open
+  # decision belongs to an episode already answered, and absorbing that leaves no
+  # timer and no other wake owner.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park feedface)'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a park the crew never wrote about was absorbed as an outstanding decision"
+  # And it STAYS surfaced: adopting the new park as a fresh baseline would absorb
+  # it from the next sighting, which is the same silence with one extra step.
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "a park the crew never wrote about was absorbed on the sighting after"
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "the never-announced verdict decayed after three sightings"
+
+  # The crew speaks about the park it is actually at, and the wait is legible
+  # again from the sighting after that word is placed.
+  printf 'needs-decision [key=round-2]: the new round raised another ask-user finding\n' \
+    >> "$state/correlate.status"
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "the sighting that first saw the crew speak absorbed before it could be placed"
+  [ "$(crew_absorb_class correlate)" = deciding ] \
+    || fail "a crew that spoke about the park it is at was never absorbed again"
+
+  # Back to a park with no identity published at all: nothing says which episode
+  # this is, so the pair is incomplete and the crew surfaces.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision)'
+  [ "$(crew_absorb_class correlate)" = none ] \
+    || fail "a park publishing no identity was absorbed as an outstanding decision"
 
   # A park whose gate ownership bin/fm-crew-state.sh could not establish carries
   # its operator note instead of the ownership token. The note reports what the
@@ -814,7 +849,12 @@ test_parked_on_open_decision_absorbed_without_a_wedge_timer() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
+  # Firstmate has seen this crew at this park before - the absorb only ever
+  # silenced the REPEAT wakes, and the first sighting surfaces by design. Recorded
+  # through the library's own writer rather than by spelling the file's format
+  # here, so this setup cannot drift from what the classifier writes.
+  STATE=$state fm_classify_park_announced parked deadbeef || true
 
   # A one-second escalation threshold: were a wedge timer started at all, the
   # watcher would surface within a couple of polls.
@@ -856,7 +896,7 @@ test_parked_crew_with_a_newer_captain_line_still_surfaces() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \

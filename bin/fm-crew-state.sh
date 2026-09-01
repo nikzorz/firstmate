@@ -58,9 +58,9 @@
 #      rule and appends the marker only for a gate the crew may not answer
 #      itself. Every other park whose findings carry an ask-user action gets the
 #      operator note beside it instead, which reports the finding without naming
-#      an owner. Beside that marker it also publishes whether the crew's own
-#      status record was written during THIS park episode rather than an earlier
-#      one (nm_park_holds_current_status below), which is what stops an open
+#      an owner. Beside that marker it also publishes an IDENTITY for the park
+#      episode itself (nm_park_identity below), which is what lets the classifier
+#      tell one park from the next without any clock and so stops an open
 #      decision from an already-answered park from reading as this park's wait.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
@@ -117,11 +117,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-claude-limit-lib.sh
 . "$SCRIPT_DIR/fm-claude-limit-lib.sh"
-# Sourced for fm_sup_stat_mtime alone. Two leaf libraries already carry that
-# platform shim as a deliberate self-contained copy, and this reader adds no
-# third; nothing else from that library is called here.
-# shellcheck source=bin/fm-supervision-lib.sh
-. "$SCRIPT_DIR/fm-supervision-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -513,112 +508,63 @@ nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
   [ -n "$1" ] && [ "$2" = yes ]
 }
 
-# How long the run has been at THIS park, from the `awaiting_agent: parked
-# <duration>` line. no-mistakes stamps that clock when a run stops for the agent
-# and clears it when the agent responds, so the figure measures one park episode
-# rather than the run: a run that parked, was answered, and parked again reports
-# only the latest episode. The field is omitted entirely unless the run is
-# parked.
-#
-# Prints "<seconds> <resolution>" - the truncated figure the run published, and
-# the size of the unit it was truncated to - because the render loses precision
-# as the wait grows and only the pair states that honestly. A park reported as
-# `3d11h` is anywhere from 3d11h to 3d11h59m59s. Prints nothing when the line is
-# empty or its token does not parse, which the caller below reads as no evidence
-# rather than as a fresh park.
-#
-# It takes the line rather than reading it, matching nm_gate_needs_authority
-# above and for the same reason: the parked branch below has already resolved it,
-# and a second probe that could be narrowed apart from the first would let the
-# park clock and the parked decision disagree about which run they describe.
-nm_park_age_bounds() {  # <awaiting_agent line>
-  local tok secs unit
-  [ -n "$1" ] || return 0
-  tok=$(strip_quotes "$(trim "${1#*:}")")
-  case "$tok" in "parked "*) tok=$(trim "${tok#parked }") ;; *) return 0 ;; esac
-  secs=$(nm_duration_secs "$tok") || return 0
-  # The smallest unit the token renders IS its resolution; the measured renders
-  # are Ns, NmMs, NhMm and NdMh, so the trailing character names it.
-  case "$tok" in
-    *d) unit=86400 ;;
-    *h) unit=3600 ;;
-    *m) unit=60 ;;
-    *s) unit=1 ;;
-    *)  return 0 ;;
-  esac
-  printf '%s %s' "$secs" "$unit"
+# The lines of the gate's own findings table - its header and the rows indented
+# under it, body text only. Located exactly as nm_gate_has_ask_user_action above
+# locates it, because the two must never disagree about which lines are the
+# table, and prose elsewhere in the response must contribute to neither.
+nm_gate_findings_block() {
+  printf '%s\n' "$RUN_OUT" | awk '
+    {
+      n = match($0, /[^ ]/)
+      if (n == 0) next
+      indent = n - 1
+      body = substr($0, n)
+      if (intab && indent <= ind) intab = 0
+      if (intab) { print body; next }
+      if (body ~ /^findings\[[0-9]+\]\{[^}]*\}[ \t]*:/) { print body; ind = indent; intab = 1 }
+    }
+  '
 }
 
-# 0 when the crew's own status record was last appended to during THIS park
-# episode - the fact FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER publishes (rule owned
-# here, literal owned by bin/fm-classify-lib.sh).
+# A short fingerprint of the park EPISODE the run is stopped at, published as
+# FM_CLASSIFY_PARK_IDENTITY_PREFIX (rule owned here, literal owned by
+# bin/fm-classify-lib.sh). It names one park, not one run: the classifier keeps
+# the last identity it saw for a task and reads a CHANGED identity as the run
+# having re-parked, which is the only thing it needs to know and the only thing
+# a single response can honestly supply.
 #
-# It is what separates a crew that announced the park it is sitting at from one
-# whose only open decision belongs to an EARLIER park. Those look identical to
-# the status fold, which is keyed per task and folds an append-only stream with
-# no per-line time: after firstmate answers a decision, the worker responds to
-# the gate, the pipeline fixes, and the run parks again - and a worker that
-# wedges before appending anything about the new park leaves its old
-# `needs-decision:` line standing over a park it never announced. Absorbing that
-# is the silence-forever shape, because no timer and no other wake owner is left.
+# It replaces a duration read off the printed `awaiting_agent` clock. That clock
+# is truncated - coarsely once a wait passes a day - so every comparison built on
+# it carried a slack window, and inside that window the shape this whole rule
+# exists to exclude was absorbed. An identity has no resolution to lose.
 #
-# The park clock above is what tells them apart, because it restarts with each
-# episode. The status file is append-only, so its mtime dates the crew's most
-# recent append: one at or after this episode began was made DURING this episode,
-# and one before it was made during an earlier one.
+# The material is the gate name, the run head, and the gate's findings table.
+# Each moves when a park is answered and the pipeline raises the next one: the
+# fix round commits, so the head advances, and the new round publishes its own
+# findings. The gate name alone would NOT do, because consecutive rounds park at
+# the same step, so an identity is refused outright unless the head or the
+# findings table contributed to it - a bare gate name would collide across
+# episodes and read a stale decision as this park's.
 #
-# Dating that append is ALL this establishes, and the token claims no more. It
-# does not establish that the append was about this gate, nor that it was a
-# decision line at all - a crew that appended `working: rerunning tests` at this
-# park while an older key stayed open satisfies it. bin/fm-classify-lib.sh's
-# `deciding` contract states what the pair is worth together, and names the
-# consumer that carries the further check that the crew's last line is the
-# decision itself.
-#
-# Deliberately lenient, because the published age is truncated: the episode can
-# have begun up to one further resolution unit before the figure says, so the
-# floor subtracts that unit rather than reading the truncated figure as exact.
-# The strict bound would refuse a legitimate park whose crew wrote its decision
-# moments after arriving, which is the ordinary shape and the one the absorb
-# exists for.
-#
-# The slack DELIVERED is one unit minus the time between the two clocks it
-# straddles, not a full unit: `secs` was rendered when `axi status` answered,
-# while the floor is measured from the clock here, so the bounded no-mistakes
-# call (FM_CREW_STATE_NM_TIMEOUT) and the gate probes between them are charged
-# against it. Below an hour the render carries second resolution and that gap can
-# consume the whole unit. Less lenient than the truncation alone allows is the
-# safe direction - the token is withheld and the park surfaces - and the lag
-# between no-mistakes stamping the park and the crew reaching the gate and
-# appending its line dominates the gap in practice.
-#
-# What the slack still costs is stated rather than hidden: a decision written
-# less than that margin BEFORE this episode began is accepted as written at it,
-# which matters only past a day of waiting, where the render's unit is a whole
-# hour.
-#
-# An unreadable park clock, an unparseable duration token, an unreadable mtime,
-# and a missing status file all report 1 - no evidence is not evidence - so the
-# park surfaces exactly as it did before this rule existed.
-#
-# That has a price, and it is deliberate rather than overlooked: on an
-# installation whose no-mistakes never renders the clock, no park can earn this
-# token, so none absorbs and that installation keeps the whole notification
-# volume this absorb exists to remove. Never silently swallowing a park is worth
-# more than removing that noise, because a swallowed one leaves no timer and no
-# other wake owner behind.
-nm_park_holds_current_status() {  # <awaiting_agent line>
-  local bounds secs unit mtime floor
-  bounds=$(nm_park_age_bounds "$1")
-  [ -n "$bounds" ] || return 1
-  secs=${bounds%% *}
-  unit=${bounds##* }
-  [ -f "$LOG" ] || return 1
-  mtime=$(fm_sup_stat_mtime "$LOG") || return 1
-  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
-  floor=$(( $(date +%s) - secs - unit ))
-  [ "$mtime" -ge "$floor" ]
+# Prints nothing when nothing but the gate name is available, which the reader
+# below publishes as no token at all, so such a park surfaces exactly as it did
+# before this rule existed. The fingerprint is a CRC, so two different episodes
+# could in principle collide; nothing here is adversarial (the material is
+# no-mistakes' own output) and the cost of a collision is one absorbed park that
+# should have surfaced, which is the same cost the rule already accepts when the
+# crew's record predates the feature.
+nm_park_identity() {  # <gate-name>
+  local head findings material sum
+  head=$(strip_quotes "$(nm_field head)")
+  findings=$(nm_gate_findings_block)
+  [ -n "$head" ] || [ -n "$findings" ] || return 0
+  material=$(printf '%s\n%s\n%s\n' "$1" "$head" "$findings")
+  sum=$(printf '%s' "$material" | cksum 2>/dev/null) || return 0
+  sum=${sum%% *}
+  case "$sum" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%08x' "$sum"
 }
+
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
   case "$(status_line_note "$LOG_LINE")" in
@@ -1176,10 +1122,10 @@ if [ "$HAVE_RUN" = 1 ]; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
         # Published only beside the ownership token, because the two are read
         # together and nothing consumes this one alone: who owns the gate, and
-        # whether the crew's record is about THIS park.
-        if nm_park_holds_current_status "$awaiting"; then
-          RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER"
-        fi
+        # which park episode this is.
+        park_id=$(nm_park_identity "$gate")
+        [ -n "$park_id" ] \
+          && RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_IDENTITY_PREFIX$park_id)"
       elif [ "$ask_user_row" = yes ]; then
         RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi
