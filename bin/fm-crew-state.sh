@@ -549,9 +549,9 @@ nm_park_age_bounds() {  # <awaiting_agent line>
   printf '%s %s' "$secs" "$unit"
 }
 
-# 0 when the crew's own status record was written during THIS park episode - the
-# fact FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER publishes (rule owned here, literal
-# owned by bin/fm-classify-lib.sh).
+# 0 when the crew's own status record was last appended to during THIS park
+# episode - the fact FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER publishes (rule owned
+# here, literal owned by bin/fm-classify-lib.sh).
 #
 # It is what separates a crew that announced the park it is sitting at from one
 # whose only open decision belongs to an EARLIER park. Those look identical to
@@ -563,9 +563,17 @@ nm_park_age_bounds() {  # <awaiting_agent line>
 # is the silence-forever shape, because no timer and no other wake owner is left.
 #
 # The park clock above is what tells them apart, because it restarts with each
-# episode. The status file is append-only, so its mtime is the crew's most
-# recent word; a word written at or after this episode began is about this
-# episode, and one written before it belongs to an earlier one.
+# episode. The status file is append-only, so its mtime dates the crew's most
+# recent append: one at or after this episode began was made DURING this episode,
+# and one before it was made during an earlier one.
+#
+# Dating that append is ALL this establishes, and the token claims no more. It
+# does not establish that the append was about this gate, nor that it was a
+# decision line at all - a crew that appended `working: rerunning tests` at this
+# park while an older key stayed open satisfies it. bin/fm-classify-lib.sh's
+# `deciding` contract states what the pair is worth together, and names the
+# consumer that carries the further check that the crew's last line is the
+# decision itself.
 #
 # Deliberately lenient, because the published age is truncated: the episode can
 # have begun up to one further resolution unit before the figure says, so the

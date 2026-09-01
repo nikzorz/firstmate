@@ -181,7 +181,19 @@ FM_CLASSIFY_AUTHORITY_GATE_MARKER='(ask-user: authority decision)'
 # It must stay textually DISJOINT from the ownership token and from that
 # script's operator note - neither a substring of another - because
 # crew_absorb_verdict matches all of them as plain substrings of one line.
-FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER='(status written at this park)'
+#
+# Its LENGTH is a constraint too, and this spelling is as terse as it is for that
+# reason alone. bin/fm-bearings-snapshot.sh renders the same detail as a crew's
+# `doing` field through a fixed truncation, and the parked detail already carries
+# a gate name, a finding count and the token above, so a wordier spelling here
+# pushes the ordinary absorbable park past that budget and shows the captain a
+# mid-token ellipsis. Nothing reads either token out of the bearings JSON, so the
+# cost is display only. This spelling clears the budget for every gate name a
+# real gate line has carried; the unobserved arm that names the park after the
+# run status word still exceeds it, and that residual is accepted rather than
+# paid for by widening a budget this rule does not own.
+# docs/verification/supervision.md records the measured lengths.
+FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER='(status at this park)'
 
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
@@ -556,13 +568,23 @@ fm_classify_landing_route_armed() {  # <id>
 #
 # What this still does not prove, stated rather than hidden: that the open key
 # names the FINDING at this gate. Nothing available here can, because the fold
-# is keyed per task and the park names no key. What the pair does establish is
-# that firstmate owes an answer at a gate of this kind and that the crew's only
-# word on the matter was written while sitting at this one. A crew that opened a
-# key, was answered in the pane rather than through a `resolved:` line, and then
-# stayed silent through a whole further park episode is caught by the second
-# token; one that opens a fresh key at each park it reaches, which is what its
-# own status-reporting contract asks of it, is absorbed.
+# is keyed per task and the park names no key. What the pair DOES establish is
+# narrower than it reads at a glance, and is worth stating exactly: that
+# firstmate owes an answer at a gate of this kind, and that the crew appended
+# something to its status record during this park episode. The second token is
+# an mtime test, so it dates the crew's last append and says nothing about what
+# that append was - a crew that wrote `working: rerunning tests` at this park
+# while an older key stayed open satisfies it just as a fresh `needs-decision:`
+# would. Narrowing that to a decision line is a SEPARATE gate that does not live
+# here: bin/fm-watch.sh additionally requires the crew's last status line to be
+# the `needs-decision` it is parked on, and it is today's only consumer of this
+# class. A second consumer would have to make that check for itself.
+#
+# A crew that opened a key, was answered in the pane rather than through a
+# `resolved:` line, and then stayed silent through a whole further park episode
+# is caught by the second token; one that opens a fresh key at each park it
+# reaches, which is what its own status-reporting contract asks of it, is
+# absorbed.
 #
 # Both residuals the second token leaves are stated where its rule lives, in
 # nm_park_holds_current_status: past a day of waiting the published park clock

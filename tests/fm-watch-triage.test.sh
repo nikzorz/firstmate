@@ -590,7 +590,7 @@ test_deciding_absorb_class_classifier() {
   # shellcheck disable=SC2034 # Read by _fm_classify_state_dir in the callees below.
   STATE=$state
   export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status written at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
 
   # Parked with the decision still open: the answer owns the next wake.
   printf 'working: implementing\nneeds-decision [key=seat-scope]: per-tenant or per-seat billing\n' \
@@ -640,7 +640,7 @@ test_deciding_absorb_class_classifier() {
   # rule; tests/fm-crew-state.test.sh owns that half. The park token is spelled
   # here deliberately - the producer never emits it alone, and this pins that
   # even if one did, it would earn nothing without the ownership token.
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) (status written at this park)'
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 1 finding(s) (status at this park)'
   [ "$(crew_absorb_class correlate)" = none ] \
     || fail "a park at a worker-owned gate was absorbed as an outstanding decision"
 
@@ -814,7 +814,7 @@ test_parked_on_open_decision_absorbed_without_a_wedge_timer() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status written at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
 
   # A one-second escalation threshold: were a wedge timer started at all, the
   # watcher would surface within a couple of polls.
@@ -856,7 +856,7 @@ test_parked_crew_with_a_newer_captain_line_still_surfaces() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status written at this park)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (status at this park)'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \

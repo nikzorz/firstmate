@@ -398,6 +398,30 @@ The price of that direction is worth naming where a reader meets it: on an insta
 Nothing in the response carries a version or capability marker, so such an installation cannot be recognised and given different treatment; failing toward surfacing is the deliberate choice over absorbing a park on evidence nobody has.
 A future version that kept the column across a response is the failure this record cannot detect, because the comparison would then read one episode's clock against another episode's record; one that stopped rendering the line moves real parks to the never-absorbed side instead.
 
+## Parked detail length against the bearings display budget
+
+This record supports the SPELLING of `FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER` in `bin/fm-classify-lib.sh`, which is as terse as it is because of a budget enforced in a different script.
+`bin/fm-bearings-snapshot.sh` renders a crew's `current_state.detail` as the bearings `doing` field through a 90-character truncation, and the parked detail is the longest one `bin/fm-crew-state.sh` produces, so a token appended there can push the ordinary absorbable park past the cut and show the captain a mid-token ellipsis.
+The effect is display only: nothing reads either marker out of the bearings JSON, because the absorb matches them on the raw current-state line from `bin/fm-crew-state.sh` directly.
+
+Measured on 2026-09-01 by composing the detail exactly as that script's parked branch does and taking its length.
+Besides the finding count the only variable part is the gate name, and its resolution order is what an earlier reading of this got wrong: the parked branch takes the `gate:` line's name, then the parked steps row's step name, then the RUN STATUS WORD, then the literal `gate`.
+That status-word arm is what makes the worst case `awaiting_approval` at 17 characters, rather than `fix_review` at 10 or the longest step name `document` at 8.
+
+```
+gate name              base   + '(status written at this park)'   + '(status at this park)'
+review                   61                                  91                         83
+document                 63                                  93                         85
+fix_review               65                                  95                         87
+awaiting_approval        72                                 102                         94
+awaiting_approval        73                                 103                         95   two-digit finding count
+```
+
+The shortened spelling clears the budget for every gate name a real gate line or steps row can supply, since both of those arms yield a step name and the longest is `document`.
+It does not clear the status-word arm, which stays over at 94 and 95 and truncates exactly as the longer spelling did.
+That arm is reached only by a response carrying no `gate:` line AND no parked steps row, and all three real captures in the gate-status record above carried the steps-row form, which is itself the source of a step name.
+So the shape that still truncates is modelled rather than observed, and the residual is accepted rather than removed, because raising that truncation is a bearings decision rather than this rule's to make.
+
 ## Forge probe for a monitoring ci step
 
 This record supports the forge half of the stalled-run detection in `bin/fm-crew-state.sh`: the arm that settles a ci step which keeps logging while what it waits for cannot arrive.
