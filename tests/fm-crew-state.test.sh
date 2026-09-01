@@ -1318,10 +1318,10 @@ test_fix_review_gate_with_an_ask_user_row_publishes_the_authority_marker() {
   assert_contains "$out" "state: parked" "a fix-review gate still reports parked"
   assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a fix-review gate carrying an ask-user row published no authority-gate marker"
-  # Nothing shows the crew's decision belongs to an earlier park, so the second
-  # token is published too - the pair is what the absorb reads.
-  assert_contains "$out" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
-    "a crew that wrote its status at this park published no park-episode marker"
+  # The crew wrote its decision at this park, so the second token is published
+  # too - the pair is what the absorb reads.
+  assert_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+    "a crew that wrote its status at this park published no park-current marker"
   assert_not_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
     "a confirmed authority gate also carried the unconfirmed-owner operator note"
   pass "a fix-review gate carrying an ask-user row publishes the authority-gate marker"
@@ -1413,10 +1413,10 @@ test_ask_user_in_prose_does_not_publish_the_authority_marker() {
 # other wake owner left. The park clock restarts with each episode, so a status
 # record older than the episode is a record about a previous one.
 #
-# The token is withheld ONLY for that proven shape. Every way the clock can fail
-# to establish it - no line, an unparseable token - establishes nothing about
-# which episode the record belongs to, and the cases below pin that those keep
-# the token rather than permanently escalating a run that publishes no clock.
+# Every way the clock can fail to establish that withholds the token too, and the
+# cases below pin each one: no evidence is not evidence, so such a park surfaces
+# exactly as it did before this rule existed rather than being absorbed on a fact
+# nothing established.
 test_a_park_the_crew_never_wrote_about_publishes_no_park_marker() {
   reset_fakes
   local d; d=$(new_case gate-park-stale-status)
@@ -1429,18 +1429,17 @@ test_a_park_the_crew_never_wrote_about_publishes_no_park_marker() {
   local out; out=$(run_crew_state "$d" feat-go6)
   assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "the gate ownership token depends on the crew's status age"
-  assert_not_contains "$out" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
-    "a decision written long before this park episode published the park-episode marker"
-  pass "a park the crew never wrote about publishes no park-episode marker"
+  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+    "a decision written long before this park episode published the park-current marker"
+  pass "a park the crew never wrote about publishes no park-current marker"
 }
 
-# No published clock is no evidence EITHER WAY, so the park keeps the token and
-# absorbs exactly as it did before this rule existed. The clock is the run row's
-# own park stamp, and this fixture is a run that is parked with none: its gate
-# word resolves from the gate block and steps table alone. Withholding here would
-# not close the silence-forever shape for such a run, it would escalate every one
-# of its parks forever.
-test_a_park_with_no_published_clock_keeps_the_park_marker() {
+# No published clock is no evidence, not a fresh park: the field is omitted
+# unless the run is parked for the agent, and a response shape that stopped
+# rendering it must move parks into the never-absorbed side rather than the
+# absorbed one. The cost of that direction is that such an installation gets no
+# absorb at all, which is the deliberate price of never swallowing a park.
+test_a_park_with_no_published_clock_publishes_no_park_marker() {
   reset_fakes
   local d; d=$(new_case gate-park-no-clock)
   make_repo_on_branch "$d/wt" fm/feat-go7
@@ -1451,29 +1450,28 @@ test_a_park_with_no_published_clock_keeps_the_park_marker() {
   local out; out=$(run_crew_state "$d" feat-go7)
   assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a fix-review gate resolved from a gate block published no authority-gate marker"
-  assert_contains "$out" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
-    "a park publishing no clock at all was treated as proof of an earlier park"
-  pass "a park with no published clock keeps the park-episode marker"
+  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+    "a park publishing no clock at all published the park-current marker"
+  pass "a park with no published clock publishes no park-current marker"
 }
 
-# A token that does not parse is the same absence. It must not be read as a
-# zero-length park either, which would make every stale record look current -
-# the fixture's own status file predates the park by decades, and a zero-length
-# reading would still admit it.
-test_an_unparseable_park_clock_keeps_the_park_marker() {
+# A token that does not parse is the same absence, and must not be read as a
+# zero-length park - which would make every stale status record look current.
+# The status file here is FRESH, so it would earn the token under any parseable
+# clock; only the unparseable token withholds it.
+test_an_unparseable_park_clock_publishes_no_park_marker() {
   reset_fakes
   local d; d=$(new_case gate-park-bad-clock)
   make_repo_on_branch "$d/wt" fm/feat-go8
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-go8.meta" "window=fm:fm-feat-go8" "worktree=$d/wt" "kind=ship"
   printf 'needs-decision: review gate\n' > "$d/state/feat-go8.status"
-  touch -t 200001010000 "$d/state/feat-go8.status"
   FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go8 "a while")"
   local out; out=$(run_crew_state "$d" feat-go8)
   assert_contains "$out" "state: parked" "an unparseable park clock stopped the park read"
-  assert_contains "$out" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
-    "an unparseable park clock was treated as proof of an earlier park"
-  pass "an unparseable park clock keeps the park-episode marker"
+  assert_not_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+    "an unparseable park clock published the park-current marker"
+  pass "an unparseable park clock publishes no park-current marker"
 }
 
 # The published clock is TRUNCATED, and coarsely so once a wait passes a day:
@@ -1494,7 +1492,7 @@ test_a_coarse_park_clock_does_not_refuse_a_decision_written_at_it() {
   age_file "$d/state/feat-go9.status" $(( 3 * 86400 + 11 * 3600 + 30 * 60 ))
   FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go9 3d11h)"
   local out; out=$(run_crew_state "$d" feat-go9)
-  assert_contains "$out" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
+  assert_contains "$out" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
     "the truncated park clock refused a decision written at the park it names"
   pass "a coarse park clock does not refuse a decision written at that park"
 }
@@ -2610,8 +2608,8 @@ test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
 test_a_park_the_crew_never_wrote_about_publishes_no_park_marker
-test_a_park_with_no_published_clock_keeps_the_park_marker
-test_an_unparseable_park_clock_keeps_the_park_marker
+test_a_park_with_no_published_clock_publishes_no_park_marker
+test_an_unparseable_park_clock_publishes_no_park_marker
 test_a_coarse_park_clock_does_not_refuse_a_decision_written_at_it
 test_deciding_class_over_the_real_helper
 

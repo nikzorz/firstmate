@@ -172,23 +172,16 @@ FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
 FM_CLASSIFY_AUTHORITY_GATE_MARKER='(ask-user: authority decision)'
 
 # The second token bin/fm-crew-state.sh appends to a `parked` detail, beside the
-# one above: nothing establishes that the crew's open decision was carried over
-# from an EARLIER park episode. nm_park_status_not_from_earlier_park there owns
-# the rule and is the only place it is stated; this is only the literal both
-# sides must spell the same way, and it carries no per-home override for the same
-# reason the token above carries none.
-#
-# The token asserts exactly what that rule can establish and no more, which is
-# why it is spelled as a negative. It is withheld only when the park clock PROVES
-# the record predates the episode; a park that publishes no clock, or one whose
-# clock does not parse, is a cannot-tell and keeps the token, because an
-# installation that cannot supply the evidence must not be pinned into escalating
-# every park forever.
+# one above: the crew's own status record was written during THIS park episode
+# rather than carried over from an earlier one. nm_park_holds_current_status
+# there owns the rule and is the only place it is stated; this is only the
+# literal both sides must spell the same way, and it carries no per-home
+# override for the same reason the token above carries none.
 #
 # It must stay textually DISJOINT from the ownership token and from that
 # script's operator note - neither a substring of another - because
 # crew_absorb_verdict matches all of them as plain substrings of one line.
-FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER='(status not from an earlier park)'
+FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER='(status written at this park)'
 
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
@@ -552,14 +545,14 @@ fm_classify_landing_route_armed() {  # <id>
 #   - FM_CLASSIFY_AUTHORITY_GATE_MARKER says WHO OWNS the gate this run is
 #     parked at - firstmate or the captain, not the worker. On its own it says
 #     nothing about which episode the open key belongs to.
-#   - FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER says nothing establishes the
-#     crew's status record as belonging to an EARLIER park episode. That is what
-#     ties the fold's open key to the park in front of it, because the shape it
-#     excludes - firstmate answers, the worker responds to the gate, the pipeline
-#     fixes, the run parks again, and the worker wedges before saying anything
-#     about the new gate - leaves the old decision open over a park it never
-#     announced. The park clock no-mistakes publishes restarts with each episode,
-#     so a status record older than this episode is a record about a previous one.
+#   - FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER says the crew wrote its status
+#     record DURING THIS park episode. That is what ties the fold's open key to
+#     the park in front of it, because the alternative shape - firstmate answers,
+#     the worker responds to the gate, the pipeline fixes, the run parks again,
+#     and the worker wedges before saying anything about the new gate - leaves
+#     the old decision open over a park it never announced. The park clock
+#     no-mistakes publishes restarts with each episode, so a status record older
+#     than this episode is a record about a previous one.
 #
 # What this still does not prove, stated rather than hidden: that the open key
 # names the FINDING at this gate. Nothing available here can, because the fold
@@ -571,12 +564,11 @@ fm_classify_landing_route_armed() {  # <id>
 # token; one that opens a fresh key at each park it reaches, which is what its
 # own status-reporting contract asks of it, is absorbed.
 #
-# Two residuals the second token leaves are stated where its rule lives, in
-# nm_park_status_not_from_earlier_park: past a day of waiting the published park
-# clock resolves to whole hours, so a decision written up to an hour before this
-# episode began still reads as written at it; and a park that publishes no clock
-# at all cannot be proven stale, so it absorbs exactly as it did before this
-# token existed.
+# Both residuals the second token leaves are stated where its rule lives, in
+# nm_park_holds_current_status: past a day of waiting the published park clock
+# resolves to whole hours, so a decision written up to an hour before this
+# episode began still reads as written at it; and a run that publishes no clock
+# can never earn the token, so it never reaches this class at all.
 #
 # The fold is verb-blind, so a key opened by `blocked:` counts as open here just
 # as a `needs-decision:` one does. What keeps a crew asking firstmate to ACT
@@ -622,14 +614,14 @@ _fm_classify_line_carries() {  # <line> <token>
 #   deciding   - the crew's authoritative current state is a `run-step` `parked`
 #                whose detail carries FM_CLASSIFY_AUTHORITY_GATE_MARKER, so the
 #                gate is one firstmate or the captain owns, AND
-#                FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER, so nothing shows the
-#                crew's status record belongs to an earlier park episode, AND the
-#                task's status stream still carries an open keyed decision
-#                (fm_classify_decision_outstanding above). Those are three
-#                separate facts, not one implying the others - see the section
-#                above. A park whose gate ownership could not be read, a park the
-#                crew is PROVEN never to have written about, and the run-less
-#                status-log `parked` fallback are all deliberately left out;
+#                FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER, so the crew's status
+#                record was written at this park episode rather than an earlier
+#                one, AND the task's status stream still carries an open keyed
+#                decision (fm_classify_decision_outstanding above). Those are
+#                three separate facts, not one implying the others - see the
+#                section above. A park whose gate ownership could not be read, a
+#                park the crew never wrote about, and the run-less status-log
+#                `parked` fallback are all deliberately left out;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
@@ -698,7 +690,7 @@ crew_absorb_verdict() {  # <id>
   fi
   if [ "$state" = parked ] && [ "$src" = run-step ] \
      && _fm_classify_line_carries "$line" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
-     && _fm_classify_line_carries "$line" "$FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER" \
+     && _fm_classify_line_carries "$line" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
      && fm_classify_decision_outstanding "$id"; then
     printf 'deciding %s' "$src"; return
   fi

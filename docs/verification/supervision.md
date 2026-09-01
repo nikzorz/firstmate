@@ -355,8 +355,8 @@ That is the one direction the safety asymmetry forbids, so a reader who meets su
 
 ## Park clock on a parked run
 
-This record supports the park-episode half of the parked detail in `bin/fm-crew-state.sh`: `nm_park_age_bounds` reads the `awaiting_agent: parked <duration>` line, and `nm_park_status_not_from_earlier_park` compares it against the crew status file's mtime to decide whether the crew's record is PROVEN to belong to an earlier episode than the one the run is sitting in now.
-Four things about that line are evidence rather than contract - whether it is rendered at all for a parked run, that its figure restarts per park episode, how coarsely it is truncated, and what a run this reader calls parked can publish when the field is absent - and the truncation is what the comparison's one-unit leniency is sized from.
+This record supports the park-episode half of the parked detail in `bin/fm-crew-state.sh`: `nm_park_age_bounds` reads the `awaiting_agent: parked <duration>` line, and `nm_park_holds_current_status` compares it against the crew status file's mtime to decide whether the crew's record was written at the episode the run is sitting in now.
+Three things about that line are evidence rather than contract - that it is rendered at all for a parked run, that its figure restarts per park episode, and how coarsely it is truncated - and the truncation is what the comparison's leniency is sized from.
 The rule itself, both directions, and every way the line can be missing or unparseable are covered without a real run by `tests/fm-crew-state.test.sh`.
 
 Measured on 2026-08-31 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
@@ -393,20 +393,10 @@ Nothing else in the response carries the park's start: the API struct's own `awa
 Per-episode restart is not observable from a single response, so it is taken from the schema this version writes rather than from a rendering: the `runs` table's `awaiting_agent_since` column is set when a run stops for the agent and set back to `NULL` when the agent responds, with the elapsed time accumulated into a separate `parked_ms` column.
 A run that has parked, been answered, and parked again therefore reports only the latest episode, which is exactly the property the comparison rests on.
 
-The fourth fact was measured separately, on 2026-09-01 and by the same method, and it is the one that decides what an ABSENT line means.
-The column is `omitempty`, so on this same version a run this reader calls parked can render with no `awaiting_agent` line at all:
-
-```
-runs.status = fix_review, awaiting_agent_since = NULL   ->   status: fix_review, and no awaiting_agent line
-runs.status = running, gate word read from the steps row only, awaiting_agent_since = NULL   ->   the steps row reads fix_review, and no awaiting_agent line
-the same steps-row shape with awaiting_agent_since SET   ->   awaiting_agent: parked 12h30m
-```
-
-The clock is therefore a property of the run row, orthogonal to how the gate word resolves, and absence is not a proxy for an older installation.
-Nothing in the response carries a version or capability marker either, so a build that never renders the field cannot be told apart from a rendering build whose run has no clock set, and the reader does not attempt it: both are the same input, no clock published, and both take the same branch.
-That is why the rule withholds its token only on proof and treats every absence as cannot-tell.
-The residual is stated rather than hidden: a park that publishes no clock is never proven stale, so the silence-forever shape stays open for it, which is the deliberate trade against permanently escalating every park on a run that cannot supply the evidence.
-A future version that kept the column across a response would be the failure this record cannot detect, because the comparison would then read one episode's clock over another's record; a future version that stopped rendering the line entirely would leave every park on the pre-rule behaviour instead.
+An absent line, an unparseable token, an unreadable status-file mtime and a missing status file all withhold the token, so a park this reader cannot date surfaces exactly as it did before the rule existed.
+The price of that direction is worth naming where a reader meets it: on an installation whose no-mistakes never renders this line, no park can ever earn the token, so none is absorbed and that installation keeps the whole notification volume the absorb exists to remove.
+Nothing in the response carries a version or capability marker, so such an installation cannot be recognised and given different treatment; failing toward surfacing is the deliberate choice over absorbing a park on evidence nobody has.
+A future version that kept the column across a response is the failure this record cannot detect, because the comparison would then read one episode's clock against another episode's record; one that stopped rendering the line moves real parks to the never-absorbed side instead.
 
 ## Forge probe for a monitoring ci step
 
