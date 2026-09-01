@@ -59,9 +59,10 @@
 #      itself. Every other park whose findings carry an ask-user action gets the
 #      operator note beside it instead, which reports the finding without naming
 #      an owner. Beside that marker it also publishes whether the crew's own
-#      status record was written during THIS park episode rather than an earlier
-#      one (nm_park_holds_current_status below), which is what stops an open
-#      decision from an already-answered park from reading as this park's wait.
+#      status record is free of any evidence that it belongs to an EARLIER park
+#      episode (nm_park_status_not_from_earlier_park below), which is what stops
+#      an open decision from an already-answered park from reading as this park's
+#      wait.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
 #      `last_activity` names how long the active step has been quiet, so a run
@@ -524,13 +525,17 @@ nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
 # the size of the unit it was truncated to - because the render loses precision
 # as the wait grows and only the pair states that honestly. A park reported as
 # `3d11h` is anywhere from 3d11h to 3d11h59m59s. Prints nothing when the line is
-# absent or its token does not parse, which the caller below reads as no
-# evidence rather than as a fresh park.
-nm_park_age_bounds() {
-  local line tok secs unit
-  line=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
-  [ -n "$line" ] || return 0
-  tok=$(strip_quotes "$(trim "${line#*:}")")
+# empty or its token does not parse, which the caller below reads as no evidence
+# either way rather than as a fresh park or a stale one.
+#
+# It takes the line rather than reading it, matching nm_gate_needs_authority
+# above and for the same reason: the parked branch below has already resolved it,
+# and a second probe that could be narrowed apart from the first would let the
+# park clock and the parked decision disagree about which run they describe.
+nm_park_age_bounds() {  # <awaiting_agent line>
+  local tok secs unit
+  [ -n "$1" ] || return 0
+  tok=$(strip_quotes "$(trim "${1#*:}")")
   case "$tok" in "parked "*) tok=$(trim "${tok#parked }") ;; *) return 0 ;; esac
   secs=$(nm_duration_secs "$tok") || return 0
   # The smallest unit the token renders IS its resolution; the measured renders
@@ -545,8 +550,9 @@ nm_park_age_bounds() {
   printf '%s %s' "$secs" "$unit"
 }
 
-# 0 when the crew's own status record was written during THIS park episode - the
-# fact FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER publishes (rule owned here, literal
+# 1 only when the crew's own status record is PROVEN to belong to an earlier park
+# episode than the one the run is sitting in - the fact
+# FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER publishes (rule owned here, literal
 # owned by bin/fm-classify-lib.sh).
 #
 # It is what separates a crew that announced the park it is sitting at from one
@@ -560,8 +566,7 @@ nm_park_age_bounds() {
 #
 # The park clock above is what tells them apart, because it restarts with each
 # episode. The status file is append-only, so its mtime is the crew's most
-# recent word; a word written at or after this episode began is about this
-# episode, and one written before it belongs to an earlier one.
+# recent word; a word written before this episode began belongs to an earlier one.
 #
 # Deliberately lenient by exactly one resolution unit: the published age is
 # truncated, so the earliest instant this episode can have begun is
@@ -573,18 +578,25 @@ nm_park_age_bounds() {
 # accepted, which matters only past a day of waiting, where the render's unit is
 # a whole hour.
 #
-# An unreadable park clock, an unreadable mtime, and a missing status file all
-# report 1 - no evidence is not evidence - so the park surfaces exactly as it
-# did before this rule existed.
-nm_park_holds_current_status() {
+# UNKNOWN IS NOT UNANNOUNCED, and this is the asymmetry the rule turns on. An
+# absent park clock, a token that does not parse, an unreadable mtime, and a
+# missing status file establish nothing about which episode the record belongs
+# to, so all four report 0 and leave the absorb exactly where it stood before
+# this rule existed. Reading them as staleness would be a claim no evidence
+# supports, and it would cost more than the noise it removed: the clock is the
+# run row's own park stamp and a run this reader calls parked can carry none -
+# a gate word resolved from the steps or gate block alone is such a shape - so an
+# absence rule would permanently escalate every park on such a run.
+# docs/verification/supervision.md records that measurement.
+nm_park_status_not_from_earlier_park() {  # <awaiting_agent line>
   local bounds secs unit mtime floor
-  bounds=$(nm_park_age_bounds)
-  [ -n "$bounds" ] || return 1
+  bounds=$(nm_park_age_bounds "$1")
+  [ -n "$bounds" ] || return 0
   secs=${bounds%% *}
   unit=${bounds##* }
-  [ -f "$LOG" ] || return 1
-  mtime=$(fm_sup_stat_mtime "$LOG") || return 1
-  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  [ -f "$LOG" ] || return 0
+  mtime=$(fm_sup_stat_mtime "$LOG") || return 0
+  case "$mtime" in ''|*[!0-9]*) return 0 ;; esac
   floor=$(( $(date +%s) - secs - unit ))
   [ "$mtime" -ge "$floor" ]
 }
@@ -1145,9 +1157,9 @@ if [ "$HAVE_RUN" = 1 ]; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
         # Published only beside the ownership token, because the two are read
         # together and nothing consumes this one alone: who owns the gate, and
-        # whether the crew's record is about THIS park.
-        if nm_park_holds_current_status; then
-          RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER"
+        # whether the crew's record is shown to be about an earlier park.
+        if nm_park_status_not_from_earlier_park "$awaiting"; then
+          RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_STATUS_NOT_EARLIER_MARKER"
         fi
       elif [ "$ask_user_row" = yes ]; then
         RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
