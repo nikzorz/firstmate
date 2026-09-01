@@ -314,8 +314,9 @@ Columns are located by name from the table header rather than by position, so th
 
 ## Gate status word on a parked run
 
-This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word reads `awaiting_approval`.
+This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word one of its two probes can read.
 That rule is worth measuring because a parked run whose status word neither probe can read never earns the token and so is never absorbed, and whether that shape occurs in practice is evidence rather than a contract.
+The measurement below is also what settles that the rule must not turn on which of the two words it reads: both are parks, and the `fix_review` word is the one most of them carry.
 The rule itself, both probes, and every exclusion are covered without a real run by `tests/fm-crew-state.test.sh`.
 
 Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), over the three real parked gates captured from review rounds one through three of this branch's own validation run: one `awaiting_approval` and two `fix_review`.
@@ -342,7 +343,7 @@ The subject was five real `axi status` gate responses captured from this branch'
 The predicate checked was `nm_gate_has_ask_user_action` in `bin/fm-crew-state.sh`, its own awk run verbatim against each captured response rather than a copy here that would drift from it.
 
 All five rendered their gate findings as a `findings[N]{id,severity,file,action,description}` table carrying a literal `action` column, with `ask-user` present as an exact cell value in that column, and the predicate returned its match token for all five.
-The single `awaiting_approval` capture is the one that matters most, and it matched: `fix_review` is excluded from the ownership token by design, so an `awaiting_approval` park is the only shape that can earn the token and therefore the only shape that can produce a `deciding` absorb.
+The one-to-four split between the two gate words is the load-bearing figure here: an ownership rule admitting only `awaiting_approval` would have published its token for one of these five real parks and withheld it from the other four, so it could never have produced a `deciding` absorb for the shape those parks actually take.
 
 This is evidence that this version renders the table this way, not proof that every version will.
 A future response shape that drops the table, renames the column, or reports the finding count without a table would make the predicate return false, which moves a real park into the never-absorbed exclusion with no test failing, because every fixture in the suite hard-codes the table.
@@ -351,6 +352,47 @@ That benign direction is a property of the measured header shape rather than of 
 `nm_gate_has_ask_user_action` locates the `action` column by name but reads its cell with a bare comma split that does not honour the quoting of the TOON table it is splitting, which is safe only while every column before `action` is comma-free, as it is in the measured `findings[N]{id,severity,file,action,description}` shape whose single free-text column is last.
 A future header that places a quoted free-text column before `action` breaks that reading: a comma inside such a cell shifts the split, so a row carrying some other action can be read as `ask-user`, publishing the ownership token for a gate that has no ask-user row and absorbing a park that should have surfaced.
 That is the one direction the safety asymmetry forbids, so a reader who meets such a header shape can no longer rely on the benign-direction claim above.
+
+## Park clock on a parked run
+
+This record supports the park-episode half of the parked detail in `bin/fm-crew-state.sh`: `nm_park_age_bounds` reads the `awaiting_agent: parked <duration>` line, and `nm_park_holds_current_status` compares it against the crew status file's mtime to decide whether the crew's record was written at the episode the run is sitting in now.
+Three things about that line are evidence rather than contract - that it is rendered at all for a parked run, that its figure restarts per park episode, and how coarsely it is truncated - and the truncation is what the comparison's one-unit leniency is sized from.
+The rule itself, both directions, and every way the line can be missing or unparseable are covered without a real run by `tests/fm-crew-state.test.sh`.
+
+Measured on 2026-08-31 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
+Nothing live was touched: `NM_HOME` pointed at a copy of the state database, and the copy's own `runs` row was moved into a parked state so the field would render.
+
+```sh
+no-mistakes axi status --run <run-id>
+```
+
+The row's `awaiting_agent_since` was set to a series of known offsets from the present, and every rendering the reader parses was produced:
+
+```
+      5 ->   awaiting_agent: parked 5s
+     70 ->   awaiting_agent: parked 1m10s
+   3725 ->   awaiting_agent: parked 1h2m
+  45000 ->   awaiting_agent: parked 12h30m
+  86399 ->   awaiting_agent: parked 23h59m
+  90000 ->   awaiting_agent: parked 1d1h
+ 300000 ->   awaiting_agent: parked 3d11h
+```
+
+Four facts the reader depends on are visible here.
+The figure is always TRUNCATED, never rounded: 300000 seconds is 3d11h20m and renders `3d11h`, so the true age is at least the published one and less than one further unit of the smallest rendered unit.
+That smallest unit is named by the token's own trailing character, and it coarsens as the wait grows - seconds below an hour, minutes below a day, whole hours past a day - which is why the comparison is lenient by exactly one such unit and why the residual it leaves matters only past a day of waiting.
+The field renders for both parked words, so it is available for the `fix_review` shape most escalation parks take and not only for the approval one:
+
+```
+awaiting_approval  ->   status: awaiting_approval   awaiting_agent: parked 12h30m
+fix_review         ->   status: fix_review   awaiting_agent: parked 12h30m
+```
+
+Nothing else in the response carries the park's start: the API struct's own `awaiting_agent_since` field is not rendered by this surface, so the truncated duration is the only handle and its precision is the rule's precision.
+
+Per-episode restart is not observable from a single response, so it is taken from the schema this version writes rather than from a rendering: the `runs` table's `awaiting_agent_since` column is set when a run stops for the agent and set back to `NULL` when the agent responds, with the elapsed time accumulated into a separate `parked_ms` column.
+A run that has parked, been answered, and parked again therefore reports only the latest episode, which is exactly the property the comparison rests on.
+A future version that kept the column across a response, or stopped rendering the line, would move real parks to the never-absorbed side rather than the absorbed one, because an unreadable clock reports no evidence.
 
 ## Forge probe for a monitoring ci step
 

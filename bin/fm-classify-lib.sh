@@ -171,6 +171,18 @@ FM_CLASSIFY_LIMIT_WINDOW_PREFIX='limit-window: '
 # carry none. The producer reads it from here rather than repeating the text.
 FM_CLASSIFY_AUTHORITY_GATE_MARKER='(ask-user: authority decision)'
 
+# The second token bin/fm-crew-state.sh appends to a `parked` detail, beside the
+# one above: the crew's own status record was written during THIS park episode
+# rather than carried over from an earlier one. nm_park_holds_current_status
+# there owns the rule and is the only place it is stated; this is only the
+# literal both sides must spell the same way, and it carries no per-home
+# override for the same reason the token above carries none.
+#
+# It must stay textually DISJOINT from the ownership token and from that
+# script's operator note - neither a substring of another - because
+# crew_absorb_verdict matches all of them as plain substrings of one line.
+FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER='(status written at this park)'
+
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
 # task with its run no longer advancing, which is work that needs attention
@@ -510,15 +522,15 @@ fm_classify_landing_route_armed() {  # <id>
 # repeat stale wakes that follow it.
 #
 # An open decision on its own is not enough. The fold is a record about the whole
-# TASK while the park is a fact about ONE gate, so an open key left behind before
-# validation even started, plus a later park at a gate the WORKER must answer,
+# TASK while the park is a fact about ONE park episode, so an open key left
+# behind by an EARLIER episode, plus a later park the crew never announced,
 # would read as "correctly waiting on somebody else" for as long as that worker
 # stayed wedged - an absorb with no timer and no other wake owner, which is
 # strictly worse than the wake noise it replaces. So crew_absorb_verdict below
-# also requires FM_CLASSIFY_AUTHORITY_GATE_MARKER on the parked line, and
-# separately requires the source to be `run-step`.
+# requires two further facts on the parked line, and separately requires the
+# source to be `run-step`.
 #
-# The source check is NOT redundant with the token match, and deleting it as
+# The source check is NOT redundant with the token matches, and deleting it as
 # such is the mistake to avoid here. A status-log `parked` line's detail is the
 # crew's own unconstrained prose, so a crew that writes `needs-decision: review
 # escalated an (ask-user: authority decision) finding` produces a parked line
@@ -528,20 +540,34 @@ fm_classify_landing_route_armed() {  # <id>
 # park from the very needs-decision line being folded here, so it correlates
 # nothing with nothing.
 #
-# Be exact about what that token buys, because it is less than a correlation.
-# It proves WHO OWNS the gate this run is parked at - firstmate or the captain,
-# not the worker. It does NOT prove the open key the fold reports is the answer
-# this particular park is waiting on, and nothing available here can: the fold
-# is keyed per task and the park names no key. So the class rests on two
-# separate facts that agree in the observed incidents rather than on one that
-# implies the other.
+# The two tokens answer two different questions, and the class needs both:
 #
-# The residual that leaves, stated rather than hidden: a task carrying an
-# unrelated key that was answered in-pane but never closed with `resolved:`,
-# whose run then parks at an authority-owned gate, and whose worker then wedges,
-# stays absorbed for as long as the key stays open. The gate is narrower than
-# before - a worker-owned park no longer reaches the class at all - but it is
-# not closed, and the stale timer is not what closes it. Closing the key does.
+#   - FM_CLASSIFY_AUTHORITY_GATE_MARKER says WHO OWNS the gate this run is
+#     parked at - firstmate or the captain, not the worker. On its own it says
+#     nothing about which episode the open key belongs to.
+#   - FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER says the crew wrote its status
+#     record DURING THIS park episode. That is what ties the fold's open key to
+#     the park in front of it, because the alternative shape - firstmate answers,
+#     the worker responds to the gate, the pipeline fixes, the run parks again,
+#     and the worker wedges before saying anything about the new gate - leaves
+#     the old decision open over a park it never announced. The park clock
+#     no-mistakes publishes restarts with each episode, so a status record older
+#     than this episode is a record about a previous one.
+#
+# What this still does not prove, stated rather than hidden: that the open key
+# names the FINDING at this gate. Nothing available here can, because the fold
+# is keyed per task and the park names no key. What the pair does establish is
+# that firstmate owes an answer at a gate of this kind and that the crew's only
+# word on the matter was written while sitting at this one. A crew that opened a
+# key, was answered in the pane rather than through a `resolved:` line, and then
+# stayed silent through a whole further park episode is caught by the second
+# token; one that opens a fresh key at each park it reaches, which is what its
+# own status-reporting contract asks of it, is absorbed.
+#
+# The residual the leniency in nm_park_holds_current_status leaves is stated
+# there: past a day of waiting the published park clock resolves to whole hours,
+# so a decision written up to an hour before this episode began still reads as
+# written at it.
 #
 # The fold is verb-blind, so a key opened by `blocked:` counts as open here just
 # as a `needs-decision:` one does. What keeps a crew asking firstmate to ACT
@@ -555,6 +581,13 @@ fm_classify_decision_outstanding() {  # <id>
   state=$(_fm_classify_state_dir)
   [ -n "$state" ] || return 1
   [ -n "$(status_open_decisions "$state/$id.status")" ]
+}
+
+# 0 when <line> carries <token> as a plain substring. Both tokens the parked
+# absorb weighs are matched through here, so neither can drift into a looser
+# test than the other.
+_fm_classify_line_carries() {  # <line> <token>
+  case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac
 }
 
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
@@ -579,13 +612,15 @@ fm_classify_decision_outstanding() {  # <id>
 #                captain takes their time over the PR;
 #   deciding   - the crew's authoritative current state is a `run-step` `parked`
 #                whose detail carries FM_CLASSIFY_AUTHORITY_GATE_MARKER, so the
-#                gate is one firstmate or the captain owns, AND the task's status
-#                stream still carries an open keyed decision
-#                (fm_classify_decision_outstanding above). Those are two separate
-#                facts, not one implying the other - see the residual named in
-#                the section above. A park at a gate the worker itself must
-#                answer, and the run-less status-log `parked` fallback, are both
-#                deliberately left out;
+#                gate is one firstmate or the captain owns, AND
+#                FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER, so the crew's status
+#                record was written at this park episode rather than an earlier
+#                one, AND the task's status stream still carries an open keyed
+#                decision (fm_classify_decision_outstanding above). Those are
+#                three separate facts, not one implying the others - see the
+#                section above. A park whose gate ownership could not be read, a
+#                park the crew never wrote about, and the run-less status-log
+#                `parked` fallback are all deliberately left out;
 #   unreliable - the verdict came back, but it is not evidence about THIS CREW
 #                either way (see below). Consumers that have an independent reason
 #                to believe the crew is fine - today only the watcher's declared-pause
@@ -652,12 +687,11 @@ crew_absorb_verdict() {  # <id>
   if [ "$state" = "done" ] && fm_classify_landing_route_armed "$id"; then
     printf 'landing %s' "$src"; return
   fi
-  if [ "$state" = parked ] && [ "$src" = run-step ]; then
-    case "$line" in
-      *"$FM_CLASSIFY_AUTHORITY_GATE_MARKER"*)
-        if fm_classify_decision_outstanding "$id"; then printf 'deciding %s' "$src"; return; fi
-        ;;
-    esac
+  if [ "$state" = parked ] && [ "$src" = run-step ] \
+     && _fm_classify_line_carries "$line" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+     && _fm_classify_line_carries "$line" "$FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER" \
+     && fm_classify_decision_outstanding "$id"; then
+    printf 'deciding %s' "$src"; return
   fi
   if [ "$state" = failed ] && [ "$src" = run-step ]; then printf 'unreliable %s' "$src"; return; fi
   printf 'none %s' "$src"

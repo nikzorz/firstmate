@@ -58,7 +58,10 @@
 #      rule and appends the marker only for a gate the crew may not answer
 #      itself. Every other park whose findings carry an ask-user action gets the
 #      operator note beside it instead, which reports the finding without naming
-#      an owner.
+#      an owner. Beside that marker it also publishes whether the crew's own
+#      status record was written during THIS park episode rather than an earlier
+#      one (nm_park_holds_current_status below), which is what stops an open
+#      decision from an already-answered park from reading as this park's wait.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
 #      `last_activity` names how long the active step has been quiet, so a run
@@ -114,6 +117,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-claude-limit-lib.sh
 . "$SCRIPT_DIR/fm-claude-limit-lib.sh"
+# Sourced for fm_sup_stat_mtime alone. Two leaf libraries already carry that
+# platform shim as a deliberate self-contained copy, and this reader adds no
+# third; nothing else from that library is called here.
+# shellcheck source=bin/fm-supervision-lib.sh
+. "$SCRIPT_DIR/fm-supervision-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -416,21 +424,20 @@ nm_gate_findings_count() {
 # it replaced, and without it those parks lost a hint an operator reads.
 #
 # It says only those two things, because they are the only two this reader
-# established, and they arise from two DIFFERENT situations it cannot tell apart
-# after the fact: a `fix_review` gate, whose owner was read and is the worker,
-# and a gate whose status word neither probe could read, whose owner is genuinely
-# unknown. Both get this note. It must never claim which, because firstmate reads
-# this line to decide whether to escalate, and naming the wrong one argues for an
-# escalation the ownership rule just ruled out.
+# established. The one situation that reaches it is a gate whose status word
+# neither probe could read, so the finding is real but its owner is genuinely
+# unknown. It must never claim an owner anyway, because firstmate reads this line
+# to decide whether to escalate, and naming one this reader did not establish
+# argues for an escalation on evidence it does not have.
 #
-# It is deliberately NOT the ownership token and must never become it. The two
-# strings have to stay textually DISJOINT - neither a substring of the other -
-# because bin/fm-classify-lib.sh's crew_absorb_verdict matches the ownership
-# token as a plain substring of this whole line, so any overlap would make a
-# gate this reader refused to call authority-owned read as authority-owned
-# there, silently absorbing exactly the parks that must keep surfacing. This
-# note is display text only: nothing consumes it, it is not published as a
-# shared constant, and it must not become one.
+# It is deliberately NOT either token the parked detail can carry and must never
+# become one. All three strings have to stay textually DISJOINT - none a
+# substring of another - because bin/fm-classify-lib.sh's crew_absorb_verdict
+# matches those tokens as plain substrings of this whole line, so any overlap
+# would make a gate this reader refused to call authority-owned read as
+# authority-owned there, silently absorbing exactly the parks that must keep
+# surfacing. This note is display text only: nothing consumes it, it is not
+# published as a shared constant, and it must not become one.
 NM_GATE_ASK_USER_NOTE='[ask-user finding, authority gate unconfirmed]'
 
 # 0 when the gate's own findings table carries a row whose `action` column is
@@ -481,20 +488,105 @@ nm_gate_has_ask_user_action() {
 # them, because the parked branch below has already resolved both and neither
 # probe is worth running twice; this owns only how they combine. Both must hold:
 #
-#   - the gate status word must be `awaiting_approval`, the state in which the
-#     run is asking for a DECISION, not `fix_review`, where it is asking the
-#     worker to review fixes it has already made (AGENTS.md's Validate section
-#     owns which of those the worker answers);
 #   - the gate's findings table must carry an ask-user action row
-#     (nm_gate_has_ask_user_action above).
+#     (nm_gate_has_ask_user_action above). That row is the ownership fact:
+#     `ask-user` is the action AGENTS.md's approval-authority section reserves to
+#     firstmate or the captain, because the implementation worker never answers
+#     its own finding;
+#   - the gate's status word must be READABLE, which is this reader's evidence
+#     that it saw a real gate rather than inferred one from a stray field.
+#
+# WHICH readable word it is decides nothing. `awaiting_approval` and
+# `fix_review` are both parks, and an ask-user finding sitting at either is one
+# the worker may not answer, so an ownership rule that admitted only the
+# approval word published nothing for the shape most escalation parks actually
+# take. AGENTS.md draws no approval-versus-fix-review ownership line either: its
+# Validate section sends the worker to the active gate help for both words, and
+# routes the ask-user finding itself to firstmate regardless of which gate
+# raised it.
 #
 # A gate whose status word could not be read is not evidence of anything and
-# reports 1, so such a park surfaces rather than absorbs, exactly as a
-# `fix_review` gate does. Either way the park keeps the operator note above
-# instead of the token. docs/verification/supervision.md records what real
-# parked runs published when this rule was measured.
+# reports 1, so such a park surfaces rather than absorbs, and keeps the operator
+# note above instead of the token. docs/verification/supervision.md records what
+# real parked runs published when this rule was measured.
 nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
-  [ "$1" = awaiting_approval ] && [ "$2" = yes ]
+  [ -n "$1" ] && [ "$2" = yes ]
+}
+
+# How long the run has been at THIS park, from the `awaiting_agent: parked
+# <duration>` line. no-mistakes stamps that clock when a run stops for the agent
+# and clears it when the agent responds, so the figure measures one park episode
+# rather than the run: a run that parked, was answered, and parked again reports
+# only the latest episode. The field is omitted entirely unless the run is
+# parked.
+#
+# Prints "<seconds> <resolution>" - the truncated figure the run published, and
+# the size of the unit it was truncated to - because the render loses precision
+# as the wait grows and only the pair states that honestly. A park reported as
+# `3d11h` is anywhere from 3d11h to 3d11h59m59s. Prints nothing when the line is
+# absent or its token does not parse, which the caller below reads as no
+# evidence rather than as a fresh park.
+nm_park_age_bounds() {
+  local line tok secs unit
+  line=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
+  [ -n "$line" ] || return 0
+  tok=$(strip_quotes "$(trim "${line#*:}")")
+  case "$tok" in "parked "*) tok=$(trim "${tok#parked }") ;; *) return 0 ;; esac
+  secs=$(nm_duration_secs "$tok") || return 0
+  # The smallest unit the token renders IS its resolution; the measured renders
+  # are Ns, NmMs, NhMm and NdMh, so the trailing character names it.
+  case "$tok" in
+    *d) unit=86400 ;;
+    *h) unit=3600 ;;
+    *m) unit=60 ;;
+    *s) unit=1 ;;
+    *)  return 0 ;;
+  esac
+  printf '%s %s' "$secs" "$unit"
+}
+
+# 0 when the crew's own status record was written during THIS park episode - the
+# fact FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER publishes (rule owned here, literal
+# owned by bin/fm-classify-lib.sh).
+#
+# It is what separates a crew that announced the park it is sitting at from one
+# whose only open decision belongs to an EARLIER park. Those look identical to
+# the status fold, which is keyed per task and folds an append-only stream with
+# no per-line time: after firstmate answers a decision, the worker responds to
+# the gate, the pipeline fixes, and the run parks again - and a worker that
+# wedges before appending anything about the new park leaves its old
+# `needs-decision:` line standing over a park it never announced. Absorbing that
+# is the silence-forever shape, because no timer and no other wake owner is left.
+#
+# The park clock above is what tells them apart, because it restarts with each
+# episode. The status file is append-only, so its mtime is the crew's most
+# recent word; a word written at or after this episode began is about this
+# episode, and one written before it belongs to an earlier one.
+#
+# Deliberately lenient by exactly one resolution unit: the published age is
+# truncated, so the earliest instant this episode can have begun is
+# now - secs - unit, and the comparison uses that bound rather than the latest.
+# The strict bound would refuse a legitimate park whose crew wrote its decision
+# moments after arriving, which is the ordinary shape and the one the absorb
+# exists for. What the slack costs is stated rather than hidden: a decision
+# written less than one resolution unit BEFORE this episode began is still
+# accepted, which matters only past a day of waiting, where the render's unit is
+# a whole hour.
+#
+# An unreadable park clock, an unreadable mtime, and a missing status file all
+# report 1 - no evidence is not evidence - so the park surfaces exactly as it
+# did before this rule existed.
+nm_park_holds_current_status() {
+  local bounds secs unit mtime floor
+  bounds=$(nm_park_age_bounds)
+  [ -n "$bounds" ] || return 1
+  secs=${bounds%% *}
+  unit=${bounds##* }
+  [ -f "$LOG" ] || return 1
+  mtime=$(fm_sup_stat_mtime "$LOG") || return 1
+  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  floor=$(( $(date +%s) - secs - unit ))
+  [ "$mtime" -ge "$floor" ]
 }
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
@@ -1051,6 +1143,12 @@ if [ "$HAVE_RUN" = 1 ]; then
       nm_gate_has_ask_user_action && ask_user_row=yes
       if nm_gate_needs_authority "$gate_status" "$ask_user_row"; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
+        # Published only beside the ownership token, because the two are read
+        # together and nothing consumes this one alone: who owns the gate, and
+        # whether the crew's record is about THIS park.
+        if nm_park_holds_current_status; then
+          RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_CURRENT_STATUS_MARKER"
+        fi
       elif [ "$ask_user_row" = yes ]; then
         RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi
