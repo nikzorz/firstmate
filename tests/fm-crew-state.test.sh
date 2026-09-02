@@ -30,6 +30,10 @@
 #       safety direction, that ordinary worker output discussing limits (and the
 #       prompt's own text quoted in tool output) never triggers it. The
 #       regression pair for the 2026-07-29 incident.
+#   (m) gate ownership and park episode on a parked run: which run shapes publish
+#       the two tokens the watcher's `deciding` absorb reads, plus that absorb
+#       decided over the REAL helper for the majority `fix_review` park - both
+#       the crew that announced the park it sits at and the one that did not.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -388,6 +392,21 @@ gate: review
 EOF
 }
 
+# The park identity as the classifier slices it out, for tests that compare one
+# published identity against another.
+park_identity_of() {  # <current-state-line>
+  local v=$1
+  case "$v" in *"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"*) ;; *) return 0 ;; esac
+  v=${v#*"$FM_CLASSIFY_PARK_IDENTITY_PREFIX"}
+  printf '%s' "${v%%)*}"
+}
+
+# crew_absorb_class over the real producer, with this case's state dir and fake
+# no-mistakes in place, so the sighting record lands where teardown would find it.
+absorb_class_in() {  # <case-dir> <id>
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" crew_absorb_class "$2"
+}
+
 run_parked_scalar_gate_running() {  # <branch>
   cat <<EOF
 run:
@@ -419,6 +438,25 @@ steps[3]{step,status,findings,duration_ms}:
   intent,completed,0,0
   review,fix_review,1,0
   test,pending,0,0
+EOF
+}
+
+# A fix-review gate carrying an ask-user finding, the shape most real escalation
+# parks take. The optional second argument names the finding, which is what a new
+# review round actually changes and therefore what moves the park identity: pass
+# a different one to model the run having been answered and re-parked.
+run_parked_fix_review() {  # <branch> [<finding-id>]
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: fix_review
+  awaiting_agent: parked 2m10s
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings[1]{id,severity,file,line,action,description}:
+    ${2:-r1},error,b.go,,ask-user,changes product behavior
+gate: review
 EOF
 }
 
@@ -1264,31 +1302,33 @@ test_genuine_parked_not_superseded() {
 # --- gate ownership: who the park is actually waiting on ---------------------
 #
 # The marker means the gate is one the crew may NOT answer itself, which is the
-# whole basis of the watcher's `deciding` absorb. These four pin the rule as a
-# fact about the gate rather than as a search for a token anywhere in the run
-# output, which is what it used to be: an `ask-user` row on a worker-owned gate,
-# and the token in prose, both used to publish it.
-test_worker_owned_fix_review_gate_publishes_no_authority_marker() {
+# whole basis of the watcher's `deciding` absorb. These pin the rule as a fact
+# about the gate rather than as a search for a token anywhere in the run output,
+# which is what it used to be: the token in prose used to publish it.
+#
+# Ownership turns on the ask-user row and on the status word being READABLE, not
+# on which of the two readable words it is. A `fix_review` park carrying an
+# ask-user row is waiting on the same answer an `awaiting_approval` one is, and
+# it is the shape most real escalation parks take, so an approval-only rule
+# published nothing for the majority of them.
+test_fix_review_gate_with_an_ask_user_row_publishes_the_authority_marker() {
   reset_fakes
   local d; d=$(new_case gate-owner-fix-review)
   make_repo_on_branch "$d/wt" fm/feat-go1
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-go1.meta" "window=fm:fm-feat-go1" "worktree=$d/wt" "kind=ship"
   printf 'needs-decision: review gate\n' > "$d/state/feat-go1.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_in_gate_block fm/feat-go1)"
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go1)"
   local out; out=$(run_crew_state "$d" feat-go1)
   assert_contains "$out" "state: parked" "a fix-review gate still reports parked"
-  assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
-    "a fix-review gate carrying an ask-user row published the authority-gate marker"
-  # This gate's owner WAS read and is the worker, so the note must report the
-  # finding without naming an owner: firstmate reads this line to decide whether
-  # to escalate, and a note claiming the owner is unknown argues for the
-  # escalation the rule above just ruled out.
-  assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
-    "a fix-review gate with an ask-user row lost or reworded its operator note"
-  assert_not_contains "$out" "unread" \
-    "the operator note claims the gate owner is unread on a gate whose owner was read"
-  pass "a gate the worker itself must answer publishes no authority-gate marker"
+  assert_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
+    "a fix-review gate carrying an ask-user row published no authority-gate marker"
+  # The park identity is published beside it - the pair is what the absorb reads.
+  assert_contains "$out" "$FM_CLASSIFY_PARK_IDENTITY_PREFIX" \
+    "a fix-review park published no park identity"
+  assert_not_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
+    "a confirmed authority gate also carried the unconfirmed-owner operator note"
+  pass "a fix-review gate carrying an ask-user row publishes the authority-gate marker"
 }
 
 test_authority_marker_reads_the_action_column_by_name() {
@@ -1322,9 +1362,9 @@ test_steps_row_approval_gate_publishes_the_authority_marker() {
 }
 
 # A park whose gate status word neither probe can read. It cannot earn the token,
-# because nothing here says who owns the gate, so it keeps surfacing. What it
-# does keep is the operator note, which reports what the findings table shows
-# and claims no ownership. The two strings must stay disjoint: were the note to
+# because nothing here says a real gate was seen at all, so it keeps surfacing.
+# What it does keep is the operator note, which reports what the findings table
+# shows and claims no ownership. The two strings must stay disjoint: were the note to
 # contain the token, this park would read as authority-owned in the classifier
 # and be absorbed - see test_the_operator_note_is_inert_to_the_absorb_classifier
 # in tests/fm-watch-triage.test.sh for the other half of that guard.
@@ -1340,8 +1380,8 @@ test_unreadable_gate_status_keeps_the_note_without_the_marker() {
   assert_contains "$out" "state: parked" "an unreadable-status gate still reports parked"
   assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a park whose gate status word cannot be read published the authority-gate marker"
-  # The same note the fix-review park gets, because once the token is withheld
-  # the two shapes are indistinguishable and the note must not guess which.
+  # The finding is still real and still worth reporting to an operator, so the
+  # note stays - naming no owner, because this reader established none.
   assert_contains "$out" "[ask-user finding, authority gate unconfirmed]" \
     "an unreadable-status park lost or reworded its operator note"
   case "$out" in
@@ -1364,6 +1404,106 @@ test_ask_user_in_prose_does_not_publish_the_authority_marker() {
   assert_not_contains "$out" "$FM_CLASSIFY_AUTHORITY_GATE_MARKER" \
     "a description and a note mentioning ask-user published the authority-gate marker"
   pass "only an ask-user action column publishes the authority-gate marker"
+}
+
+# --- which park episode the crew's decision belongs to ------------------------
+#
+# The ownership token says who owns the gate; it cannot say whether the decision
+# the status fold still reports open is about THIS park. The shape that makes
+# the difference matter: firstmate answers, the worker responds to the gate, the
+# pipeline fixes, the run parks again, and the worker wedges before writing
+# anything about the new gate. Its old `needs-decision:` line stands over a park
+# it never announced, and absorbing that would silence it with no timer and no
+# other wake owner left.
+#
+# What tells them apart is an IDENTITY for the park, compared across two
+# sightings of the same task. bin/fm-crew-state.sh composes and publishes it;
+# bin/fm-classify-lib.sh remembers the last one and owns the comparison, so these
+# cases pin the producer half and the end-to-end cases below pin the rest.
+test_a_park_publishes_an_identity_that_moves_with_the_round() {
+  reset_fakes
+  local d first second; d=$(new_case gate-park-identity)
+  make_repo_on_branch "$d/wt" fm/feat-go6
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-go6.meta" "window=fm:fm-feat-go6" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-go6.status"
+
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go6 round-one-finding)"
+  first=$(park_identity_of "$(run_crew_state "$d" feat-go6)")
+  [ -n "$first" ] || fail "a fix-review park published no park identity at all"
+
+  # The same response read again names the same park: an identity that moved on
+  # its own would surface every absorbable park forever.
+  [ "$(park_identity_of "$(run_crew_state "$d" feat-go6)")" = "$first" ] \
+    || fail "one unchanged park response produced two different identities"
+
+  # The round is answered and the pipeline raises the next one. The gate word and
+  # the step are the same; only the finding is new, which is what a real round
+  # changes, and that alone must move the identity.
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-go6 round-two-finding)"
+  second=$(park_identity_of "$(run_crew_state "$d" feat-go6)")
+  [ -n "$second" ] || fail "the second round published no park identity"
+  [ "$second" != "$first" ] \
+    || fail "a re-park at the same gate with new findings reused the first park's identity"
+  pass "a park publishes an identity that is stable within a round and moves with the next"
+}
+
+# The deciding absorb end to end over the REAL producer and the REAL classifier,
+# not a canned verdict line: the majority park shape - `fix_review`, with an
+# ask-user finding at the gate - reaching the classifier, and each of the three
+# sighting cases the rule turns on. tests/fm-watch-triage.test.sh owns what the
+# watcher then does with each verdict.
+test_deciding_class_over_the_real_helper() {
+  reset_fakes
+  local d out; d=$(new_case deciding-real-helper)
+  make_repo_on_branch "$d/wt" fm/feat-dr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dr.meta" "window=fm:fm-feat-dr" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision [key=review-2]: round 2 raised two ask-user findings\n' \
+    > "$d/state/feat-dr.status"
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-dr round-one-finding)"
+
+  # First sighting: nothing recorded, so nothing can be said about which episode
+  # the open decision belongs to, and the park surfaces.
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "a park seen for the first time was absorbed with nothing to compare it against: $out"
+
+  # Second sighting of the SAME park with the crew silent since: the decision it
+  # announced is the decision in front of it, so the answer owns the next wake.
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = deciding ] \
+    || fail "a fix-review park on a decision firstmate already knows about was not absorbed: $out"
+
+  # The compensating gate, the whole reason this rule exists. Firstmate answered
+  # in the pane without the crew closing the key, the worker responded, the
+  # pipeline fixed, and the run parked again at a NEW round - and the crew wedged
+  # without writing a word about it. Same open key, same last line, same gate
+  # word; only the park moved.
+  FM_FAKE_AXI_STATUS="$(run_parked_fix_review fm/feat-dr round-two-finding)"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "a park the crew never wrote about was absorbed over the real helper: $out"
+
+  # And it STAYS surfaced. Adopting the new park as a fresh baseline would absorb
+  # it from here on, which is the silence-forever shape with extra steps.
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "a park the crew never wrote about was absorbed on the sighting after: $out"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "the never-announced verdict decayed after three sightings: $out"
+
+  # The crew finally speaks about the park it is at, so the wait is legible again.
+  printf 'needs-decision [key=review-3]: round 3 raised another ask-user finding\n' \
+    >> "$d/state/feat-dr.status"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = none ] \
+    || fail "the sighting that first saw the crew speak absorbed before it could be placed: $out"
+  out=$(absorb_class_in "$d" feat-dr)
+  [ "$out" = deciding ] \
+    || fail "a crew that spoke about the park it is at was never absorbed again: $out"
+  pass "crew_absorb_class absorbs a park the crew announced and surfaces one it re-parked into silently"
 }
 
 test_scalar_gate_parked_not_superseded() {
@@ -2441,10 +2581,12 @@ test_usage_limit_ignores_ordinary_limit_prose
 test_usage_limit_only_for_recorded_claude
 test_usage_limit_unreadable_pane_falls_through
 test_usage_limit_classifier_over_real_helper
-test_worker_owned_fix_review_gate_publishes_no_authority_marker
+test_fix_review_gate_with_an_ask_user_row_publishes_the_authority_marker
 test_authority_marker_reads_the_action_column_by_name
 test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
+test_a_park_publishes_an_identity_that_moves_with_the_round
+test_deciding_class_over_the_real_helper
 
 echo "all fm-crew-state tests passed"

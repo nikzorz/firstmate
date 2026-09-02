@@ -58,7 +58,10 @@
 #      rule and appends the marker only for a gate the crew may not answer
 #      itself. Every other park whose findings carry an ask-user action gets the
 #      operator note beside it instead, which reports the finding without naming
-#      an owner.
+#      an owner. Beside that marker it also publishes an IDENTITY for the park
+#      episode itself (nm_park_identity below), which is what lets the classifier
+#      tell one park from the next without any clock and so stops an open
+#      decision from an already-answered park from reading as this park's wait.
 #   2b. A non-terminal run reports WHETHER it is advancing, not only that it
 #      exists. `axi status` publishes an `active_steps` table whose
 #      `last_activity` names how long the active step has been quiet, so a run
@@ -416,21 +419,20 @@ nm_gate_findings_count() {
 # it replaced, and without it those parks lost a hint an operator reads.
 #
 # It says only those two things, because they are the only two this reader
-# established, and they arise from two DIFFERENT situations it cannot tell apart
-# after the fact: a `fix_review` gate, whose owner was read and is the worker,
-# and a gate whose status word neither probe could read, whose owner is genuinely
-# unknown. Both get this note. It must never claim which, because firstmate reads
-# this line to decide whether to escalate, and naming the wrong one argues for an
-# escalation the ownership rule just ruled out.
+# established. The one situation that reaches it is a gate whose status word
+# neither probe could read, so the finding is real but its owner is genuinely
+# unknown. It must never claim an owner anyway, because firstmate reads this line
+# to decide whether to escalate, and naming one this reader did not establish
+# argues for an escalation on evidence it does not have.
 #
-# It is deliberately NOT the ownership token and must never become it. The two
-# strings have to stay textually DISJOINT - neither a substring of the other -
-# because bin/fm-classify-lib.sh's crew_absorb_verdict matches the ownership
-# token as a plain substring of this whole line, so any overlap would make a
-# gate this reader refused to call authority-owned read as authority-owned
-# there, silently absorbing exactly the parks that must keep surfacing. This
-# note is display text only: nothing consumes it, it is not published as a
-# shared constant, and it must not become one.
+# It is deliberately NOT either token the parked detail can carry and must never
+# become one. All three strings have to stay textually DISJOINT - none a
+# substring of another - because bin/fm-classify-lib.sh's crew_absorb_verdict
+# matches those tokens as plain substrings of this whole line, so any overlap
+# would make a gate this reader refused to call authority-owned read as
+# authority-owned there, silently absorbing exactly the parks that must keep
+# surfacing. This note is display text only: nothing consumes it, it is not
+# published as a shared constant, and it must not become one.
 NM_GATE_ASK_USER_NOTE='[ask-user finding, authority gate unconfirmed]'
 
 # 0 when the gate's own findings table carries a row whose `action` column is
@@ -481,21 +483,102 @@ nm_gate_has_ask_user_action() {
 # them, because the parked branch below has already resolved both and neither
 # probe is worth running twice; this owns only how they combine. Both must hold:
 #
-#   - the gate status word must be `awaiting_approval`, the state in which the
-#     run is asking for a DECISION, not `fix_review`, where it is asking the
-#     worker to review fixes it has already made (AGENTS.md's Validate section
-#     owns which of those the worker answers);
 #   - the gate's findings table must carry an ask-user action row
-#     (nm_gate_has_ask_user_action above).
+#     (nm_gate_has_ask_user_action above). That row is the ownership fact:
+#     `ask-user` is the action AGENTS.md's approval-authority section reserves to
+#     firstmate or the captain, because the implementation worker never answers
+#     its own finding;
+#   - the gate's status word must be READABLE, which is this reader's evidence
+#     that it saw a real gate rather than inferred one from a stray field.
+#
+# WHICH readable word it is decides nothing. `awaiting_approval` and
+# `fix_review` are both parks, and an ask-user finding sitting at either is one
+# the worker may not answer, so an ownership rule that admitted only the
+# approval word published nothing for the shape most escalation parks actually
+# take. AGENTS.md draws no approval-versus-fix-review ownership line either: its
+# Validate section sends the worker to the active gate help for both words, and
+# routes the ask-user finding itself to firstmate regardless of which gate
+# raised it.
 #
 # A gate whose status word could not be read is not evidence of anything and
-# reports 1, so such a park surfaces rather than absorbs, exactly as a
-# `fix_review` gate does. Either way the park keeps the operator note above
-# instead of the token. docs/verification/supervision.md records what real
-# parked runs published when this rule was measured.
+# reports 1, so such a park surfaces rather than absorbs, and keeps the operator
+# note above instead of the token. docs/verification/supervision.md records what
+# real parked runs published when this rule was measured.
 nm_gate_needs_authority() {  # <gate-status-word> <ask-user-row: yes|no>
-  [ "$1" = awaiting_approval ] && [ "$2" = yes ]
+  [ -n "$1" ] && [ "$2" = yes ]
 }
+
+# The lines of the gate's own findings table - its header and the rows indented
+# under it, body text only. Located exactly as nm_gate_has_ask_user_action above
+# locates it, because the two must never disagree about which lines are the
+# table, and prose elsewhere in the response must contribute to neither.
+nm_gate_findings_block() {
+  printf '%s\n' "$RUN_OUT" | awk '
+    {
+      n = match($0, /[^ ]/)
+      if (n == 0) next
+      indent = n - 1
+      body = substr($0, n)
+      if (intab && indent <= ind) intab = 0
+      if (intab) { print body; next }
+      if (body ~ /^findings\[[0-9]+\]\{[^}]*\}[ \t]*:/) { print body; ind = indent; intab = 1 }
+    }
+  '
+}
+
+# A short fingerprint of the park EPISODE the run is stopped at, published as
+# FM_CLASSIFY_PARK_IDENTITY_PREFIX (rule owned here, literal owned by
+# bin/fm-classify-lib.sh). It names one park, not one run: the classifier keeps
+# the last identity it saw for a task and reads a CHANGED identity as the run
+# having re-parked, which is the only thing it needs to know and the only thing
+# a single response can honestly supply.
+#
+# It replaces a duration read off the printed `awaiting_agent` clock. That clock
+# is truncated - coarsely once a wait passes a day - so every comparison built on
+# it carried a slack window, and inside that window the shape this whole rule
+# exists to exclude was absorbed. An identity has no resolution to lose.
+#
+# The material is the gate name, the run head, and the gate's findings table.
+# Each moves when a park is answered and the pipeline raises the next one: the
+# fix round commits, so the head advances, and the new round publishes its own
+# findings. That is measured rather than assumed, and measured narrowly - three
+# transitions across four real park episodes of one run, in which both movers
+# moved every time - so docs/verification/supervision.md's park-identity record
+# is where a reader goes for how far the evidence reaches and what it would take
+# to break it. The gate name alone would NOT do, because consecutive rounds park
+# at the same step, so a bare gate name would collide across episodes and read a
+# stale decision as this park's. It never is alone under the caller below: that
+# call site sits inside the ownership branch, which needs an ask-user row, and
+# nm_gate_has_ask_user_action finds that row by matching the same findings-table
+# header nm_gate_findings_block collects from - so the findings block is
+# non-empty on every call that gets here, and the identity always carries it.
+#
+# The material guard below therefore cannot fire today, and is kept as declared
+# defence in depth rather than removed: the invariant it leans on is the caller's
+# requirement above, held one branch away by a condition nothing enforces, and a
+# later revision that published an identity for a park whose table was never read
+# must still get no token rather than one that repeats across episodes. Check
+# that invariant, not this line, if the guard ever looks removable. A park that
+# did reach it with nothing to fingerprint publishes no token at all and surfaces
+# exactly as it did before this rule existed.
+#
+# The fingerprint is a CRC, so two different episodes could in principle
+# collide; nothing here is adversarial (the material is
+# no-mistakes' own output) and the cost of a collision is one absorbed park that
+# should have surfaced, which is the same cost the rule already accepts when the
+# crew's record predates the feature.
+nm_park_identity() {  # <gate-name>
+  local head findings material sum
+  head=$(strip_quotes "$(nm_field head)")
+  findings=$(nm_gate_findings_block)
+  [ -n "$head" ] || [ -n "$findings" ] || return 0
+  material=$(printf '%s\n%s\n%s\n' "$1" "$head" "$findings")
+  sum=$(printf '%s' "$material" | cksum 2>/dev/null) || return 0
+  sum=${sum%% *}
+  case "$sum" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%08x' "$sum"
+}
+
 log_reports_ci_ready() {
   [ "$LOG_VERB" = "done" ] || return 1
   case "$(status_line_note "$LOG_LINE")" in
@@ -1051,6 +1134,12 @@ if [ "$HAVE_RUN" = 1 ]; then
       nm_gate_has_ask_user_action && ask_user_row=yes
       if nm_gate_needs_authority "$gate_status" "$ask_user_row"; then
         RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_AUTHORITY_GATE_MARKER"
+        # Published only beside the ownership token, because the two are read
+        # together and nothing consumes this one alone: who owns the gate, and
+        # which park episode this is.
+        park_id=$(nm_park_identity "$gate")
+        [ -n "$park_id" ] \
+          && RUN_DETAIL="$RUN_DETAIL $FM_CLASSIFY_PARK_IDENTITY_PREFIX$park_id)"
       elif [ "$ask_user_row" = yes ]; then
         RUN_DETAIL="$RUN_DETAIL $NM_GATE_ASK_USER_NOTE"
       fi

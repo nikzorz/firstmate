@@ -741,6 +741,32 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   pass "teardown prompts tasks-axi backlog refresh when compatible"
 }
 
+# Every per-task file the supervisors write has to leave with the task, or a home
+# accumulates one orphan per task forever. The park sighting is the newest of
+# them, and it is the one that would silently change a FUTURE task's verdict if it
+# outlived this one and the id were reused.
+test_teardown_removes_the_per_task_supervisor_records() {
+  local case_dir
+  case_dir=$(make_case per-task-records)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf 'needs-decision: waiting on the captain\n' > "$case_dir/state/task-x1.status"
+  printf '%s\n' "$(( $(date +%s) + 3000 ))" > "$case_dir/state/task-x1.pause-recheck"
+  printf 'deadbeef 12345\n' > "$case_dir/state/task-x1.park-sighting"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "per-task-records: teardown failed"
+
+  assert_absent "$case_dir/state/task-x1.status" \
+    "per-task-records: the status log outlived its task"
+  assert_absent "$case_dir/state/task-x1.pause-recheck" \
+    "per-task-records: the pause recheck deadline outlived its task"
+  assert_absent "$case_dir/state/task-x1.park-sighting" \
+    "per-task-records: the park sighting outlived its task"
+  pass "teardown removes the per-task supervisor records with the task"
+}
+
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
   local case_dir out
   case_dir=$(make_case tasks-axi-manual-optout)
@@ -2146,6 +2172,7 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
 
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
+test_teardown_removes_the_per_task_supervisor_records
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

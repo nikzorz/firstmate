@@ -314,8 +314,9 @@ Columns are located by name from the table header rather than by position, so th
 
 ## Gate status word on a parked run
 
-This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word reads `awaiting_approval`.
+This record supports the gate-ownership half of the parked detail in `bin/fm-crew-state.sh`, which appends its ownership token only for a gate whose status word one of its two probes can read.
 That rule is worth measuring because a parked run whose status word neither probe can read never earns the token and so is never absorbed, and whether that shape occurs in practice is evidence rather than a contract.
+The measurement below is also what settles that the rule must not turn on which of the two words it reads: both are parks, and the `fix_review` word is the one most of them carry.
 The rule itself, both probes, and every exclusion are covered without a real run by `tests/fm-crew-state.test.sh`.
 
 Measured on 2026-08-30 against the installed no-mistakes v1.60.2 (eb4e379), over the three real parked gates captured from review rounds one through three of this branch's own validation run: one `awaiting_approval` and two `fix_review`.
@@ -342,7 +343,7 @@ The subject was five real `axi status` gate responses captured from this branch'
 The predicate checked was `nm_gate_has_ask_user_action` in `bin/fm-crew-state.sh`, its own awk run verbatim against each captured response rather than a copy here that would drift from it.
 
 All five rendered their gate findings as a `findings[N]{id,severity,file,action,description}` table carrying a literal `action` column, with `ask-user` present as an exact cell value in that column, and the predicate returned its match token for all five.
-The single `awaiting_approval` capture is the one that matters most, and it matched: `fix_review` is excluded from the ownership token by design, so an `awaiting_approval` park is the only shape that can earn the token and therefore the only shape that can produce a `deciding` absorb.
+The one-to-four split between the two gate words is the load-bearing figure here: an ownership rule admitting only `awaiting_approval` would have published its token for one of these five real parks and withheld it from the other four, so it could never have produced a `deciding` absorb for the shape those parks actually take.
 
 This is evidence that this version renders the table this way, not proof that every version will.
 A future response shape that drops the table, renames the column, or reports the finding count without a table would make the predicate return false, which moves a real park into the never-absorbed exclusion with no test failing, because every fixture in the suite hard-codes the table.
@@ -351,6 +352,80 @@ That benign direction is a property of the measured header shape rather than of 
 `nm_gate_has_ask_user_action` locates the `action` column by name but reads its cell with a bare comma split that does not honour the quoting of the TOON table it is splitting, which is safe only while every column before `action` is comma-free, as it is in the measured `findings[N]{id,severity,file,action,description}` shape whose single free-text column is last.
 A future header that places a quoted free-text column before `action` breaks that reading: a comma inside such a cell shifts the split, so a row carrying some other action can be read as `ask-user`, publishing the ownership token for a gate that has no ask-user row and absorbing a park that should have surfaced.
 That is the one direction the safety asymmetry forbids, so a reader who meets such a header shape can no longer rely on the benign-direction claim above.
+
+## Awaiting-agent field on a parked run
+
+This record supports one narrow thing the parked branch of `bin/fm-crew-state.sh` relies on: that a run stopped for the agent renders an `awaiting_agent:` line at all, which is one of the signals that branch treats as "this run is parked right now".
+Nothing reads a QUANTITY out of that line any more.
+An earlier revision of this rule derived the park's age from the printed duration and compared it against the crew status file's mtime; that comparison is gone, because the printed figure is truncated and every bound built on it carried a slack window in which a stale decision read as a current one.
+What replaced it is a park IDENTITY compared across two sightings, recorded in `state/<id>.park-sighting`, which has no resolution to lose.
+
+Measured on 2026-08-31 against the installed no-mistakes v1.60.2 (eb4e379), built 2026-08-29.
+Nothing live was touched: `NM_HOME` pointed at a copy of the state database, and the copy's own `runs` row was moved into a parked state so the field would render.
+
+```sh
+no-mistakes axi status --run <run-id>
+```
+
+The field rendered for both parked words, so it is available for the `fix_review` shape most escalation parks take and not only for the approval one:
+
+```
+awaiting_approval  ->   status: awaiting_approval   awaiting_agent: parked 12h30m
+fix_review         ->   status: fix_review   awaiting_agent: parked 12h30m
+```
+
+The column behind it is `omitempty`, so a run this reader calls parked can also render with no `awaiting_agent` line at all - the gate word then comes from the scalar status line, the `gate:` block or the parked steps row instead.
+That is why the branch treats the field as one signal among several rather than as the definition of a park, and why nothing in the absorb depends on the line being present.
+
+## Park identity movement between consecutive park episodes
+
+This record supports the premise the whole park-episode gate rests on: that the material `bin/fm-crew-state.sh` composes the park identity from actually differs between one park episode and the next.
+The identity is the gate name, the run head and a digest of the gate's findings table.
+If a re-park ever left all three unchanged, the identity would repeat across episodes, and `bin/fm-classify-lib.sh` would read a decision the crew opened at an earlier park as belonging to the park in front of it, which is the one failure the gate exists to prevent.
+
+Taken on 2026-09-01 from no-mistakes' own recorded run history rather than from a designed capture: the `step_rounds` rows for the `review` step of run `01M1DFBMVXHNXMHYPNGR6VSG2Z`, which is this branch's own first validation run.
+That run went through four consecutive real park episodes, so the transitions between them are exactly the event the identity has to distinguish.
+The columns read were `round`, `starting_head_sha`, `reviewed_head_sha` and `findings_json`, with the findings column reduced to a digest over its sorted finding ids.
+
+```
+round 1: start=3e79559a reviewed=3e79559a findings=73354a80 n=3
+round 2: start=3e79559a reviewed=9899c832 findings=c5d59718 n=2   head moved: yes   findings moved: yes
+round 3: start=9899c832 reviewed=87be778f findings=9bf42328 n=3   head moved: yes   findings moved: yes
+round 4: start=87be778f reviewed=100706f5 findings=f5199de8 n=2   head moved: yes   findings moved: yes
+```
+
+Both movers moved on all three transitions: the reviewed head advanced every time because each fix round commits, and the findings block differed every time because each re-review publishes its own table.
+
+The limits belong in the same breath as the evidence, because this is the kind of premise a reader is most likely to round up.
+It is n = 3 transitions across 4 episodes, on ONE branch, from ONE run, and it is recorded history rather than a designed capture, so nothing was arranged to make the movers move.
+It is therefore evidence that the material DID move in every observed case, and not a law that it always will.
+The failure it would take is worth stating plainly: a re-park whose fix step commits nothing AND whose re-review republishes an identical finding set would repeat the identity across episodes.
+No such case was observed here, and none was constructed either.
+A later reader should re-take this the same way before relying on the premise against a newer no-mistakes, since the `step_rounds` rows of any multi-round run are the cheapest source.
+
+## Parked detail length against the bearings display budget
+
+This record supports the SPELLING of the two tokens `bin/fm-crew-state.sh` appends to a parked detail, which are as terse as they are because of a budget enforced in a different script.
+`bin/fm-bearings-snapshot.sh` renders a crew's `current_state.detail` as the bearings `doing` field through a 90-character truncation, and the parked detail is the longest one `bin/fm-crew-state.sh` produces, so a token appended there can push a park past the cut and show the captain a mid-token ellipsis.
+The effect is display only: nothing reads either token out of the bearings JSON, because the absorb reads them from the raw current-state line directly.
+
+Measured on 2026-09-01 by composing the detail exactly as that script's parked branch does and taking its length.
+Besides the finding count the only variable part is the gate name, and its resolution order is worth stating because an earlier reading of this got it wrong: the parked branch takes the `gate:` line's name when a gate line is present, and ONLY when one is absent does it fall through to the reader that consults the parked steps row; failing both, it uses the RUN STATUS WORD, and failing that the literal `gate`.
+So the status-word arm is reached whenever no name can be read, which includes a `gate:` block carrying no name inside it even though a parked steps row is present and would have supplied one.
+That arm is what makes the worst case `awaiting_approval` at 17 characters, rather than `fix_review` at 10 or the longest step name `document` at 8.
+
+```
+gate name              base   + '(ask-user: authority decision) (park a1b2c3d4)'
+review                   30                                                  77
+document                 32                                                  79
+fix_review               34                                                  81
+awaiting_approval        41                                                  88
+awaiting_approval        42                                                  89   two-digit finding count
+```
+
+Every shape clears the budget, including the status-word arm, so the detail no longer truncates for any park this reader can produce.
+That was not true of an earlier spelling, which carried a sentence where the second token now carries a fixed eight-character identity: it measured 91 to 103 and truncated the ordinary absorbable park.
+The margin is one character at the worst case, so a third token, or a longer identity, would put the status-word arm back over the cut.
 
 ## Forge probe for a monitoring ci step
 
