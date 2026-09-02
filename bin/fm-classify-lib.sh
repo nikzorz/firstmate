@@ -32,9 +32,9 @@
 # window in which a word the crew appends and a re-park cannot be told apart, and
 # that window is the one that resolves toward absorbing a crew that should have
 # surfaced - so a SLOWER cadence degrades the property the record exists for.
-# Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
-# never on every wake, and that limit is about the bounded read below rather than
-# about the record.
+# Callers run it ONLY on no-verb signal handling, on a surfaced signal whose crew
+# announced a decision, and on first sighting of a stale hash, never on every wake,
+# and that limit is about the bounded read below rather than about the record.
 # A caller that keeps absorbing the same unchanged pane across polls - today only
 # bin/fm-watch.sh's declared-pause cadence - memoizes the verdict in its own marker
 # state and re-reads no more often than FM_STALE_ESCALATE_SECS, which is what keeps
@@ -865,16 +865,18 @@ crew_absorb_class() {  # <id>
   printf '%s' "${verdict%% *}"
 }
 
-# Take the verdict for its RECORD alone and throw the class away, for a consumer
-# that surfaces a stale crew unconditionally and so never asks the absorb anything.
-# Only bin/fm-watch.sh's away-mode path is that consumer: the daemon owns triage
-# there, so the watcher surfaces one-shot per distinct stale hash without
-# classifying - and without this, no park sighting would be recorded for the whole
-# time firstmate is away. The next sighting after a return would then be weighed
-# against evidence from before the away window, which is the one comparison the
-# record must never make. Recording here costs the same bounded fm-crew-state.sh
-# read the classifying path already pays, at the same once-per-stale-hash cadence,
-# and changes nothing about what that path does with the crew.
+# Take the verdict for its RECORD alone and throw the class away, for a caller that
+# surfaces a crew without asking the absorb anything. Both such callers live in
+# bin/fm-watch.sh, which owns why each one records: the away-mode stale path, where
+# the daemon owns triage and the watcher surfaces one-shot per distinct stale hash
+# without classifying, and the wake that announces a decision, which the classifying
+# path short-circuits past. Without the away-mode one, no park sighting would be
+# recorded for the whole time firstmate is away, and the next sighting after a
+# return would be weighed against evidence from before the away window, which is the
+# one comparison the record must never make. Recording costs the same bounded
+# fm-crew-state.sh read the classifying path already pays, on the same bounded
+# occasions rather than every wake, and changes nothing about what either path does
+# with the crew.
 crew_park_sighting_record() {  # <id>
   crew_absorb_verdict "$1" >/dev/null 2>&1 || true
 }
