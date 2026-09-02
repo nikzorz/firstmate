@@ -270,6 +270,27 @@ recorded_windows() {
 # below).
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 
+# The long-cadence recheck, shared by the two absorbs that can hold ONE unchanged
+# stale pane indefinitely: a declared external wait (handle_paused_stale below)
+# and a wedge threshold reached while the run step is still advancing
+# (wedge_timer_check below). Neither may rot invisibly, and both earn a recheck on
+# the same terms. <anchor-age> is measured from a DURABLE timestamp - the pause's
+# own status file, the pane signature's own record - rather than a per-hash
+# marker, so a churny idle pane (a ticking clock, a token counter) cannot keep
+# resetting the cadence. <throttle-file> holds the last recheck epoch, so once
+# past the window this fires once per window rather than on every poll.
+resurface_due() {  # <anchor-age> <throttle-file>
+  [ "$1" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$(age_of "$2")" -ge "$PAUSE_RESURFACE_SECS" ]
+}
+
+# Raise one long-cadence recheck and stamp its throttle. Exits the cycle through
+# wake(), so a caller must finish its own bookkeeping before calling this.
+raise_resurface() {  # <window> <throttle-file> <reason>
+  fm_wake_append stale "$1" "$3" || exit 1
+  date +%s > "$2"
+  wake "$3"
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -284,11 +305,18 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # entire window was escalated as a possible wedge while the reconciler could see
 # it moving. At the threshold, and ONLY there, this asks crew_run_step_advancing
 # (bin/fm-classify-lib.sh) whether the run step is still moving, and restarts the
-# window instead of escalating when it is. The absorb is safe without any timer
-# behind it because the run itself owns the next wake: it parks at a gate, goes
-# terminal, or stops advancing, and each of those reaches firstmate through a
-# path that already exists - the last one right here, since a run that stopped
-# moving reports `stalled` and no longer satisfies the test.
+# window instead of escalating when it is. Usually the run itself owns the next
+# wake from there: it parks at a gate, goes terminal, or stops advancing, and each
+# of those reaches firstmate through a path that already exists - the last one
+# right here, since a run that stopped moving reports `stalled` and no longer
+# satisfies the test. But that last route needs an elapsed figure the run
+# publishes, and a `working` run step whose advancement cannot be MEASURED
+# (docs/configuration.md's declared-pause section enumerates those readings) would
+# otherwise satisfy the test forever, so an absorbed pane also carries the same
+# bounded recheck a declared pause gets: past PAUSE_RESURFACE_SECS of true idle
+# age it re-surfaces once per window through resurface_due/raise_resurface above.
+# That cadence sits strictly BEHIND the stalled reading - a run that has stopped
+# advancing fails the test and escalates immediately, exactly as it always did.
 #
 # Three limits keep this from becoming a way to go quiet. The run step is graded
 # against the endpoint exactly as pause_state_class below grades it, and for the
@@ -301,13 +329,15 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # supported-backends note); everywhere else the timer escalates exactly as
 # before. The read happens at most once per STALE_ESCALATE_SECS, which is the
 # cadence bin/fm-classify-lib.sh's contract asks of a caller that keeps absorbing
-# one unchanged pane. And a window that has already wedge-escalated up to
-# FM_WEDGE_DEMAND_INSPECT_COUNT times is never absorbed here, because that
-# escalation's own payload tells firstmate not to re-absorb on the run-step state
-# alone; absorbing it in the watcher would contradict the instruction the wake
+# one unchanged pane. And the absorb stops one window BEFORE the deep-inspection
+# escalation, so that escalation itself always fires: the gate below compares the
+# escalation that WOULD fire against FM_WEDGE_DEMAND_INSPECT_COUNT, not the count
+# already recorded. That is the point of it - the deep-inspection payload tells
+# firstmate not to re-absorb on the run-step state alone, and a watcher that
+# absorbed the threshold carrying it would contradict the instruction the wake
 # carries.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason key idle idle_age rf
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -317,6 +347,19 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        key=$(printf '%s' "$win" | tr ':/.' '___')
+        # The timer restarts on every absorbed threshold, so it is the wrong clock
+        # for how long the pane has ACTUALLY been quiet - the figure firstmate
+        # triages a wedge on. .hash-<key> is rewritten only when the pane signature
+        # changes, so its mtime is the real idle start. Any reading that would
+        # UNDERSTATE the wait - an unreadable mtime, one somehow younger than the
+        # timer itself - falls back to the timer's own age.
+        idle=$(stat_mtime "$STATE/.hash-$key")
+        case "$idle" in
+          ''|*[!0-9]*) idle_age=$age ;;
+          *) idle_age=$(( $(date +%s) - idle )) ;;
+        esac
+        [ "$idle_age" -ge "$age" ] || idle_age=$age
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
         if [ "$n" -lt "$FM_WEDGE_DEMAND_INSPECT_COUNT" ] \
            && [ "$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null)" = alive ] \
@@ -326,12 +369,17 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           # the escalation count is left alone because nothing escalated.
           date +%s > "$since_file"
           triage_log "absorbed $label (run step still advancing at the escalation threshold): $win"
+          rf="$STATE/.advancing-resurfaced-$key"
+          if resurface_due "$idle_age" "$rf"; then
+            raise_resurface "$win" "$rf" \
+              "stale: $win (idle ${idle_age}s, run step still advancing - absorbed on a long cadence not a wedge; confirm the run is still moving)"
+          fi
           return 0
         fi
         echo "$n" > "$escalation_file"
-        reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
+        reason="stale: $win (idle ${idle_age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
-          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
+          reason="stale: $win (idle ${idle_age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
         rm -f "$since_file"
@@ -345,45 +393,37 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # dead-agent captain-held transfer, and re-surface it once every
 # PAUSE_RESURFACE_SECS for a recheck so it cannot rot invisibly. Called on any
 # stale poll once pause_state_class permits the bounded cadence, so it must be
-# cheap: it NEVER re-reads crew state. The re-surface age is anchored on the
-# status file mtime, not a per-hash marker, so a churny idle pane (a ticking
-# clock, a token counter) cannot keep resetting the cadence the way a hash-tied
-# timer would. A .paused-resurfaced-<key> throttle marker records the last
-# re-surface epoch so, once past the window, it fires once per window rather than
-# every poll. Advances the stale suppressor to <hash> and flags the key paused.
+# cheap: it NEVER re-reads crew state. The cadence itself is resurface_due/
+# raise_resurface above, shared with the advancing-run absorb: the age is anchored
+# on the status file mtime, and .paused-resurfaced-<key> is the throttle marker.
+# Advances the stale suppressor to <hash> and flags the key paused.
 # A pause that recorded WHEN its wait ends (fm-classify-lib.sh's one-shot
 # deadline) also re-surfaces at that instant, which is only ever earlier than the
 # window above: the throttle is skipped because the deadline is cleared as it
 # fires, so it cannot repeat, and the next recheck is back on the fixed cadence.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason due
+  local win=$1 task=$2 h=$3 key statusf mtime age rf reason=''
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
-  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.advancing-resurfaced-$key"
   statusf="$STATE/$task.status"
   mtime=$(stat_mtime "$statusf")
   case "$mtime" in ''|*[!0-9]*) mtime=$(date +%s) ;; esac
   age=$(( $(date +%s) - mtime ))
   rf="$STATE/.paused-resurfaced-$key"
-  rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
-  due=none
   if pause_deadline_reached "$STATE" "$task"; then
     # Consumed the moment it decides this recheck, not after the wake lands: an
     # elapsed deadline left in place would re-decide on every poll. A cadence
     # re-surface that happens to come first never consumes it, so a recheck still
     # scheduled ahead survives.
-    due=deadline
     pause_deadline_clear "$STATE" "$task"
     reason="stale: $win (paused ${age}s, awaiting external - the wait's reported end time has arrived; recheck it now)"
-  elif [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
-    due=cadence
+  elif resurface_due "$age" "$rf"; then
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
   fi
-  if [ "$due" != none ]; then
-    fm_wake_append stale "$win" "$reason" || exit 1
-    date +%s > "$rf"
-    wake "$reason"
+  if [ -n "$reason" ]; then
+    raise_resurface "$win" "$rf" "$reason"
   fi
   triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
 }
@@ -414,7 +454,7 @@ clear_pause_tracking() {  # <window>
   key=${key//\//_}
   key=${key//./_}
   clear_pause_state "$win"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.advancing-resurfaced-$key"
   task=$(window_to_task "$win" "$STATE")
   if [ -n "$task" ] && ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
     pause_deadline_clear "$STATE" "$task"
@@ -1072,6 +1112,7 @@ EOF
     sf="$STATE/.stale-$key"
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
+    arf="$STATE/.advancing-resurfaced-$key"   # throttle: last long-cadence advancing-run recheck
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
     prev=$(cat "$hf" 2>/dev/null || true)
     if [ "$h" = "$prev" ]; then
@@ -1150,7 +1191,7 @@ EOF
                 # expected shape for as long as the PR waits, and timing it would
                 # re-raise the same finished task every escalation window.
                 printf '%s' "$h" > "$sf"
-                rm -f "$ssf" "$ewf"
+                rm -f "$ssf" "$ewf" "$arf"
                 triage_log "absorbed stale (finished, awaiting merge; the merge poll owns the next wake): $w"
                 ;;
               deciding)
@@ -1164,7 +1205,7 @@ EOF
                 # to carry, and closing it (a `resolved:` line, or a verified
                 # captain-held transfer) drops this class on the next sighting.
                 printf '%s' "$h" > "$sf"
-                rm -f "$ssf" "$ewf"
+                rm -f "$ssf" "$ewf" "$arf"
                 triage_log "absorbed stale (parked on an open decision; the answer owns the next wake): $w"
                 ;;
               *)
@@ -1253,7 +1294,7 @@ EOF
         fi
       else
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping.
-        rm -f "$ssf" "$ewf"
+        rm -f "$ssf" "$ewf" "$arf"
         if [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$(window_to_task "$w" "$STATE").status")"; }; then
           clear_pause_tracking "$w"
         fi
@@ -1261,7 +1302,7 @@ EOF
     else
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
-      rm -f "$ssf" "$ewf"
+      rm -f "$ssf" "$ewf" "$arf"
       task=$(window_to_task "$w" "$STATE")
       if ! afk_present && status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")" && ! window_is_busy "$w" "$tail40"; then
         case "$(pause_state_class "$w" "$task")" in

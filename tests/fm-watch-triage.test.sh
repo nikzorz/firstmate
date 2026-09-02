@@ -1251,11 +1251,14 @@ test_stale_terminal_status_overridden_by_active_run() {
   # threshold, so the next poll escalates exactly like the non-terminal case.
   # The verdict has to change for that: an advancing run is absorbed at the
   # threshold instead (see the advancing-run test below), so leaving it as
-  # `working` would be testing that path rather than this one.
+  # `working` would be testing that path rather than this one. The endpoint is
+  # CONFIRMED alive here, so the absorb's own liveness gate cannot be what
+  # produces this escalation - only the `stalled` verdict can.
   export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (running, no activity for 900s)'
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
@@ -1272,7 +1275,7 @@ test_stale_terminal_status_overridden_by_active_run() {
 # the wedge timer eventually escalates it - the low-churn behavior preserved.
 
 test_nonterminal_stale_provably_working_absorbed_then_escalated() {
-  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid back idle_reported
   dir=$(make_case nonterminal-stale-working); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-quiet"
@@ -1307,16 +1310,29 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   # fm-crew-state.sh reports as `stalled` - and the idle timer is backdated past
   # the threshold. This is the reading the whole wedge escalation exists for, so
   # it must still escalate now that an ADVANCING run is absorbed here instead.
+  # The endpoint reads CONFIRMED alive, so the absorb's liveness gate cannot be
+  # what escalates this; only the `stalled` verdict can.
   export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (running, no activity for 900s)'
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # The pane has actually been quiet far longer than the timer, which restarts on
+  # every absorbed threshold. .hash-<key> holds that true idle start, and the wake
+  # has to report it: firstmate triages a four-hour wedge differently from a
+  # four-minute one.
+  back=$(( $(date +%s) - 4000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.hash-$key"
+  else touch -m -d "@$back" "$state/.hash-$key"; fi
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
   wait_for_exit "$pid" 40 || fail "watcher did not escalate a provably-working non-terminal stale past the threshold"
   grep -F "stale: $window" "$out" >/dev/null || fail "escalation did not print a stale wake"
   grep -F "possible wedge" "$out" >/dev/null || fail "escalation did not flag a possible wedge"
+  idle_reported=$(sed -n 's/.*idle \([0-9][0-9]*\)s.*/\1/p' "$out" | head -1)
+  [ -n "$idle_reported" ] || fail "the wedge escalation reported no idle age: $(cat "$out")"
+  [ "$idle_reported" -ge 4000 ] || fail "the wedge escalation understated the idle age as ${idle_reported}s, measuring from the restarted timer rather than the pane's own idle start"
   [ ! -e "$state/.stale-since-$key" ] || fail "stale-since timer was not cleared after escalation"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the wedge escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "wedge escalation was not queued"
@@ -1446,6 +1462,114 @@ test_advancing_run_over_an_unconfirmed_endpoint_still_escalates() {
   grep -F "possible wedge" "$out" >/dev/null || fail "the escalation did not flag a possible wedge"
   unset FM_FAKE_CREW_STATE
   pass "an advancing run whose endpoint cannot be confirmed alive still wedge-escalates"
+}
+
+# --- a busy PANE over a live endpoint still escalates -------------------------
+# The absorb reads the run step and nothing else, and this is what pins that at
+# the watcher level. A `working` verdict sourced from the PANE is read from the
+# very pane the stale wake already found unchanged, so it cannot corroborate
+# itself; widening the absorb to crew_is_provably_working, which accepts it,
+# would silence exactly the wedge this timer exists to catch. The endpoint is
+# confirmed alive here, so the verdict's SOURCE is the only thing left deciding.
+test_busy_pane_verdict_over_a_live_endpoint_still_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case wedge-pane-source); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-pane-only"
+  printf 'no-mistakes: applying review fixes' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/pane-only.meta"
+  printf 'working: handed off to validation\n' > "$state/pane-only.status"
+  sig=$(seen_sig "$state/pane-only.status"); printf '%s' "$sig" > "$state/.seen-pane-only_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "no-mistakes: applying review fixes")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "a pane-sourced working verdict was absorbed as an advancing run step"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the escalation did not flag a possible wedge"
+  unset FM_FAKE_CREW_STATE
+  pass "a working verdict sourced from the pane alone still wedge-escalates over a live endpoint"
+}
+
+# --- the advancing absorb re-surfaces on the long cadence ---------------------
+# fm-crew-state.sh cannot MEASURE advancement for every run it calls working: the
+# coarse runs-list fallback, an absent active_steps table, a last_activity of
+# `unknown`, and a monitoring ci step the forge gives no answer about all report
+# `working · run-step` with no elapsed figure behind them (docs/configuration.md
+# enumerates them). A hung pipeline in one of those readings would satisfy the
+# absorb forever, so the absorbed pane carries the same bounded recheck a declared
+# pause gets: nothing before PAUSE_RESURFACE_SECS of accumulated idle age, then
+# one recheck wake per window. The verdict below is exactly what the coarse
+# fallback emits, and the idle age is anchored on the pane signature's own record
+# rather than the wedge timer the absorb keeps restarting.
+test_absorbed_advancing_run_resurfaces_on_the_long_cadence() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid back
+  dir=$(make_case wedge-advancing-resurface); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-unmeasurable"
+  printf 'no-mistakes axi run: validating...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/unmeasurable.meta"
+  printf 'working: handed off to validation\n' > "$state/unmeasurable.status"
+  sig=$(seen_sig "$state/unmeasurable.status"); printf '%s' "$sig" > "$state/.seen-unmeasurable_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "no-mistakes axi run: validating...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (background run)'
+
+  # Phase A: the wedge threshold is reached, so the absorb runs - but the pane's
+  # idle age is still inside the re-surface window, so nothing is raised.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=3600 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "an absorbed advancing run was rechecked before its window elapsed: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "an absorbed advancing run printed a wake reason inside the re-surface window"
+  [ ! -s "$state/.wake-queue" ] || fail "an absorbed advancing run enqueued a wake inside the re-surface window"
+  [ ! -e "$state/.advancing-resurfaced-$key" ] || fail "the recheck throttle was stamped without a recheck"
+  reap "$pid"
+
+  # Phase B: the pane has now been quiet past the window. .hash-<key> is the
+  # durable anchor - the watcher rewrites it only when the pane signature
+  # changes, so backdating it is the same thing as the pane having sat unchanged
+  # that long - and the absorb, which keeps restarting the wedge timer, must now
+  # raise one recheck that reads as a recheck rather than a wedge.
+  back=$(( $(date +%s) - 5000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.hash-$key"
+  else touch -m -d "@$back" "$state/.hash-$key"; fi
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=3600 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "an absorbed advancing run never re-surfaced past its window"
+  grep -F "stale: $window" "$out" >/dev/null || fail "the recheck did not print a stale wake"
+  grep -F "still advancing" "$out" >/dev/null || fail "the recheck was not labeled a still-advancing recheck: $(cat "$out")"
+  grep -F "possible wedge" "$out" >/dev/null && fail "the long-cadence recheck was mislabeled a possible wedge"
+  [ -e "$state/.advancing-resurfaced-$key" ] || fail "the recheck throttle marker was not recorded"
+  [ ! -s "$state/.wedge-escalations-$key" ] || fail "a recheck must not count as a wedge escalation"
+  [ -s "$state/.stale-since-$key" ] || fail "the recheck cleared the wedge timer instead of restarting it"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the advancing-run recheck failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the advancing-run recheck was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "an absorbed advancing run stays quiet inside its window, then re-surfaces once as a recheck"
 }
 
 # --- non-terminal stale, crew NOT provably working: surfaced immediately ------
@@ -2392,7 +2516,9 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   # The run then hangs. It has to for this test to reach the escalation path at
   # all: a run still advancing at the threshold is absorbed there instead, which
   # is asserted by its own test above, so only a run that stopped moving
-  # escalates round after round.
+  # escalates round after round. Every round below runs over a CONFIRMED-alive
+  # endpoint, so the absorb is offered its liveness gate on each one and the
+  # `stalled` verdict is the only thing turning it down.
   export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (running, no activity for 900s)'
 
   n=1
@@ -2402,6 +2528,7 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
     echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
     : > "$out"
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=claude \
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
     pid=$!
@@ -2701,6 +2828,8 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_threshold_absorbed_while_run_step_advancing
 test_demand_deep_inspection_outranks_the_advancing_absorb
 test_advancing_run_over_an_unconfirmed_endpoint_still_escalates
+test_busy_pane_verdict_over_a_live_endpoint_still_escalates
+test_absorbed_advancing_run_resurfaces_on_the_long_cadence
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
