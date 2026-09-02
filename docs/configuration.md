@@ -107,6 +107,8 @@ When a crew declares a bounded external wait, the stale path decides from two in
 
 Long pause cadence means absorbed, rechecked once per `FM_PAUSE_RESURFACE_SECS` window or at a recorded one-shot deadline, whichever comes first.
 Ordinary wedge timer means absorbed now and escalated once the pane stays idle past `FM_STALE_ESCALATE_SECS`.
+At that threshold the crew is asked once more: a run step still advancing over a confirmed-live endpoint restarts the window instead of escalating, because pane idleness is the expected shape of a long pipeline step, while a run that has stopped advancing escalates exactly as before.
+A pane that has already escalated up to `FM_WEDGE_DEMAND_INSPECT_COUNT` times is never absorbed that way, since that escalation asks firstmate for a closer look than the run-step state alone.
 Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
 
 Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.

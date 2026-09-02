@@ -892,6 +892,27 @@ crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
 }
 
+# 0 if crew <id>'s current-code-matched no-mistakes run step is ACTIVELY
+# ADVANCING, which is the `working` class from the `run-step` source and nothing
+# else. This is deliberately narrower than crew_is_provably_working above, and
+# the difference is the whole point: a `working` verdict from `pane` is read from
+# the very pane a stale wake has already found unchanged, so it cannot
+# corroborate itself, while a run step is a separate process's out-of-band record
+# that the pipeline moved. What counts as advancing is not decided here -
+# bin/fm-crew-state.sh owns it, and reports `stalled` (which falls to `none`
+# above) for a run that has stopped moving, so a hung pipeline can never satisfy
+# this and still escalates.
+#
+# It exists for one caller shape: a stale pane already absorbed as
+# provably-working, whose idle timer has now reached the wedge threshold. The
+# pane being unchanged says nothing there, because a long fix step is exactly a
+# quiet pane over a moving run. Carries crew_absorb_verdict's bounded read and
+# its park-sighting write, so a caller must ask at most once per escalation
+# window rather than every poll.
+crew_run_step_advancing() {  # <id>
+  [ "$(crew_absorb_verdict "$1")" = "working run-step" ]
+}
+
 # Classify a crew against Claude Code's usage-limit stall, from the SAME single
 # authoritative current-state line crew_absorb_class reads. Prints one token:
 #   none    - the crew is not parked on the usage-limit prompt (the common case);

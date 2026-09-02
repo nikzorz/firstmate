@@ -273,11 +273,39 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
+# escalates once STALE_ESCALATE_SECS have elapsed. Shared by both places a hash
+# can be absorbed this way: the plain non-terminal path, and the
+# stale_is_terminal-overridden path (a captain-relevant status-log line that an
+# active run/busy pane outranked).
+#
+# The timer alone cannot tell a wedge from a long pipeline step. Pane idleness is
+# all it measures, and a crew that handed its work to a validation run is idle
+# for the whole of that step by design - so a run that had been advancing for the
+# entire window was escalated as a possible wedge while the reconciler could see
+# it moving. At the threshold, and ONLY there, this asks crew_run_step_advancing
+# (bin/fm-classify-lib.sh) whether the run step is still moving, and restarts the
+# window instead of escalating when it is. The absorb is safe without any timer
+# behind it because the run itself owns the next wake: it parks at a gate, goes
+# terminal, or stops advancing, and each of those reaches firstmate through a
+# path that already exists - the last one right here, since a run that stopped
+# moving reports `stalled` and no longer satisfies the test.
+#
+# Three limits keep this from becoming a way to go quiet. The run step is graded
+# against the endpoint exactly as pause_state_class below grades it, and for the
+# same reason: a no-mistakes run executes in no-mistakes' own bare repo, so a
+# moving run says nothing about whether the crew that started it is still there.
+# On 2026-07-29 three crews sat stopped on an interactive prompt for hours while
+# their runs read `running`, and this timer is what caught them - so the absorb
+# requires a CONFIRMED-alive endpoint, not merely one that is not known to be
+# dead. That scopes it to the backends that can answer (see pause_state_class's
+# supported-backends note); everywhere else the timer escalates exactly as
+# before. The read happens at most once per STALE_ESCALATE_SECS, which is the
+# cadence bin/fm-classify-lib.sh's contract asks of a caller that keeps absorbing
+# one unchanged pane. And a window that has already wedge-escalated up to
+# FM_WEDGE_DEMAND_INSPECT_COUNT times is never absorbed here, because that
+# escalation's own payload tells firstmate not to re-absorb on the run-step state
+# alone; absorbing it in the watcher would contradict the instruction the wake
+# carries.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -290,6 +318,16 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
+        if [ "$n" -lt "$FM_WEDGE_DEMAND_INSPECT_COUNT" ] \
+           && [ "$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null)" = alive ] \
+           && crew_run_step_advancing "$(window_to_task "$win" "$STATE")"; then
+          # Restart the window rather than clearing it: the next threshold asks
+          # again, so a run that stops advancing escalates one window later, and
+          # the escalation count is left alone because nothing escalated.
+          date +%s > "$since_file"
+          triage_log "absorbed $label (run step still advancing at the escalation threshold): $win"
+          return 0
+        fi
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
