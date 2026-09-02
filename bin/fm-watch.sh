@@ -979,6 +979,24 @@ EOF
       done <<EOF
 $pending
 EOF
+      # The wake that TELLS firstmate about a decision is the one moment the park
+      # behind it is knowably the park the crew spoke at, and no other path takes
+      # that sighting: the || above short-circuits on a captain verb before the
+      # absorb is ever consulted, and the stale loop needs two identical polls, so
+      # a decision answered before the pane settles leaves no sighting at all and
+      # the next park to reach the record becomes the baseline for a word written
+      # at an earlier one. Recording only - the signal enqueues and surfaces here
+      # exactly as it did before.
+      # The decision verb, not any captain verb, is what opens the gap, so gating
+      # on it keeps the bounded read off every other surfaced status. That is also
+      # why the || ordering's own rationale is untouched: it exists to keep this
+      # read off the benign no-verb wakes, and none of those reach this line.
+      # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
+      for park_sf in $files; do
+        [ "$(status_line_verb "$(last_status_line "$park_sf")")" = needs-decision ] || continue
+        park_task=$(basename "$park_sf"); park_task=${park_task%.status}
+        crew_park_sighting_record "$park_task"
+      done
       wake "$reason"
     else
       while IFS=$(printf '\t') read -r sf sig f; do

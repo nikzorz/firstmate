@@ -1109,6 +1109,74 @@ test_afk_stale_records_the_park_sighting_it_never_classifies() {
   pass "away mode records the park sighting for the crew it hands to the daemon"
 }
 
+# The ordinary answer flow, end to end over three watcher runs, and the reason the
+# sighting has to be taken on the signal path: a decision answered before the pane
+# ever settles is surfaced by the signal branch, which short-circuits on the
+# captain verb, and the stale loop needs two identical polls to triage - so
+# without a sighting at the announce, the FIRST park to reach the record is a
+# later one, and the classifier then reads a word written at an earlier park as
+# spoken at this one.
+#   run 1: the crew announces its decision while the run is parked at deadbeef;
+#   run 2: firstmate has answered in the pane, the run has re-parked at feedface
+#          and the crew has said nothing since, so the park moved under an
+#          unchanged word;
+#   run 3: the same, at a second stale hash - the look that decides whether the
+#          verdict STICKS or the record has quietly adopted feedface.
+# Run 3 is the guard: without the announce-time sighting, run 2 writes feedface as
+# a first-sighting baseline and run 3 absorbs, leaving a crew whose decision was
+# already answered with no wedge timer and no other wake owner.
+test_a_decision_answered_before_the_pane_settled_still_surfaces() {
+  local dir state fakebin out drain_out capture_file window key statusf pid
+  dir=$(make_case deciding-answered-early); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-answered-park"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/answered-park.meta"
+  statusf="$state/answered-park.status"
+  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$statusf"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
+
+  # Run 1: the announce. No .seen-* marker, so the signal branch owns this wake.
+  printf 'asking the captain' > "$capture_file"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the announcing needs-decision signal was not surfaced"
+  grep -F "signal: $statusf" "$out" >/dev/null || fail "no signal wake was printed for the announced decision"
+  # Read back through the library's own reader rather than the record's bytes: the
+  # claim is "this task has been seen at deadbeef, with the word it has now".
+  STATE=$state fm_classify_park_announced answered-park deadbeef \
+    || fail "the wake that announced the decision recorded no sighting for the park it was written at"
+
+  # Runs 2 and 3: the run has re-parked and the crew has appended nothing.
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park feedface)'
+  local phase pane
+  for phase in 2 3; do
+    pane="awaiting a decision, poll $phase"
+    printf '%s' "$pane" > "$capture_file"
+    printf '%s' "$(hash_text "$pane")" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    : > "$out"; : > "$state/.wake-queue"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    wait_for_exit "$pid" 40 \
+      || fail "a decision answered at an earlier park was absorbed on look $phase"
+    grep -Fx "stale: $window" "$out" >/dev/null \
+      || fail "no stale wake was printed on look $phase for the re-parked silent crew"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+      || fail "drain after the re-parked stale on look $phase failed"
+    grep -F "$window" "$drain_out" >/dev/null \
+      || fail "the re-parked stale was not queued on look $phase"
+  done
+  unset FM_FAKE_CREW_STATE
+  pass "a decision answered before the pane settled keeps surfacing after the run re-parks"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -2463,6 +2531,7 @@ test_parked_on_a_decision_from_an_earlier_park_still_surfaces
 test_the_operator_note_is_inert_to_the_absorb_classifier
 test_parked_from_the_status_log_fallback_still_surfaces
 test_afk_stale_records_the_park_sighting_it_never_classifies
+test_a_decision_answered_before_the_pane_settled_still_surfaces
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

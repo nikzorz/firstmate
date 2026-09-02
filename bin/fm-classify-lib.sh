@@ -260,8 +260,17 @@ _fm_classify_status_fingerprint() {  # <status-file>
 #     about which episode its open decision belongs to. Report 1 and escalate,
 #     which is this home's standing answer that unknown is not unannounced, and
 #     write the baseline so the NEXT sighting has something to compare against.
-#     A crash, a restart, a cleared state directory, and a task older than this
-#     rule all land here and all cost exactly one notification.
+#     The cost is NOT one notification, and calling it that would understate it:
+#     writing the current park as the baseline asserts the very thing this arm
+#     could not establish, so a crew ALREADY in the re-parked-and-silent shape
+#     when its first sighting lands escalates once and absorbs from every look
+#     after. What keeps that rare is taking the sighting while the park behind
+#     the crew's word is still the one it was written at, which bin/fm-watch.sh
+#     does on the captain-verb signal path as well as on both stale paths - so
+#     the ordinary announce-then-wait flow no longer arrives here at all.
+#     What still does: a crash, a restart, a cleared state directory, a task
+#     older than this rule, and a decision announced while its run was not yet
+#     parked or could not be read.
 #   - THE CREW HAS SPOKEN since the record was written. Write the new baseline,
 #     but answer from the record as it stood, because a word appended somewhere
 #     between two sightings cannot be placed on either side of a re-park that
