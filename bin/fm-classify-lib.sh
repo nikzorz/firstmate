@@ -11,22 +11,31 @@
 # what it needs as arguments and touches no globals beyond the optional
 # FM_CAPTAIN_RE override. Consumers layer their own dedup/marker state on top (the
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
-# signatures).
+# signatures) - with the one exception below, which keeps a record of its own.
 #
 # The one exception is the absorb classification: crew_absorb_verdict, the primitive
-# that prints "<class> <source>", plus crew_absorb_class (the class alone) and its
-# working/paused wrappers. It is NOT a pure status-file read: it reuses
-# bin/fm-crew-state.sh, which may make a bounded no-mistakes call, to decide whether
-# a crew that just stopped its turn or went stale is working, deliberately paused,
-# finished with a landing route, parked on a decision only firstmate or the
-# captain can answer, unreliable (a verdict that is evidence of nothing either
-# way), or none of those.
+# that prints "<class> <source>", plus crew_absorb_class (the class alone), its
+# working/paused wrappers, and crew_park_sighting_record. It is NOT a pure
+# status-file read: it reuses bin/fm-crew-state.sh, which may make a bounded
+# no-mistakes call, to decide whether a crew that just stopped its turn or went
+# stale is working, deliberately paused, finished with a landing route, parked on a
+# decision only firstmate or the captain can answer, unreliable (a verdict that is
+# evidence of nothing either way), or none of those.
+#
+# It also WRITES durable per-task state, which a second consumer written against
+# this contract has to know before it calls: a parked verdict records the park
+# sighting in state/<id>.park-sighting (fm_classify_park_announced below), so the
+# verdict is order-dependent and NOT idempotent. Two calls in one wake consume the
+# first-sighting escalation between them, and a caller that took the verdict every
+# poll would advance the sighting baseline the moment the crew spoke, absorbing the
+# re-parked-and-silent shape the record exists to catch.
 # Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
-# never on every wake, so the per-wake triage stays cheap. A caller that keeps
-# absorbing the same unchanged pane across polls - today only bin/fm-watch.sh's
-# declared-pause cadence - memoizes the verdict in its own marker state and re-reads
-# no more often than FM_STALE_ESCALATE_SECS, which is what keeps "never on every
-# wake" true for a crew that stays absorbed indefinitely.
+# never on every wake, so the per-wake triage stays cheap AND the sightings stay one
+# per stale episode: that cadence carries correctness now, not only cost.
+# A caller that keeps absorbing the same unchanged pane across polls - today only
+# bin/fm-watch.sh's declared-pause cadence - memoizes the verdict in its own marker
+# state and re-reads no more often than FM_STALE_ESCALATE_SECS, which is what keeps
+# "never on every wake" true for a crew that stays absorbed indefinitely.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
@@ -249,7 +258,13 @@ _fm_classify_status_fingerprint() {  # <status-file>
 #   - THE CREW HAS SPOKEN since the record was written. Write the new baseline,
 #     but answer from the record as it stood, because a word appended somewhere
 #     between two sightings cannot be placed on either side of a re-park that
-#     happened in the same window.
+#     happened in the same window. Name the cost of adopting that baseline plainly:
+#     when the word and a re-park BOTH fell in one sighting gap, and the word was
+#     not about the new park, this arm escalates once and every later sighting then
+#     absorbs, so the residual is a permanent absorb rather than a dating
+#     imprecision. Narrowing the gap is what keeps that rare, which is why every
+#     path that sees a stale crew records a sighting - including the away-mode one,
+#     through crew_park_sighting_record below, which classifies nothing.
 #   - THE CREW HAS NOT SPOKEN. Do NOT write. This is the case the whole rule
 #     turns on: if the identity also matches, the crew's last word was already
 #     its last word when this same park was seen before, so the park it announced
@@ -702,9 +717,12 @@ fm_classify_decision_outstanding() {  # <id>
   [ -n "$(status_open_decisions "$state/$id.status")" ]
 }
 
-# 0 when <line> carries <token> as a plain substring. Both tokens the parked
-# absorb weighs are matched through here, so neither can drift into a looser
-# test than the other.
+# 0 when <line> carries <token> as a plain substring. The parked absorb weighs two
+# tokens and only ONE of them is matched this way - the ownership marker, whose
+# whole content is the literal itself. The park identity beside it is not a plain
+# substring test at all: _fm_classify_park_identity above slices a value out and
+# validates its alphabet, which is why the two literals must stay textually
+# disjoint.
 _fm_classify_line_carries() {  # <line> <token>
   case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac
 }
@@ -785,8 +803,13 @@ _fm_classify_line_carries() {  # <line> <token>
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
-# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# NOT a pure read, in two ways that both bind the caller. fm-crew-state.sh may make
+# a bounded no-mistakes call, and the parked arm WRITES state/<id>.park-sighting
+# through fm_classify_park_announced, so the verdict is order-dependent: the first
+# call for a task consumes its first-sighting escalation, and calls made faster than
+# once per stale episode advance the sighting baseline past the very re-park the
+# record exists to catch. Callers run it only on no-verb signal and first-sighting
+# stale paths, never every wake, for that reason as much as for the cost.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_verdict() {  # <id>
   local id=$1 line state src park
@@ -824,6 +847,20 @@ crew_absorb_class() {  # <id>
   local verdict
   verdict=$(crew_absorb_verdict "$1")
   printf '%s' "${verdict%% *}"
+}
+
+# Take the verdict for its RECORD alone and throw the class away, for a consumer
+# that surfaces a stale crew unconditionally and so never asks the absorb anything.
+# Only bin/fm-watch.sh's away-mode path is that consumer: the daemon owns triage
+# there, so the watcher surfaces one-shot per distinct stale hash without
+# classifying - and without this, no park sighting would be recorded for the whole
+# time firstmate is away. The next sighting after a return would then be weighed
+# against evidence from before the away window, which is the one comparison the
+# record must never make. Recording here costs the same bounded fm-crew-state.sh
+# read the classifying path already pays, at the same once-per-stale-hash cadence,
+# and changes nothing about what that path does with the crew.
+crew_park_sighting_record() {  # <id>
+  crew_absorb_verdict "$1" >/dev/null 2>&1 || true
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class

@@ -1284,7 +1284,7 @@ cleanup_firstmate_home_children() {
     rm -f "$sub_state/$child_id.status" "$sub_state/$child_id.turn-ended" \
       "$sub_state/$child_id.meta" "$sub_state/$child_id.pi-ext.ts" \
       "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
-      "$sub_state/$child_id.pause-recheck"
+      "$sub_state/$child_id.pause-recheck" "$sub_state/$child_id.park-sighting"
   done
 }
 

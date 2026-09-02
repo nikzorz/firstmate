@@ -897,6 +897,11 @@ test_parked_crew_with_a_newer_captain_line_still_surfaces() {
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
+  # Every gate BEFORE the one under test has to pass, or this would surface for
+  # the wrong reason and keep passing with that gate deleted: the crew has been
+  # seen at this same park before, with its status exactly as it stands now, so
+  # the classifier reaches `deciding` and only the newer captain line stops it.
+  STATE=$state fm_classify_park_announced moved-on deadbeef || true
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -954,9 +959,9 @@ test_parked_at_a_worker_owned_gate_still_surfaces() {
 # firstmate answers, the worker responds to the gate, the pipeline fixes, the run
 # parks again, and the worker wedges before writing anything about the new gate.
 # Its old `needs-decision:` line is still the last line and still open, so every
-# other gate here passes; only the crew's status record being older than this
-# park episode separates the two, and without that this crew goes silent for
-# good. Which run shapes publish that token is bin/fm-crew-state.sh's rule,
+# other gate here passes; only the park identity having moved while the crew's
+# status record stayed put separates the two, and without that this crew goes
+# silent for good. Which run shapes publish that token is bin/fm-crew-state.sh's rule,
 # asserted against the real producer in tests/fm-crew-state.test.sh.
 test_parked_on_a_decision_from_an_earlier_park_still_surfaces() {
   local dir state fakebin out drain_out capture_file window key pane_hash pid
@@ -972,7 +977,14 @@ test_parked_on_a_decision_from_an_earlier_park_still_surfaces() {
   pane_hash=$(hash_text "awaiting a decision on 2 findings")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision)'
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park feedface)'
+  # The state the name claims, built rather than described: this crew was last
+  # seen at a DIFFERENT park (deadbeef) with its status file exactly as it stands
+  # now, so the run has re-parked and the crew has said nothing since. Every other
+  # gate passes - ownership token present, decision open, last line the
+  # needs-decision - and only the moved park identity separates it from the
+  # absorbed case above.
+  STATE=$state fm_classify_park_announced earlier-park deadbeef || true
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -1054,6 +1066,47 @@ test_parked_from_the_status_log_fallback_still_surfaces() {
   grep -F "$window" "$drain_out" >/dev/null || fail "the status-log fallback stale was not queued"
   unset FM_FAKE_CREW_STATE
   pass "a crew whose parked verdict comes from its own status log still surfaces"
+}
+
+# Away mode records the sighting it never classifies. The daemon owns triage while
+# firstmate is away, so this path surfaces each distinct stale hash without asking
+# the absorb anything - and a park record is a comparison between two looks at one
+# task, so a supervision mode that never looked would leave a hole in it as wide as
+# the away window, and the first look after a return would weigh the park in front
+# of it against evidence from before firstmate left. Both halves are asserted: the
+# handoff is unchanged, and the sighting is now there. The record is read back
+# through the library's own reader rather than through the file's bytes, so this
+# pins the meaning - "this task has been seen at this park, with the word it has
+# now" - rather than a format.
+test_afk_stale_records_the_park_sighting_it_never_classifies() {
+  local dir state fakebin out drain_out capture_file window key pane_hash pid
+  dir=$(make_case afk-park-sighting); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-afk-park"
+  printf 'awaiting a decision on 2 findings' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/afk-park.meta"
+  printf 'needs-decision [key=seat-scope]: per-tenant or per-seat billing\n' > "$state/afk-park.status"
+  printf '%s' "$(seen_sig "$state/afk-park.status")" > "$state/.seen-afk-park_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "awaiting a decision on 2 findings")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  date '+%s' > "$state/.afk"   # away mode: the supervise-daemon owns triage
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision) (park deadbeef)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the away-mode watcher did not hand a stale parked crew to the daemon"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "away mode stopped surfacing the parked crew"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the away-mode park stale failed"
+  grep -F "$window" "$drain_out" >/dev/null || fail "the away-mode park stale was not queued for the daemon"
+  STATE=$state fm_classify_park_announced afk-park deadbeef \
+    || fail "away mode surfaced a park without recording the sighting, leaving a hole in the record"
+  unset FM_FAKE_CREW_STATE
+  pass "away mode records the park sighting for the crew it hands to the daemon"
 }
 
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
@@ -2409,6 +2462,7 @@ test_parked_at_a_worker_owned_gate_still_surfaces
 test_parked_on_a_decision_from_an_earlier_park_still_surfaces
 test_the_operator_note_is_inert_to_the_absorb_classifier
 test_parked_from_the_status_log_fallback_still_surfaces
+test_afk_stale_records_the_park_sighting_it_never_classifies
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

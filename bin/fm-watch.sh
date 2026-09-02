@@ -1038,6 +1038,13 @@ EOF
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             fm_wake_append stale "$w" "stale: $w" || exit 1
             printf '%s' "$h" > "$sf"
+            # Surfacing is unchanged and the daemon still classifies. What this
+            # adds is the SIGHTING: the park record is a comparison between two
+            # looks at one task, so a supervision mode that never looked would
+            # leave a hole in it as wide as the away window, and the first look
+            # after a return would weigh this park against evidence from before
+            # firstmate left. Before the wake, which exits the cycle.
+            crew_park_sighting_record "$task"
             wake "stale: $w"
           fi
         elif stale_is_terminal "$w" "$STATE"; then

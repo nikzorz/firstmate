@@ -377,6 +377,32 @@ fix_review         ->   status: fix_review   awaiting_agent: parked 12h30m
 The column behind it is `omitempty`, so a run this reader calls parked can also render with no `awaiting_agent` line at all - the gate word then comes from the scalar status line, the `gate:` block or the parked steps row instead.
 That is why the branch treats the field as one signal among several rather than as the definition of a park, and why nothing in the absorb depends on the line being present.
 
+## Park identity movement between consecutive park episodes
+
+This record supports the premise the whole park-episode gate rests on: that the material `bin/fm-crew-state.sh` composes the park identity from actually differs between one park episode and the next.
+The identity is the gate name, the run head and a digest of the gate's findings table.
+If a re-park ever left all three unchanged, the identity would repeat across episodes, and `bin/fm-classify-lib.sh` would read a decision the crew opened at an earlier park as belonging to the park in front of it, which is the one failure the gate exists to prevent.
+
+Taken on 2026-09-01 from no-mistakes' own recorded run history rather than from a designed capture: the `step_rounds` rows for the `review` step of run `01M1DFBMVXHNXMHYPNGR6VSG2Z`, which is this branch's own first validation run.
+That run went through four consecutive real park episodes, so the transitions between them are exactly the event the identity has to distinguish.
+The columns read were `round`, `starting_head_sha`, `reviewed_head_sha` and `findings_json`, with the findings column reduced to a digest over its sorted finding ids.
+
+```
+round 1: start=3e79559a reviewed=3e79559a findings=73354a80 n=3
+round 2: start=3e79559a reviewed=9899c832 findings=c5d59718 n=2   head moved: yes   findings moved: yes
+round 3: start=9899c832 reviewed=87be778f findings=9bf42328 n=3   head moved: yes   findings moved: yes
+round 4: start=87be778f reviewed=100706f5 findings=f5199de8 n=2   head moved: yes   findings moved: yes
+```
+
+Both movers moved on all three transitions: the reviewed head advanced every time because each fix round commits, and the findings block differed every time because each re-review publishes its own table.
+
+The limits belong in the same breath as the evidence, because this is the kind of premise a reader is most likely to round up.
+It is n = 3 transitions across 4 episodes, on ONE branch, from ONE run, and it is recorded history rather than a designed capture, so nothing was arranged to make the movers move.
+It is therefore evidence that the material DID move in every observed case, and not a law that it always will.
+The failure it would take is worth stating plainly: a re-park whose fix step commits nothing AND whose re-review republishes an identical finding set would repeat the identity across episodes.
+No such case was observed here, and none was constructed either.
+A later reader should re-take this the same way before relying on the premise against a newer no-mistakes, since the `step_rounds` rows of any multi-round run are the cheapest source.
+
 ## Parked detail length against the bearings display budget
 
 This record supports the SPELLING of the two tokens `bin/fm-crew-state.sh` appends to a parked detail, which are as terse as they are because of a budget enforced in a different script.

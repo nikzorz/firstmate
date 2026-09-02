@@ -541,7 +541,11 @@ nm_gate_findings_block() {
 # The material is the gate name, the run head, and the gate's findings table.
 # Each moves when a park is answered and the pipeline raises the next one: the
 # fix round commits, so the head advances, and the new round publishes its own
-# findings. The gate name alone would NOT do, because consecutive rounds park at
+# findings. That is measured rather than assumed, and measured narrowly - three
+# transitions across four real park episodes of one run, in which both movers
+# moved every time - so docs/verification/supervision.md's park-identity record
+# is where a reader goes for how far the evidence reaches and what it would take
+# to break it. The gate name alone would NOT do, because consecutive rounds park at
 # the same step, so an identity is refused outright unless the head or the
 # findings table contributed to it - a bare gate name would collide across
 # episodes and read a stale decision as this park's.
