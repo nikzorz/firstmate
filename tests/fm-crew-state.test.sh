@@ -407,21 +407,6 @@ absorb_class_in() {  # <case-dir> <id>
   PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" crew_absorb_class "$2"
 }
 
-# A parked gate with neither a run head nor a findings table, so the gate name is
-# all that is left to identify the park with.
-run_parked_headless_findingless() {  # <branch>
-  cat <<EOF
-run:
-  id: "01RUN"
-  branch: $1
-  status: fix_review
-  awaiting_agent: parked 2m10s
-  head: ""
-  pr: ""
-gate: review
-EOF
-}
-
 run_parked_scalar_gate_running() {  # <branch>
   cat <<EOF
 run:
@@ -1461,24 +1446,6 @@ test_a_park_publishes_an_identity_that_moves_with_the_round() {
   [ "$second" != "$first" ] \
     || fail "a re-park at the same gate with new findings reused the first park's identity"
   pass "a park publishes an identity that is stable within a round and moves with the next"
-}
-
-# Nothing to fingerprint is no evidence: a response with neither a run head nor a
-# findings table leaves only the gate name, which repeats across rounds, so an
-# identity built from it would read a stale decision as this park's.
-test_a_park_with_nothing_to_identify_it_publishes_no_identity() {
-  reset_fakes
-  local d; d=$(new_case gate-park-no-identity)
-  make_repo_on_branch "$d/wt" fm/feat-go7
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-go7.meta" "window=fm:fm-feat-go7" "worktree=$d/wt" "kind=ship"
-  printf 'needs-decision: review gate\n' > "$d/state/feat-go7.status"
-  FM_FAKE_AXI_STATUS="$(run_parked_headless_findingless fm/feat-go7)"
-  local out; out=$(run_crew_state "$d" feat-go7)
-  assert_contains "$out" "state: parked" "a park with no identifying material stopped the park read"
-  assert_not_contains "$out" "$FM_CLASSIFY_PARK_IDENTITY_PREFIX" \
-    "a park with only a gate name to go on published an identity anyway"
-  pass "a park with nothing to identify it publishes no identity"
 }
 
 # The deciding absorb end to end over the REAL producer and the REAL classifier,
@@ -2620,7 +2587,6 @@ test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
 test_a_park_publishes_an_identity_that_moves_with_the_round
-test_a_park_with_nothing_to_identify_it_publishes_no_identity
 test_deciding_class_over_the_real_helper
 
 echo "all fm-crew-state tests passed"

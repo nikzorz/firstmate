@@ -25,13 +25,16 @@
 # It also WRITES durable per-task state, which a second consumer written against
 # this contract has to know before it calls: a parked verdict records the park
 # sighting in state/<id>.park-sighting (fm_classify_park_announced below), so the
-# verdict is order-dependent and NOT idempotent. Two calls in one wake consume the
-# first-sighting escalation between them, and a caller that took the verdict every
-# poll would advance the sighting baseline the moment the crew spoke, absorbing the
-# re-parked-and-silent shape the record exists to catch.
+# verdict is order-dependent and NOT idempotent. The hazard that carries is asking
+# TWICE for one look: the second call answers against the baseline the first just
+# wrote, so the wake absorbs and the first-sighting escalation is spent on nobody.
+# Asking on MORE looks is the opposite of a hazard. Each extra sighting narrows the
+# window in which a word the crew appends and a re-park cannot be told apart, and
+# that window is the one that resolves toward absorbing a crew that should have
+# surfaced - so a SLOWER cadence degrades the property the record exists for.
 # Callers run it ONLY on no-verb signal handling and first sighting of a stale hash,
-# never on every wake, so the per-wake triage stays cheap AND the sightings stay one
-# per stale episode: that cadence carries correctness now, not only cost.
+# never on every wake, and that limit is about the bounded read below rather than
+# about the record.
 # A caller that keeps absorbing the same unchanged pane across polls - today only
 # bin/fm-watch.sh's declared-pause cadence - memoizes the verdict in its own marker
 # state and re-reads no more often than FM_STALE_ESCALATE_SECS, which is what keeps
@@ -216,11 +219,15 @@ _fm_classify_park_identity() {  # <line>
 # <status-fingerprint>", meaning "when this task was last seen parked at
 # <park-identity>, the crew's status file stood at <status-fingerprint>".
 #
-# This library owns it for the same reason it owns the pause deadline above: the
-# supervisors both consult the absorb from here, and bin/fm-crew-state.sh is
-# documented read-only and side-effect free, so the reader that supplies the
-# identity must not be the one that remembers it. bin/fm-teardown.sh removes it
-# with the rest of a task's state, and AGENTS.md section 2 lists it.
+# This library owns it because bin/fm-crew-state.sh, which supplies the identity,
+# is documented read-only and side-effect free, so the reader that supplies the
+# identity must not be the one that remembers it - the same split that puts the
+# pause deadline above here. Unlike that deadline, which both supervisors consult,
+# the absorb has ONE consumer: every call site is in bin/fm-watch.sh, and the
+# away-mode daemon reads only the pause accessors from this library. So a
+# supervision path in that script which sees a stale crew and does not record
+# leaves a hole in the record that nothing else fills. bin/fm-teardown.sh removes
+# it with the rest of a task's state, and AGENTS.md section 2 lists it.
 FM_CLASSIFY_PARK_SIGHTING_SUFFIX='.park-sighting'
 
 park_sighting_file() {  # <state-dir> <id>
@@ -699,9 +706,9 @@ fm_classify_landing_route_armed() {  # <id>
 # The residuals the second fact leaves are stated where its rule lives, in
 # fm_classify_park_announced above: a task with no recorded sighting yet cannot
 # be judged and escalates once, so a crew already wedged in that shape when
-# firstmate first records it is absorbed from the sighting after; and a park
-# whose identity could not be composed publishes no token and never reaches this
-# class at all.
+# firstmate first records it is absorbed from the sighting after; and a word the
+# crew appends in the same gap as a re-park cannot be placed on either side of
+# it, which costs one escalation and then absorbs.
 #
 # The fold is verb-blind, so a key opened by `blocked:` counts as open here just
 # as a `needs-decision:` one does. What keeps a crew asking firstmate to ACT
@@ -806,10 +813,10 @@ _fm_classify_line_carries() {  # <line> <token>
 # NOT a pure read, in two ways that both bind the caller. fm-crew-state.sh may make
 # a bounded no-mistakes call, and the parked arm WRITES state/<id>.park-sighting
 # through fm_classify_park_announced, so the verdict is order-dependent: the first
-# call for a task consumes its first-sighting escalation, and calls made faster than
-# once per stale episode advance the sighting baseline past the very re-park the
-# record exists to catch. Callers run it only on no-verb signal and first-sighting
-# stale paths, never every wake, for that reason as much as for the cost.
+# call for a task consumes its first-sighting escalation, and a second call for the
+# SAME look answers against the baseline the first one wrote. Taking it on more
+# looks is safe and wanted, for the reason the header gives, so the once-per-stale-
+# hash cadence callers keep is about the bounded read and not about the record.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_verdict() {  # <id>
   local id=$1 line state src park

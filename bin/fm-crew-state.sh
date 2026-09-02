@@ -545,15 +545,25 @@ nm_gate_findings_block() {
 # transitions across four real park episodes of one run, in which both movers
 # moved every time - so docs/verification/supervision.md's park-identity record
 # is where a reader goes for how far the evidence reaches and what it would take
-# to break it. The gate name alone would NOT do, because consecutive rounds park at
-# the same step, so an identity is refused outright unless the head or the
-# findings table contributed to it - a bare gate name would collide across
-# episodes and read a stale decision as this park's.
+# to break it. The gate name alone would NOT do, because consecutive rounds park
+# at the same step, so a bare gate name would collide across episodes and read a
+# stale decision as this park's. It never is alone under the caller below: that
+# call site sits inside the ownership branch, which needs an ask-user row, and
+# nm_gate_has_ask_user_action finds that row by matching the same findings-table
+# header nm_gate_findings_block collects from - so the findings block is
+# non-empty on every call that gets here, and the identity always carries it.
 #
-# Prints nothing when nothing but the gate name is available, which the reader
-# below publishes as no token at all, so such a park surfaces exactly as it did
-# before this rule existed. The fingerprint is a CRC, so two different episodes
-# could in principle collide; nothing here is adversarial (the material is
+# The material guard below therefore cannot fire today, and is kept as declared
+# defence in depth rather than removed: the invariant it leans on is the caller's
+# requirement above, held one branch away by a condition nothing enforces, and a
+# later revision that published an identity for a park whose table was never read
+# must still get no token rather than one that repeats across episodes. Check
+# that invariant, not this line, if the guard ever looks removable. A park that
+# did reach it with nothing to fingerprint publishes no token at all and surfaces
+# exactly as it did before this rule existed.
+#
+# The fingerprint is a CRC, so two different episodes could in principle
+# collide; nothing here is adversarial (the material is
 # no-mistakes' own output) and the cost of a collision is one absorbed park that
 # should have surfaced, which is the same cost the rule already accepts when the
 # crew's record predates the feature.
