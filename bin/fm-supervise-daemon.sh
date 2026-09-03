@@ -52,9 +52,11 @@
 #     endpoint is absorbed at that threshold instead of reported as a wedge - a
 #     long pipeline step is a quiet pane by design - and re-surfaces once per
 #     PAUSE_RESURFACE_SECS of accumulated idle age so the silence stays bounded.
-#     After WEDGE_DEMAND_INSPECT_COUNT of those rechecks in a row the absorb
-#     stops and the pane escalates as a wedge demanding deep inspection, so a
-#     crew halted behind a run step nobody can measure cannot stay quiet.
+#     After WEDGE_DEMAND_INSPECT_COUNT of those rechecks the stale episode
+#     escalates as a wedge demanding deep inspection instead of absorbing again,
+#     so a crew halted behind a run step nobody can measure cannot stay quiet.
+#     That escalation ends the episode rather than raising a lasting flag: a crew
+#     still stuck when the next episode opens repeats the cycle.
 #     A run that has stopped advancing escalates exactly as it always did.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
@@ -103,9 +105,9 @@
 #                                   or an absorbed still-advancing run,
 #                                   re-surfaces as a recheck (default 3600)
 #          FM_WEDGE_DEMAND_INSPECT_COUNT
-#                                   consecutive still-advancing rechecks on one
-#                                   pane before the absorb stops and the pane
-#                                   escalates demanding deep inspection
+#                                   still-advancing rechecks one stale episode
+#                                   may raise before it escalates demanding deep
+#                                   inspection instead of absorbing again
 #                                   (default 3)
 #          FM_ESCALATE_BATCH_SECS   buffer window for batched escalation
 #                                   digests; 0 = flush immediately (default 90)
@@ -1031,18 +1033,26 @@ stale_run_advancing() {  # <state> <key> <window> <task>
 # run step nobody can measure, so it would earn that recheck forever and never be
 # named a wedge - unbounded silence on a stuck worker at exactly the time nobody
 # is watching. The endpoint gate cannot catch it, because it catches a crew that
-# EXITED, not one that stopped. So the absorb is capped exactly as the watcher
-# caps its own: at FM_WEDGE_DEMAND_INSPECT_COUNT it stops absorbing and returns
-# 1, and the caller escalates a wedge carrying the same demand-deep-inspection
-# instruction the watcher's payload carries. Both supervisors read that knob and
-# its default from bin/fm-classify-lib.sh, the one owner of the cap, so neither
-# can be edited into capping the same crew's absorb differently from the other.
-# The count advances per recheck
-# RAISED rather than per stale window reached, so the cap measures the silence
-# the captain actually experiences; counting windows instead would escalate a
-# genuinely advancing run as a wedge within a few minutes and undo this absorb.
-# The comparison is against the recheck that WOULD fire, not the count already
-# recorded, so the demand-inspection escalation itself is never absorbed.
+# EXITED, not one that stopped. So the absorb carries a cap, read from
+# FM_WEDGE_DEMAND_INSPECT_COUNT in bin/fm-classify-lib.sh, and it is worth being
+# exact about what that cap does and does not buy.
+#
+# It PROMISES this: after FM_WEDGE_DEMAND_INSPECT_COUNT consecutive rechecks
+# within ONE stale episode, that episode escalates as demanding inspection
+# instead of absorbing again. The count advances per recheck RAISED rather than
+# per stale window reached, so the cap measures the silence the captain actually
+# experiences; counting windows instead would escalate a genuinely advancing run
+# as a wedge within a few minutes and undo this absorb. The comparison is against
+# the recheck that WOULD fire, not the count already recorded, so the
+# demand-inspection escalation itself is never absorbed.
+#
+# It does NOT promise that the demand-inspection sticks. The escalation drops the
+# stale marker, and the count clears with it, so a crew still stuck when the next
+# stale episode opens is absorbed afresh and escalates again a cap later. The
+# captain gets a bounded repeat on that sawtooth, not a flag that stays raised.
+#
+# That reset is deliberate: a crew that has since recovered must not stay marked
+# as demanding inspection, so the record clears with the episode it describes.
 #
 # 0 while the absorb holds; 1 once it has spent that cap and escalated.
 stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
@@ -1054,7 +1064,7 @@ stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
   n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
   if [ "$n" -ge "${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}" ]; then
     escalate_add "$state" \
-      "stale persisted ${age}s (possible wedge, absorbed $((n - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: do not re-absorb on the run-step state alone): $win"
+      "stale persisted ${age}s (possible wedge, absorbed $((n - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: the run-step state alone cannot clear this pane, look at it directly): $win"
     return 1
   fi
   echo "$n" > "$cf"

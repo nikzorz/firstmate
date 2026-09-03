@@ -88,12 +88,21 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
-# Consecutive absorbs of ONE unchanged stale pane before the supervisor stops
-# absorbing and escalates it as demanding a look closer than the run-step state
-# alone. Both supervisors absorb a still-advancing run on their own path, so a
-# second literal would let them cap that absorb differently for the same crew;
-# three by default, and both consumers read FM_WEDGE_DEMAND_INSPECT_COUNT with
-# this default so the cap has one owner.
+# How many times ONE unchanged stale pane may be counted before the supervisor
+# escalates it as demanding a look closer than the run-step state alone. Three by
+# default. The two consumers count different events against it and are not
+# symmetric, so read each on its own terms rather than assuming one policy.
+# The daemon (fm-supervise-daemon.sh) counts the long-cadence rechecks it raises
+# within one stale episode, on the re-surface clock, and caps them: past this
+# many, the episode escalates instead of absorbing again.
+# The watcher (fm-watch.sh) reads it for its own wedge-escalation count, which is
+# written only when it escalates. An absorb never increments that count, so a
+# pane absorbed from its first threshold holds at one and the value does not
+# bound the watcher's still-advancing absorbs today; there it decides only when
+# an escalation that IS firing carries the demand-deep-inspection marker.
+# One owner for the number therefore buys one thing, and only this: the two
+# supervisors cannot be edited into reading different numbers for the same named
+# knob.
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 

@@ -911,8 +911,8 @@ test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap() {
     || fail "an unmeasurable run stayed absorbed past the cap instead of demanding inspection"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
     || fail "the demand-inspection escalation was not named a possible wedge"
-  grep -F "do not re-absorb on the run-step state alone" "$state/.subsuper-escalations" >/dev/null \
-    || fail "the demand-inspection escalation lost the instruction that stops firstmate re-absorbing it"
+  grep -F "the run-step state alone cannot clear this pane" "$state/.subsuper-escalations" >/dev/null \
+    || fail "the demand-inspection escalation lost the ask for a look past the run-step state"
   [ ! -e "$state/.subsuper-stale-$key" ] \
     || fail "the demand-inspection escalation kept the stale marker instead of clearing it"
   [ ! -e "$state/.subsuper-advancing-absorbs-$key" ] \
@@ -921,6 +921,58 @@ test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap() {
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
   pass "an alive crew on an unmeasurable run escalates for deep inspection once the absorb cap is spent"
+}
+
+# What the cap does NOT promise, pinned so the next reader meets it as the design
+# rather than as a surprise. The demand-inspection ends its stale episode and its
+# records go with the marker, deliberately, so a crew that has since recovered
+# cannot stay marked. A crew that is still stuck therefore opens a fresh episode,
+# is absorbed again, and reaches a second demand-inspection one cap later: a
+# bounded repeat on a sawtooth, not a flag that stays raised and not silence.
+test_housekeeping_absorb_cap_repeats_on_each_stale_episode() {
+  local dir state fakebin win pane key saved_bin episode tick
+  dir=$(make_supercase stale-advancing-cap-sawtooth)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w8"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w8.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w8.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w8" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  # Still stuck for the whole test: the crew never recovers between episodes.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  for episode in 1 2; do
+    : > "$state/.subsuper-escalations"
+    # The episode opens the way supervision opens one, on a pane already idle
+    # far past every window.
+    FM_STATE_OVERRIDE="$state" stale_marker_record "$win" "$state"
+    [ -e "$state/.subsuper-stale-$key" ] || fail "episode $episode never opened a stale marker"
+    echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+    for tick in 1 2 3; do
+      PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+        FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+        FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+        FM_WEDGE_DEMAND_INSPECT_COUNT=3 housekeeping "$state"
+      [ "$tick" = 3 ] && continue
+      [ "$(cat "$state/.subsuper-advancing-absorbs-$key" 2>/dev/null)" = "$tick" ] \
+        || fail "episode $episode recheck $tick did not count toward its own cap"
+      backdate_record "$state/.subsuper-advancing-$key" 5000
+      backdate_record "$state/.subsuper-advancing-resurfaced-$key" 5000
+    done
+    grep -F "demand-deep-inspection" "$state/.subsuper-escalations" >/dev/null \
+      || fail "episode $episode did not reach a demand-inspection escalation"
+    [ ! -e "$state/.subsuper-stale-$key" ] \
+      || fail "episode $episode did not end with the demand-inspection escalation"
+    [ ! -e "$state/.subsuper-advancing-absorbs-$key" ] \
+      || fail "episode $episode left its absorb count behind for the next one to inherit"
+  done
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "a still-stuck crew is absorbed afresh each stale episode and demands inspection again one cap later"
 }
 
 test_housekeeping_resumed_stale_cleared() {
@@ -2332,6 +2384,7 @@ test_housekeeping_advancing_absorb_requires_a_live_endpoint
 test_housekeeping_resumed_pane_drops_its_absorb_records
 test_housekeeping_absorbed_pane_is_not_re_read_within_its_window
 test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap
+test_housekeeping_absorb_cap_repeats_on_each_stale_episode
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_paused_resurfaces_at_its_deadline
