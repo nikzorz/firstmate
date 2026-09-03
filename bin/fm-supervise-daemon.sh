@@ -52,6 +52,9 @@
 #     endpoint is absorbed at that threshold instead of reported as a wedge - a
 #     long pipeline step is a quiet pane by design - and re-surfaces once per
 #     PAUSE_RESURFACE_SECS of accumulated idle age so the silence stays bounded.
+#     After WEDGE_DEMAND_INSPECT_COUNT of those rechecks in a row the absorb
+#     stops and the pane escalates as a wedge demanding deep inspection, so a
+#     crew halted behind a run step nobody can measure cannot stay quiet.
 #     A run that has stopped advancing escalates exactly as it always did.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
@@ -96,8 +99,14 @@
 #                                   kinds.
 #          FM_STALE_ESCALATE_SECS   idle seconds before a stale pane escalates
 #                                   as a possible wedge (default 240)
-#          FM_PAUSE_RESURFACE_SECS  idle seconds before a declared external wait
+#          FM_PAUSE_RESURFACE_SECS  idle seconds before a declared external wait,
+#                                   or an absorbed still-advancing run,
 #                                   re-surfaces as a recheck (default 3600)
+#          FM_WEDGE_DEMAND_INSPECT_COUNT
+#                                   consecutive still-advancing rechecks on one
+#                                   pane before the absorb stops and the pane
+#                                   escalates demanding deep inspection
+#                                   (default 3)
 #          FM_ESCALATE_BATCH_SECS   buffer window for batched escalation
 #                                   digests; 0 = flush immediately (default 90)
 #          FM_HEARTBEAT_SCAN_SECS   cadence for the catch-all status scan
@@ -193,6 +202,12 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
+# Consecutive long-cadence rechecks the still-advancing-run absorb may raise on
+# one unchanged pane before it stops absorbing and escalates a wedge that asks
+# for a closer look than the run-step state alone. Same knob, same default, and
+# same demand-deep-inspection meaning the watcher applies on its own stale path,
+# so the two supervisors cannot drift on how long one pane may stay absorbed.
+WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 ESCALATE_BATCH_SECS_DEFAULT=90
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
@@ -448,15 +463,18 @@ stale_marker_remove() {  # <window> <state>
   stale_absorb_clear "$state" "$key"
 }
 
-# The two records the still-advancing-run absorb in housekeeping keeps beside a
+# The three records the still-advancing-run absorb in housekeeping keeps beside a
 # stale marker: .subsuper-advancing-<key> is the epoch of the last check that
-# came back advancing (the read throttle), and
-# .subsuper-advancing-resurfaced-<key> the epoch of the last long-cadence
-# recheck it raised. Both are meaningless once the stale marker they qualify is
-# gone, and a survivor would let a resumed-then-restale pane inherit an absorb
-# it never earned, so every path that drops the marker drops these too.
+# came back advancing (the read throttle), .subsuper-advancing-resurfaced-<key>
+# the epoch of the last long-cadence recheck it raised, and
+# .subsuper-advancing-absorbs-<key> how many of those rechecks have fired in a
+# row without the pane ever leaving the absorb (the demand-deep-inspection cap).
+# All three are meaningless once the stale marker they qualify is gone, and a
+# survivor would let a resumed-then-restale pane inherit an absorb it never
+# earned, so every path that drops the marker drops these too.
 stale_absorb_clear() {  # <state> <key>
-  rm -f "$1/.subsuper-advancing-$2" "$1/.subsuper-advancing-resurfaced-$2"
+  rm -f "$1/.subsuper-advancing-$2" "$1/.subsuper-advancing-resurfaced-$2" \
+    "$1/.subsuper-advancing-absorbs-$2"
 }
 
 # Pause marker: state/.subsuper-paused-<key> holds the epoch a declared pause was
@@ -967,11 +985,17 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # property does not survive: a stale pane on any harness now costs one
 # current-state read once it is proven idle past the threshold. The read is
 # bought at the one point per wedge where the pane is already proven idle, so the
-# per-wake status-log classification stays free, and the throttle below holds it
-# to at most one read per FM_STALE_ESCALATE_SECS window - the cadence
+# per-wake status-log classification stays free, and .subsuper-advancing-<key>
+# holds it to at most one read per FM_STALE_ESCALATE_SECS window - the cadence
 # bin/fm-classify-lib.sh's contract asks of a caller that keeps absorbing one
 # unchanged pane. That is the price of not reporting a working crew as wedged
 # while the captain is away, and it is worth paying.
+#
+# That record is consulted by the caller rather than here, because an absorb
+# keeps its stale marker and so re-reaches the threshold on every tick: gating
+# the whole recheck on it throttles the pane capture that precedes this call
+# too, and leaves this function to answer one question with no cadence of its
+# own.
 #
 # The absorb is graded against a CONFIRMED-alive endpoint for the reason
 # bin/fm-watch.sh states: a no-mistakes run executes in no-mistakes' own bare
@@ -981,11 +1005,9 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # stale_window_is_busy's verdict cannot stand in for this.
 #
 # 0 when the threshold belongs to a run still moving behind a live endpoint.
-stale_run_advancing() {  # <state> <key> <window> <task> <stale-secs>
-  local state=$1 key=$2 win=$3 task=$4 stale_secs=$5 adv
+stale_run_advancing() {  # <state> <key> <window> <task>
+  local state=$1 key=$2 win=$3 task=$4 adv
   adv="$state/.subsuper-advancing-$key"
-  # Inside the window an earlier check already bought: absorbed with no reads.
-  [ "$(_file_age "$adv")" -lt "$stale_secs" ] && return 0
   if [ "$(fm_backend_agent_alive "$(task_window_backend "$win" "$state")" "$win" 2>/dev/null)" != alive ]; then
     rm -f "$adv"; return 1
   fi
@@ -1005,11 +1027,36 @@ stale_run_advancing() {  # <state> <key> <window> <task> <stale-secs>
 # idle age and not a window this loop keeps restarting. The cadence sits strictly
 # BEHIND the stalled reading: a run that stopped advancing fails the test above
 # and escalates immediately, on this path exactly as on the watcher's.
-stale_absorb_resurface() {  # <state> <key> <window> <idle-age> <pause-secs>
-  local state=$1 key=$2 win=$3 age=$4 pause_secs=$5 rf
+#
+# A cadence alone is not a bound, though: a crew halted on an interactive prompt
+# inside its harness reports a live endpoint and keeps reading `working` from a
+# run step nobody can measure, so it would earn that recheck forever and never be
+# named a wedge - unbounded silence on a stuck worker at exactly the time nobody
+# is watching. The endpoint gate cannot catch it, because it catches a crew that
+# EXITED, not one that stopped. So the absorb is capped exactly as the watcher
+# caps its own: at WEDGE_DEMAND_INSPECT_COUNT it stops absorbing and returns 1,
+# and the caller escalates a wedge carrying the same demand-deep-inspection
+# instruction the watcher's payload carries. The count advances per recheck
+# RAISED rather than per stale window reached, so the cap measures the silence
+# the captain actually experiences; counting windows instead would escalate a
+# genuinely advancing run as a wedge within a few minutes and undo this absorb.
+# The comparison is against the recheck that WOULD fire, not the count already
+# recorded, so the demand-inspection escalation itself is never absorbed.
+#
+# 0 while the absorb holds; 1 once it has spent that cap and escalated.
+stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
+  local state=$1 key=$2 win=$3 age=$4 pause_secs=$5 rf cf n
   rf="$state/.subsuper-advancing-resurfaced-$key"
+  cf="$state/.subsuper-advancing-absorbs-$key"
   [ "$age" -ge "$pause_secs" ] || return 0
   [ "$(_file_age "$rf")" -ge "$pause_secs" ] || return 0
+  n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
+  if [ "$n" -ge "${FM_WEDGE_DEMAND_INSPECT_COUNT:-$WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}" ]; then
+    escalate_add "$state" \
+      "stale persisted ${age}s (possible wedge, absorbed $((n - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: do not re-absorb on the run-step state alone): $win"
+    return 1
+  fi
+  echo "$n" > "$cf"
   escalate_add "$state" \
     "stale persisted ${age}s, run step still advancing - absorbed on a long cadence, not a wedge; confirm the run is still moving: $win"
   _now > "$rf"
@@ -1084,6 +1131,18 @@ housekeeping() {  # <state>
     stale_secs=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
     [ "$age" -ge "$stale_secs" ] || continue
+    # An absorbed pane keeps its marker, so without this the threshold below is
+    # re-reached on every tick and buys a fresh pane capture and busy-state read
+    # each time - for the whole absorb, not once per marker as every other
+    # branch here does. The absorb already stamped when it last looked, so
+    # honor that window for the pane read too, not just for the crew-state read
+    # underneath it. The cost of doing so is stated rather than left implicit:
+    # a pane that RESUMES while absorbed is noticed up to one window late
+    # instead of within a tick, which is the right trade for a pane already
+    # classified as working.
+    if [ "$(_file_age "$state/.subsuper-advancing-$key")" -lt "$stale_secs" ]; then
+      continue
+    fi
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker"; stale_absorb_clear "$state" "$key" ;;
@@ -1097,9 +1156,13 @@ housekeeping() {  # <state>
         # precedence is unchanged either way: a crew parked on the usage-limit
         # prompt has no advancing run step, so it falls straight through.
         # The marker is left in place so its epoch keeps measuring true idle age.
-        if stale_run_advancing "$state" "$key" "$win" "$task" "$stale_secs"; then
-          stale_absorb_resurface "$state" "$key" "$win" "$age" \
-            "${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}"
+        # The absorb holds unless it has spent its demand-deep-inspection cap, in
+        # which case the recheck has already escalated the wedge and the marker
+        # goes exactly as on the wedge path below.
+        if stale_run_advancing "$state" "$key" "$win" "$task"; then
+          stale_absorb_recheck "$state" "$key" "$win" "$age" \
+            "${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}" \
+            || stale_marker_remove "$win" "$state"
           continue
         fi
         # Before calling this a possible wedge, ask the shared classifier about

@@ -23,6 +23,16 @@ fi
 
 TMP_ROOT=$(fm_test_tmproot fm-daemon-tests)
 
+# Age a record's MTIME, which is what the daemon's _file_age throttles read - so
+# a test can drive several throttle windows without sleeping through them. Both
+# spellings are needed because BSD touch has no -d @epoch.
+backdate_record() {  # <file> <seconds-ago>
+  local f=$1 back
+  back=$(( $(date +%s) - $2 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$f"
+  else touch -m -d "@$back" "$f"; fi
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written() {
   local dir state out status
   dir=$(make_supercase afk-start-flag-unwritable)
@@ -775,6 +785,9 @@ test_housekeeping_resumed_pane_drops_its_absorb_records() {
   [ -e "$state/.subsuper-advancing-$key" ] || fail "the absorb recorded nothing to clear"
 
   # The crew resumed: the pane is busy again, so every trace of the absorb goes.
+  # Driven one window on, because an absorbed pane is only re-read once the
+  # window its last look bought has run out.
+  backdate_record "$state/.subsuper-advancing-$key" 500
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
     FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
@@ -785,6 +798,117 @@ test_housekeeping_resumed_pane_drops_its_absorb_records() {
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
   pass "a resumed pane drops the absorb records along with its stale marker"
+}
+
+# An absorbed pane keeps its stale marker, so it re-reaches the escalation
+# threshold on every housekeeping tick. What it must NOT re-buy on every tick is
+# the recheck in front of that decision: the pane capture and busy read cost as
+# much as the crew-state read the absorb already throttles. The deferral this
+# buys is bounded by the same window, which the third tick pins.
+test_housekeeping_absorbed_pane_is_not_re_read_within_its_window() {
+  local dir state fakebin win pane busy key saved_bin
+  dir=$(make_supercase stale-advancing-tick-cost)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w6"; pane="$dir/pane.txt"; busy="$dir/busy.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w6.status"
+  printf 'idle prompt $\n' > "$pane"
+  printf 'Validating... (esc to interrupt)\n' > "$busy"
+  fm_write_meta "$state/adv-w6.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w6" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ -e "$state/.subsuper-advancing-$key" ] || fail "the first tick did not absorb"
+
+  # The next tick is inside the window that first look bought: it costs nothing.
+  : > "$dir/capture-calls.log"; : > "$dir/crew-state-calls.log"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_FAKE_TMUX_CAPTURE_LOG="$dir/capture-calls.log" \
+    FM_FAKE_CREW_STATE_LOG="$dir/crew-state-calls.log" \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ ! -s "$dir/capture-calls.log" ] \
+    || fail "an absorbed pane bought $(wc -l < "$dir/capture-calls.log" | tr -d ' ') pane captures on a tick inside its own window"
+  [ ! -s "$dir/crew-state-calls.log" ] || fail "an absorbed pane re-read crew state inside its own window"
+  [ -e "$state/.subsuper-stale-$key" ] || fail "a throttled tick dropped the stale marker"
+
+  # And the saving is a deferral, not a hole: one window on, the resumed pane is
+  # seen and the marker goes.
+  backdate_record "$state/.subsuper-advancing-$key" 500
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "the deferred re-read never happened, so a resumed pane stayed absorbed"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an absorbed pane is re-read once per window, not on every housekeeping tick"
+}
+
+# The escape from the absorb, and the worst shape this path has to answer for: a
+# crew halted on an interactive prompt inside its harness reports a live endpoint
+# and keeps reading `working` from a run step whose advancement nobody can
+# MEASURE, so the absorb is satisfied on every window forever. The endpoint gate
+# does not catch it - that catches a crew which EXITED, not one which stopped -
+# so the cap does, exactly as bin/fm-watch.sh's does on the watcher's own path.
+test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap() {
+  local dir state fakebin win pane key saved_bin tick
+  dir=$(make_supercase stale-advancing-cap)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w7"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w7.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w7.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w7" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  # Never advances to a different reading: the unmeasurable shape, not a stall.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  for tick in 1 2 3; do
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+      FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+      FM_WEDGE_DEMAND_INSPECT_COUNT=3 housekeeping "$state"
+    if [ "$tick" != 3 ]; then
+      grep -F "run step still advancing" "$state/.subsuper-escalations" >/dev/null \
+        || fail "recheck $tick did not re-surface the absorb"
+      grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+        && fail "recheck $tick escalated a wedge before the cap was spent"
+      [ "$(cat "$state/.subsuper-advancing-absorbs-$key" 2>/dev/null)" = "$tick" ] \
+        || fail "recheck $tick did not count toward the cap"
+      # Both throttles run out, so the next tick is the next recheck window.
+      backdate_record "$state/.subsuper-advancing-$key" 5000
+      backdate_record "$state/.subsuper-advancing-resurfaced-$key" 5000
+    fi
+  done
+
+  grep -F "demand-deep-inspection" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an unmeasurable run stayed absorbed past the cap instead of demanding inspection"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "the demand-inspection escalation was not named a possible wedge"
+  grep -F "do not re-absorb on the run-step state alone" "$state/.subsuper-escalations" >/dev/null \
+    || fail "the demand-inspection escalation lost the instruction that stops firstmate re-absorbing it"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "the demand-inspection escalation kept the stale marker instead of clearing it"
+  [ ! -e "$state/.subsuper-advancing-absorbs-$key" ] \
+    || fail "the spent absorb count outlived the marker it qualified"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an alive crew on an unmeasurable run escalates for deep inspection once the absorb cap is spent"
 }
 
 test_housekeeping_resumed_stale_cleared() {
@@ -2194,6 +2318,8 @@ test_housekeeping_advancing_absorb_reads_once_per_window
 test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence
 test_housekeeping_advancing_absorb_requires_a_live_endpoint
 test_housekeeping_resumed_pane_drops_its_absorb_records
+test_housekeeping_absorbed_pane_is_not_re_read_within_its_window
+test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_paused_resurfaces_at_its_deadline
