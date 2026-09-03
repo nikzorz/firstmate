@@ -129,6 +129,9 @@ set -u
 case "${1:-}" in
   display-message)
     [ "${FM_FAKE_TMUX_PANE_ALIVE:-1}" = "1" ] || exit 1
+    case "$*" in
+      *pane_current_command*) printf '%s\n' "${FM_FAKE_TMUX_CURRENT_COMMAND:-}"; exit 0 ;;
+    esac
     _print=0
     # Return cursor_y when the format asks for it (pane_input_pending).
     for _a in "$@"; do
@@ -138,7 +141,15 @@ case "${1:-}" in
     [ "$_print" = 1 ] && printf 'fakepane\n'
     exit 0 ;;
   list-windows)
-    [ -n "${FM_FAKE_TMUX_WINDOW:-}" ] && printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
+    # Faithful to real tmux, which the endpoint-liveness classifier depends on:
+    # `-a` lists every window as "<session>:<window>", while a session-scoped
+    # listing prints bare window names.
+    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
+      case " $* " in
+        *" -a "*) printf '%s\n' "$FM_FAKE_TMUX_WINDOW" ;;
+        *)        printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}" ;;
+      esac
+    fi
     exit 0 ;;
   capture-pane)
     # Honor a single-line band capture (-S N -E M, both non-negative) for the

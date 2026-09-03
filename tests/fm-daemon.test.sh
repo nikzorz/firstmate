@@ -520,11 +520,14 @@ test_housekeeping_usage_limited_stale_is_named_not_a_wedge() {
   pass "away mode names a usage-limit stall instead of reporting it as a possible wedge"
 }
 
-# The detection is claude-specific, so housekeeping must not buy a current-state
-# call for a harness that can never present the prompt: a fleet with no claude
-# crew keeps this loop's property of making no current-state calls at all.
-test_housekeeping_stale_non_claude_makes_no_current_state_call() {
-  local dir state fakebin win pane key saved_bin
+# The usage-limit detection is claude-specific, so housekeeping must not buy its
+# current-state call for a harness that can never present that prompt. What a
+# non-claude stale task DOES buy is the harness-independent advancing-run
+# question, and exactly one of it: the pane is asked whether its run is still
+# moving, not whether claude is waiting on a quota window, and the two together
+# never cost more than one read on this path.
+test_housekeeping_stale_non_claude_asks_only_the_advancing_question() {
+  local dir state fakebin win pane key saved_bin calls
   dir=$(make_supercase stale-non-claude)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -539,17 +542,249 @@ test_housekeeping_stale_non_claude_makes_no_current_state_call() {
   export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
   : > "$dir/crew-state-calls.log"
 
+  # A live endpoint whose run has stopped moving: the advancing question is
+  # asked and answered no, and nothing asks the claude question after it.
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (fixing) has not moved'
   echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=codex \
     FM_FAKE_CREW_STATE_LOG="$dir/crew-state-calls.log" \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
-  [ ! -s "$dir/crew-state-calls.log" ] \
-    || fail "a non-claude stale task still cost a current-state call"
+  calls=$(wc -l < "$dir/crew-state-calls.log" | tr -d ' ')
+  [ "$calls" = 1 ] \
+    || fail "a non-claude stale task cost $calls current-state calls, not the single advancing question"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
     || fail "a non-claude persistent stale lost its possible-wedge wording"
+  grep -F "usage limit" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a non-claude stale task was classified against the claude usage-limit prompt"
 
+  unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
-  pass "a stale task on another harness is classified without any current-state call"
+  pass "a stale task on another harness is asked the advancing question once and never the claude one"
+}
+
+# --- the still-advancing-run absorb on the daemon's stale-recheck path -------
+#
+# The defect these close: away mode - the one stretch where nobody is watching -
+# escalated a crew as a possible wedge for the whole of a long fix or test step,
+# because the daemon's wedge threshold measured pane idleness alone. bin/fm-watch.sh's
+# per-wake stale path already asks the run itself; this is the same question on
+# the persistence path, so the two cannot disagree about the same crew.
+
+# The hard constraint, asserted first because it matters more than the absorb: a
+# run that has STOPPED advancing escalates on the very threshold it always did.
+# The absorb must not slow, soften, or reroute the measured-stalled path.
+test_housekeeping_stalled_run_still_escalates_a_wedge() {
+  local dir state fakebin win pane key saved_bin
+  dir=$(make_supercase stale-stalled-run)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-stall-w1"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/stall-w1.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/stall-w1.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "stall-w1" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (fixing) has not moved'
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "a run that stopped advancing was not escalated as a possible wedge"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "a stalled run kept its stale marker instead of escalating and clearing it"
+  [ ! -e "$state/.subsuper-advancing-$key" ] \
+    || fail "a stalled run left an absorb record behind"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "a run that has stopped advancing still escalates a wedge on the daemon's stale path"
+}
+
+# The absorb itself: a moving run behind a live endpoint reaches nobody as a
+# wedge, and the marker stays so its epoch keeps measuring true idle age.
+test_housekeeping_advancing_run_is_absorbed_not_a_wedge() {
+  local dir state fakebin win pane key saved_bin marker_before marker_after
+  dir=$(make_supercase stale-advancing-run)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w1"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w1.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w1.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w1" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  marker_before=$(( $(date +%s) - 500 ))
+  echo "$marker_before" > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "an advancing run reached the captain: $(cat "$state/.subsuper-escalations")"
+  marker_after=$(cat "$state/.subsuper-stale-$key" 2>/dev/null || true)
+  [ "$marker_after" = "$marker_before" ] \
+    || fail "the absorb moved the stale marker, losing the pane's true idle age"
+  [ -e "$state/.subsuper-advancing-$key" ] \
+    || fail "the absorb recorded no read throttle, so the next tick would re-read"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an advancing run is absorbed on the daemon's stale path instead of escalating a wedge"
+}
+
+# The absorb costs at most one current-state read per escalation window - the
+# cadence bin/fm-classify-lib.sh asks of a caller that keeps absorbing one
+# unchanged pane - even though housekeeping runs on every tick.
+test_housekeeping_advancing_absorb_reads_once_per_window() {
+  local dir state fakebin win pane key saved_bin calls
+  dir=$(make_supercase stale-advancing-throttle)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w2"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w2.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w2.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w2" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+  : > "$dir/crew-state-calls.log"
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  for _ in 1 2 3; do
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=claude FM_FAKE_CREW_STATE_LOG="$dir/crew-state-calls.log" \
+      FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+      housekeeping "$state"
+  done
+  calls=$(wc -l < "$dir/crew-state-calls.log" | tr -d ' ')
+  [ "$calls" = 1 ] || fail "three ticks inside one window cost $calls current-state reads, not 1"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a repeat tick inside the absorbed window escalated"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "the advancing absorb reads crew state at most once per escalation window"
+}
+
+# Silence is bounded, not unbounded. A run whose advancement cannot be measured
+# would satisfy the test forever, so an absorbed pane re-surfaces once per
+# PAUSE_RESURFACE_SECS of accumulated idle age - named as an absorb, never as a
+# wedge - and the throttle keeps it to once per window.
+test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence() {
+  local dir state fakebin win pane key saved_bin
+  dir=$(make_supercase stale-advancing-resurface)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w3"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w3.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w3.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w3" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  # Idle far past the long window: the absorb is due for its recheck.
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  grep -F "still advancing" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an absorb held past the long window never re-surfaced"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a long-cadence recheck was worded as a possible wedge"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "a long-cadence recheck cleared the stale marker, restarting the idle clock"
+
+  # The next tick is inside the throttle window: silent.
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "the long-cadence recheck repeated inside its own window"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an absorbed advancing run re-surfaces once per long window, never as a wedge"
+}
+
+# A no-mistakes run executes in no-mistakes' own bare repo, so a moving run says
+# nothing about whether the crew that started it is still there - the 2026-07-29
+# shape, where stopped crews' runs still read as progressing. An endpoint that is
+# not CONFIRMED alive therefore buys no absorb, and a successful pane capture (a
+# dead crew leaves a shell that captures perfectly well) is not that confirmation.
+test_housekeeping_advancing_absorb_requires_a_live_endpoint() {
+  local dir state fakebin win pane key saved_bin
+  dir=$(make_supercase stale-advancing-dead-endpoint)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w4"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w4.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w4.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w4" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  # The agent is gone: the window holds a bare shell, which captures fine.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=bash \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an advancing run behind a dead endpoint was absorbed instead of escalated"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "the advancing absorb requires a confirmed-live endpoint"
+}
+
+# The absorb's records qualify one stale marker and must never outlive it: a pane
+# that resumed and later went stale again would otherwise inherit an absorb it
+# never earned, and go quiet for a whole window without anyone asking the run.
+test_housekeeping_resumed_pane_drops_its_absorb_records() {
+  local dir state fakebin win pane key saved_bin busy
+  dir=$(make_supercase stale-advancing-resumed)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w5"; pane="$dir/pane.txt"; busy="$dir/busy.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w5.status"
+  printf 'idle prompt $\n' > "$pane"
+  printf 'Validating... (esc to interrupt)\n' > "$busy"
+  fm_write_meta "$state/adv-w5.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w5" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ -e "$state/.subsuper-advancing-$key" ] || fail "the absorb recorded nothing to clear"
+
+  # The crew resumed: the pane is busy again, so every trace of the absorb goes.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "a resumed pane kept its stale marker"
+  [ ! -e "$state/.subsuper-advancing-$key" ] \
+    || fail "a resumed pane kept an absorb record, so its next stale would go quiet unasked"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "a resumed pane drops the absorb records along with its stale marker"
 }
 
 test_housekeeping_resumed_stale_cleared() {
@@ -1952,7 +2187,13 @@ test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
 test_housekeeping_persistent_stale_escalates
 test_housekeeping_usage_limited_stale_is_named_not_a_wedge
-test_housekeeping_stale_non_claude_makes_no_current_state_call
+test_housekeeping_stale_non_claude_asks_only_the_advancing_question
+test_housekeeping_stalled_run_still_escalates_a_wedge
+test_housekeeping_advancing_run_is_absorbed_not_a_wedge
+test_housekeeping_advancing_absorb_reads_once_per_window
+test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence
+test_housekeeping_advancing_absorb_requires_a_live_endpoint
+test_housekeeping_resumed_pane_drops_its_absorb_records
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_paused_resurfaces_at_its_deadline
