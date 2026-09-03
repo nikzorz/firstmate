@@ -272,7 +272,7 @@ recorded_windows() {
 # look instead of another routine supervision resume. Reset wherever a window's
 # pane/hash state resets to genuinely active (see the two rm-on-reset call sites
 # below).
-FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
+FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}
 
 # The long-cadence recheck, shared by the two absorbs that can hold ONE unchanged
 # stale pane indefinitely: a declared external wait (handle_paused_stale below)

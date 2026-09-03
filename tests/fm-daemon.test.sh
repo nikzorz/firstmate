@@ -534,8 +534,9 @@ test_housekeeping_usage_limited_stale_is_named_not_a_wedge() {
 # current-state call for a harness that can never present that prompt. What a
 # non-claude stale task DOES buy is the harness-independent advancing-run
 # question, and exactly one of it: the pane is asked whether its run is still
-# moving, not whether claude is waiting on a quota window, and the two together
-# never cost more than one read on this path.
+# moving, and never whether claude is waiting on a quota window, so a stalled run
+# on this harness costs one read where a claude pane falling through to the
+# usage-limit question on the same pass costs two.
 test_housekeeping_stale_non_claude_asks_only_the_advancing_question() {
   local dir state fakebin win pane key saved_bin calls
   dir=$(make_supercase stale-non-claude)
@@ -714,13 +715,24 @@ test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence() {
   [ -e "$state/.subsuper-stale-$key" ] \
     || fail "a long-cadence recheck cleared the stale marker, restarting the idle clock"
 
-  # The next tick is inside the throttle window: silent.
+  [ "$(cat "$state/.subsuper-advancing-absorbs-$key" 2>/dev/null)" = 1 ] \
+    || fail "the first recheck did not count as one absorb"
+
+  # The read throttle is spent, so the pane IS re-read and IS still advancing:
+  # the only thing that can keep this tick silent is the recheck's own window.
+  # Without that, an absorbed pane would re-surface every escalation window
+  # rather than once per long one, and burn its absorb cap fifteen times faster.
   : > "$state/.subsuper-escalations"
+  backdate_record "$state/.subsuper-advancing-$key" 5000
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
     FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
     housekeeping "$state"
   [ ! -s "$state/.subsuper-escalations" ] || fail "the long-cadence recheck repeated inside its own window"
+  [ "$(cat "$state/.subsuper-advancing-absorbs-$key" 2>/dev/null)" = 1 ] \
+    || fail "a tick inside the recheck window still spent an absorb from the cap"
+  [ "$(_file_age "$state/.subsuper-advancing-$key")" -lt 5000 ] \
+    || fail "the pane was never re-read, so the read throttle produced this silence, not the recheck window"
 
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi

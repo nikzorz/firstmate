@@ -202,12 +202,6 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
-# Consecutive long-cadence rechecks the still-advancing-run absorb may raise on
-# one unchanged pane before it stops absorbing and escalates a wedge that asks
-# for a closer look than the run-step state alone. Same knob, same default, and
-# same demand-deep-inspection meaning the watcher applies on its own stale path,
-# so the two supervisors cannot drift on how long one pane may stay absorbed.
-WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 ESCALATE_BATCH_SECS_DEFAULT=90
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
@@ -983,7 +977,11 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # a fleet with no claude crew buys no current-state call from this loop at all.
 # A run step belongs to no harness, so no such pre-filter exists here and that
 # property does not survive: a stale pane on any harness now costs one
-# current-state read once it is proven idle past the threshold. The read is
+# current-state read once it is proven idle past the threshold, and two when a
+# claude pane's run is not advancing and it falls through to the usage-limit
+# question on the same pass. That second read is bounded to one per marker,
+# because the pass that reaches it is the pass that escalates and consumes the
+# marker; a pane that stays absorbed never reaches it at all. The read is
 # bought at the one point per wedge where the pane is already proven idle, so the
 # per-wake status-log classification stays free, and .subsuper-advancing-<key>
 # holds it to at most one read per FM_STALE_ESCALATE_SECS window - the cadence
@@ -1034,9 +1032,12 @@ stale_run_advancing() {  # <state> <key> <window> <task>
 # named a wedge - unbounded silence on a stuck worker at exactly the time nobody
 # is watching. The endpoint gate cannot catch it, because it catches a crew that
 # EXITED, not one that stopped. So the absorb is capped exactly as the watcher
-# caps its own: at WEDGE_DEMAND_INSPECT_COUNT it stops absorbing and returns 1,
-# and the caller escalates a wedge carrying the same demand-deep-inspection
-# instruction the watcher's payload carries. The count advances per recheck
+# caps its own: at FM_WEDGE_DEMAND_INSPECT_COUNT it stops absorbing and returns
+# 1, and the caller escalates a wedge carrying the same demand-deep-inspection
+# instruction the watcher's payload carries. Both supervisors read that knob and
+# its default from bin/fm-classify-lib.sh, the one owner of the cap, so neither
+# can be edited into capping the same crew's absorb differently from the other.
+# The count advances per recheck
 # RAISED rather than per stale window reached, so the cap measures the silence
 # the captain actually experiences; counting windows instead would escalate a
 # genuinely advancing run as a wedge within a few minutes and undo this absorb.
@@ -1051,7 +1052,7 @@ stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
   [ "$age" -ge "$pause_secs" ] || return 0
   [ "$(_file_age "$rf")" -ge "$pause_secs" ] || return 0
   n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
-  if [ "$n" -ge "${FM_WEDGE_DEMAND_INSPECT_COUNT:-$WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}" ]; then
+  if [ "$n" -ge "${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}" ]; then
     escalate_add "$state" \
       "stale persisted ${age}s (possible wedge, absorbed $((n - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: do not re-absorb on the run-step state alone): $win"
     return 1

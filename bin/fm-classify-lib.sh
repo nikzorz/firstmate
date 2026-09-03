@@ -88,6 +88,15 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
+# Consecutive absorbs of ONE unchanged stale pane before the supervisor stops
+# absorbing and escalates it as demanding a look closer than the run-step state
+# alone. Both supervisors absorb a still-advancing run on their own path, so a
+# second literal would let them cap that absorb differently for the same crew;
+# three by default, and both consumers read FM_WEDGE_DEMAND_INSPECT_COUNT with
+# this default so the cap has one owner.
+# shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
+FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
+
 # --- one-shot pause recheck deadline ----------------------------------------
 #
 # Some external waits announce when they end. The cadence above cannot use that:
