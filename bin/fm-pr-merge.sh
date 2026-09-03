@@ -21,6 +21,11 @@
 # asked for separately so each arrives as raw text with no delimiter to guess at.
 # A default that cannot be read stops the merge rather than falling back to a
 # composed message, which is the case this exists to prevent.
+#
+# Ownership of that message splits by half, because the trailers live in the
+# body and never in the subject. A caller's --body or --body-file takes the body
+# and the strip stands down with it; a caller's --subject takes only the subject,
+# and the stripped body is still read and supplied underneath it.
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
 # whatever trailers they carry.
@@ -86,14 +91,24 @@ caller_selects_squash() {
   return 1
 }
 
-# A caller who writes the squash message owns it, including its trailers.
-# Long spellings are the whole set: gh-axi's pr merge allowlist accepts only
+# A caller who writes the squash body owns it, including its trailers. Long
+# spellings are the whole set: gh-axi's pr merge allowlist accepts only
 # --subject, --body, and --body-file, and rejects any short form before gh runs.
-caller_writes_squash_message() {
+caller_writes_squash_body() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --subject|--subject=*|--body|--body=*|--body-file|--body-file=*) return 0 ;;
+      --body|--body=*|--body-file|--body-file=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+caller_writes_squash_subject() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --subject|--subject=*) return 0 ;;
     esac
   done
   return 1
@@ -136,7 +151,7 @@ else
   squashing=0
 fi
 
-if [ "$squashing" = 1 ] && ! caller_writes_squash_message "$@"; then
+if [ "$squashing" = 1 ] && ! caller_writes_squash_body "$@"; then
   # shellcheck disable=SC2016  # GraphQL variables, not shell expansions.
   DEFAULT_MESSAGE_QUERY='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){viewerMergeHeadlineText(mergeType:SQUASH) viewerMergeBodyText(mergeType:SQUASH)}}}'
   if ! command -v gh >/dev/null 2>&1; then
@@ -147,12 +162,15 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_message "$@"; then
   # to compute, both come back as a JSON null, which gh renders as the literal
   # token "null" on stdout with a zero exit. That token is an unreadable default,
   # never a message, on either field.
-  if ! SQUASH_SUBJECT=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
-    -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
-    --jq '.data.repository.pullRequest.viewerMergeHeadlineText' 2>/dev/null) \
-    || [ -z "$SQUASH_SUBJECT" ] || [ "$SQUASH_SUBJECT" = null ]; then
-    echo "error: the default squash message could not be read" >&2
-    exit 1
+  if ! caller_writes_squash_subject "$@"; then
+    if ! SQUASH_SUBJECT=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
+      -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
+      --jq '.data.repository.pullRequest.viewerMergeHeadlineText' 2>/dev/null) \
+      || [ -z "$SQUASH_SUBJECT" ] || [ "$SQUASH_SUBJECT" = null ]; then
+      echo "error: the default squash message could not be read" >&2
+      exit 1
+    fi
+    merge_args+=(--subject "$SQUASH_SUBJECT")
   fi
   # An empty body is a legitimate default for a single-commit pull request with
   # no commit body, so emptiness alone is not an error here.
@@ -166,7 +184,7 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_message "$@"; then
   SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
   trap 'rm -f "$SQUASH_BODY_FILE"' EXIT
   printf '%s\n' "$SQUASH_BODY" | fm_attribution_strip > "$SQUASH_BODY_FILE"
-  merge_args+=(--subject "$SQUASH_SUBJECT" --body-file "$SQUASH_BODY_FILE")
+  merge_args+=(--body-file "$SQUASH_BODY_FILE")
 fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"

@@ -18,9 +18,13 @@
 #       attribution stripped and human co-authors preserved
 #   (j) a non-squash merge supplies no message, because replayed branch commits
 #       keep their own
-#   (k) a caller-written squash message is left alone
-#   (l) an unreadable default squash message refuses before merging
-#   (m) a default squash message returned as a JSON null refuses before merging,
+#   (k) a caller-written squash body is left alone, strip and reads stood down
+#   (l) a caller-written squash subject keeps the caller's subject but still
+#       gets the stripped default body underneath it
+#   (m) a subject-only squash merge still refuses when the default body is
+#       unreadable, rather than letting the forge compose one
+#   (n) an unreadable default squash message refuses before merging
+#   (o) a default squash message returned as a JSON null refuses before merging,
 #       on the headline and on the body alike
 set -u
 
@@ -406,19 +410,80 @@ test_non_squash_merge_supplies_no_message() {
   pass "fm-pr-merge supplies no squash message when the caller merges without squashing"
 }
 
-test_caller_written_squash_message_is_kept() {
+test_caller_written_squash_body_is_kept() {
   local case_dir
-  case_dir=$(make_case caller-message)
+  case_dir=$(make_case caller-body)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  # A caller who owns the body owns its trailers, so no default is even read.
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
   : > "$case_dir/gh-axi.log"
 
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/11 -- --squash --subject 'chore: mine' \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "caller-message: fm-pr-merge failed"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/11 -- --squash --body 'mine, trailers and all' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "caller-body: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 11 --repo example/repo --squash --subject chore: mine' "$case_dir/gh-axi.log" \
-    || fail "caller-message: a caller-written squash message was overridden"
-  pass "fm-pr-merge leaves a caller-written squash message alone"
+  grep -qxF 'pr merge 11 --repo example/repo --squash --body mine, trailers and all' "$case_dir/gh-axi.log" \
+    || fail "caller-body: a caller-written squash body was overridden"
+  pass "fm-pr-merge leaves a caller-written squash body alone"
+}
+
+# The subject is not where agent trailers live, so a caller who names only the
+# subject must still get the stripped body rather than a forge-composed one.
+test_caller_written_subject_still_gets_stripped_body() {
+  local case_dir
+  case_dir=$(make_case caller-subject)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1111111111111111111111111111111111111111
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/25 -- --squash --subject 'chore: mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "caller-subject: fm-pr-merge failed"
+
+  grep -qF 'pr merge 25 --repo example/repo --body-file /' "$case_dir/gh-axi.log" \
+    || fail "caller-subject: no stripped body was supplied for a subject-only squash merge"
+  grep -qF -- '--squash --subject chore: mine' "$case_dir/gh-axi.log" \
+    || fail "caller-subject: the caller's subject was not forwarded"
+  assert_no_grep '--subject fix: do a thing' "$case_dir/gh-axi.log" \
+    "caller-subject: the forge headline was added alongside the caller's subject"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "caller-subject: a claude co-author trailer survived into the squash body"
+  assert_no_grep 'noreply@openai.com' "$case_dir/merge-body" \
+    "caller-subject: a codex co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "caller-subject: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge supplies the stripped default body under a caller-written subject"
+}
+
+test_caller_written_subject_refuses_unreadable_body() {
+  local case_dir rc
+  case_dir=$(make_case caller-subject-unreadable-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222222
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/26 -- --squash --subject 'chore: mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "caller-subject-unreadable-body: fm-pr-merge should refuse rather than let the forge compose the body"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "caller-subject-unreadable-body: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "caller-subject-unreadable-body: the merge ran with a forge-composed body"
+  pass "fm-pr-merge refuses a subject-only squash merge when the default body cannot be read"
 }
 
 test_unreadable_default_message_refuses_before_merge() {
@@ -528,7 +593,9 @@ test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
 test_squash_message_drops_agent_attribution
 test_non_squash_merge_supplies_no_message
-test_caller_written_squash_message_is_kept
+test_caller_written_squash_body_is_kept
+test_caller_written_subject_still_gets_stripped_body
+test_caller_written_subject_refuses_unreadable_body
 test_unreadable_default_message_refuses_before_merge
 test_null_default_headline_refuses_before_merge
 test_null_default_body_refuses_before_merge
