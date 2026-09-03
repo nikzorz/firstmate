@@ -20,9 +20,10 @@
 # envelope, and this path needs the raw message bytes. The headline and body are
 # asked for separately so each arrives as raw text with no delimiter to guess at.
 # A default that cannot be read stops the merge rather than falling back to a
-# composed message, which is the case this exists to prevent. The guarantee is squash-only by construction:
-# a merge-commit or rebase merge replays the branch commits onto the default
-# branch untouched, so it carries whatever trailers they carry.
+# composed message, which is the case this exists to prevent.
+# The guarantee is squash-only by construction: a merge-commit or rebase merge
+# replays the branch commits onto the default branch untouched, so it carries
+# whatever trailers they carry.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,11 +87,14 @@ caller_selects_squash() {
 }
 
 # A caller who writes the squash message owns it, including its trailers.
+# Short spellings count: gh accepts -t, -b, and -F for the same three flags.
 caller_writes_squash_message() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --subject|--subject=*|--body|--body=*|--body-file|--body-file=*) return 0 ;;
+      --subject|--subject=*|-t|-t?*|\
+      --body|--body=*|-b|-b?*|\
+      --body-file|--body-file=*|-F|-F?*) return 0 ;;
     esac
   done
   return 1
@@ -140,18 +144,23 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_message "$@"; then
     echo "error: the forge CLI needed to read the default squash message is unavailable" >&2
     exit 1
   fi
+  # A pull request the query cannot resolve, and a merge text the forge declines
+  # to compute, both come back as a JSON null, which gh renders as the literal
+  # token "null" on stdout with a zero exit. That token is an unreadable default,
+  # never a message, on either field.
   if ! SQUASH_SUBJECT=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
     -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
     --jq '.data.repository.pullRequest.viewerMergeHeadlineText' 2>/dev/null) \
-    || [ -z "$SQUASH_SUBJECT" ]; then
+    || [ -z "$SQUASH_SUBJECT" ] || [ "$SQUASH_SUBJECT" = null ]; then
     echo "error: the default squash message could not be read" >&2
     exit 1
   fi
   # An empty body is a legitimate default for a single-commit pull request with
-  # no commit body, so only the request failing is an error here.
+  # no commit body, so emptiness alone is not an error here.
   if ! SQUASH_BODY=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
     -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
-    --jq '.data.repository.pullRequest.viewerMergeBodyText' 2>/dev/null); then
+    --jq '.data.repository.pullRequest.viewerMergeBodyText' 2>/dev/null) \
+    || [ "$SQUASH_BODY" = null ]; then
     echo "error: the default squash message could not be read" >&2
     exit 1
   fi

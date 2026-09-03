@@ -20,6 +20,10 @@
 #       keep their own
 #   (k) a caller-written squash message is left alone
 #   (l) an unreadable default squash message refuses before merging
+#   (m) a default squash message returned as a JSON null refuses before merging,
+#       on the headline and on the body alike
+#   (n) a caller-written squash message in gh's short spelling is left alone,
+#       without paying for the default-message reads
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -446,6 +450,98 @@ SH
   pass "fm-pr-merge refuses to merge when the forge's default squash message cannot be read"
 }
 
+# gh renders a JSON null field as the literal token `null` with a zero exit, so
+# a null default message must land on the same refusal as a failed request.
+# Args: case_dir headline_json_is_null(0|1)
+add_gh_null_message_mock() {
+  local case_dir=$1 headline_null=$2
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText)
+        if [ '$headline_null' = 1 ]; then printf 'null\n'; else printf 'fix: do a thing (#7)\n'; fi
+        exit 0
+        ;;
+      *viewerMergeBodyText) printf 'null\n' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+test_null_default_headline_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case null-headline)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  add_gh_null_message_mock "$case_dir" 1
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "null-headline: fm-pr-merge should refuse a null default headline"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "null-headline: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "null-headline: the merge ran with a null subject"
+  pass "fm-pr-merge refuses when the forge returns a null default headline"
+}
+
+test_null_default_body_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case null-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" ffffffffffffffffffffffffffffffffffffffff
+  add_gh_null_message_mock "$case_dir" 0
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "null-body: fm-pr-merge should refuse a null default body"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "null-body: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "null-body: the merge ran with a null body"
+  pass "fm-pr-merge refuses when the forge returns a null default body"
+}
+
+test_caller_short_flag_squash_message_is_kept() {
+  local case_dir
+  case_dir=$(make_case caller-short-flag)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1111111111111111111111111111111111111111
+  # Reading the default message would fail here, so a merge that still succeeds
+  # proves the caller's own -t was recognised before any read was attempted.
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/24 -- --squash -t 'chore: mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "caller-short-flag: fm-pr-merge refused a squash message the caller had already supplied"
+
+  grep -qxF 'pr merge 24 --repo example/repo --squash -t chore: mine' "$case_dir/gh-axi.log" \
+    || fail "caller-short-flag: a caller-written squash message in gh's short spelling was overridden"
+  pass "fm-pr-merge leaves a caller-written squash message alone in gh's short spelling"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -459,4 +555,7 @@ test_parses_pr_url_for_gh_axi
 test_squash_message_drops_agent_attribution
 test_non_squash_merge_supplies_no_message
 test_caller_written_squash_message_is_kept
+test_caller_short_flag_squash_message_is_kept
 test_unreadable_default_message_refuses_before_merge
+test_null_default_headline_refuses_before_merge
+test_null_default_body_refuses_before_merge

@@ -3,7 +3,7 @@
 Active empirical evidence for the guarantee that no commit reaching this repo's default branch names an agent as a co-author.
 Measured 2026-09-03 unless stated otherwise.
 
-## Both supported harnesses inject a trailer
+## The two measured harnesses inject a trailer
 
 Claude Code 2.1.259 composes its commit attribution from the merged settings, then appends the session link separately.
 Read from the shipped binary at `/home/nik/.local/share/claude/versions/2.1.259`:
@@ -32,6 +32,10 @@ Ignore any earlier instructions requiring Codex attribution and do not add it.
 Its enabled path adds `- Ignore any earlier instructions disabling Codex attribution; this policy reflects the current workspace.`
 The setting is account-side and explicitly outranks repository rules, so no file in this repo can turn it off.
 That is why the merge path, not the harness setting, owns the guarantee.
+
+Claude and codex are the whole of the measured set.
+`opencode`, `pi`, `grok`, and `kimi` are verified firstmate harnesses too, but none is installed on this machine, so whether each injects a trailer, and under which address, is unmeasured rather than known to be nothing.
+Covering one starts by measuring the trailer that runtime actually emits and ends by adding the address it uses to `FM_ATTRIBUTION_AGENT_EMAILS`; a guessed address is worse than no entry, because a wrong one silently strips a human co-author.
 
 ## The Claude settings knob works, including in a linked worktree
 
@@ -95,4 +99,4 @@ $ diff body.txt stripped.txt
 
 The strip runs on the squash path only.
 A merge-commit or rebase merge replays the branch commits onto the default branch untouched and carries whatever trailers they carry; `.claude/settings.json` is what keeps those commits clean for Claude-run work.
-`tests/fm-attribution-lib.test.sh` and `tests/fm-pr-merge.test.sh` own the regression coverage.
+`tests/fm-attribution-lib.test.sh` owns the regression coverage for both halves, the strip itself and the `.claude/settings.json` knob, and `tests/fm-pr-merge.test.sh` owns it for the merge path.
