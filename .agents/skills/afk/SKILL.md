@@ -149,7 +149,7 @@ behavior but needs a separate fix; the gap is recorded in
 The daemon wraps `fm-watch.sh`, runs the watcher as a child, classifies each
 wake reason in bash, and self-handles the routine majority without consuming a
 firstmate turn.
-Captain-relevant events, plus a bounded recheck of a declared external wait that remains idle, escalate to firstmate's context as one pre-read, single-line, batched digest.
+Captain-relevant events, plus a bounded recheck of a declared external wait or a still-advancing run that remains idle, escalate to firstmate's context as one pre-read, single-line, batched digest.
 The classification predicates (the captain-relevant verb set, declared-pause vocabulary, signal/stale tests, and fleet-scan) live in the shared `bin/fm-classify-lib.sh`, the same library the always-on watcher uses for its own triage when afk is off, so the two modes apply one identical policy.
 While `state/.afk` exists the daemon owns the watcher, so the watcher reverts to one-shot and lets the daemon do the triage - the two never run their triage at the same time.
 
@@ -163,9 +163,14 @@ Classify each wake this way:
 - `check` -> always escalate. Check scripts print only when firstmate should wake.
 - `stale` with a terminal status or bare legacy captain-relevant line -> escalate.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.
-  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge.
-  One idle shape is not a wedge: a claude crew parked on Claude Code's usage-limit prompt escalates named for what it is - window reset and recoverable, window still exhausted as a bounded external wait, or quota window unreadable - so handle it through `harness-adapters` instead of wedge recovery.
-  This bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
+  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge unless one of two idle shapes that are not wedges applies.
+  Asked first: a crew whose no-mistakes validation run is still advancing behind a confirmed-live endpoint is absorbed rather than escalated, because a long fix or test step is a quiet pane by design.
+  An absorbed pane re-surfaces once per `FM_PAUSE_RESURFACE_SECS` (default 3600s) of accumulated idle age, named as an absorb rather than a wedge, so expect a digest line reading `stale persisted Ns, run step still advancing - absorbed on a long cadence, not a wedge`.
+  It is named a possible wedge only at the `FM_WEDGE_DEMAND_INSPECT_COUNT`th recheck, which carries `demand-deep-inspection` and asks for a closer look than the run-step state alone.
+  Asked second: a claude crew parked on Claude Code's usage-limit prompt escalates named for what it is - window reset and recoverable, window still exhausted as a bounded external wait, or quota window unreadable - so handle it through `harness-adapters` instead of wedge recovery.
+  For a pane that is not absorbed this bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
+  For a pane already inside the absorb, a run that stops advancing escalates at the next threshold rather than on the tick that observes the stall, because the read throttle defers the busy read and the advancing read alike.
+  That deferral is intended rather than slippage: the always-on watcher restarts its own timer on an absorb and defers the stalled reading by one window too, so the two supervisors stay in step on one crew.
   Healthy crewmates are autonomous and do not wait on firstmate mid-task.
 - `heartbeat` -> self-handle. The daemon runs its own cheap bash fleet scan
   every `FM_HEARTBEAT_SCAN_SECS` (default 300s) as the catch-all for a
