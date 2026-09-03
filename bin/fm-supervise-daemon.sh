@@ -44,7 +44,14 @@
 #     external wait is escalated only after it has been idle for
 #     STALE_ESCALATE_SECS (configurable), rechecked once, so a crewmate whose run
 #     is NOT advancing is detected within STALE_ESCALATE_SECS + a tick, never
-#     lost. A pane absorbed on a still-advancing run trades that latency for not
+#     lost. One exception to that figure, and it is deliberate: a pane already
+#     inside the absorb below when its run stops is read at the next gate
+#     opening rather than on the tick that could first observe the stall,
+#     because the read throttle returns ahead of both the busy read and the
+#     advancing read. The watcher defers the stalled reading by one window too,
+#     since it restarts its own timer on an absorb, so the two supervisors stay
+#     in step on one crew rather than one of them jumping first.
+#     A pane absorbed on a still-advancing run trades that latency for not
 #     reporting a working crew as wedged: it is named a possible wedge only at
 #     the WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, which at
 #     defaults is hours rather than minutes. Both bounds are finite, and the
@@ -68,7 +75,9 @@
 #     next episode opens only once the pane's capture changes and settles again,
 #     so a pane frozen for the whole away window gets one demand-inspection and
 #     no repeat - the same single line it got before this absorb existed.
-#     A run that has stopped advancing escalates exactly as it always did.
+#     A run that has stopped advancing escalates as it always did, on the first
+#     threshold it is read at, which for an already-absorbed pane is the next
+#     gate opening for the reason the latency bullet above records.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
 #     Buffered escalation delivery also has a max-defer alarm: if a digest stays

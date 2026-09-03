@@ -736,7 +736,7 @@ test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence() {
 
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
-  pass "an absorbed advancing run re-surfaces once per long window, never as a wedge"
+  pass "an absorbed advancing run re-surfaces once per long window, named an absorb rather than a wedge below the cap"
 }
 
 # A no-mistakes run executes in no-mistakes' own bare repo, so a moving run says
