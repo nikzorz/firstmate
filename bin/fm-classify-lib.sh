@@ -42,6 +42,10 @@
 # true for a crew that stays absorbed indefinitely: bin/fm-watch.sh's declared-pause
 # cadence memoizes the verdict in its own marker state, and its wedge threshold is
 # already spaced by the idle window it restarts on each absorb.
+# bin/fm-supervise-daemon.sh's stale-persistence recheck buys no spacing from its
+# own marker, because its absorb deliberately leaves that marker's epoch measuring
+# true idle age, so it keeps to the same window through a throttle record it writes
+# beside the marker.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a

@@ -1121,7 +1121,8 @@ stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
 #     attempt one normal delivery; if it cannot confirm, raise the wedge alarm.
 #     Never silently defer forever.
 #  2) stale recheck: for each pending stale marker past STALE_ESCALATE_SECS,
-#     re-peek the pane; still idle -> escalate (wedge); resumed -> clear marker.
+#     re-peek the pane; resumed -> clear marker; still idle -> escalate (wedge),
+#     unless the still-advancing-run absorb above holds it instead.
 #  2b) pause re-surface: for each declared-pause marker past PAUSE_RESURFACE_SECS,
 #     re-peek; busy/gone -> clear; still idle + still paused -> escalate a recheck
 #     digest and reset the window (repeating bounded re-surface, never a wedge).
@@ -1221,8 +1222,11 @@ housekeeping() {  # <state>
         # firstmate records the wait as `paused:`, this loop stops seeing the
         # task and the pause re-surface cadence below owns the recheck.
         # Cheap pre-filter only: the recorded harness is read straight from
-        # metadata, so a fleet with no claude crew keeps this loop's property of
-        # making no current-state calls at all. bin/fm-crew-state.sh remains the
+        # metadata, so a fleet with no claude crew buys no usage-limit read at
+        # all. What it no longer buys is this loop making no current-state call
+        # at all, because the harness-independent advancing question above costs
+        # one for a stale pane on any harness; the still-advancing-run absorb
+        # section above owns that trade. bin/fm-crew-state.sh remains the
         # authoritative gate, so an absent or unreadable record still asks.
         limit_class=none
         case "$(task_window_harness "$win" "$state")" in
