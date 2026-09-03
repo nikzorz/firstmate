@@ -40,15 +40,19 @@
 #     reason.
 #   - Fail-safe-to-escalate: any wake the classifier cannot confidently mark
 #     routine is escalated.
-#   - Bounded wedge latency, in two regimes. A stale pane without a declared
-#     external wait is escalated only after it has been idle for
-#     STALE_ESCALATE_SECS (configurable), rechecked once, so a crewmate whose run
-#     is NOT advancing is detected within STALE_ESCALATE_SECS + a tick, never
-#     lost. A pane absorbed on a still-advancing run trades that figure for not
-#     reporting a working crew as wedged: it is named a possible wedge only at
-#     the WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, hours rather
-#     than minutes at defaults. Both bounds are finite. The still-advancing-run
-#     absorb section below states that contract in full and owns it.
+#   - Bounded wedge latency, never unbounded, but the bound depends on whether
+#     the pane is inside the absorb. A stale pane without a declared external
+#     wait is escalated only after it has been idle for STALE_ESCALATE_SECS
+#     (configurable), rechecked once, so a crewmate whose run is NOT advancing
+#     and is not already absorbed is detected within STALE_ESCALATE_SECS + a
+#     tick, never lost. A pane ALREADY absorbed whose run then stops is read at
+#     the next throttle opening instead, so that figure doubles. A pane absorbed
+#     on a still-advancing run trades that figure for not reporting a working
+#     crew as wedged: it is named a possible wedge only at the
+#     WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, hours rather
+#     than minutes at defaults. All three bounds are finite. The
+#     still-advancing-run absorb section below states that contract in full and
+#     owns it.
 #     A declared pause instead
 #     gets its own longer PAUSE_RESURFACE_SECS recheck, never a wedge escalation.
 #     A crew parked on Claude Code's usage-limit prompt is escalated on that same
@@ -967,8 +971,18 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # demonstrably moving run to the captain as a possible wedge. The threshold now
 # asks the run itself, exactly as bin/fm-watch.sh's wedge timer does, through the
 # same crew_run_step_advancing (bin/fm-classify-lib.sh). A run that has STOPPED
-# advancing reports `stalled`, never satisfies the test, and escalates precisely
-# as before.
+# advancing reports `stalled`, never satisfies the test, and escalates as before.
+#
+# WHAT THE ABSORB COSTS THE STALLED READING, the one qualification on the wedge
+# latency the header states. The throttle below returns before the alive and the
+# advancing reads, so a run that stops moving while its pane is ALREADY absorbed
+# is not read on the tick that could first observe it but at the next throttle
+# opening: up to FM_STALE_ESCALATE_SECS after the stall, and so up to twice that
+# from the idle epoch. It escalates there exactly as an unabsorbed pane does at
+# its first threshold, and the deferral is intended rather than slippage:
+# bin/fm-watch.sh restarts its own timer on an absorb and defers the stalled
+# reading by one window too, so the two supervisors stay in step on one crew
+# rather than one of them jumping first.
 #
 # THE COST PROPERTY THIS CHANGES, DELIBERATELY. The usage-limit read above it is
 # pre-filtered on the recorded harness because that prompt is claude's alone, so

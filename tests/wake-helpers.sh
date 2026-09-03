@@ -152,8 +152,6 @@ case "${1:-}" in
     fi
     exit 0 ;;
   capture-pane)
-    # Optional call log, so a test can assert a path bought NO pane capture.
-    [ -n "${FM_FAKE_TMUX_CAPTURE_LOG:-}" ] && printf '%s\n' "$*" >> "$FM_FAKE_TMUX_CAPTURE_LOG"
     # Honor a single-line band capture (-S N -E M, both non-negative) for the
     # composer reader's non-bordered compatibility fallback; otherwise (e.g. its
     # structural full-pane scan or fm_pane_is_busy's "-S -40" tail) return the whole capture. -e is accepted and

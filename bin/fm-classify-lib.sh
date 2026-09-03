@@ -240,12 +240,14 @@ _fm_classify_park_identity() {  # <line>
 # This library owns it because bin/fm-crew-state.sh, which supplies the identity,
 # is documented read-only and side-effect free, so the reader that supplies the
 # identity must not be the one that remembers it - the same split that puts the
-# pause deadline above here. Unlike that deadline, which both supervisors consult,
-# the absorb has ONE consumer: every call site is in bin/fm-watch.sh, and the
-# away-mode daemon reads only the pause accessors from this library. So a
-# supervision path in that script which sees a stale crew and does not record
-# leaves a hole in the record that nothing else fills. bin/fm-teardown.sh removes
-# it with the rest of a task's state, and AGENTS.md section 2 lists it.
+# pause deadline above here. Both supervisors write it, so a supervision path in
+# either that sees a stale crew and does not record leaves a hole in the record
+# that nothing else fills. bin/fm-watch.sh holds most of the call sites, and
+# bin/fm-supervise-daemon.sh's stale-persistence recheck adds one more through
+# crew_run_step_advancing: that resolves to crew_absorb_verdict, so the away-mode
+# daemon takes a sighting on the same terms as the watcher and can write the very
+# first baseline through the no-record arm below. bin/fm-teardown.sh removes it
+# with the rest of a task's state, and AGENTS.md section 2 lists it.
 FM_CLASSIFY_PARK_SIGHTING_SUFFIX='.park-sighting'
 
 park_sighting_file() {  # <state-dir> <id>
