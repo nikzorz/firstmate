@@ -33,12 +33,15 @@
 # that window is the one that resolves toward absorbing a crew that should have
 # surfaced - so a SLOWER cadence degrades the property the record exists for.
 # Callers run it ONLY on no-verb signal handling, on a surfaced signal whose crew
-# announced a decision, and on first sighting of a stale hash, never on every wake,
-# and that limit is about the bounded read below rather than about the record.
-# A caller that keeps absorbing the same unchanged pane across polls - today only
-# bin/fm-watch.sh's declared-pause cadence - memoizes the verdict in its own marker
-# state and re-reads no more often than FM_STALE_ESCALATE_SECS, which is what keeps
-# "never on every wake" true for a crew that stays absorbed indefinitely.
+# announced a decision, on first sighting of a stale hash, and at the wedge
+# escalation threshold for a stale pane still absorbed as provably working, never
+# on every wake, and that limit is about the bounded read below rather than about
+# the record.
+# A caller that keeps absorbing the same unchanged pane across polls re-reads no
+# more often than FM_STALE_ESCALATE_SECS, which is what keeps "never on every wake"
+# true for a crew that stays absorbed indefinitely: bin/fm-watch.sh's declared-pause
+# cadence memoizes the verdict in its own marker state, and its wedge threshold is
+# already spaced by the idle window it restarts on each absorb.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a

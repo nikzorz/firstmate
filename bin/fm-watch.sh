@@ -48,7 +48,11 @@
 #                          also carries a "demand-deep-inspection" marker so the
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
-#                          resume. Unless afk is active.
+#                          resume. A threshold reached while the crew's run step
+#                          is still advancing behind a confirmed-live endpoint is
+#                          absorbed instead and restarts the window, re-surfacing
+#                          only on the long recheck cadence (wedge_timer_check
+#                          below owns both). Unless afk is active.
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
