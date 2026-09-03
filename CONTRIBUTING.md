@@ -68,6 +68,11 @@ Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistak
 Local no-mistakes Test is intent-targeted and must not re-run every `tests/*.test.sh`; `.github/workflows/ci.yml` owns the broad behavior suite plus platform-specific compatibility lanes.
 That is firstmate-specific; do not commit `.no-mistakes/evidence/` here even when another no-mistakes-managed target project keeps committed PR evidence.
 
+Commits here never name an agent as a co-author, and every coding agent's vendor instructs it to add one anyway.
+`.claude/settings.json` disables that injection for Claude Code inside this repo, and `bin/fm-pr-merge.sh` supplies the squash commit message so a trailer that still reached a branch commit is dropped before the default branch sees it.
+Codex's equivalent is an account-side workspace setting no file here can reach, so keep the trailer out of your commits by hand when your client insists on it.
+[`docs/verification/agent-attribution.md`](docs/verification/agent-attribution.md) holds the evidence and the exact limits of each mechanism.
+
 Check and test the toolbelt before pushing:
 
 ```sh

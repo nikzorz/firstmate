@@ -64,6 +64,17 @@ SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+# The forge's default squash message, which bin/fm-pr-merge.sh reads before it
+# will merge. Each request is identified by its --jq field, the last argument.
+if [ "${1:-}" = api ] && [ "${2:-}" = graphql ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *viewerMergeHeadlineText) printf '%s\n' 'fix: fixture (#3)' ; exit 0 ;;
+      *viewerMergeBodyText) printf '%s\n' '* fix: fixture' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
 case " $* " in
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
