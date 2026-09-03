@@ -29,6 +29,10 @@
 #   (p) an all-digit repository name still gets a stripped body, because the
 #       String! variables are sent as strings rather than typed fields
 #   (q) a refusal carries the cause the forge CLI reported
+#   (r) an already-merged PR merges with no default-message read attempted
+#   (s) a merged state that cannot be read still takes the ordinary read path
+#   (t) --auto is refused rather than freezing a supplied squash message
+#   (u) --auto still merges when the caller owns the body
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -159,6 +163,7 @@ run_pr_merge() {
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
   FM_TEST_SUBJECT_OUT="$case_dir/merge-subject" \
   FM_TEST_BODY_OUT="$case_dir/merge-body" \
+  FM_TEST_GH_API_LOG="$case_dir/gh-api.log" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -581,6 +586,138 @@ SH
   chmod +x "$case_dir/fakebin/gh"
 }
 
+# gh mocks for the merged-state probe. Both record every `gh api` call so a test
+# can prove the default-message read was never attempted, and both refuse that
+# call so an attempted read would also fail the merge outright.
+# Args: case_dir
+add_gh_merged_state_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ]; then
+  printf '%s\n' "$*" >> "$FM_TEST_GH_API_LOG"
+  exit 1
+fi
+case "${1:-} ${2:-}" in
+  "pr view")
+    case " $* " in
+      *"--json state"*) printf '%s\n' MERGED ; exit 0 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# Args: case_dir
+add_gh_unreadable_state_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json state"*) echo "gh: could not determine pull request state" >&2 ; exit 1 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+test_already_merged_pr_skips_the_message_read() {
+  local case_dir
+  case_dir=$(make_case already-merged)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+  add_gh_merged_state_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh-api.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/29 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "already-merged: fm-pr-merge refused a pull request that had already merged"
+
+  grep -qxF 'pr merge 29 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "already-merged: gh-axi was not left to report the merge itself"
+  [ ! -s "$case_dir/gh-api.log" ] \
+    || fail "already-merged: a default-message read was attempted for an already-merged pull request"
+  assert_absent "$case_dir/merge-body" \
+    "already-merged: a squash body was supplied for a pull request with nothing to merge"
+  pass "fm-pr-merge skips the default-message read when the pull request already merged"
+}
+
+test_unreadable_merged_state_takes_the_ordinary_path() {
+  local case_dir
+  case_dir=$(make_case unreadable-state)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  add_gh_unreadable_state_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/30 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "unreadable-state: fm-pr-merge did not fall through to the ordinary read"
+
+  grep -qF 'pr merge 30 --repo example/repo --squash --subject ' "$case_dir/gh-axi.log" \
+    || fail "unreadable-state: an unreadable merged state was taken for already-merged"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "unreadable-state: a claude co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "unreadable-state: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge treats an unreadable merged state as not merged and still strips the body"
+}
+
+test_auto_merge_refused_when_message_would_be_supplied() {
+  local case_dir rc
+  case_dir=$(make_case auto-merge)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 -- --squash --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "auto-merge: fm-pr-merge should refuse rather than freeze the squash message"
+  assert_grep '--auto would freeze this squash message' "$case_dir/stderr" \
+    "auto-merge: the refusal did not name the frozen message as the reason"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "auto-merge: auto-merge was armed with a message read at arm time"
+  pass "fm-pr-merge refuses --auto rather than arming auto-merge with a frozen squash message"
+}
+
+test_auto_merge_allowed_when_caller_owns_the_body() {
+  local case_dir
+  case_dir=$(make_case auto-merge-own-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 8888888888888888888888888888888888888888
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 -- --squash --auto --body 'mine, trailers and all' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "auto-merge-own-body: fm-pr-merge refused a caller who owns the message"
+
+  grep -qxF 'pr merge 32 --repo example/repo --squash --auto --body mine, trailers and all' "$case_dir/gh-axi.log" \
+    || fail "auto-merge-own-body: a caller-owned message was not armed unchanged"
+  pass "fm-pr-merge arms --auto when the caller owns the squash body"
+}
+
 test_numeric_repository_name_still_gets_stripped_body() {
   local case_dir
   case_dir=$(make_case numeric-repo)
@@ -698,3 +835,7 @@ test_null_default_headline_refuses_before_merge
 test_null_default_body_refuses_before_merge
 test_numeric_repository_name_still_gets_stripped_body
 test_refusal_carries_the_forge_cli_cause
+test_already_merged_pr_skips_the_message_read
+test_unreadable_merged_state_takes_the_ordinary_path
+test_auto_merge_refused_when_message_would_be_supplied
+test_auto_merge_allowed_when_caller_owns_the_body
