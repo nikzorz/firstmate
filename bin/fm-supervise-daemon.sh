@@ -44,40 +44,16 @@
 #     external wait is escalated only after it has been idle for
 #     STALE_ESCALATE_SECS (configurable), rechecked once, so a crewmate whose run
 #     is NOT advancing is detected within STALE_ESCALATE_SECS + a tick, never
-#     lost. One exception to that figure, and it is deliberate: a pane already
-#     inside the absorb below when its run stops is read at the next gate
-#     opening rather than on the tick that could first observe the stall,
-#     because the read throttle returns ahead of both the busy read and the
-#     advancing read. The watcher defers the stalled reading by one window too,
-#     since it restarts its own timer on an absorb, so the two supervisors stay
-#     in step on one crew rather than one of them jumping first.
-#     A pane absorbed on a still-advancing run trades that latency for not
+#     lost. A pane absorbed on a still-advancing run trades that figure for not
 #     reporting a working crew as wedged: it is named a possible wedge only at
-#     the WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, which at
-#     defaults is hours rather than minutes. Both bounds are finite, and the
-#     absorb paragraphs below carry the mechanism. A declared pause instead
+#     the WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, hours rather
+#     than minutes at defaults. Both bounds are finite. The still-advancing-run
+#     absorb section below states that contract in full and owns it.
+#     A declared pause instead
 #     gets its own longer PAUSE_RESURFACE_SECS recheck, never a wedge escalation.
 #     A crew parked on Claude Code's usage-limit prompt is escalated on that same
 #     wedge schedule but named for what it is, so a still-exhausted account
 #     window reads as a bounded external wait rather than a fault to hunt.
-#     A crew whose validation run is still ADVANCING behind a confirmed-live
-#     endpoint is absorbed at that threshold instead of reported as a wedge - a
-#     long pipeline step is a quiet pane by design - and re-surfaces once per
-#     PAUSE_RESURFACE_SECS of accumulated idle age so the silence stays bounded.
-#     The WEDGE_DEMAND_INSPECT_COUNTth of those rechecks escalates the stale
-#     episode as a wedge demanding deep inspection instead of absorbing again,
-#     after COUNT - 1 absorb notices, so a crew halted behind a run step nobody
-#     can measure cannot stay quiet.
-#     That cap fires on every such episode, including one whose run really is
-#     moving, because the advancing verdict cannot tell those apart; a bounded
-#     false alarm is the deliberate price of not missing a halted crew.
-#     That escalation ends the episode rather than raising a lasting flag, and a
-#     next episode opens only once the pane's capture changes and settles again,
-#     so a pane frozen for the whole away window gets one demand-inspection and
-#     no repeat - the same single line it got before this absorb existed.
-#     A run that has stopped advancing escalates as it always did, on the first
-#     threshold it is read at, which for an already-absorbed pane is the next
-#     gate opening for the reason the latency bullet above records.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
 #     Buffered escalation delivery also has a max-defer alarm: if a digest stays
@@ -1011,11 +987,16 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # unchanged pane. That is the price of not reporting a working crew as wedged
 # while the captain is away, and it is worth paying.
 #
-# That record is consulted by the caller rather than here, because an absorb
-# keeps its stale marker and so re-reaches the threshold on every tick: gating
-# the whole recheck on it throttles the pane capture that precedes this call
-# too, and leaves this function to answer one question with no cadence of its
-# own.
+# WHAT THE THROTTLE MAY NOT COVER. It gates this function alone, never the
+# stale_window_is_busy read above the call. That read is the daemon's only
+# observer of a resumed pane: nothing else drops the stale marker on a resume,
+# since the wake path's stale_marker_record is create-if-absent and preserves
+# the epoch, and reconcile_pause_tracking acts only on a declared pause. Gating
+# it would let the marker's epoch count through work the crew really did, and
+# the idle age the captain triages on, the re-surface cadence and the cap are
+# all keyed off that one epoch, so all three would be computed against an idle
+# age that was never true. A crew that resumes and re-idles inside one window is
+# therefore still seen busy, and its clock restarts on the work.
 #
 # The absorb is graded against a CONFIRMED-alive endpoint for the reason
 # bin/fm-watch.sh states: a no-mistakes run executes in no-mistakes' own bare
@@ -1025,9 +1006,10 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 # stale_window_is_busy's verdict cannot stand in for this.
 #
 # 0 when the threshold belongs to a run still moving behind a live endpoint.
-stale_run_advancing() {  # <state> <key> <window> <task>
-  local state=$1 key=$2 win=$3 task=$4 adv
+stale_run_advancing() {  # <state> <key> <window> <task> <stale-secs>
+  local state=$1 key=$2 win=$3 task=$4 stale_secs=$5 adv
   adv="$state/.subsuper-advancing-$key"
+  [ "$(_file_age "$adv")" -lt "$stale_secs" ] && return 0
   if [ "$(fm_backend_agent_alive "$(task_window_backend "$win" "$state")" "$win" 2>/dev/null)" != alive ]; then
     rm -f "$adv"; return 1
   fi
@@ -1037,16 +1019,16 @@ stale_run_advancing() {  # <state> <key> <window> <task>
   rm -f "$adv"; return 1
 }
 
-# The bound on that silence. A `working` run step whose advancement cannot be
-# MEASURED (docs/configuration.md's declared-pause section enumerates those
-# readings) would otherwise satisfy the test forever, so an absorbed pane earns
-# the same long recheck a declared external wait gets in (2b) below: past
-# PAUSE_RESURFACE_SECS of accumulated idle age it re-surfaces once per window,
-# named as an absorb rather than a wedge. <idle-age> is measured from the stale
-# marker, which the absorb deliberately leaves in place, so it is the pane's true
-# idle age and not a window this loop keeps restarting. The cadence sits strictly
-# BEHIND the stalled reading: a run that stopped advancing fails the test above
-# and escalates immediately, on this path exactly as on the watcher's.
+# The bound on that silence, under the absorb contract stated above. A `working`
+# run step whose advancement cannot be MEASURED (docs/configuration.md's
+# declared-pause section enumerates those readings) would otherwise satisfy the
+# test forever, so an absorbed pane earns the same long recheck a declared
+# external wait gets in (2b) below: past PAUSE_RESURFACE_SECS of accumulated idle
+# age it re-surfaces once per window, named as an absorb rather than a wedge.
+# <idle-age> is measured from the stale marker, which the absorb deliberately
+# leaves in place, so it is the pane's true idle age and not a window this loop
+# keeps restarting. This cadence never sits in front of the stalled reading,
+# which stale_run_advancing above owns.
 #
 # A cadence alone is not a bound, though. What MOTIVATES the cap is a crew halted
 # on an interactive prompt inside its harness: it reports a live endpoint and
@@ -1186,24 +1168,11 @@ housekeeping() {  # <state>
     stale_secs=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
     [ "$age" -ge "$stale_secs" ] || continue
-    # An absorbed pane keeps its marker, so without this the threshold below is
-    # re-reached on every tick and buys a fresh pane capture and busy-state read
-    # each time - for the whole absorb, not once per marker as every other
-    # branch here does. The absorb already stamped when it last looked, so
-    # honor that window for the pane read too, not just for the crew-state read
-    # underneath it. The cost of doing so is stated rather than left implicit,
-    # and it lands on BOTH transitions this gate sits in front of, since it
-    # returns ahead of the busy read and the advancing read alike. A pane that
-    # RESUMES while absorbed is noticed up to one window late instead of within
-    # a tick, and so is a run that STOPS advancing while absorbed: that pane
-    # escalates at the next gate opening rather than on the tick that observes
-    # the stall. Deferring the stalled reading by one window is what the watcher
-    # does too, since it restarts its own timer on an absorb, so the two
-    # supervisors stay in step on one crew rather than one of them jumping
-    # first.
-    if [ "$(_file_age "$state/.subsuper-advancing-$key")" -lt "$stale_secs" ]; then
-      continue
-    fi
+    # Runs on every tick, absorbed or not, and that is load-bearing rather than
+    # incidental: this read is the daemon's ONLY observer of a resumed pane, so
+    # throttling it would let the marker's epoch count straight through work the
+    # crew really did. The absorb's own throttle sits below, around the current-
+    # state read that actually costs something.
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker"; stale_absorb_clear "$state" "$key" ;;
@@ -1220,7 +1189,7 @@ housekeeping() {  # <state>
         # The absorb holds unless it has spent its demand-deep-inspection cap, in
         # which case the recheck has already escalated the wedge and the marker
         # goes exactly as on the wedge path below.
-        if stale_run_advancing "$state" "$key" "$win" "$task"; then
+        if stale_run_advancing "$state" "$key" "$win" "$task" "$stale_secs"; then
           stale_absorb_recheck "$state" "$key" "$win" "$age" \
             "${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}" \
             || stale_marker_remove "$win" "$state"

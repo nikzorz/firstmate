@@ -797,9 +797,6 @@ test_housekeeping_resumed_pane_drops_its_absorb_records() {
   [ -e "$state/.subsuper-advancing-$key" ] || fail "the absorb recorded nothing to clear"
 
   # The crew resumed: the pane is busy again, so every trace of the absorb goes.
-  # Driven one window on, because an absorbed pane is only re-read once the
-  # window its last look bought has run out.
-  backdate_record "$state/.subsuper-advancing-$key" 500
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
     FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
@@ -870,14 +867,17 @@ test_housekeeping_absorbed_pane_that_stalls_still_escalates() {
   pass "an absorbed pane whose run then stalls escalates a wedge at the next gate opening"
 }
 
-# An absorbed pane keeps its stale marker, so it re-reaches the escalation
-# threshold on every housekeeping tick. What it must NOT re-buy on every tick is
-# the recheck in front of that decision: the pane capture and busy read cost as
-# much as the crew-state read the absorb already throttles. The deferral this
-# buys is bounded by the same window, which the third tick pins.
-test_housekeeping_absorbed_pane_is_not_re_read_within_its_window() {
-  local dir state fakebin win pane busy key saved_bin
-  dir=$(make_supercase stale-advancing-tick-cost)
+# The clock the captain triages on must measure real idleness, so the busy read
+# in front of the absorb decision runs on every tick rather than on the absorb's
+# own window. It is the daemon's ONLY observer of a resumed pane: nothing else
+# drops the stale marker on a resume, since the wake path's record is
+# create-if-absent and preserves the epoch. Throttling it would let a crew that
+# wakes, works, and re-idles inside one window go unseen, and the marker's epoch
+# would count straight through that work into a false idle age, a false
+# re-surface cadence, and eventually a false demand-inspection wedge.
+test_housekeeping_absorbed_pane_resuming_inside_one_window_restarts_its_clock() {
+  local dir state fakebin win pane busy key saved_bin epoch_before epoch_after now
+  dir=$(make_supercase stale-advancing-sub-window-resume)
   state="$dir/state"; fakebin="$dir/fakebin"
   win="sess:fm-adv-w6"; pane="$dir/pane.txt"; busy="$dir/busy.txt"
   printf 'working: handed off to validation\n' > "$state/adv-w6.status"
@@ -890,39 +890,36 @@ test_housekeeping_absorbed_pane_is_not_re_read_within_its_window() {
   export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
 
-  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  epoch_before=$(( $(date +%s) - 500 ))
+  echo "$epoch_before" > "$state/.subsuper-stale-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
     FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
     housekeeping "$state"
   [ -e "$state/.subsuper-advancing-$key" ] || fail "the first tick did not absorb"
 
-  # The next tick is inside the window that first look bought: it costs nothing.
-  : > "$dir/capture-calls.log"; : > "$dir/crew-state-calls.log"
-  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
-    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
-    FM_FAKE_TMUX_CAPTURE_LOG="$dir/capture-calls.log" \
-    FM_FAKE_CREW_STATE_LOG="$dir/crew-state-calls.log" \
-    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
-    housekeeping "$state"
-  [ ! -s "$dir/capture-calls.log" ] \
-    || fail "an absorbed pane bought $(wc -l < "$dir/capture-calls.log" | tr -d ' ') pane captures on a tick inside its own window"
-  [ ! -s "$dir/crew-state-calls.log" ] || fail "an absorbed pane re-read crew state inside its own window"
-  [ -e "$state/.subsuper-stale-$key" ] || fail "a throttled tick dropped the stale marker"
-
-  # And the saving is a deferral, not a hole: one window on, the resumed pane is
-  # seen and the marker goes.
-  backdate_record "$state/.subsuper-advancing-$key" 500
+  # The crew wakes INSIDE the window that absorb bought. No record is backdated,
+  # so this is the very next tick.
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
     FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
     housekeeping "$state"
   [ ! -e "$state/.subsuper-stale-$key" ] \
-    || fail "the deferred re-read never happened, so a resumed pane stayed absorbed"
+    || fail "a crew that resumed inside the absorb window was never seen busy, so its idle epoch kept counting through real work"
+  [ ! -e "$state/.subsuper-advancing-$key" ] \
+    || fail "the resumed pane kept an absorb record it no longer earns"
+
+  # The crew idles again: the next episode's clock starts now, not at the epoch
+  # the pane carried before it worked.
+  FM_STATE_OVERRIDE="$state" stale_marker_record "$win" "$state"
+  epoch_after=$(cat "$state/.subsuper-stale-$key" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  [ "$epoch_after" -gt "$epoch_before" ] && [ $(( now - epoch_after )) -lt 60 ] \
+    || fail "the re-idled pane inherited its pre-resume idle epoch instead of restarting"
 
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
-  pass "an absorbed pane is re-read once per window, not on every housekeeping tick"
+  pass "a crew resuming inside one absorb window is seen busy and restarts its idle clock"
 }
 
 # The escape from the absorb, and the worst shape this path has to answer for: a
@@ -2443,7 +2440,7 @@ test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence
 test_housekeeping_advancing_absorb_requires_a_live_endpoint
 test_housekeeping_resumed_pane_drops_its_absorb_records
 test_housekeeping_absorbed_pane_that_stalls_still_escalates
-test_housekeeping_absorbed_pane_is_not_re_read_within_its_window
+test_housekeeping_absorbed_pane_resuming_inside_one_window_restarts_its_clock
 test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap
 test_housekeeping_absorb_cap_starts_each_stale_episode_from_zero
 test_housekeeping_resumed_stale_cleared
