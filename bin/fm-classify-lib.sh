@@ -42,6 +42,10 @@
 # true for a crew that stays absorbed indefinitely: bin/fm-watch.sh's declared-pause
 # cadence memoizes the verdict in its own marker state, and its wedge threshold is
 # already spaced by the idle window it restarts on each absorb.
+# bin/fm-supervise-daemon.sh's stale-persistence recheck buys no spacing from its
+# own marker, because its absorb deliberately leaves that marker's epoch measuring
+# true idle age, so it keeps to the same window through a throttle record it writes
+# beside the marker.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
@@ -87,6 +91,21 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # one owner.
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
+
+# How many times ONE unchanged stale pane may be counted before the supervisor
+# counting it escalates that pane as demanding a look closer than the run-step
+# state alone. Three by default.
+# The number lives here rather than in either supervisor because both weigh it
+# against the same crew, and two literals could be edited apart. That is the
+# whole of what one owner buys: neither can end up reading a different number for
+# the same named knob. What each supervisor counts against it, and when, is that
+# supervisor's own policy and is stated where it is enforced, so this definition
+# stays true however either one reorders its internals.
+# A consumer resolving this at load time makes the source order load-bearing: in
+# a `set -u` script the constant must already be defined, or startup aborts
+# rather than quietly falling back.
+# shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
+FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 
 # --- one-shot pause recheck deadline ----------------------------------------
 #
@@ -225,12 +244,14 @@ _fm_classify_park_identity() {  # <line>
 # This library owns it because bin/fm-crew-state.sh, which supplies the identity,
 # is documented read-only and side-effect free, so the reader that supplies the
 # identity must not be the one that remembers it - the same split that puts the
-# pause deadline above here. Unlike that deadline, which both supervisors consult,
-# the absorb has ONE consumer: every call site is in bin/fm-watch.sh, and the
-# away-mode daemon reads only the pause accessors from this library. So a
-# supervision path in that script which sees a stale crew and does not record
-# leaves a hole in the record that nothing else fills. bin/fm-teardown.sh removes
-# it with the rest of a task's state, and AGENTS.md section 2 lists it.
+# pause deadline above here. Both supervisors write it, so a supervision path in
+# either that sees a stale crew and does not record leaves a hole in the record
+# that nothing else fills. bin/fm-watch.sh holds most of the call sites, and
+# bin/fm-supervise-daemon.sh's stale-persistence recheck adds one more through
+# crew_run_step_advancing: that resolves to crew_absorb_verdict, so the away-mode
+# daemon takes a sighting on the same terms as the watcher and can write the very
+# first baseline through the no-record arm below. bin/fm-teardown.sh removes it
+# with the rest of a task's state, and AGENTS.md section 2 lists it.
 FM_CLASSIFY_PARK_SIGHTING_SUFFIX='.park-sighting'
 
 park_sighting_file() {  # <state-dir> <id>

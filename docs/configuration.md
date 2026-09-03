@@ -110,6 +110,14 @@ Ordinary wedge timer means absorbed now and escalated once the pane stays idle p
 At that threshold the crew is asked once more: a run step still advancing over a confirmed-live endpoint restarts the window instead of escalating, because pane idleness is the expected shape of a long pipeline step, while a run that has stopped advancing escalates exactly as before.
 That absorb is bounded, not open-ended: a pane held by it re-surfaces for a recheck once per `FM_PAUSE_RESURFACE_SECS` of accumulated idle age, on the same long cadence as a declared pause, so a run whose advancement cannot be measured cannot go quiet indefinitely.
 The absorb also stops one window before the deep-inspection escalation, so the escalation that reaches `FM_WEDGE_DEMAND_INSPECT_COUNT` always fires: it asks firstmate for a closer look than the run-step state alone, and the watcher must not answer that ask on its own.
+Away mode asks the same question on the same terms: the sub-supervisor's stale-persistence recheck (`bin/fm-supervise-daemon.sh`) absorbs a still-advancing run behind a confirmed-live endpoint rather than reporting it to the captain as a possible wedge.
+The still-advancing-run absorb section of `bin/fm-supervise-daemon.sh` states that contract in full and owns it; what belongs here is which knobs govern it and what they cost.
+`FM_STALE_ESCALATE_SECS` is both the threshold at which the question is first asked and the window that throttles it, so an absorbed pane costs at most one current-state read per window.
+That is one read for a non-claude harness or for a run that is still advancing, and two when a claude pane's run is not advancing and it falls through to the usage-limit question on the same pass; the second is bounded to one per stale marker, because the pass that reaches it is the pass that escalates and drops the marker.
+Unlike the claude usage-limit question beside it, neither read is pre-filtered on the recorded harness, because a run step belongs to no harness.
+The pane capture in front of that read is never throttled, because it is the daemon's only observer of a resumed pane, so a crew that resumes and re-idles inside one window still restarts its idle clock rather than accumulating a false idle age.
+`FM_PAUSE_RESURFACE_SECS` is the cadence on which an absorbed pane re-surfaces, named as an absorb rather than a wedge.
+`FM_WEDGE_DEMAND_INSPECT_COUNT` caps those rechecks within one stale episode: the recheck reaching that number escalates as a possible wedge demanding deep inspection instead of absorbing again, so one fewer than that many absorb notices arrive first, which at the default of three reads absorb, absorb, wedge.
 Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
 
 Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
@@ -488,8 +496,8 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless the crew declared the pause verb or finished with an armed merge poll, both of which bin/fm-watch.sh's stale triage owns
-FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon; the watcher applies the same window to a stale pane it keeps absorbing on a still-advancing run step
-FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added; also caps the still-advancing-run absorb, which stops one window before this count so that escalation always fires
+FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon; both apply the same window to a stale pane they keep absorbing on a still-advancing run step
+FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added; also caps the still-advancing-run absorb, which stops one window before this count so that escalation always fires; the away-mode daemon reads the same knob to cap the rechecks one stale episode may raise before that episode escalates instead
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=     # optional seconds allowed for bootstrap's best-effort clone refresh; unset/blank defaults to max(20, 5 + 3 * origin-backed-project-count)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
