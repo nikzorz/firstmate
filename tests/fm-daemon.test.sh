@@ -812,6 +812,64 @@ test_housekeeping_resumed_pane_drops_its_absorb_records() {
   pass "a resumed pane drops the absorb records along with its stale marker"
 }
 
+# The hard constraint, driven from INSIDE the absorb rather than from a fresh
+# marker: a pane already held by the absorb whose run then stops advancing must
+# still reach the captain as a possible wedge. The nearest neighbour above drives
+# absorbed-then-busy, which exits through a different branch entirely. The one
+# thing the read throttle changes here is WHEN, not whether: the stall is not
+# reported on the tick that could first observe it, but at the next gate opening,
+# which this pins from both sides.
+test_housekeeping_absorbed_pane_that_stalls_still_escalates() {
+  local dir state fakebin win pane key saved_bin
+  dir=$(make_supercase stale-advancing-then-stalled)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-adv-w9"; pane="$dir/pane.txt"
+  printf 'working: handed off to validation\n' > "$state/adv-w9.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/adv-w9.meta" "window=$win" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "adv-w9" | tr ':/.' '___')
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ -e "$state/.subsuper-advancing-$key" ] || fail "the pane was never absorbed, so nothing is being driven"
+
+  # The run stops moving. Inside the window the absorb already bought, the daemon
+  # has not looked again, so it cannot yet know.
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · validating (fixing) has not moved'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "the stall was reported inside the window the absorb bought: $(cat "$state/.subsuper-escalations")"
+  [ -e "$state/.subsuper-stale-$key" ] || fail "the pane lost its stale marker without escalating"
+
+  # At the next gate opening the daemon looks again, reads the stall, and escalates.
+  backdate_record "$state/.subsuper-advancing-$key" 500
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "a run that stopped advancing while absorbed never escalated as a possible wedge"
+  grep -F "still advancing" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a stalled run was reported as an absorb rather than a wedge"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "the wedge escalation kept the stale marker"
+  [ ! -e "$state/.subsuper-advancing-$key" ] \
+    || fail "the wedge escalation left the absorb records behind"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an absorbed pane whose run then stalls escalates a wedge at the next gate opening"
+}
+
 # An absorbed pane keeps its stale marker, so it re-reaches the escalation
 # threshold on every housekeeping tick. What it must NOT re-buy on every tick is
 # the recheck in front of that decision: the pane capture and busy read cost as
@@ -2384,6 +2442,7 @@ test_housekeeping_advancing_absorb_reads_once_per_window
 test_housekeeping_advancing_absorb_resurfaces_on_the_long_cadence
 test_housekeeping_advancing_absorb_requires_a_live_endpoint
 test_housekeeping_resumed_pane_drops_its_absorb_records
+test_housekeeping_absorbed_pane_that_stalls_still_escalates
 test_housekeeping_absorbed_pane_is_not_re_read_within_its_window
 test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap
 test_housekeeping_absorb_cap_starts_each_stale_episode_from_zero

@@ -40,10 +40,15 @@
 #     reason.
 #   - Fail-safe-to-escalate: any wake the classifier cannot confidently mark
 #     routine is escalated.
-#   - Bounded wedge latency: a stale pane without a declared external wait is
-#     escalated only after it has been idle for STALE_ESCALATE_SECS
-#     (configurable), rechecked once. A wedged crewmate is therefore detected
-#     within STALE_ESCALATE_SECS + a tick, never lost. A declared pause instead
+#   - Bounded wedge latency, in two regimes. A stale pane without a declared
+#     external wait is escalated only after it has been idle for
+#     STALE_ESCALATE_SECS (configurable), rechecked once, so a crewmate whose run
+#     is NOT advancing is detected within STALE_ESCALATE_SECS + a tick, never
+#     lost. A pane absorbed on a still-advancing run trades that latency for not
+#     reporting a working crew as wedged: it is named a possible wedge only at
+#     the WEDGE_DEMAND_INSPECT_COUNTth PAUSE_RESURFACE_SECS recheck, which at
+#     defaults is hours rather than minutes. Both bounds are finite, and the
+#     absorb paragraphs below carry the mechanism. A declared pause instead
 #     gets its own longer PAUSE_RESURFACE_SECS recheck, never a wedge escalation.
 #     A crew parked on Claude Code's usage-limit prompt is escalated on that same
 #     wedge schedule but named for what it is, so a still-exhausted account
@@ -1177,10 +1182,16 @@ housekeeping() {  # <state>
     # each time - for the whole absorb, not once per marker as every other
     # branch here does. The absorb already stamped when it last looked, so
     # honor that window for the pane read too, not just for the crew-state read
-    # underneath it. The cost of doing so is stated rather than left implicit:
-    # a pane that RESUMES while absorbed is noticed up to one window late
-    # instead of within a tick, which is the right trade for a pane already
-    # classified as working.
+    # underneath it. The cost of doing so is stated rather than left implicit,
+    # and it lands on BOTH transitions this gate sits in front of, since it
+    # returns ahead of the busy read and the advancing read alike. A pane that
+    # RESUMES while absorbed is noticed up to one window late instead of within
+    # a tick, and so is a run that STOPS advancing while absorbed: that pane
+    # escalates at the next gate opening rather than on the tick that observes
+    # the stall. Deferring the stalled reading by one window is what the watcher
+    # does too, since it restarts its own timer on an absorb, so the two
+    # supervisors stay in step on one crew rather than one of them jumping
+    # first.
     if [ "$(_file_age "$state/.subsuper-advancing-$key")" -lt "$stale_secs" ]; then
       continue
     fi

@@ -89,25 +89,17 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
 # How many times ONE unchanged stale pane may be counted before the supervisor
-# escalates it as demanding a look closer than the run-step state alone. Three by
-# default. The two consumers count different events against it and are not
-# symmetric, so read each on its own terms rather than assuming one policy.
-# The daemon (fm-supervise-daemon.sh) counts the long-cadence rechecks it raises
-# within one stale episode, on the re-surface clock, and caps them: the recheck
-# that reaches this number escalates instead of absorbing, so this many minus one
-# absorb notices arrive before the wedge does.
-# The watcher (fm-watch.sh) reads it against its own wedge-escalation count, and
-# both halves of what that does are needed, because either alone misleads. The
-# count check is the FIRST conjunct of the watcher's absorb gate, ahead of the
-# endpoint and advancing checks, so reaching this many refuses the absorb outright
-# and the demand-deep-inspection escalation fires in its place. AND that gate
-# never trips for a pane absorbed from its first threshold, because the counter it
-# reads is written only on the escalate path: an absorb leaves the count alone, so
-# such a pane holds at one forever. The count therefore bounds the watcher's
-# absorb only for a pane that already escalated before its run started advancing.
-# One owner for the number therefore buys one thing, and only this: the two
-# supervisors cannot be edited into reading different numbers for the same named
-# knob.
+# counting it escalates that pane as demanding a look closer than the run-step
+# state alone. Three by default.
+# The number lives here rather than in either supervisor because both weigh it
+# against the same crew, and two literals could be edited apart. That is the
+# whole of what one owner buys: neither can end up reading a different number for
+# the same named knob. What each supervisor counts against it, and when, is that
+# supervisor's own policy and is stated where it is enforced, so this definition
+# stays true however either one reorders its internals.
+# A consumer resolving this at load time makes the source order load-bearing: in
+# a `set -u` script the constant must already be defined, or startup aborts
+# rather than quietly falling back.
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 
