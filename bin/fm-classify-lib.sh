@@ -33,12 +33,15 @@
 # that window is the one that resolves toward absorbing a crew that should have
 # surfaced - so a SLOWER cadence degrades the property the record exists for.
 # Callers run it ONLY on no-verb signal handling, on a surfaced signal whose crew
-# announced a decision, and on first sighting of a stale hash, never on every wake,
-# and that limit is about the bounded read below rather than about the record.
-# A caller that keeps absorbing the same unchanged pane across polls - today only
-# bin/fm-watch.sh's declared-pause cadence - memoizes the verdict in its own marker
-# state and re-reads no more often than FM_STALE_ESCALATE_SECS, which is what keeps
-# "never on every wake" true for a crew that stays absorbed indefinitely.
+# announced a decision, on first sighting of a stale hash, and at the wedge
+# escalation threshold for a stale pane still absorbed as provably working, never
+# on every wake, and that limit is about the bounded read below rather than about
+# the record.
+# A caller that keeps absorbing the same unchanged pane across polls re-reads no
+# more often than FM_STALE_ESCALATE_SECS, which is what keeps "never on every wake"
+# true for a crew that stays absorbed indefinitely: bin/fm-watch.sh's declared-pause
+# cadence memoizes the verdict in its own marker state, and its wedge threshold is
+# already spaced by the idle window it restarts on each absorb.
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
@@ -890,6 +893,27 @@ crew_park_sighting_record() {  # <id>
 # run. See crew_absorb_class for the exact classification.
 crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
+}
+
+# 0 if crew <id>'s current-code-matched no-mistakes run step is ACTIVELY
+# ADVANCING, which is the `working` class from the `run-step` source and nothing
+# else. This is deliberately narrower than crew_is_provably_working above, and
+# the difference is the whole point: a `working` verdict from `pane` is read from
+# the very pane a stale wake has already found unchanged, so it cannot
+# corroborate itself, while a run step is a separate process's out-of-band record
+# that the pipeline moved. What counts as advancing is not decided here -
+# bin/fm-crew-state.sh owns it, and reports `stalled` (which falls to `none`
+# above) for a run that has stopped moving, so a hung pipeline can never satisfy
+# this and still escalates.
+#
+# It exists for one caller shape: a stale pane already absorbed as
+# provably-working, whose idle timer has now reached the wedge threshold. The
+# pane being unchanged says nothing there, because a long fix step is exactly a
+# quiet pane over a moving run. Carries crew_absorb_verdict's bounded read and
+# its park-sighting write, so a caller must ask at most once per escalation
+# window rather than every poll.
+crew_run_step_advancing() {  # <id>
+  [ "$(crew_absorb_verdict "$1")" = "working run-step" ]
 }
 
 # Classify a crew against Claude Code's usage-limit stall, from the SAME single

@@ -107,6 +107,9 @@ When a crew declares a bounded external wait, the stale path decides from two in
 
 Long pause cadence means absorbed, rechecked once per `FM_PAUSE_RESURFACE_SECS` window or at a recorded one-shot deadline, whichever comes first.
 Ordinary wedge timer means absorbed now and escalated once the pane stays idle past `FM_STALE_ESCALATE_SECS`.
+At that threshold the crew is asked once more: a run step still advancing over a confirmed-live endpoint restarts the window instead of escalating, because pane idleness is the expected shape of a long pipeline step, while a run that has stopped advancing escalates exactly as before.
+That absorb is bounded, not open-ended: a pane held by it re-surfaces for a recheck once per `FM_PAUSE_RESURFACE_SECS` of accumulated idle age, on the same long cadence as a declared pause, so a run whose advancement cannot be measured cannot go quiet indefinitely.
+The absorb also stops one window before the deep-inspection escalation, so the escalation that reaches `FM_WEDGE_DEMAND_INSPECT_COUNT` always fires: it asks firstmate for a closer look than the run-step state alone, and the watcher must not answer that ask on its own.
 Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
 
 Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
@@ -485,8 +488,8 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless the crew declared the pause verb or finished with an armed merge poll, both of which bin/fm-watch.sh's stale triage owns
-FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon
-FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
+FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon; the watcher applies the same window to a stale pane it keeps absorbing on a still-advancing run step
+FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added; also caps the still-advancing-run absorb, which stops one window before this count so that escalation always fires
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=     # optional seconds allowed for bootstrap's best-effort clone refresh; unset/blank defaults to max(20, 5 + 3 * origin-backed-project-count)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
