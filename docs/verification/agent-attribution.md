@@ -104,8 +104,9 @@ $ for c in f15915f 2f4c1a2 d1513a1; do git log -1 --format=%B $c | awk '/^-+$/ {
 9
 ```
 
-`bin/fm-attribution-lib.sh` drops that exact width and no other, so a horizontal rule an author wrote in a commit body is never mistaken for the forge's own.
-A future GitHub change to the width would leave a bare rule in the squash body rather than strip an author's, which is the direction this repo would rather fail in.
+`bin/fm-attribution-lib.sh` drops that exact width and no other, so a rule of any other width is the author's and survives even when an agent trailer sat directly under it.
+An author's own rule of exactly nine hyphens, with nothing but an agent trailer after it, is still dropped; the pin buys the common case and gives up that collision deliberately.
+A future GitHub change to the width would leave a bare rule in the squash body rather than widen what the strip deletes, which is the direction this repo would rather fail in.
 
 ## Scope of the guarantee
 

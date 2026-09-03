@@ -114,6 +114,17 @@ caller_writes_squash_subject() {
   return 1
 }
 
+# The refusal stays fail-closed and fixed; only its cause comes from gh, which
+# writes a one-line summary to stderr and the raw response to stdout.
+refuse_unreadable_default_message() {
+  echo "error: the default squash message could not be read" >&2
+  if [ -s "$GH_STDERR_FILE" ]; then
+    echo "error: the forge CLI reported:" >&2
+    cat "$GH_STDERR_FILE" >&2
+  fi
+  exit 1
+}
+
 reject_repo_overrides() {
   local arg
   for arg in "$@"; do
@@ -158,31 +169,34 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_body "$@"; then
     echo "error: the forge CLI needed to read the default squash message is unavailable" >&2
     exit 1
   fi
+  SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
+  GH_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-gh-stderr.XXXXXX")
+  trap 'rm -f "$SQUASH_BODY_FILE" "$GH_STDERR_FILE"' EXIT
+  # Owner and repository are String! variables, so they go through gh's raw
+  # field flag: the typed one converts an all-digit name to a JSON number, which
+  # the server then refuses to coerce. Only the Int! number stays typed.
+  #
   # A pull request the query cannot resolve, and a merge text the forge declines
   # to compute, both come back as a JSON null, which gh renders as the literal
   # token "null" on stdout with a zero exit. That token is an unreadable default,
   # never a message, on either field.
   if ! caller_writes_squash_subject "$@"; then
     if ! SQUASH_SUBJECT=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
-      -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
-      --jq '.data.repository.pullRequest.viewerMergeHeadlineText' 2>/dev/null) \
+      -f owner="$PR_OWNER" -f repo="$PR_REPO" -F number="$PR_NUMBER" \
+      --jq '.data.repository.pullRequest.viewerMergeHeadlineText' 2>"$GH_STDERR_FILE") \
       || [ -z "$SQUASH_SUBJECT" ] || [ "$SQUASH_SUBJECT" = null ]; then
-      echo "error: the default squash message could not be read" >&2
-      exit 1
+      refuse_unreadable_default_message
     fi
     merge_args+=(--subject "$SQUASH_SUBJECT")
   fi
   # An empty body is a legitimate default for a single-commit pull request with
   # no commit body, so emptiness alone is not an error here.
   if ! SQUASH_BODY=$(gh api graphql -f query="$DEFAULT_MESSAGE_QUERY" \
-    -F owner="$PR_OWNER" -F repo="$PR_REPO" -F number="$PR_NUMBER" \
-    --jq '.data.repository.pullRequest.viewerMergeBodyText' 2>/dev/null) \
+    -f owner="$PR_OWNER" -f repo="$PR_REPO" -F number="$PR_NUMBER" \
+    --jq '.data.repository.pullRequest.viewerMergeBodyText' 2>"$GH_STDERR_FILE") \
     || [ "$SQUASH_BODY" = null ]; then
-    echo "error: the default squash message could not be read" >&2
-    exit 1
+    refuse_unreadable_default_message
   fi
-  SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
-  trap 'rm -f "$SQUASH_BODY_FILE"' EXIT
   printf '%s\n' "$SQUASH_BODY" | fm_attribution_strip > "$SQUASH_BODY_FILE"
   merge_args+=(--body-file "$SQUASH_BODY_FILE")
 fi

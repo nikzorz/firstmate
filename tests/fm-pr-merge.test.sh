@@ -26,6 +26,9 @@
 #   (n) an unreadable default squash message refuses before merging
 #   (o) a default squash message returned as a JSON null refuses before merging,
 #       on the headline and on the body alike
+#   (p) an all-digit repository name still gets a stripped body, because the
+#       String! variables are sent as strings rather than typed fields
+#   (q) a refusal carries the cause the forge CLI reported
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -537,6 +540,100 @@ SH
   chmod +x "$case_dir/fakebin/gh"
 }
 
+# The server rejects a String! variable it is handed as a JSON number, which is
+# what gh's typed -F flag makes of an all-digit owner or repository name:
+# `Could not coerce value 2048 to String`. This mock holds gh to that contract.
+# Args: case_dir
+add_gh_typed_string_strict_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  prev=
+  for arg in "\$@"; do
+    if [ "\$prev" = -F ]; then
+      case "\$arg" in
+        owner=*|repo=*)
+          value=\${arg#*=}
+          case "\$value" in
+            ''|*[!0-9]*) ;;
+            *)
+              echo "gh: Variable of type String! was provided invalid value" >&2
+              exit 1
+              ;;
+          esac
+          ;;
+      esac
+    fi
+    prev=\$arg
+  done
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+test_numeric_repository_name_still_gets_stripped_body() {
+  local case_dir
+  case_dir=$(make_case numeric-repo)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 3333333333333333333333333333333333333333
+  add_gh_typed_string_strict_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/2048/pull/27 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "numeric-repo: fm-pr-merge refused a repository whose name is all digits"
+
+  grep -qF 'pr merge 27 --repo example/2048 --squash --subject ' "$case_dir/gh-axi.log" \
+    || fail "numeric-repo: no default squash message was supplied"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "numeric-repo: a claude co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "numeric-repo: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge reads the default squash message for an all-digit repository name"
+}
+
+test_refusal_carries_the_forge_cli_cause() {
+  local case_dir rc
+  case_dir=$(make_case refusal-cause)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 4444444444444444444444444444444444444444
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ]; then
+  echo "gh: Bad credentials (HTTP 401)" >&2
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/28 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "refusal-cause: fm-pr-merge should still refuse"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "refusal-cause: the fixed refusal was replaced rather than kept"
+  assert_grep 'Bad credentials (HTTP 401)' "$case_dir/stderr" \
+    "refusal-cause: the cause the forge CLI reported was discarded"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "refusal-cause: the merge ran despite an unreadable default message"
+  pass "fm-pr-merge carries the forge CLI's cause into an unreadable-message refusal"
+}
+
 test_null_default_headline_refuses_before_merge() {
   local case_dir rc
   case_dir=$(make_case null-headline)
@@ -599,3 +696,5 @@ test_caller_written_subject_refuses_unreadable_body
 test_unreadable_default_message_refuses_before_merge
 test_null_default_headline_refuses_before_merge
 test_null_default_body_refuses_before_merge
+test_numeric_repository_name_still_gets_stripped_body
+test_refusal_carries_the_forge_cli_cause

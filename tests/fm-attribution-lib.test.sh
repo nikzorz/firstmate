@@ -226,6 +226,7 @@ Body.
 # docs/verification/agent-attribution.md records the runtime measurement.
 test_claude_settings_disable_agent_attribution() {
   local settings="$ROOT/.claude/settings.json"
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; return 0; }
   jq -e '.includeCoAuthoredBy == false' "$settings" >/dev/null \
     || fail "settings: .claude/settings.json no longer disables the co-author trailer"
   jq -e '.attribution.sessionUrl == false' "$settings" >/dev/null \
