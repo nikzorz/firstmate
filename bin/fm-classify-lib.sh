@@ -93,8 +93,9 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 # default. The two consumers count different events against it and are not
 # symmetric, so read each on its own terms rather than assuming one policy.
 # The daemon (fm-supervise-daemon.sh) counts the long-cadence rechecks it raises
-# within one stale episode, on the re-surface clock, and caps them: past this
-# many, the episode escalates instead of absorbing again.
+# within one stale episode, on the re-surface clock, and caps them: the recheck
+# that reaches this number escalates instead of absorbing, so this many minus one
+# absorb notices arrive before the wedge does.
 # The watcher (fm-watch.sh) reads it against its own wedge-escalation count, and
 # both halves of what that does are needed, because either alone misleads. The
 # count check is the FIRST conjunct of the watcher's absorb gate, ahead of the

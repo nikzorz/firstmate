@@ -926,10 +926,12 @@ test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap() {
 # What the cap does NOT promise, pinned so the next reader meets it as the design
 # rather than as a surprise. The demand-inspection ends its stale episode and its
 # records go with the marker, deliberately, so a crew that has since recovered
-# cannot stay marked. A crew that is still stuck therefore opens a fresh episode,
-# is absorbed again, and reaches a second demand-inspection one cap later: a
-# bounded repeat on a sawtooth, not a flag that stays raised and not silence.
-test_housekeeping_absorb_cap_repeats_on_each_stale_episode() {
+# cannot stay marked. The scope of this test is exactly that reset: each episode
+# here is recorded directly, so it pins that a freshly recorded episode absorbs
+# again from zero and inherits nothing, and NOT that a still-stuck crew reaches a
+# second episode in production - away mode opens one only when the pane's capture
+# changes and settles again, which no fixture here drives.
+test_housekeeping_absorb_cap_starts_each_stale_episode_from_zero() {
   local dir state fakebin win pane key saved_bin episode tick
   dir=$(make_supercase stale-advancing-cap-sawtooth)
   state="$dir/state"; fakebin="$dir/fakebin"
@@ -972,7 +974,7 @@ test_housekeeping_absorb_cap_repeats_on_each_stale_episode() {
 
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
-  pass "a still-stuck crew is absorbed afresh each stale episode and demands inspection again one cap later"
+  pass "a freshly recorded stale episode absorbs from zero and reaches its own demand-inspection"
 }
 
 test_housekeeping_resumed_stale_cleared() {
@@ -2384,7 +2386,7 @@ test_housekeeping_advancing_absorb_requires_a_live_endpoint
 test_housekeeping_resumed_pane_drops_its_absorb_records
 test_housekeeping_absorbed_pane_is_not_re_read_within_its_window
 test_housekeeping_unmeasurable_run_escalates_after_the_absorb_cap
-test_housekeeping_absorb_cap_repeats_on_each_stale_episode
+test_housekeeping_absorb_cap_starts_each_stale_episode_from_zero
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_paused_resurfaces_at_its_deadline
