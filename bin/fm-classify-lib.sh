@@ -95,11 +95,15 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 # The daemon (fm-supervise-daemon.sh) counts the long-cadence rechecks it raises
 # within one stale episode, on the re-surface clock, and caps them: past this
 # many, the episode escalates instead of absorbing again.
-# The watcher (fm-watch.sh) reads it for its own wedge-escalation count, which is
-# written only when it escalates. An absorb never increments that count, so a
-# pane absorbed from its first threshold holds at one and the value does not
-# bound the watcher's still-advancing absorbs today; there it decides only when
-# an escalation that IS firing carries the demand-deep-inspection marker.
+# The watcher (fm-watch.sh) reads it against its own wedge-escalation count, and
+# both halves of what that does are needed, because either alone misleads. The
+# count check is the FIRST conjunct of the watcher's absorb gate, ahead of the
+# endpoint and advancing checks, so reaching this many refuses the absorb outright
+# and the demand-deep-inspection escalation fires in its place. AND that gate
+# never trips for a pane absorbed from its first threshold, because the counter it
+# reads is written only on the escalate path: an absorb leaves the count alone, so
+# such a pane holds at one forever. The count therefore bounds the watcher's
+# absorb only for a pane that already escalated before its run started advancing.
 # One owner for the number therefore buys one thing, and only this: the two
 # supervisors cannot be edited into reading different numbers for the same named
 # knob.

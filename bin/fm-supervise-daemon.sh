@@ -55,6 +55,9 @@
 #     After WEDGE_DEMAND_INSPECT_COUNT of those rechecks the stale episode
 #     escalates as a wedge demanding deep inspection instead of absorbing again,
 #     so a crew halted behind a run step nobody can measure cannot stay quiet.
+#     That cap fires on every such episode, including one whose run really is
+#     moving, because the advancing verdict cannot tell those apart; a bounded
+#     false alarm is the deliberate price of not missing a halted crew.
 #     That escalation ends the episode rather than raising a lasting flag: a crew
 #     still stuck when the next episode opens repeats the cycle.
 #     A run that has stopped advancing escalates exactly as it always did.
@@ -1028,14 +1031,28 @@ stale_run_advancing() {  # <state> <key> <window> <task>
 # BEHIND the stalled reading: a run that stopped advancing fails the test above
 # and escalates immediately, on this path exactly as on the watcher's.
 #
-# A cadence alone is not a bound, though: a crew halted on an interactive prompt
-# inside its harness reports a live endpoint and keeps reading `working` from a
-# run step nobody can measure, so it would earn that recheck forever and never be
-# named a wedge - unbounded silence on a stuck worker at exactly the time nobody
-# is watching. The endpoint gate cannot catch it, because it catches a crew that
-# EXITED, not one that stopped. So the absorb carries a cap, read from
-# FM_WEDGE_DEMAND_INSPECT_COUNT in bin/fm-classify-lib.sh, and it is worth being
-# exact about what that cap does and does not buy.
+# A cadence alone is not a bound, though. What MOTIVATES the cap is a crew halted
+# on an interactive prompt inside its harness: it reports a live endpoint and
+# keeps reading `working` from a run step nobody can measure, so it would earn
+# that recheck forever and never be named a wedge - unbounded silence on a stuck
+# worker at exactly the time nobody is watching. The endpoint gate cannot catch
+# it, because it catches a crew that EXITED, not one that stopped. So the absorb
+# carries a cap, read from FM_WEDGE_DEMAND_INSPECT_COUNT in
+# bin/fm-classify-lib.sh.
+#
+# That motivation is NARROWER THAN THE SCOPE, deliberately, and the two must not
+# be confused. The cap counts consecutive rechecks within one stale episode and
+# fires on all of them, whether the run's advancement was measured or merely
+# assumed. It cannot do otherwise: crew_run_step_advancing is satisfied by a
+# `working` verdict from the run step, and bin/fm-crew-state.sh returns that for
+# any step still inside its quiet budget, so a chatty test step logging every few
+# minutes and a crew halted behind a step that has published nothing are one
+# reading here. Widening the cap to cover both is the conservative side of that
+# trade: firing on a run that really is moving costs one prompt to go look per
+# cap, which is bounded, while a halted crew the cap declined to name is
+# unbounded silence in away mode. Narrowing it would mean BUILDING the
+# measured-versus-assumed distinction, and a distinction that got the
+# unmeasurable case wrong would reopen the hole the cap exists to close.
 #
 # It PROMISES this: after FM_WEDGE_DEMAND_INSPECT_COUNT consecutive rechecks
 # within ONE stale episode, that episode escalates as demanding inspection
@@ -1063,6 +1080,9 @@ stale_absorb_recheck() {  # <state> <key> <window> <idle-age> <pause-secs>
   [ "$(_file_age "$rf")" -ge "$pause_secs" ] || return 0
   n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
   if [ "$n" -ge "${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}" ]; then
+    # Worded generically on purpose: the verdict this stands on publishes neither
+    # a last-activity figure nor a measured/assumed marker, so the text cannot
+    # tell the captain which of the two they are looking at.
     escalate_add "$state" \
       "stale persisted ${age}s (possible wedge, absorbed $((n - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: the run-step state alone cannot clear this pane, look at it directly): $win"
     return 1
