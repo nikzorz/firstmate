@@ -87,14 +87,13 @@ caller_selects_squash() {
 }
 
 # A caller who writes the squash message owns it, including its trailers.
-# Short spellings count: gh accepts -t, -b, and -F for the same three flags.
+# Long spellings are the whole set: gh-axi's pr merge allowlist accepts only
+# --subject, --body, and --body-file, and rejects any short form before gh runs.
 caller_writes_squash_message() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --subject|--subject=*|-t|-t?*|\
-      --body|--body=*|-b|-b?*|\
-      --body-file|--body-file=*|-F|-F?*) return 0 ;;
+      --subject|--subject=*|--body|--body=*|--body-file|--body-file=*) return 0 ;;
     esac
   done
   return 1

@@ -22,8 +22,6 @@
 #   (l) an unreadable default squash message refuses before merging
 #   (m) a default squash message returned as a JSON null refuses before merging,
 #       on the headline and on the body alike
-#   (n) a caller-written squash message in gh's short spelling is left alone,
-#       without paying for the default-message reads
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -518,30 +516,6 @@ test_null_default_body_refuses_before_merge() {
   pass "fm-pr-merge refuses when the forge returns a null default body"
 }
 
-test_caller_short_flag_squash_message_is_kept() {
-  local case_dir
-  case_dir=$(make_case caller-short-flag)
-  mkdir -p "$case_dir/wt"
-  add_gh_mocks "$case_dir" 1111111111111111111111111111111111111111
-  # Reading the default message would fail here, so a merge that still succeeds
-  # proves the caller's own -t was recognised before any read was attempted.
-  cat > "$case_dir/fakebin/gh" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" = api ] && exit 1
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/gh"
-  : > "$case_dir/gh-axi.log"
-
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/24 -- --squash -t 'chore: mine' \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "caller-short-flag: fm-pr-merge refused a squash message the caller had already supplied"
-
-  grep -qxF 'pr merge 24 --repo example/repo --squash -t chore: mine' "$case_dir/gh-axi.log" \
-    || fail "caller-short-flag: a caller-written squash message in gh's short spelling was overridden"
-  pass "fm-pr-merge leaves a caller-written squash message alone in gh's short spelling"
-}
-
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -555,7 +529,6 @@ test_parses_pr_url_for_gh_axi
 test_squash_message_drops_agent_attribution
 test_non_squash_merge_supplies_no_message
 test_caller_written_squash_message_is_kept
-test_caller_short_flag_squash_message_is_kept
 test_unreadable_default_message_refuses_before_merge
 test_null_default_headline_refuses_before_merge
 test_null_default_body_refuses_before_merge

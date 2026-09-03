@@ -95,6 +95,18 @@ $ diff body.txt stripped.txt
 
 `Co-authored-by: Kun Chen <3233006+kunchenguid@users.noreply.github.com>` survived, along with the separator introducing it and the whole commit list.
 
+That separator is exactly nine hyphens, on all three squash commits `main` carries:
+
+```
+$ for c in f15915f 2f4c1a2 d1513a1; do git log -1 --format=%B $c | awk '/^-+$/ { print length($0) }'; done
+9
+9
+9
+```
+
+`bin/fm-attribution-lib.sh` drops that exact width and no other, so a horizontal rule an author wrote in a commit body is never mistaken for the forge's own.
+A future GitHub change to the width would leave a bare rule in the squash body rather than strip an author's, which is the direction this repo would rather fail in.
+
 ## Scope of the guarantee
 
 The strip runs on the squash path only.

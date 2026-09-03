@@ -11,10 +11,15 @@
 # varies with the model in use, and human co-authors are never matched.
 #
 # fm_attribution_strip filters a commit message on stdin and writes it to stdout
-# with those lines removed. Blank runs are collapsed only where a removal
-# created them, and a trailing separator is dropped only when the co-author
-# block it introduced is the thing the strip emptied, so an untouched message
-# passes through byte-for-byte.
+# with those lines removed. Interior content and blank runs survive untouched
+# except where a removal created the blank run; leading and trailing blank lines
+# are dropped either way, which a commit message never depends on.
+#
+# One separator is dropped too, and only the forge's own: GitHub introduces the
+# co-author list it hoists into a squash body with exactly nine hyphens, so that
+# exact width, left last with nothing but removals after it, is the one rule the
+# strip may delete. A rule of any other width is the author's, and survives even
+# when an agent trailer sat directly under it.
 
 # Claude and codex are the whole of the measured set. The repo's other verified
 # harnesses - opencode, pi, grok, and kimi - are not installed on this machine,
@@ -40,6 +45,7 @@ fm_attribution_strip() {
       return tolower(line) ~ /^claude-session:[ \t]/
     }
     BEGIN {
+      forge_separator = "---------"
       count = split(emails, list, " ")
       for (i = 1; i <= count; i++) agent[tolower(list[i])] = 1
     }
@@ -61,7 +67,7 @@ fm_attribution_strip() {
     END {
       # "removed" survives to END only when every line after the last kept one
       # was stripped, which is exactly a separator whose block the strip emptied.
-      if (removed && kept > 0 && out[kept] ~ /^-{3,}$/) {
+      if (removed && kept > 0 && out[kept] == forge_separator) {
         kept--
         while (kept > 0 && out[kept] == "") kept--
       }
