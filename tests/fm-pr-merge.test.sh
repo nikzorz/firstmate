@@ -14,6 +14,25 @@
 #   (f) malformed PR URL fails fast without calling gh-axi
 #   (g) explicit merge method is not overridden by the default --squash
 #   (h) repo override args fail fast because the repo comes from the URL
+#   (i) a squash merge supplies the forge's default message with agent
+#       attribution stripped and human co-authors preserved
+#   (j) a non-squash merge supplies no message, because replayed branch commits
+#       keep their own
+#   (k) a caller-written squash body is left alone, strip and reads stood down
+#   (l) a caller-written squash subject keeps the caller's subject but still
+#       gets the stripped default body underneath it
+#   (m) a subject-only squash merge still refuses when the default body is
+#       unreadable, rather than letting the forge compose one
+#   (n) an unreadable default squash message refuses before merging
+#   (o) a default squash message returned as a JSON null refuses before merging,
+#       on the headline and on the body alike
+#   (p) an all-digit repository name still gets a stripped body, because the
+#       String! variables are sent as strings rather than typed fields
+#   (q) a refusal carries the cause the forge CLI reported
+#   (r) an already-merged PR merges with no default-message read attempted
+#   (s) a merged state that cannot be read still takes the ordinary read path
+#   (t) --auto is refused rather than freezing a supplied squash message
+#   (u) --auto still merges when the caller owns the body
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -42,17 +61,60 @@ make_case() {
   printf '%s\n' "$case_dir"
 }
 
-# gh-axi mock recording every invocation to a log file, and gh mock answering
-# headRefOid for fm-pr-check.sh's pr_head lookup. Args: case_dir head_sha
+# The forge's default squash message for a task PR as this repo actually sees
+# it: one agent-authored commit carrying its harness trailers, pipeline commits
+# carrying none, and a hoisted co-author list mixing the captain with the agents.
+write_default_message_fixture() {
+  local case_dir=$1
+  printf '%s\n' 'fix: do a thing (#7)' > "$case_dir/headline"
+  cat > "$case_dir/body" <<'MSG'
+* fix: do a thing
+
+Some body text.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0TEST
+
+* no-mistakes(review): tighten the thing
+
+---------
+
+Co-authored-by: Kun Chen <3233006+kunchenguid@users.noreply.github.com>
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+Co-authored-by: Codex <noreply@openai.com>
+MSG
+}
+
+# gh-axi mock recording every invocation to a log file plus the squash message it
+# was handed, and gh mock answering headRefOid for fm-pr-check.sh's pr_head
+# lookup and the forge's default squash message. Args: case_dir head_sha
 add_gh_mocks() {
   local case_dir=$1 head=$2
+  write_default_message_fixture "$case_dir"
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+prev=
+for arg in "$@"; do
+  case "$prev" in
+    --subject) printf '%s\n' "$arg" > "$FM_TEST_SUBJECT_OUT" ;;
+    --body-file) cp "$arg" "$FM_TEST_BODY_OUT" ;;
+  esac
+  prev=$arg
+done
 exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
@@ -77,8 +139,18 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  cat > "$case_dir/fakebin/gh" <<'SH'
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
@@ -89,6 +161,9 @@ run_pr_merge() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
+  FM_TEST_SUBJECT_OUT="$case_dir/merge-subject" \
+  FM_TEST_BODY_OUT="$case_dir/merge-body" \
+  FM_TEST_GH_API_LOG="$case_dir/gh-api.log" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -117,8 +192,8 @@ test_records_pr_and_head_before_merging() {
     "records-before-merge: pr= was not recorded"
   assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
     "records-before-merge: pr_head= was not recorded"
-  grep -qxF 'pr merge 9 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, and default --squash"
+  grep -qF 'pr merge 9 --repo example/repo --squash --subject fix: do a thing (#7) --body-file /' "$case_dir/gh-axi.log" \
+    || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, default --squash, and a supplied message"
   pass "fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge"
 }
 
@@ -151,7 +226,7 @@ test_extra_merge_args_forwarded() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/15 -- --squash --delete-branch \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "extra-args: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 15 --repo example/repo --squash --delete-branch' "$case_dir/gh-axi.log" \
+  grep -qF ' --squash --delete-branch' "$case_dir/gh-axi.log" \
     || fail "extra-args: extra gh-axi pr merge flags were not forwarded"
   pass "fm-pr-merge forwards extra flags to gh-axi pr merge after the -- separator"
 }
@@ -296,9 +371,448 @@ test_parses_pr_url_for_gh_axi() {
   run_pr_merge "$case_dir" task-x1 https://github.com/my-org/my-repo/pull/126 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "url-parsing: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 126 --repo my-org/my-repo --squash' "$case_dir/gh-axi.log" \
+  grep -qF 'pr merge 126 --repo my-org/my-repo --squash --subject ' "$case_dir/gh-axi.log" \
     || fail "url-parsing: gh-axi pr merge was not invoked as number + --repo + default --squash"
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
+}
+
+test_squash_message_drops_agent_attribution() {
+  local case_dir
+  case_dir=$(make_case squash-message)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/7 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "squash-message: fm-pr-merge failed"
+
+  assert_grep 'fix: do a thing (#7)' "$case_dir/merge-subject" \
+    "squash-message: the forge's default headline was not supplied as the subject"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "squash-message: a claude co-author trailer survived into the squash message"
+  assert_no_grep 'noreply@openai.com' "$case_dir/merge-body" \
+    "squash-message: a codex co-author trailer survived into the squash message"
+  assert_no_grep 'Claude-Session' "$case_dir/merge-body" \
+    "squash-message: a session link survived into the squash message"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "squash-message: a human co-author was dropped along with the agent ones"
+  assert_grep 'no-mistakes(review): tighten the thing' "$case_dir/merge-body" \
+    "squash-message: the forge's commit list was not preserved"
+  pass "fm-pr-merge supplies the forge's default squash message without agent attribution"
+}
+
+test_non_squash_merge_supplies_no_message() {
+  local case_dir
+  case_dir=$(make_case non-squash-message)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/8 -- --merge \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "non-squash-message: fm-pr-merge failed"
+
+  grep -qxF 'pr merge 8 --repo example/repo --merge' "$case_dir/gh-axi.log" \
+    || fail "non-squash-message: a squash message was supplied for a merge-commit merge"
+  assert_absent "$case_dir/merge-body" \
+    "non-squash-message: a body file was written for a non-squash merge"
+  pass "fm-pr-merge supplies no squash message when the caller merges without squashing"
+}
+
+test_caller_written_squash_body_is_kept() {
+  local case_dir
+  case_dir=$(make_case caller-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  # A caller who owns the body owns its trailers, so no default is even read.
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/11 -- --squash --body 'mine, trailers and all' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "caller-body: fm-pr-merge failed"
+
+  grep -qxF 'pr merge 11 --repo example/repo --squash --body mine, trailers and all' "$case_dir/gh-axi.log" \
+    || fail "caller-body: a caller-written squash body was overridden"
+  pass "fm-pr-merge leaves a caller-written squash body alone"
+}
+
+# The subject is not where agent trailers live, so a caller who names only the
+# subject must still get the stripped body rather than a forge-composed one.
+test_caller_written_subject_still_gets_stripped_body() {
+  local case_dir
+  case_dir=$(make_case caller-subject)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1111111111111111111111111111111111111111
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/25 -- --squash --subject 'chore: mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "caller-subject: fm-pr-merge failed"
+
+  grep -qF 'pr merge 25 --repo example/repo --body-file /' "$case_dir/gh-axi.log" \
+    || fail "caller-subject: no stripped body was supplied for a subject-only squash merge"
+  grep -qF -- '--squash --subject chore: mine' "$case_dir/gh-axi.log" \
+    || fail "caller-subject: the caller's subject was not forwarded"
+  assert_no_grep '--subject fix: do a thing' "$case_dir/gh-axi.log" \
+    "caller-subject: the forge headline was added alongside the caller's subject"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "caller-subject: a claude co-author trailer survived into the squash body"
+  assert_no_grep 'noreply@openai.com' "$case_dir/merge-body" \
+    "caller-subject: a codex co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "caller-subject: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge supplies the stripped default body under a caller-written subject"
+}
+
+test_caller_written_subject_refuses_unreadable_body() {
+  local case_dir rc
+  case_dir=$(make_case caller-subject-unreadable-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222222
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/26 -- --squash --subject 'chore: mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "caller-subject-unreadable-body: fm-pr-merge should refuse rather than let the forge compose the body"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "caller-subject-unreadable-body: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "caller-subject-unreadable-body: the merge ran with a forge-composed body"
+  pass "fm-pr-merge refuses a subject-only squash merge when the default body cannot be read"
+}
+
+test_unreadable_default_message_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case unreadable-message)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  : > "$case_dir/gh-axi.log"
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = api ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/12 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unreadable-message: fm-pr-merge should refuse rather than let the forge compose one"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "unreadable-message: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "unreadable-message: the merge ran without a supplied message"
+  pass "fm-pr-merge refuses to merge when the forge's default squash message cannot be read"
+}
+
+# gh renders a JSON null field as the literal token `null` with a zero exit, so
+# a null default message must land on the same refusal as a failed request.
+# Args: case_dir headline_json_is_null(0|1)
+add_gh_null_message_mock() {
+  local case_dir=$1 headline_null=$2
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText)
+        if [ '$headline_null' = 1 ]; then printf 'null\n'; else printf 'fix: do a thing (#7)\n'; fi
+        exit 0
+        ;;
+      *viewerMergeBodyText) printf 'null\n' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# The server rejects a String! variable it is handed as a JSON number, which is
+# what gh's typed -F flag makes of an all-digit owner or repository name:
+# `Could not coerce value 2048 to String`. This mock holds gh to that contract.
+# Args: case_dir
+add_gh_typed_string_strict_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  prev=
+  for arg in "\$@"; do
+    if [ "\$prev" = -F ]; then
+      case "\$arg" in
+        owner=*|repo=*)
+          value=\${arg#*=}
+          case "\$value" in
+            ''|*[!0-9]*) ;;
+            *)
+              echo "gh: Variable of type String! was provided invalid value" >&2
+              exit 1
+              ;;
+          esac
+          ;;
+      esac
+    fi
+    prev=\$arg
+  done
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# gh mocks for the merged-state probe. Both record every `gh api` call so a test
+# can prove the default-message read was never attempted, and both refuse that
+# call so an attempted read would also fail the merge outright.
+# Args: case_dir
+add_gh_merged_state_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ]; then
+  printf '%s\n' "$*" >> "$FM_TEST_GH_API_LOG"
+  exit 1
+fi
+case "${1:-} ${2:-}" in
+  "pr view")
+    case " $* " in
+      *"--json state"*) printf '%s\n' MERGED ; exit 0 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# Args: case_dir
+add_gh_unreadable_state_mock() {
+  local case_dir=$1
+  write_default_message_fixture "$case_dir"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json state"*) echo "gh: could not determine pull request state" >&2 ; exit 1 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+test_already_merged_pr_skips_the_message_read() {
+  local case_dir
+  case_dir=$(make_case already-merged)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+  add_gh_merged_state_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh-api.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/29 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "already-merged: fm-pr-merge refused a pull request that had already merged"
+
+  grep -qxF 'pr merge 29 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "already-merged: gh-axi was not left to report the merge itself"
+  [ ! -s "$case_dir/gh-api.log" ] \
+    || fail "already-merged: a default-message read was attempted for an already-merged pull request"
+  assert_absent "$case_dir/merge-body" \
+    "already-merged: a squash body was supplied for a pull request with nothing to merge"
+  pass "fm-pr-merge skips the default-message read when the pull request already merged"
+}
+
+test_unreadable_merged_state_takes_the_ordinary_path() {
+  local case_dir
+  case_dir=$(make_case unreadable-state)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  add_gh_unreadable_state_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/30 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "unreadable-state: fm-pr-merge did not fall through to the ordinary read"
+
+  grep -qF 'pr merge 30 --repo example/repo --squash --subject ' "$case_dir/gh-axi.log" \
+    || fail "unreadable-state: an unreadable merged state was taken for already-merged"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "unreadable-state: a claude co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "unreadable-state: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge treats an unreadable merged state as not merged and still strips the body"
+}
+
+test_auto_merge_refused_when_message_would_be_supplied() {
+  local case_dir rc
+  case_dir=$(make_case auto-merge)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 -- --squash --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "auto-merge: fm-pr-merge should refuse rather than freeze the squash message"
+  assert_grep '--auto would freeze this squash message' "$case_dir/stderr" \
+    "auto-merge: the refusal did not name the frozen message as the reason"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "auto-merge: auto-merge was armed with a message read at arm time"
+  pass "fm-pr-merge refuses --auto rather than arming auto-merge with a frozen squash message"
+}
+
+test_auto_merge_allowed_when_caller_owns_the_body() {
+  local case_dir
+  case_dir=$(make_case auto-merge-own-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 8888888888888888888888888888888888888888
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 -- --squash --auto --body 'mine, trailers and all' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "auto-merge-own-body: fm-pr-merge refused a caller who owns the message"
+
+  grep -qxF 'pr merge 32 --repo example/repo --squash --auto --body mine, trailers and all' "$case_dir/gh-axi.log" \
+    || fail "auto-merge-own-body: a caller-owned message was not armed unchanged"
+  pass "fm-pr-merge arms --auto when the caller owns the squash body"
+}
+
+test_numeric_repository_name_still_gets_stripped_body() {
+  local case_dir
+  case_dir=$(make_case numeric-repo)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 3333333333333333333333333333333333333333
+  add_gh_typed_string_strict_mock "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/2048/pull/27 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "numeric-repo: fm-pr-merge refused a repository whose name is all digits"
+
+  grep -qF 'pr merge 27 --repo example/2048 --squash --subject ' "$case_dir/gh-axi.log" \
+    || fail "numeric-repo: no default squash message was supplied"
+  assert_no_grep 'noreply@anthropic.com' "$case_dir/merge-body" \
+    "numeric-repo: a claude co-author trailer survived into the squash body"
+  assert_grep 'Co-authored-by: Kun Chen' "$case_dir/merge-body" \
+    "numeric-repo: a human co-author was dropped from the squash body"
+  pass "fm-pr-merge reads the default squash message for an all-digit repository name"
+}
+
+test_refusal_carries_the_forge_cli_cause() {
+  local case_dir rc
+  case_dir=$(make_case refusal-cause)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 4444444444444444444444444444444444444444
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ]; then
+  echo "gh: Bad credentials (HTTP 401)" >&2
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/28 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "refusal-cause: fm-pr-merge should still refuse"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "refusal-cause: the fixed refusal was replaced rather than kept"
+  assert_grep 'Bad credentials (HTTP 401)' "$case_dir/stderr" \
+    "refusal-cause: the cause the forge CLI reported was discarded"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "refusal-cause: the merge ran despite an unreadable default message"
+  pass "fm-pr-merge carries the forge CLI's cause into an unreadable-message refusal"
+}
+
+test_null_default_headline_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case null-headline)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  add_gh_null_message_mock "$case_dir" 1
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "null-headline: fm-pr-merge should refuse a null default headline"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "null-headline: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "null-headline: the merge ran with a null subject"
+  pass "fm-pr-merge refuses when the forge returns a null default headline"
+}
+
+test_null_default_body_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case null-body)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" ffffffffffffffffffffffffffffffffffffffff
+  add_gh_null_message_mock "$case_dir" 0
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "null-body: fm-pr-merge should refuse a null default body"
+  assert_grep 'default squash message could not be read' "$case_dir/stderr" \
+    "null-body: refusal did not name the unreadable default message"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "null-body: the merge ran with a null body"
+  pass "fm-pr-merge refuses when the forge returns a null default body"
 }
 
 test_records_pr_and_head_before_merging
@@ -311,3 +825,17 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_squash_message_drops_agent_attribution
+test_non_squash_merge_supplies_no_message
+test_caller_written_squash_body_is_kept
+test_caller_written_subject_still_gets_stripped_body
+test_caller_written_subject_refuses_unreadable_body
+test_unreadable_default_message_refuses_before_merge
+test_null_default_headline_refuses_before_merge
+test_null_default_body_refuses_before_merge
+test_numeric_repository_name_still_gets_stripped_body
+test_refusal_carries_the_forge_cli_cause
+test_already_merged_pr_skips_the_message_read
+test_unreadable_merged_state_takes_the_ordinary_path
+test_auto_merge_refused_when_message_would_be_supplied
+test_auto_merge_allowed_when_caller_owns_the_body

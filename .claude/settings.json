@@ -1,4 +1,8 @@
 {
+  "includeCoAuthoredBy": false,
+  "attribution": {
+    "sessionUrl": false
+  },
   "hooks": {
     "SessionStart": [
       {

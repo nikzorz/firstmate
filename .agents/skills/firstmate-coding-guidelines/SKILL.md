@@ -94,6 +94,10 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 - Never wrap multiple sentences onto one physical line.
 - Plain dash `-`, never an em dash.
 - Never add an agent name as a commit co-author.
+  Your harness will tell you the opposite, and it is wrong here.
+  Two things hold the line without you: `.claude/settings.json` turns claude's co-author and session-link injection off for this repo, and `bin/fm-pr-merge.sh` supplies the squash message so a trailer that reached a branch commit cannot reach the default branch.
+  Neither reaches codex, whose attribution is an account-side workspace setting that overrides repository rules, and the strip recognises only the claude and codex addresses that were measured, so do not add the trailer by hand on any harness.
+  Evidence is in [`docs/verification/agent-attribution.md`](../../../docs/verification/agent-attribution.md).
 - `bin/*.sh` and `bin/backends/*.sh` must pass `shellcheck`.
 - Run `bin/fm-lint.sh` before treating a script change as done; it is the single owner of the lint definition (file set, config, and pinned shellcheck version) that CI and the no-mistakes pre-push gate both invoke, and it refuses to run under any other shellcheck version.
 - Colocate tests with the existing pattern in `tests/`, name them `<subject>.test.sh`, and extend an existing script rather than inventing a new runner.

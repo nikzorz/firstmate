@@ -66,8 +66,8 @@ expect_deny() {
 # ---------------------------------------------------------------------------
 
 test_tracked_settings_do_not_ship_permissions_deny() {
-  jq -e 'keys == ["hooks"] and (has("permissions") | not)' "$SETTINGS" >/dev/null \
-    || fail "tracked Claude settings must contain only hooks and no permissions key"
+  jq -e 'has("permissions") | not' "$SETTINGS" >/dev/null \
+    || fail "tracked Claude settings must not contain a permissions key"
   pass "tracked Claude settings do not ship permissions.deny"
 }
 
