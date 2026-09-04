@@ -29,9 +29,9 @@
 #
 # A pull request that is already merged has no message to supply: gh-axi reports
 # it merged and runs no merge, so the read is skipped and re-running a merge that
-# already landed stays clean without needing forge access. A merged state that
-# cannot be read is not taken for either answer; it falls through to the ordinary
-# read, which still refuses when the default message is unavailable.
+# already landed no longer depends on a readable default message. A merged state
+# that cannot be read is not taken for either answer; it falls through to the
+# ordinary read, which still refuses when the default message is unavailable.
 #
 # --auto is refused wherever this path would supply the message, because the
 # forge stores the headline and body when auto-merge is armed and lands them
