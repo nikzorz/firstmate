@@ -23,7 +23,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# shellcheck source=bin/fm-attribution-lib.sh
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-attribution-lib.sh"
 
 # Compare fm_attribution_strip's output against an expected message, byte for
