@@ -548,10 +548,14 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
 #
 # bin/fm-classify-lib.sh owns keyed open/resolved semantics, so a request the
 # crew closed with a matching resolved line never resurfaces here, and this
-# invents no second notion of open. Prints nothing when the latest event IS the
-# request itself: the annotation is already carrying it.
+# invents no second notion of open. A request the latest-event line already
+# carries is dropped from the set rather than printed twice, and the fold falls
+# through to whatever is still open behind it; only an empty set prints nothing.
 FM_WAKE_OPEN_DECISION=
 FM_WAKE_OPEN_DECISION_OLDER=0
+_fm_wake_newest_open_decision() {  # <open-set>
+  printf '%s' "$1" | LC_ALL=C awk 'NF { line = $0 } END { print line }'
+}
 fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
   local chunk=$1 partial=$2 latest=$3 body open record count key rest verb note
   FM_WAKE_OPEN_DECISION=
@@ -572,16 +576,24 @@ fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
   fi
   open=$(printf '%s' "$body" | status_open_decisions -) || return 1
   [ -n "$open" ] || return 1
-  count=$(printf '%s' "$open" | LC_ALL=C grep -c .) || return 1
-  record=$(printf '%s' "$open" | LC_ALL=C awk 'NF { line = $0 } END { print line }') || return 1
+  record=$(_fm_wake_newest_open_decision "$open") || return 1
   [ -n "$record" ] || return 1
+  rest=${record#*$'\t'}
+  if [ "${rest%%$'\t'*}" = "$(status_line_verb "$latest")" ] &&
+    [ "${record%%$'\t'*}" = "$(_fm_decision_key "$latest")" ]; then
+    # The latest-event line is already carrying this one, so repeating it would
+    # only say the same thing twice. Anything OLDER is still unanswered and would
+    # still be silent, which is the masking this fold exists to stop, so drop
+    # just the redundant record and fall through to the next-newest.
+    open=$(printf '%s' "$open" | LC_ALL=C awk 'NF { keep[n++] = $0 } END { for (i = 0; i + 1 < n; i++) print keep[i] }') || return 1
+    record=$(_fm_wake_newest_open_decision "$open") || return 1
+    [ -n "$record" ] || return 1
+  fi
+  count=$(printf '%s' "$open" | LC_ALL=C grep -c .) || return 1
   key=${record%%$'\t'*}
   rest=${record#*$'\t'}
   verb=${rest%%$'\t'*}
   note=${rest#*$'\t'}
-  if [ "$verb" = "$(status_line_verb "$latest")" ] && [ "$key" = "$(_fm_decision_key "$latest")" ]; then
-    return 1
-  fi
   if [ "$key" = default ]; then
     FM_WAKE_OPEN_DECISION="$verb: $note"
   else

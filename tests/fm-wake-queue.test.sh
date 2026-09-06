@@ -364,12 +364,23 @@ test_open_decision_survives_a_later_status_line() {
   printf 'working: applying it\n' >> "$state/answered.status"
   # A request that IS the latest event needs no second copy of itself.
   printf 'needs-decision [key=api]: choose an API shape\n' > "$state/current.status"
+  # A second request masks the first exactly as a working line does: the newest
+  # one rides the latest-event line, and the older one must still be surfaced.
+  printf 'needs-decision [key=a]: pick A or B\n' > "$state/two.status"
+  printf 'working: still poking\n' >> "$state/two.status"
+  printf 'needs-decision [key=b]: pick C or D\n' >> "$state/two.status"
+  # Several open at once: the newest is annotated and the rest are counted.
+  printf 'needs-decision [key=x]: choose a rollout order\n' > "$state/stack.status"
+  printf 'blocked [key=y]: the staging credential expired\n' >> "$state/stack.status"
+  printf 'working: chasing the credential owner\n' >> "$state/stack.status"
   # A file that never carried a request annotates exactly as before.
   printf 'working: first\ndone: latest event\n' > "$state/plain.status"
 
   append_wake "$state" signal masked.status "signal: masked" || fail "masked status wake append failed"
   append_wake "$state" signal answered.status "signal: answered" || fail "answered status wake append failed"
   append_wake "$state" signal current.status "signal: current" || fail "current status wake append failed"
+  append_wake "$state" signal two.status "signal: two" || fail "two-request status wake append failed"
+  append_wake "$state" signal stack.status "signal: stack" || fail "stacked status wake append failed"
   append_wake "$state" signal plain.status "signal: plain" || fail "plain status wake append failed"
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "open-decision drain failed"
@@ -384,8 +395,17 @@ test_open_decision_survives_a_later_status_line() {
   if grep -E '^wake annotation: open decision or blocker.*: (current|plain)\.status:' "$out" >/dev/null; then
     fail "annotated an unanswered decision that the latest event already carried"
   fi
+  grep -Fx 'wake annotation: open decision or blocker not superseded by the latest event: two.status: needs-decision [key=a]: pick A or B' "$out" >/dev/null \
+    || fail "a later request hid the earlier unanswered one"
+  grep -F 'latest wake-EVENT observed at drain, not current state: two.status: needs-decision [key=b]: pick C or D' "$out" >/dev/null \
+    || fail "the latest request was dropped from the annotation"
+  if grep -E '^wake annotation: open decision or blocker.*: two\.status: needs-decision \[key=b\]' "$out" >/dev/null; then
+    fail "the request the latest event already carried was printed twice"
+  fi
+  grep -Fx 'wake annotation: open decision or blocker not superseded by the latest event: stack.status: blocked [key=y]: the staging credential expired (+1 older still open)' "$out" >/dev/null \
+    || fail "the newest open request and the count of the rest were not annotated"
   annotation_count=$(grep -c '^wake annotation: open decision or blocker' "$out" || true)
-  [ "$annotation_count" -eq 1 ] || fail "expected exactly one open-decision annotation, got $annotation_count"
+  [ "$annotation_count" -eq 3 ] || fail "expected exactly three open-decision annotations, got $annotation_count"
   pass "an unanswered keyed decision request survives later status lines and a resolved one stays closed"
 }
 
