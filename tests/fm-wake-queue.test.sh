@@ -348,6 +348,47 @@ SH
   pass "bounded reads and per-item/global caps fail open with explicit truncation and omission markers"
 }
 
+test_open_decision_survives_a_later_status_line() {
+  local dir state out annotation_count
+  dir=$(make_case open-decision)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # The masking sequence: a keyed request, then an ordinary progress line. The
+  # latest event alone shows only the progress line.
+  printf 'needs-decision [key=r3]: two ask-user findings\n' > "$state/masked.status"
+  printf 'working: investigating a failing test\n' >> "$state/masked.status"
+  # Answered, then progress. A resolved request must not resurface.
+  printf 'needs-decision [key=r3]: two ask-user findings\n' > "$state/answered.status"
+  printf 'resolved [key=r3]: firstmate chose the shared fix\n' >> "$state/answered.status"
+  printf 'working: applying it\n' >> "$state/answered.status"
+  # A request that IS the latest event needs no second copy of itself.
+  printf 'needs-decision [key=api]: choose an API shape\n' > "$state/current.status"
+  # A file that never carried a request annotates exactly as before.
+  printf 'working: first\ndone: latest event\n' > "$state/plain.status"
+
+  append_wake "$state" signal masked.status "signal: masked" || fail "masked status wake append failed"
+  append_wake "$state" signal answered.status "signal: answered" || fail "answered status wake append failed"
+  append_wake "$state" signal current.status "signal: current" || fail "current status wake append failed"
+  append_wake "$state" signal plain.status "signal: plain" || fail "plain status wake append failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "open-decision drain failed"
+
+  grep -F 'wake annotation: open decision or blocker not superseded by the latest event: masked.status: needs-decision [key=r3]: two ask-user findings' "$out" >/dev/null \
+    || fail "a later status line hid the unanswered decision request"
+  grep -F 'latest wake-EVENT observed at drain, not current state: masked.status: working: investigating a failing test' "$out" >/dev/null \
+    || fail "the unanswered decision replaced the latest event instead of joining it"
+  if grep -E '^wake annotation: open decision or blocker.*: answered\.status:' "$out" >/dev/null; then
+    fail "a resolved decision resurfaced"
+  fi
+  if grep -E '^wake annotation: open decision or blocker.*: (current|plain)\.status:' "$out" >/dev/null; then
+    fail "annotated an unanswered decision that the latest event already carried"
+  fi
+  annotation_count=$(grep -c '^wake annotation: open decision or blocker' "$out" || true)
+  [ "$annotation_count" -eq 1 ] || fail "expected exactly one open-decision annotation, got $annotation_count"
+  pass "an unanswered keyed decision request survives later status lines and a resolved one stays closed"
+}
+
 wait_for_file_text() {  # <file> <fixed-text>
   local file=$1 expected=$2 i=0
   while [ "$i" -lt 100 ]; do
@@ -441,3 +482,4 @@ test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_caps_and_status_file_failures
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
 test_interruption_before_and_after_raw_commit
+test_open_decision_survives_a_later_status_line

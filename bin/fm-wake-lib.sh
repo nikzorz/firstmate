@@ -489,10 +489,17 @@ EOF
 
 FM_WAKE_EVENT_LINE=
 FM_WAKE_EVENT_TRUNCATED=false
+# The tail chunk this read already holds, and whether its first line is a
+# fragment. Exposed so the open-decision fold below folds the SAME bounded read
+# rather than opening the status file a second time.
+FM_WAKE_EVENT_CHUNK=
+FM_WAKE_EVENT_PARTIAL_HEAD=false
 fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
   local path=$1 tail_bytes=$2 result size chunk record line_number
   FM_WAKE_EVENT_LINE=
   FM_WAKE_EVENT_TRUNCATED=false
+  FM_WAKE_EVENT_CHUNK=
+  FM_WAKE_EVENT_PARTIAL_HEAD=false
   result=$(perl -MFcntl=:DEFAULT -e '
     my ($path, $limit) = @ARGV;
     sysopen(my $file, $path, O_RDONLY | O_NOFOLLOW) or exit 1;
@@ -516,6 +523,8 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
   chunk=${result#*$'\t'}
   case "$size" in ''|*[!0-9]*) return 1 ;; esac
   [ -n "$chunk" ] || return 1
+  FM_WAKE_EVENT_CHUNK=$chunk
+  [ "$size" -le "$tail_bytes" ] || FM_WAKE_EVENT_PARTIAL_HEAD=true
   record=$(printf '%s' "$chunk" | LC_ALL=C awk '
     /[^[:space:]]/ { line = $0; line_number = NR }
     END { if (line_number) printf "%d\t%s", line_number, line }
@@ -529,14 +538,94 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
   fi
 }
 
+# Fold the tail chunk fm_wake_latest_event already read into the set of decision
+# requests still open, and keep the most recently opened one.
+#
+# This is what stops a later status line from hiding an unanswered request. The
+# latest event alone shows only what the crew appended most recently, so a crew
+# that posts its request and then goes on reporting progress - exactly what its
+# brief asks of it - drops out of the drain and sits parked holding a gate open.
+#
+# bin/fm-classify-lib.sh owns keyed open/resolved semantics, so a request the
+# crew closed with a matching resolved line never resurfaces here, and this
+# invents no second notion of open. Prints nothing when the latest event IS the
+# request itself: the annotation is already carrying it.
+FM_WAKE_OPEN_DECISION=
+FM_WAKE_OPEN_DECISION_OLDER=0
+fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
+  local chunk=$1 partial=$2 latest=$3 body open record count key rest verb note
+  FM_WAKE_OPEN_DECISION=
+  FM_WAKE_OPEN_DECISION_OLDER=0
+  # Sourced lazily: most fm-wake-lib.sh consumers never annotate, and the fold is
+  # the only thing here that needs the classifier.
+  if ! command -v status_open_decisions >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-classify-lib.sh
+    . "$FM_WAKE_LIB_DIR/fm-classify-lib.sh" || return 1
+  fi
+  status_may_open_decision "$chunk" || return 1
+  body=$chunk
+  if [ "$partial" = true ]; then
+    case "$chunk" in
+      *$'\n'*) body=${chunk#*$'\n'} ;;
+      *) return 1 ;;
+    esac
+  fi
+  open=$(printf '%s' "$body" | status_open_decisions -) || return 1
+  [ -n "$open" ] || return 1
+  count=$(printf '%s' "$open" | LC_ALL=C grep -c .) || return 1
+  record=$(printf '%s' "$open" | LC_ALL=C awk 'NF { line = $0 } END { print line }') || return 1
+  [ -n "$record" ] || return 1
+  key=${record%%$'\t'*}
+  rest=${record#*$'\t'}
+  verb=${rest%%$'\t'*}
+  note=${rest#*$'\t'}
+  if [ "$verb" = "$(status_line_verb "$latest")" ] && [ "$key" = "$(_fm_decision_key "$latest")" ]; then
+    return 1
+  fi
+  if [ "$key" = default ]; then
+    FM_WAKE_OPEN_DECISION="$verb: $note"
+  else
+    FM_WAKE_OPEN_DECISION="$verb [key=$key]: $note"
+  fi
+  FM_WAKE_OPEN_DECISION=$(printf '%s' "$FM_WAKE_OPEN_DECISION" | LC_ALL=C tr '\t\r' '  ')
+  FM_WAKE_OPEN_DECISION_OLDER=$((count - 1))
+}
+
+# Append one annotation line to the bounded output, truncating it to the per-item
+# cap and counting it omitted when it would breach the global cap. Accumulates
+# through globals rather than namerefs so it stays portable to bash 3.2, the
+# same floor the keyed status folds hold to.
+_FM_WAKE_ANNOT_OUTPUT=''
+_FM_WAKE_ANNOT_USED=0
+_FM_WAKE_ANNOT_OMITTED=0
+_fm_wake_annotation_append() {  # <line> <item-bytes> <global-bytes> <marker-reserve>
+  local line=$1 item_bytes=$2 global_bytes=$3 marker_reserve=$4 suffix keep bytes
+  if [ $(( ${#line} + 1 )) -gt "$item_bytes" ]; then
+    suffix=' [truncated]'
+    keep=$((item_bytes - ${#suffix} - 1))
+    line="${line:0:$keep}$suffix"
+  fi
+  bytes=$(( ${#line} + 1 ))
+  if [ $((_FM_WAKE_ANNOT_USED + bytes + marker_reserve)) -gt "$global_bytes" ]; then
+    _FM_WAKE_ANNOT_OMITTED=$((_FM_WAKE_ANNOT_OMITTED + 1))
+    return 1
+  fi
+  _FM_WAKE_ANNOT_OUTPUT="$_FM_WAKE_ANNOT_OUTPUT$line
+"
+  _FM_WAKE_ANNOT_USED=$((_FM_WAKE_ANNOT_USED + bytes))
+}
+
 # Print supplemental drain-time context only after the caller has committed the
 # raw queue consumption and released the append lock. The limits are constants,
 # so status-file volume cannot turn a drain into an unbounded context read.
 fm_wake_print_annotations() {  # <deduped-raw-rows>
-  local rows=$1 manifest status_key mode path prefix line suffix keep bytes
-  local output='' used=0 omitted=0 read_omitted=0 annotation_marker marker_reserve=192
+  local rows=$1 manifest status_key mode path prefix line suffix
+  local read_omitted=0 annotation_marker marker_reserve=192
   local tail_bytes=8192 item_bytes=2048 global_bytes=8192 read_cap=8 reads=0
   local LC_ALL=C
+  _FM_WAKE_ANNOT_OUTPUT=''
+  _FM_WAKE_ANNOT_USED=0
+  _FM_WAKE_ANNOT_OMITTED=0
 
   manifest=$(fm_wake_annotation_manifest "$rows" | awk -F '\t' '
     {
@@ -575,30 +664,28 @@ fm_wake_print_annotations() {  # <deduped-raw-rows>
     if [ "$mode" = historical ]; then
       prefix="$prefix; historical / not necessarily the triggering event"
     fi
+    # The open request goes first: it is the annotation a masked decision
+    # depends on, so under cap pressure the latest event yields to it rather
+    # than the other way round.
+    if fm_wake_open_decision "$FM_WAKE_EVENT_CHUNK" "$FM_WAKE_EVENT_PARTIAL_HEAD" "$FM_WAKE_EVENT_LINE"; then
+      line="wake annotation: open decision or blocker not superseded by the latest event: $status_key: $FM_WAKE_OPEN_DECISION"
+      if [ "$FM_WAKE_OPEN_DECISION_OLDER" -gt 0 ]; then
+        line="$line (+$FM_WAKE_OPEN_DECISION_OLDER older still open)"
+      fi
+      _fm_wake_annotation_append "$line" "$item_bytes" "$global_bytes" "$marker_reserve" || true
+    fi
     line="$prefix: $status_key: $FM_WAKE_EVENT_LINE"
     suffix=''
     [ "$FM_WAKE_EVENT_TRUNCATED" = false ] || suffix=' [truncated]'
     line="$line$suffix"
-    if [ $(( ${#line} + 1 )) -gt "$item_bytes" ]; then
-      suffix=' [truncated]'
-      keep=$((item_bytes - ${#suffix} - 1))
-      line="${line:0:$keep}$suffix"
-    fi
-    bytes=$(( ${#line} + 1 ))
-    if [ $((used + bytes + marker_reserve)) -gt "$global_bytes" ]; then
-      omitted=$((omitted + 1))
-      continue
-    fi
-    output="$output$line
-"
-    used=$((used + bytes))
+    _fm_wake_annotation_append "$line" "$item_bytes" "$global_bytes" "$marker_reserve" || continue
   done <<EOF
 $manifest
 EOF
 
-  printf '%s' "$output"
-  if [ "$omitted" -gt 0 ]; then
-    annotation_marker="wake annotation: $omitted annotations omitted (global enrichment byte cap)"
+  printf '%s' "$_FM_WAKE_ANNOT_OUTPUT"
+  if [ "$_FM_WAKE_ANNOT_OMITTED" -gt 0 ]; then
+    annotation_marker="wake annotation: $_FM_WAKE_ANNOT_OMITTED annotations omitted (global enrichment byte cap)"
     printf '%s\n' "$annotation_marker"
   fi
   if [ "$read_omitted" -gt 0 ]; then
