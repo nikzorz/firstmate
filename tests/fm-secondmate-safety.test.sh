@@ -1440,6 +1440,76 @@ EOF
   pass "secondmate force teardown discards child work"
 }
 
+test_secondmate_force_teardown_clears_child_records_in_a_returned_slot() {
+  # A retired home that occupies a treehouse slot is RETURNED to the pool, not
+  # deleted, so the child record sweep is the only thing that clears a child's
+  # records. A record it misses survives into a reusable home and is inherited by
+  # the next task that reuses that id, which is why the sweep and the task's own
+  # cleanup both drive off one declared inventory in bin/fm-teardown.sh.
+  local home subhome fakebin log lease fmroot suffix leftover leftovers
+  home="$TMP_ROOT/slot-records-home"
+  subhome="$TMP_ROOT/slot-records-subhome"
+  fmroot="$TMP_ROOT/slot-records-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+
+  # One child task holding every per-task record the inventory declares, so the
+  # assertion covers the whole inventory rather than the suffixes in use today.
+  cat > "$subhome/state/cm1.meta" <<EOF
+window=firstmate:fm-cm1
+harness=herdr
+backend=herdr
+kind=ship
+mode=no-mistakes
+yolo=off
+EOF
+  while IFS= read -r suffix; do
+    [ -n "$suffix" ] || continue
+    # .meta is the fixture written above; the turn-end token files carry a value
+    # the auth removers reject, so the fixture never reaches a real hook registry.
+    [ "$suffix" = .meta ] || printf 'not-a-token/\n' > "$subhome/state/cm1$suffix"
+  done <<EOF
+$(sed -n '/^FM_TASK_RECORD_SUFFIXES=(/,/^)/p' "$ROOT/bin/fm-teardown.sh" \
+  | grep -oE '^  \.[A-Za-z0-9][A-Za-z0-9.-]*' | tr -d ' ')
+EOF
+  [ -e "$subhome/state/cm1.park-sighting" ] || fail "fixture did not read the record inventory"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/slot-records-fake")
+  log="$TMP_ROOT/slot-records-fake/tmux.log"
+  lease="$TMP_ROOT/slot-records-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/slot-records-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "force teardown failed to retire a secondmate occupying a treehouse slot"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$lease" ] || fail "teardown left the secondmate home lease held after retirement"
+  leftovers=
+  for leftover in "$subhome"/state/cm1.*; do
+    [ -e "$leftover" ] || [ -L "$leftover" ] || continue
+    leftovers="$leftovers$(basename "$leftover")"$'\n'
+  done
+  [ -z "$leftovers" ] || fail \
+    "child records survived into the returned home:"$'\n'"$leftovers"
+  pass "forced secondmate teardown clears every child record in a returned treehouse slot"
+}
+
 test_secondmate_force_teardown_refuses_child_quarantine_symlink() {
   local home subhome childproj childwt external fakebin log err rc
   home="$TMP_ROOT/force-quarantine-home"
@@ -2208,6 +2278,7 @@ test_secondmate_teardown_retires_empty_home
 test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
 test_secondmate_force_teardown_discards_child_work
+test_secondmate_force_teardown_clears_child_records_in_a_returned_slot
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home

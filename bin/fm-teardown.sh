@@ -45,6 +45,11 @@
 # Projected closes share the presentation-order lock, refuse to close the
 # captain's active tab, and restore the exact response-derived pre-close tab
 # if Herdr's last-pane cleanup focuses an unrelated neighboring workspace.
+# Every per-task record under a home's state/ directory is declared once in
+# FM_TASK_RECORD_SUFFIXES and removed through remove_task_state_records, which
+# both the task's own cleanup and the retired-secondmate child sweep call. Adding
+# a record to that inventory therefore reaches both paths; there is no second list
+# to keep in step.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, discards
@@ -235,6 +240,38 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
   [ -z "$T_ORCA" ] || T=$T_ORCA
 fi
 
+# Every per-task record a home's state/ directory can hold, named by the suffix
+# appended to the task id. Two paths remove these - a task clearing its own
+# records, and the sweep that clears a retired secondmate's children - and both
+# drive off this one inventory through remove_task_state_records, so a record
+# added here cannot reach only one of them.
+# The child sweep is load-bearing rather than belt-and-braces: a retired home that
+# occupies a treehouse slot is returned to the pool rather than deleted, so a
+# record the sweep leaves behind survives into a reusable home and is inherited by
+# the next task that reuses the id.
+FM_TASK_RECORD_SUFFIXES=(
+  .status
+  .turn-ended
+  .meta
+  .pi-ext.ts
+  .grok-turnend-token
+  .kimi-turnend-token
+  .pause-recheck
+  .park-sighting
+  .herdr-presentation
+)
+
+# Per-task records whose removal needs its own validation. remove_pr_poll_artifacts
+# validates and removes exactly these, and remove_task_state_records calls it, so
+# this file still names every per-task suffix in one place.
+FM_TASK_RECORD_SUFFIXES_GUARDED=(
+  .check.sh
+  .check-trust
+  .pr-poll
+  .pr-poll-registration
+  .pr-poll-retirement
+)
+
 remove_grok_turnend_auth() {
   local state_dir=$1 id=$2 token hooks_dir
   token=$(cat "$state_dir/$id.grok-turnend-token" 2>/dev/null || true)
@@ -252,7 +289,7 @@ remove_kimi_turnend_auth() {
 }
 
 validate_pr_poll_cleanup() {
-  local state_dir=$1 id=$2 quarantine state_device artifact has_artifact=0
+  local state_dir=$1 id=$2 quarantine state_device artifact suffix has_artifact=0
   fm_task_id_path_safe "$id" || return 0
   quarantine="$state_dir/.pr-check-quarantine"
   if [ "$id" = _noncanonical ] \
@@ -263,9 +300,8 @@ validate_pr_poll_cleanup() {
     echo "REFUSED: legacy PR-check quarantine migration is incomplete; preserving task state." >&2
     return 1
   fi
-  for artifact in "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
-    "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
-    "$state_dir/$id.check-trust"; do
+  for suffix in "${FM_TASK_RECORD_SUFFIXES_GUARDED[@]}"; do
+    artifact="$state_dir/$id$suffix"
     [ -e "$artifact" ] || [ -L "$artifact" ] || continue
     has_artifact=1
   done
@@ -275,9 +311,8 @@ validate_pr_poll_cleanup() {
   [ "$has_artifact" -eq 1 ] || return 0
   [ -d "$state_dir" ] && [ ! -L "$state_dir" ] || return 1
   state_device=$(fm_pr_file_device "$state_dir") || return 1
-  for artifact in "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
-    "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
-    "$state_dir/$id.check-trust"; do
+  for suffix in "${FM_TASK_RECORD_SUFFIXES_GUARDED[@]}"; do
+    artifact="$state_dir/$id$suffix"
     [ -e "$artifact" ] || [ -L "$artifact" ] || continue
     if [ ! -f "$artifact" ] || [ -L "$artifact" ] \
       || [ "$(fm_pr_file_device "$artifact")" != "$state_device" ] \
@@ -314,12 +349,12 @@ validate_pr_poll_cleanup() {
 }
 
 remove_pr_poll_artifacts() {
-  local state_dir=$1 id=$2 quarantine artifact
+  local state_dir=$1 id=$2 quarantine artifact suffix
   validate_pr_poll_cleanup "$state_dir" "$id" || return 1
   fm_pr_poll_retirement_recover_one "$state_dir" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
-  rm -f "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
-    "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
-    "$state_dir/$id.check-trust" || return 1
+  for suffix in "${FM_TASK_RECORD_SUFFIXES_GUARDED[@]}"; do
+    rm -f "$state_dir/$id$suffix" || return 1
+  done
   if fm_task_id_path_safe "$id"; then
     quarantine="$state_dir/.pr-check-quarantine"
     if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
@@ -330,6 +365,25 @@ remove_pr_poll_artifacts() {
       rmdir "$quarantine" 2>/dev/null || true
     fi
   fi
+}
+
+# Remove every per-task record for <id> under <state_dir>, along with the external
+# turn-end hook registrations those records authorize. A caller that has already
+# settled one record's fate names its suffix as a retained argument; teardown uses
+# that for a Herdr presentation journal it deliberately leaves quarantined.
+remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
+  local state_dir=$1 id=$2 suffix retained
+  shift 2
+  remove_grok_turnend_auth "$state_dir" "$id"
+  remove_kimi_turnend_auth "$state_dir" "$id"
+  remove_pr_poll_artifacts "$state_dir" "$id" || return 1
+  for suffix in "${FM_TASK_RECORD_SUFFIXES[@]}"; do
+    for retained in "$@"; do
+      [ "$suffix" = "$retained" ] || continue
+      continue 2
+    done
+    rm -f "$state_dir/$id$suffix" || return 1
+  done
 }
 
 # Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
@@ -1278,13 +1332,7 @@ cleanup_firstmate_home_children() {
         safe_rm_rf_child_worktree "$child_wt" "$child_proj"
       fi
     fi
-    remove_grok_turnend_auth "$sub_state" "$child_id"
-    remove_kimi_turnend_auth "$sub_state" "$child_id"
-    remove_pr_poll_artifacts "$sub_state" "$child_id" || return 1
-    rm -f "$sub_state/$child_id.status" "$sub_state/$child_id.turn-ended" \
-      "$sub_state/$child_id.meta" "$sub_state/$child_id.pi-ext.ts" \
-      "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
-      "$sub_state/$child_id.pause-recheck" "$sub_state/$child_id.park-sighting"
+    remove_task_state_records "$sub_state" "$child_id" || return 1
   done
 }
 
@@ -1405,6 +1453,10 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
 fi
 
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"
+# The one per-task record teardown may deliberately keep: an unconfirmed pane close
+# leaves the journal quarantined for inspection, so the record sweep is told to skip
+# it rather than the journal being absent from FM_TASK_RECORD_SUFFIXES.
+HERDR_PRESENTATION_RETAINED=()
 HERDR_PRESENTATION_RETIRE_CANDIDATE=0
 HERDR_PRESENTATION_SESSION=
 HERDR_PRESENTATION_PANE=
@@ -1453,13 +1505,13 @@ elif [ "$BACKEND" != orca ]; then
   fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
 fi
 if [ "$HERDR_PRESENTATION_RETIRE_CANDIDATE" = 1 ]; then
-  if [ "$(fm_backend_herdr_pane_agent_state "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_PANE")" = dead ]; then
-    rm -f "$HERDR_PRESENTATION_JOURNAL"
-  else
+  if [ "$(fm_backend_herdr_pane_agent_state "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_PANE")" != dead ]; then
+    HERDR_PRESENTATION_RETAINED=(.herdr-presentation)
     echo "warning: exact herdr task-pane close could not be confirmed for $ID; retaining the presentation journal and attempting no workspace cleanup" >&2
   fi
 elif [ "$BACKEND" = herdr ] \
      && { [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; }; then
+  HERDR_PRESENTATION_RETAINED=(.herdr-presentation)
   echo "warning: herdr presentation journal for $ID remains quarantined; no workspace cleanup was attempted" >&2
 fi
 if [ "$KIND" = secondmate ]; then
@@ -1467,17 +1519,11 @@ if [ "$KIND" = secondmate ]; then
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
   remove_secondmate_registry_entry "$ID"
 fi
-remove_grok_turnend_auth "$STATE" "$ID"
-remove_kimi_turnend_auth "$STATE" "$ID"
 fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
-# Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
+# Read before the record sweep below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
-remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
-rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
-  "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
-  "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.pause-recheck" \
-  "$STATE/$ID.park-sighting"
+remove_task_state_records "$STATE" "$ID" ${HERDR_PRESENTATION_RETAINED[@]+"${HERDR_PRESENTATION_RETAINED[@]}"} || exit 1
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

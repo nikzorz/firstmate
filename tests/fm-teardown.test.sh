@@ -2170,9 +2170,46 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
   pass "herdr projection teardown retains the stale journal and attempts no workspace cleanup when exact-pane close is unconfirmed"
 }
 
+# Every per-task record bin/ writes under a home's state/ directory must be
+# declared in bin/fm-teardown.sh's one inventory, so a new record reaches both the
+# task's own cleanup and the retired-secondmate child sweep. Without this, adding a
+# record is a normal change with nothing to remind the author that a second removal
+# path exists - and the sweep is the only thing that clears a child's records when
+# the retired home occupies a returned treehouse slot.
+test_every_per_task_record_suffix_is_declared() {
+  local declared undeclared written suffix
+  declared=$(sed -n \
+    '/^FM_TASK_RECORD_SUFFIXES=(/,/^)/p;/^FM_TASK_RECORD_SUFFIXES_GUARDED=(/,/^)/p' \
+    "$ROOT/bin/fm-teardown.sh" | grep -oE '^  \.[A-Za-z0-9][A-Za-z0-9.-]*' | tr -d ' ' | sort -u)
+  [ -n "$declared" ] || fail "fm-teardown.sh declares no per-task record inventory"
+
+  # Suffixes written as a literal on a state-dir/task-id path, plus the ones a
+  # library exports as a named suffix constant.
+  written=$( { grep -rhoE '\$\{?(STATE|STATE_REAL|state|state_dir|sub_state)\}?/\$\{?(ID|id|child_id|task|task_id)\}?\.[A-Za-z0-9][A-Za-z0-9.-]*' \
+      "$ROOT"/bin/*.sh "$ROOT"/bin/backends/*.sh \
+      | grep -oE '\.[A-Za-z0-9][A-Za-z0-9.-]*$'
+    grep -rhoE "^[A-Za-z_]*SUFFIX=['\"]\.[A-Za-z0-9][A-Za-z0-9.-]*" \
+      "$ROOT"/bin/*.sh "$ROOT"/bin/backends/*.sh | sed -E "s/^.*=['\"]//"
+  } | sed 's/\.$//' | sort -u)
+  [ -n "$written" ] || fail "found no per-task record suffixes in bin/; the scan is broken"
+
+  undeclared=
+  while IFS= read -r suffix; do
+    [ -n "$suffix" ] || continue
+    printf '%s\n' "$declared" | grep -qxF "$suffix" \
+      || undeclared="$undeclared $suffix"
+  done <<EOF
+$written
+EOF
+  [ -z "$undeclared" ] || fail \
+    "per-task state record(s) not declared in fm-teardown.sh's inventory:$undeclared"$'\n'"Add each to FM_TASK_RECORD_SUFFIXES, or to FM_TASK_RECORD_SUFFIXES_GUARDED when a guarded helper removes it."
+  pass "every per-task record suffix is declared in one teardown inventory"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
+test_every_per_task_record_suffix_is_declared
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
