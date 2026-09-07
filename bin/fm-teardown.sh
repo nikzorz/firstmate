@@ -45,11 +45,10 @@
 # Projected closes share the presentation-order lock, refuse to close the
 # captain's active tab, and restore the exact response-derived pre-close tab
 # if Herdr's last-pane cleanup focuses an unrelated neighboring workspace.
-# Every per-task record under a home's state/ directory is declared once in
-# FM_TASK_RECORD_SUFFIXES and removed through remove_task_state_records, which
-# both the task's own cleanup and the retired-secondmate child sweep call. Adding
-# a record to that inventory therefore reaches both paths; there is no second list
-# to keep in step.
+# Per-task records under a home's state/ directory are cleared by one sweep of
+# state/<id>.* in remove_task_state_records, which the task's own cleanup and the
+# retired-secondmate child sweep both call. A new record needs no declaration and
+# no second list to keep in step: the glob already reaches it on both paths.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, discards
@@ -240,30 +239,9 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
   [ -z "$T_ORCA" ] || T=$T_ORCA
 fi
 
-# Every per-task record a home's state/ directory can hold, named by the suffix
-# appended to the task id. Two paths remove these - a task clearing its own
-# records, and the sweep that clears a retired secondmate's children - and both
-# drive off this one inventory through remove_task_state_records, so a record
-# added here cannot reach only one of them.
-# The child sweep is load-bearing rather than belt-and-braces: a retired home that
-# occupies a treehouse slot is returned to the pool rather than deleted, so a
-# record the sweep leaves behind survives into a reusable home and is inherited by
-# the next task that reuses the id.
-FM_TASK_RECORD_SUFFIXES=(
-  .status
-  .turn-ended
-  .meta
-  .pi-ext.ts
-  .grok-turnend-token
-  .kimi-turnend-token
-  .pause-recheck
-  .park-sighting
-  .herdr-presentation
-)
-
 # Per-task records whose removal needs its own validation. remove_pr_poll_artifacts
-# validates and removes exactly these, and remove_task_state_records calls it, so
-# this file still names every per-task suffix in one place.
+# validates and removes exactly these, and remove_task_state_records calls it before
+# sweeping state/<id>.*, so no guarded record is ever left for a bare rm to reach.
 FM_TASK_RECORD_SUFFIXES_GUARDED=(
   .check.sh
   .check-trust
@@ -367,22 +345,51 @@ remove_pr_poll_artifacts() {
   fi
 }
 
+# A caller may keep back a record whose fate it has already settled, but only a
+# plain <id><suffix> record the sweep itself would have removed. A guarded record is
+# validated and removed before the sweep runs, so naming one here would promise a
+# retention teardown has already broken.
+fm_task_record_suffix_retainable() {
+  local suffix=$1 guarded
+  case "$suffix" in
+    .[A-Za-z0-9]*) ;;
+    *) return 1 ;;
+  esac
+  case "$suffix" in
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  for guarded in "${FM_TASK_RECORD_SUFFIXES_GUARDED[@]}"; do
+    [ "$suffix" != "$guarded" ] || return 1
+  done
+}
+
 # Remove every per-task record for <id> under <state_dir>, along with the external
-# turn-end hook registrations those records authorize. A caller that has already
-# settled one record's fate names its suffix as a retained argument; teardown uses
-# that for a Herdr presentation journal it deliberately leaves quarantined.
+# turn-end hook registrations those records authorize. Sweeping state/<id>.* rather
+# than an enumerated suffix list is what keeps a newly added record from reaching
+# only one of the two removal paths. The dot in that glob is load-bearing: it is
+# what stops a sweep of cm1 from taking cm11's records with it.
 remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
-  local state_dir=$1 id=$2 suffix retained
+  local state_dir=$1 id=$2 record retained
   shift 2
-  remove_grok_turnend_auth "$state_dir" "$id"
-  remove_kimi_turnend_auth "$state_dir" "$id"
+  if ! fm_task_id_path_safe "$id"; then
+    echo "REFUSED: unsafe task id $id; preserving task state." >&2
+    return 1
+  fi
+  for retained in "$@"; do
+    if ! fm_task_record_suffix_retainable "$retained"; then
+      echo "error: $retained is not a retainable per-task record suffix" >&2
+      return 1
+    fi
+  done
+  remove_grok_turnend_auth "$state_dir" "$id" || return 1
+  remove_kimi_turnend_auth "$state_dir" "$id" || return 1
   remove_pr_poll_artifacts "$state_dir" "$id" || return 1
-  for suffix in "${FM_TASK_RECORD_SUFFIXES[@]}"; do
+  for record in "$state_dir/$id".*; do
+    [ -e "$record" ] || [ -L "$record" ] || continue
     for retained in "$@"; do
-      [ "$suffix" = "$retained" ] || continue
-      continue 2
+      [ "$record" != "$state_dir/$id$retained" ] || continue 2
     done
-    rm -f "$state_dir/$id$suffix" || return 1
+    rm -f -- "$record" || return 1
   done
 }
 
@@ -1237,14 +1244,49 @@ remove_firstmate_home() {
   safe_rm_rf "$abs_home_path" "$label"
 }
 
+# Every task id a retired home's state/ still holds a record for. A .meta names a
+# task outright; any other record is read as <id>.<suffix>, minus the x- prefix
+# state/ reserves for X mode's home-level relay entries (x-watch.check.sh,
+# x-poll.error), which wear that same shape without belonging to a task.
+# Records outlive their meta - a child teardown keeps a Herdr journal whose pane
+# close it could not confirm - so keying the sweep on *.meta alone would leave those
+# behind in a home that a treehouse slot return hands to the next occupant.
+firstmate_home_child_ids() {  # <sub_state>
+  local sub_state=$1 entry name
+  [ -d "$sub_state" ] || return 0
+  {
+    for entry in "$sub_state"/*.meta; do
+      [ -e "$entry" ] || continue
+      name=$(basename "$entry")
+      printf '%s\n' "${name%.meta}"
+    done
+    for entry in "$sub_state"/*.*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      name=$(basename "$entry")
+      case "$name" in x-*) continue ;; esac
+      # Only a .meta declares a task, so a stray file that does not even name a
+      # usable id is left alone rather than turned into a refusal to retire.
+      fm_task_id_path_safe "${name%%.*}" || continue
+      printf '%s\n' "${name%%.*}"
+    done
+  } | sort -u
+}
+
 validate_firstmate_home_children_removal() {
   local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
+  local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
-  for child_meta in "$sub_state"/*.meta; do
-    [ -e "$child_meta" ] || continue
-    child_id=$(basename "$child_meta" .meta)
+  while IFS= read -r child_id; do
+    [ -n "$child_id" ] || continue
+    child_ids+=("$child_id")
+  done <<EOF
+$(firstmate_home_child_ids "$sub_state")
+EOF
+  for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
     validate_pr_poll_cleanup "$sub_state" "$child_id" || return 1
+    child_meta="$sub_state/$child_id.meta"
+    [ -e "$child_meta" ] || continue
     child_wt=$(meta_value "$child_meta" worktree)
     child_kind=$(meta_value "$child_meta" kind)
     [ -n "$child_kind" ] || child_kind=ship
@@ -1268,13 +1310,25 @@ validate_firstmate_home_children_removal() {
   done
 }
 
+# The ids are read up front rather than iterated as a live glob, because this loop
+# removes records as it goes and the recursive child-home arm removes whole homes.
 cleanup_firstmate_home_children() {
   local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc
+  local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
-  for child_meta in "$sub_state"/*.meta; do
-    [ -e "$child_meta" ] || continue
-    child_id=$(basename "$child_meta" .meta)
+  while IFS= read -r child_id; do
+    [ -n "$child_id" ] || continue
+    child_ids+=("$child_id")
+  done <<EOF
+$(firstmate_home_child_ids "$sub_state")
+EOF
+  for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
+    child_meta="$sub_state/$child_id.meta"
+    if [ ! -e "$child_meta" ]; then
+      remove_task_state_records "$sub_state" "$child_id" || return 1
+      continue
+    fi
     child_wt=$(meta_value "$child_meta" worktree)
     child_proj=$(meta_value "$child_meta" project)
     child_kind=$(meta_value "$child_meta" kind)
@@ -1366,7 +1420,12 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
+# Both retirement paths sweep, not just the forced one. A home that occupies a
+# treehouse slot is returned for reuse rather than deleted, and its state/ is
+# gitignored, so any child record left here is inherited by the next task that
+# reuses that id. The refusal above already bars in-flight children from the
+# ordinary path, which leaves it only the records of children that are already gone.
+if [ "$KIND" = secondmate ]; then
   cleanup_firstmate_home_children "$HOME_PATH"
 fi
 
@@ -1454,8 +1513,10 @@ fi
 
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"
 # The one per-task record teardown may deliberately keep: an unconfirmed pane close
-# leaves the journal quarantined for inspection, so the record sweep is told to skip
-# it rather than the journal being absent from FM_TASK_RECORD_SUFFIXES.
+# leaves the journal quarantined for inspection, so the sweep below is told to skip
+# it. Retiring the whole home takes the opposite view of the same journal and sweeps
+# it, because a returned home is reused and a surviving journal would bind the next
+# task that reuses the id; a task keeping its own journal keeps its id.
 HERDR_PRESENTATION_RETAINED=()
 HERDR_PRESENTATION_RETIRE_CANDIDATE=0
 HERDR_PRESENTATION_SESSION=

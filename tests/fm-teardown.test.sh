@@ -2170,46 +2170,59 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
   pass "herdr projection teardown retains the stale journal and attempts no workspace cleanup when exact-pane close is unconfirmed"
 }
 
-# Every per-task record bin/ writes under a home's state/ directory must be
-# declared in bin/fm-teardown.sh's one inventory, so a new record reaches both the
-# task's own cleanup and the retired-secondmate child sweep. Without this, adding a
-# record is a normal change with nothing to remind the author that a second removal
-# path exists - and the sweep is the only thing that clears a child's records when
-# the retired home occupies a returned treehouse slot.
-test_every_per_task_record_suffix_is_declared() {
-  local declared undeclared written suffix
-  declared=$(sed -n \
-    '/^FM_TASK_RECORD_SUFFIXES=(/,/^)/p;/^FM_TASK_RECORD_SUFFIXES_GUARDED=(/,/^)/p' \
-    "$ROOT/bin/fm-teardown.sh" | grep -oE '^  \.[A-Za-z0-9][A-Za-z0-9.-]*' | tr -d ' ' | sort -u)
-  [ -n "$declared" ] || fail "fm-teardown.sh declares no per-task record inventory"
+# The record sweep is a state/<id>.* glob, so the dot after the id is the only thing
+# keeping a teardown of task-x1 away from task-x11's records. Ids that prefix one
+# another are ordinary (task-x1 and task-x11 both spawn cleanly), so a sweep that
+# lost that dot would silently destroy a live task's state.
+test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix() {
+  local case_dir
+  case_dir=$(make_case prefix-collision)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf 'running\n' > "$case_dir/state/task-x1.status"
+  printf 'window=fm-task-x11\n' > "$case_dir/state/task-x11.meta"
+  printf 'running\n' > "$case_dir/state/task-x11.status"
+  printf 'journal\n' > "$case_dir/state/task-x11.herdr-presentation"
 
-  # Suffixes written as a literal on a state-dir/task-id path, plus the ones a
-  # library exports as a named suffix constant.
-  written=$( { grep -rhoE '\$\{?(STATE|STATE_REAL|state|state_dir|sub_state)\}?/\$\{?(ID|id|child_id|task|task_id)\}?\.[A-Za-z0-9][A-Za-z0-9.-]*' \
-      "$ROOT"/bin/*.sh "$ROOT"/bin/backends/*.sh \
-      | grep -oE '\.[A-Za-z0-9][A-Za-z0-9.-]*$'
-    grep -rhoE "^[A-Za-z_]*SUFFIX=['\"]\.[A-Za-z0-9][A-Za-z0-9.-]*" \
-      "$ROOT"/bin/*.sh "$ROOT"/bin/backends/*.sh | sed -E "s/^.*=['\"]//"
-  } | sed 's/\.$//' | sort -u)
-  [ -n "$written" ] || fail "found no per-task record suffixes in bin/; the scan is broken"
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "prefix-collision: teardown failed"
 
-  undeclared=
-  while IFS= read -r suffix; do
-    [ -n "$suffix" ] || continue
-    printf '%s\n' "$declared" | grep -qxF "$suffix" \
-      || undeclared="$undeclared $suffix"
-  done <<EOF
-$written
-EOF
-  [ -z "$undeclared" ] || fail \
-    "per-task state record(s) not declared in fm-teardown.sh's inventory:$undeclared"$'\n'"Add each to FM_TASK_RECORD_SUFFIXES, or to FM_TASK_RECORD_SUFFIXES_GUARDED when a guarded helper removes it."
-  pass "every per-task record suffix is declared in one teardown inventory"
+  assert_absent "$case_dir/state/task-x1.status" \
+    "prefix-collision: the torn-down task kept its own status record"
+  assert_present "$case_dir/state/task-x11.meta" \
+    "prefix-collision: tearing down task-x1 destroyed task-x11's meta"
+  assert_present "$case_dir/state/task-x11.status" \
+    "prefix-collision: tearing down task-x1 destroyed task-x11's status"
+  assert_present "$case_dir/state/task-x11.herdr-presentation" \
+    "prefix-collision: tearing down task-x1 destroyed task-x11's journal"
+  pass "the per-task record sweep spares a longer task id that shares the prefix"
+}
+
+# The sweep takes any state/<id>.* record, so a record no list ever named goes with
+# the task rather than surviving into a reused home. This is the guarantee that
+# replaced the two hand-maintained removal lists.
+test_teardown_sweeps_an_undeclared_per_task_record() {
+  local case_dir
+  case_dir=$(make_case undeclared-record)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf 'some future record\n' > "$case_dir/state/task-x1.not-in-any-list"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "undeclared-record: teardown failed"
+
+  assert_absent "$case_dir/state/task-x1.not-in-any-list" \
+    "undeclared-record: a record no removal list names outlived its task"
+  pass "teardown sweeps a per-task record that no removal list names"
 }
 
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
-test_every_per_task_record_suffix_is_declared
+test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix
+test_teardown_sweeps_an_undeclared_per_task_record
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

@@ -1440,12 +1440,15 @@ EOF
   pass "secondmate force teardown discards child work"
 }
 
+# A retired home that occupies a treehouse slot is RETURNED to the pool, not
+# deleted, so the child record sweep is the only thing that clears a child's
+# records. A record it misses survives into a reusable home and is inherited by the
+# next task that reuses that id, which is why both the child sweep and a task's own
+# cleanup remove state/<id>.* as a glob rather than an enumerated list. The fixture
+# covers the records removed by that bare sweep, including one no list names; the
+# PR-check artifacts are guarded and reach removal only through
+# remove_pr_poll_artifacts, whose own refusals are covered separately.
 test_secondmate_force_teardown_clears_child_records_in_a_returned_slot() {
-  # A retired home that occupies a treehouse slot is RETURNED to the pool, not
-  # deleted, so the child record sweep is the only thing that clears a child's
-  # records. A record it misses survives into a reusable home and is inherited by
-  # the next task that reuses that id, which is why the sweep and the task's own
-  # cleanup both drive off one declared inventory in bin/fm-teardown.sh.
   local home subhome fakebin log lease fmroot suffix leftover leftovers
   home="$TMP_ROOT/slot-records-home"
   subhome="$TMP_ROOT/slot-records-subhome"
@@ -1467,8 +1470,6 @@ projects=alpha
 EOF
   printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
 
-  # One child task holding every per-task record the inventory declares, so the
-  # assertion covers the whole inventory rather than the suffixes in use today.
   cat > "$subhome/state/cm1.meta" <<EOF
 window=firstmate:fm-cm1
 harness=herdr
@@ -1477,16 +1478,13 @@ kind=ship
 mode=no-mistakes
 yolo=off
 EOF
-  while IFS= read -r suffix; do
-    [ -n "$suffix" ] || continue
-    # .meta is the fixture written above; the turn-end token files carry a value
-    # the auth removers reject, so the fixture never reaches a real hook registry.
-    [ "$suffix" = .meta ] || printf 'not-a-token/\n' > "$subhome/state/cm1$suffix"
-  done <<EOF
-$(sed -n '/^FM_TASK_RECORD_SUFFIXES=(/,/^)/p' "$ROOT/bin/fm-teardown.sh" \
-  | grep -oE '^  \.[A-Za-z0-9][A-Za-z0-9.-]*' | tr -d ' ')
-EOF
-  [ -e "$subhome/state/cm1.park-sighting" ] || fail "fixture did not read the record inventory"
+  for suffix in .status .turn-ended .pi-ext.ts .pause-recheck .park-sighting \
+    .herdr-presentation .not-in-any-removal-list; do
+    printf 'child record\n' > "$subhome/state/cm1$suffix"
+  done
+  # A token the auth removers reject, so the fixture never reaches a real hook registry.
+  printf 'not-a-token/\n' > "$subhome/state/cm1.grok-turnend-token"
+  printf 'not-a-token/\n' > "$subhome/state/cm1.kimi-turnend-token"
 
   fakebin=$(make_fake_tmux "$TMP_ROOT/slot-records-fake")
   log="$TMP_ROOT/slot-records-fake/tmux.log"
@@ -1508,6 +1506,95 @@ EOF
   [ -z "$leftovers" ] || fail \
     "child records survived into the returned home:"$'\n'"$leftovers"
   pass "forced secondmate teardown clears every child record in a returned treehouse slot"
+}
+
+# A child's own teardown removes its meta while deliberately keeping a Herdr journal
+# whose exact pane close it could not confirm, so the home's sweep cannot key on
+# *.meta: the id it must still visit is precisely the one with no meta left.
+test_secondmate_force_teardown_clears_a_child_record_that_outlived_its_meta() {
+  local home subhome fakebin log lease fmroot
+  home="$TMP_ROOT/orphan-records-home"
+  subhome="$TMP_ROOT/orphan-records-subhome"
+  fmroot="$TMP_ROOT/orphan-records-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  # No cm1.meta: the child already tore itself down and retained only the journal.
+  printf 'journal\n' > "$subhome/state/cm1.herdr-presentation"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/orphan-records-fake")
+  log="$TMP_ROOT/orphan-records-fake/tmux.log"
+  lease="$TMP_ROOT/orphan-records-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/orphan-records-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "force teardown failed to retire a secondmate holding a meta-less child record"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$subhome/state/cm1.herdr-presentation" ] \
+    || fail "a child journal that outlived its meta survived a forced retirement into the returned home"
+  pass "forced secondmate teardown clears a child record that outlived its meta"
+}
+
+# Ordinary retirement returns the same reusable home, so it has to sweep too. It
+# refuses while any child meta is present, which leaves it exactly the records of
+# children that are already gone - and those are what a reused id would inherit.
+test_secondmate_teardown_clears_child_records_without_force() {
+  local home subhome fakebin log lease fmroot
+  home="$TMP_ROOT/plain-records-home"
+  subhome="$TMP_ROOT/plain-records-subhome"
+  fmroot="$TMP_ROOT/plain-records-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  printf 'journal\n' > "$subhome/state/cm1.herdr-presentation"
+  printf 'deadbeef 12345\n' > "$subhome/state/cm1.park-sighting"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/plain-records-fake")
+  log="$TMP_ROOT/plain-records-fake/tmux.log"
+  lease="$TMP_ROOT/plain-records-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/plain-records-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "ordinary teardown failed to retire a secondmate holding leftover child records"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$lease" ] || fail "teardown left the secondmate home lease held after retirement"
+  [ ! -e "$subhome/state/cm1.herdr-presentation" ] \
+    || fail "a child journal survived an ordinary retirement into the returned home"
+  [ ! -e "$subhome/state/cm1.park-sighting" ] \
+    || fail "a child park sighting survived an ordinary retirement into the returned home"
+  pass "ordinary secondmate teardown clears leftover child records in a returned treehouse slot"
 }
 
 test_secondmate_force_teardown_refuses_child_quarantine_symlink() {
@@ -2279,6 +2366,8 @@ test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
 test_secondmate_force_teardown_discards_child_work
 test_secondmate_force_teardown_clears_child_records_in_a_returned_slot
+test_secondmate_force_teardown_clears_a_child_record_that_outlived_its_meta
+test_secondmate_teardown_clears_child_records_without_force
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home
