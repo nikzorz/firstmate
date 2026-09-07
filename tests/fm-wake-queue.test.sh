@@ -348,6 +348,135 @@ SH
   pass "bounded reads and per-item/global caps fail open with explicit truncation and omission markers"
 }
 
+test_open_decision_survives_a_later_status_line() {
+  local dir state out annotation_count
+  dir=$(make_case open-decision)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # The masking sequence: a keyed request, then an ordinary progress line. The
+  # latest event alone shows only the progress line.
+  printf 'needs-decision [key=r3]: two ask-user findings\n' > "$state/masked.status"
+  printf 'working: investigating a failing test\n' >> "$state/masked.status"
+  # Answered, then progress. A resolved request must not resurface.
+  printf 'needs-decision [key=r3]: two ask-user findings\n' > "$state/answered.status"
+  printf 'resolved [key=r3]: firstmate chose the shared fix\n' >> "$state/answered.status"
+  printf 'working: applying it\n' >> "$state/answered.status"
+  # A request that IS the latest event needs no second copy of itself.
+  printf 'needs-decision [key=api]: choose an API shape\n' > "$state/current.status"
+  # A second request masks the first exactly as a working line does: the newest
+  # one rides the latest-event line, and the older one must still be surfaced.
+  printf 'needs-decision [key=a]: pick A or B\n' > "$state/two.status"
+  printf 'working: still poking\n' >> "$state/two.status"
+  printf 'needs-decision [key=b]: pick C or D\n' >> "$state/two.status"
+  # Several open at once: the newest is annotated and the rest are counted.
+  printf 'needs-decision [key=x]: choose a rollout order\n' > "$state/stack.status"
+  printf 'blocked [key=y]: the staging credential expired\n' >> "$state/stack.status"
+  printf 'working: chasing the credential owner\n' >> "$state/stack.status"
+  # A file that never carried a request annotates exactly as before.
+  printf 'working: first\ndone: latest event\n' > "$state/plain.status"
+
+  append_wake "$state" signal masked.status "signal: masked" || fail "masked status wake append failed"
+  append_wake "$state" signal answered.status "signal: answered" || fail "answered status wake append failed"
+  append_wake "$state" signal current.status "signal: current" || fail "current status wake append failed"
+  append_wake "$state" signal two.status "signal: two" || fail "two-request status wake append failed"
+  append_wake "$state" signal stack.status "signal: stack" || fail "stacked status wake append failed"
+  append_wake "$state" signal plain.status "signal: plain" || fail "plain status wake append failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "open-decision drain failed"
+
+  grep -F 'wake annotation: open decision or blocker not superseded by the latest event: masked.status: needs-decision [key=r3]: two ask-user findings' "$out" >/dev/null \
+    || fail "a later status line hid the unanswered decision request"
+  grep -F 'latest wake-EVENT observed at drain, not current state: masked.status: working: investigating a failing test' "$out" >/dev/null \
+    || fail "the unanswered decision replaced the latest event instead of joining it"
+  if grep -E '^wake annotation: open decision or blocker.*: answered\.status:' "$out" >/dev/null; then
+    fail "a resolved decision resurfaced"
+  fi
+  if grep -E '^wake annotation: open decision or blocker.*: (current|plain)\.status:' "$out" >/dev/null; then
+    fail "annotated an unanswered decision that the latest event already carried"
+  fi
+  grep -Fx 'wake annotation: open decision or blocker not superseded by the latest event: two.status: needs-decision [key=a]: pick A or B' "$out" >/dev/null \
+    || fail "a later request hid the earlier unanswered one"
+  grep -F 'latest wake-EVENT observed at drain, not current state: two.status: needs-decision [key=b]: pick C or D' "$out" >/dev/null \
+    || fail "the latest request was dropped from the annotation"
+  if grep -E '^wake annotation: open decision or blocker.*: two\.status: needs-decision \[key=b\]' "$out" >/dev/null; then
+    fail "the request the latest event already carried was printed twice"
+  fi
+  grep -Fx 'wake annotation: open decision or blocker not superseded by the latest event: stack.status: blocked [key=y]: the staging credential expired (+1 older still open in the status tail read)' "$out" >/dev/null \
+    || fail "the newest open request and the count of the rest were not annotated"
+  annotation_count=$(grep -c '^wake annotation: open decision or blocker' "$out" || true)
+  [ "$annotation_count" -eq 3 ] || fail "expected exactly three open-decision annotations, got $annotation_count"
+  pass "an unanswered keyed decision request survives later status lines and a resolved one stays closed"
+}
+
+# The bounded tail read starts wherever the byte cap falls. When that boundary
+# lands exactly on a newline the chunk's first line is whole, so treating it as a
+# fragment silently drops a request no later line closed.
+test_open_decision_survives_a_newline_aligned_tail_boundary() {
+  local dir state out size boundary
+  dir=$(make_case tail-boundary)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # Sized so the request line starts exactly 8192 bytes before EOF, which puts the
+  # read boundary on the newline that ends the line before it.
+  awk 'BEGIN {
+    head = "working: before the read window"
+    request = "needs-decision [key=p]: pick the boundary head"
+    last = "working: later line"
+    pad = 8192 - (length(request) + 1) - (length(last) + 1) - length("working: ") - 1
+    printf "%s\n%s\nworking: ", head, request
+    for (i = 0; i < pad; i++) printf "z"
+    printf "\n%s\n", last
+  }' > "$state/head.status"
+  size=$(wc -c < "$state/head.status" | tr -d ' ')
+  [ "$size" -gt 8192 ] || fail "fixture did not exceed the bounded tail read"
+  boundary=$(head -c $((size - 8192)) "$state/head.status" | tail -c 1 | od -An -tu1 | tr -d '[:space:]')
+  [ "$boundary" = 10 ] || fail "fixture did not align the tail boundary with a newline"
+  append_wake "$state" signal head.status "signal: head" || fail "boundary status wake append failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tail-boundary drain failed"
+
+  grep -Fx 'wake annotation: open decision or blocker not superseded by the latest event: head.status: needs-decision [key=p]: pick the boundary head' "$out" >/dev/null \
+    || fail "a newline-aligned read boundary discarded a complete open request"
+  grep -Fx 'wake annotation: latest wake-EVENT observed at drain, not current state: head.status: working: later line' "$out" >/dev/null \
+    || fail "the latest event was dropped or marked truncated at an aligned boundary"
+  pass "a complete request on the tail boundary is folded, not discarded as a fragment"
+}
+
+# Under cap pressure the open request outranks the latest event, so a budget that
+# cannot hold the open-decision line must not spend that space on the same file's
+# latest-event line instead.
+test_open_decision_outranks_the_latest_event_under_the_global_cap() {
+  local dir state out i annotation_count
+  dir=$(make_case cap-priority)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # Three annotations that each land on the 2048-byte per-item cap leave room for
+  # the short latest-event line below but not for its long open-decision line.
+  i=1
+  while [ "$i" -le 3 ]; do
+    awk -v n="$i" 'BEGIN { printf "done: fill-%d ", n; for (j = 0; j < 3000; j++) printf "f"; printf "\n" }' > "$state/fill-$i.status"
+    append_wake "$state" signal "fill-$i.status" "signal: fill-$i" || fail "fill status wake append failed"
+    i=$((i + 1))
+  done
+  awk 'BEGIN { printf "needs-decision [key=z]: "; for (j = 0; j < 3000; j++) printf "q"; printf "\n" }' > "$state/squeezed.status"
+  printf 'working: short\n' >> "$state/squeezed.status"
+  append_wake "$state" signal squeezed.status "signal: squeezed" || fail "squeezed status wake append failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "cap-priority drain failed"
+
+  annotation_count=$(grep -cE '^wake annotation: latest.*: fill-[123]\.status:' "$out" || true)
+  [ "$annotation_count" -eq 3 ] || fail "the fill annotations did not consume the global budget as designed"
+  if grep -E '^wake annotation: .*: squeezed\.status:' "$out" >/dev/null; then
+    fail "the latest event took the budget the open request it yields to could not fit in"
+  fi
+  grep -Fx 'wake annotation: 2 annotations omitted (global enrichment byte cap)' "$out" >/dev/null \
+    || fail "the yielded latest-event line was not counted omitted"
+  pass "an open request that cannot fit the global cap takes its latest-event line with it"
+}
+
 wait_for_file_text() {  # <file> <fixed-text>
   local file=$1 expected=$2 i=0
   while [ "$i" -lt 100 ]; do
@@ -441,3 +570,6 @@ test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_caps_and_status_file_failures
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
 test_interruption_before_and_after_raw_commit
+test_open_decision_survives_a_later_status_line
+test_open_decision_survives_a_newline_aligned_tail_boundary
+test_open_decision_outranks_the_latest_event_under_the_global_cap
