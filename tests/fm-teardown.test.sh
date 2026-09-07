@@ -2236,6 +2236,31 @@ test_teardown_refuses_a_state_dir_holding_a_dotted_task_id() {
   pass "teardown refuses a state directory holding a task id the record namespace cannot separate"
 }
 
+# The refusal reaches exactly as far as the sweep does. A legacy dotted id that
+# state/<ID>.* cannot match is not this task's problem, so it must not make every
+# other task in the home permanently un-teardownable.
+test_teardown_sweeps_a_task_a_legacy_dotted_id_cannot_collide_with() {
+  local case_dir
+  case_dir=$(make_case noncolliding-dotted-id)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf 'running\n' > "$case_dir/state/task-x1.status"
+  printf 'window=fm-legacy.1\n' > "$case_dir/state/legacy.1.meta"
+  printf 'running\n' > "$case_dir/state/legacy.1.status"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "noncolliding-dotted-id: teardown refused over an id its sweep cannot reach"
+
+  assert_absent "$case_dir/state/task-x1.status" \
+    "noncolliding-dotted-id: the torn-down task kept its own status record"
+  assert_present "$case_dir/state/legacy.1.meta" \
+    "noncolliding-dotted-id: the sweep reached an unrelated legacy id"
+  assert_present "$case_dir/state/legacy.1.status" \
+    "noncolliding-dotted-id: the sweep reached an unrelated legacy id's records"
+  pass "teardown sweeps a task a legacy dotted id cannot collide with"
+}
+
 # Creation-time validation cannot protect ids that already exist in a home, so the
 # refusal has to stand on the resolved id too: a dot or the reserved x- prefix means
 # teardown removes nothing rather than sweeping a glob it cannot attribute.
@@ -2307,6 +2332,7 @@ test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
 test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix
 test_teardown_refuses_a_state_dir_holding_a_dotted_task_id
+test_teardown_sweeps_a_task_a_legacy_dotted_id_cannot_collide_with
 test_teardown_refuses_an_unsafe_resolved_task_id
 test_teardown_sweeps_an_undeclared_per_task_record
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present

@@ -1551,6 +1551,58 @@ EOF
   pass "forced secondmate teardown clears a child record that outlived its meta"
 }
 
+# The record sweep is all-or-nothing on both paths: a child whose PR-poll retirement
+# receipt fails validation must refuse before any child's records are cleared, not
+# after the ones sorting ahead of it are already gone. A deliberately quarantined
+# Herdr journal is exactly the kind of evidence a partial sweep would destroy.
+test_secondmate_teardown_prevalidates_every_child_before_clearing_any() {
+  local home subhome fakebin log lease fmroot rc err
+  home="$TMP_ROOT/prevalidate-records-home"
+  subhome="$TMP_ROOT/prevalidate-records-subhome"
+  fmroot="$TMP_ROOT/prevalidate-records-fmroot"
+  err="$TMP_ROOT/prevalidate-records.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  # No metas, so the in-flight refusal stays quiet and the sweep is what runs. cma
+  # sorts ahead of cmb, whose retirement receipt cannot be validated.
+  printf 'journal\n' > "$subhome/state/cma.herdr-presentation"
+  printf 'not a retirement receipt\n' > "$subhome/state/cmb.pr-poll-retirement"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/prevalidate-records-fake")
+  log="$TMP_ROOT/prevalidate-records-fake/tmux.log"
+  lease="$TMP_ROOT/prevalidate-records-fake/lease"
+  printf 'domain\n' > "$lease"
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/prevalidate-records-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "ordinary retirement accepted an unvalidatable child retirement receipt"
+  grep -q REFUSED "$err" || fail "ordinary retirement did not refuse loudly on the child receipt"
+  [ -e "$subhome/state/cma.herdr-presentation" ] \
+    || fail "a child's quarantined journal was cleared before a later child refused"
+  [ -e "$subhome/state/cmb.pr-poll-retirement" ] \
+    || fail "the refusing child's own records were cleared"
+  pass "secondmate retirement prevalidates every child before clearing any records"
+}
+
 # Ordinary retirement returns the same reusable home, so it has to sweep too. It
 # refuses while any child meta is present, which leaves it exactly the records of
 # children that are already gone - and those are what a reused id would inherit.
@@ -2368,6 +2420,7 @@ test_secondmate_force_teardown_discards_child_work
 test_secondmate_force_teardown_clears_child_records_in_a_returned_slot
 test_secondmate_force_teardown_clears_a_child_record_that_outlived_its_meta
 test_secondmate_teardown_clears_child_records_without_force
+test_secondmate_teardown_prevalidates_every_child_before_clearing_any
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home

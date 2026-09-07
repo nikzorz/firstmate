@@ -49,8 +49,9 @@
 # state/<id>.* in remove_task_state_records, which the task's own cleanup and the
 # retired-secondmate child sweep both call. A new record needs no declaration and
 # no second list to keep in step: the glob already reaches it on both paths. That
-# glob attributes a record by its id prefix, so teardown refuses outright on a state
-# directory holding an id the record namespace cannot separate.
+# glob attributes a record by its id prefix, so teardown refuses rather than sweep
+# when a task that still has a meta carries an id the record namespace cannot
+# separate. Only ids that still have a meta are visible to that check.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, discards
@@ -396,18 +397,27 @@ remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
   done
 }
 
-# A state directory can only be swept while every task id in it is separable from
-# the suffixes that follow it. The creation gate enforces that now, but a home seeded
-# before it did can still hold an id that carries a dot or the reserved x- prefix,
-# and no rule recovers which task owns state/v1.2.status once one does. So teardown
-# names the offending id and stops rather than deleting on a guess.
-state_dir_sweep_safe() {  # <state_dir>
-  local state_dir=$1 meta id
+# Records can only be attributed to a task while its id is separable from the
+# suffixes that follow it. The creation gate enforces that now, but a home seeded
+# before it did can still hold an id carrying a dot or the reserved x- prefix, and no
+# rule recovers which task owns state/v1.2.status once one does. So teardown names
+# the offending id and stops rather than deleting on a guess.
+# Only declared tasks are visible here, meaning ids that still have a meta: a record
+# that outlived an unsafe id's meta is indistinguishable from a suffix of the shorter
+# id and is swept with it. Given <swept-id> the check narrows to the ids a sweep of
+# state/<swept-id>.* can actually reach, so an unrelated legacy id does not make its
+# neighbours un-teardownable; with no id every declared one is checked, which is what
+# a retired home's sweep touches.
+state_dir_sweep_safe() {  # <state_dir> [<swept-id>]
+  local state_dir=$1 swept=${2-} meta id
   [ -d "$state_dir" ] || return 0
   for meta in "$state_dir"/*.meta; do
     [ -e "$meta" ] || continue
     id=$(basename "$meta" .meta)
     fm_task_id_record_namespace_safe "$id" && continue
+    if [ -n "$swept" ] && [ "$id" != "$swept" ]; then
+      case "$id" in "$swept".*) ;; *) continue ;; esac
+    fi
     echo "REFUSED: task id $id in $state_dir cannot be swept safely; teardown removed nothing." >&2
     echo "state/<id>.<suffix> is one namespace, so a task id may carry neither a dot nor the reserved x- prefix. Clear that task's records by hand after inspecting them." >&2
     return 1
@@ -1420,15 +1430,12 @@ remove_secondmate_registry_entry() {
   mv "$tmp" "$SECONDMATE_REG"
 }
 
-state_dir_sweep_safe "$STATE" || exit 1
+state_dir_sweep_safe "$STATE" "$ID" || exit 1
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
   validate_firstmate_home_for_removal "$HOME_PATH" "secondmate home" "$ID" >/dev/null || exit 1
-  if [ "$FORCE" = "--force" ]; then
-    validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
-  fi
 fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
@@ -1448,7 +1455,10 @@ fi
 # gitignored, so any child record left here is inherited by the next task that
 # reuses that id. The refusal above already bars in-flight children from the
 # ordinary path, which leaves it only the records of children that are already gone.
+# Prevalidating first is what makes either sweep all-or-nothing: a child that refuses
+# halfway through would otherwise leave the children before it already cleared.
 if [ "$KIND" = secondmate ]; then
+  validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
   cleanup_firstmate_home_children "$HOME_PATH"
 fi
 
