@@ -51,11 +51,11 @@
 #                          resume. A threshold reached while the crew's run step
 #                          is still advancing behind a confirmed-live endpoint is
 #                          absorbed instead and restarts the window, re-surfacing
-#                          only on the long recheck cadence; that absorb carries
-#                          the same count, so its
-#                          FM_WEDGE_DEMAND_INSPECT_COUNTth recheck demands
-#                          inspection rather than absorbing again
-#                          (wedge_timer_check below owns all three).
+#                          only on the long recheck cadence; that absorb keeps
+#                          its own count of the rechecks it raises, under the
+#                          same FM_WEDGE_DEMAND_INSPECT_COUNT, so the recheck
+#                          reaching it demands inspection rather than absorbing
+#                          again (wedge_timer_check below owns all three).
 #                          Unless afk is active.
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: rejected unauthenticated state checks: <paths>
