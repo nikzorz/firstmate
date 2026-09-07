@@ -495,7 +495,7 @@ FM_WAKE_EVENT_TRUNCATED=false
 FM_WAKE_EVENT_CHUNK=
 FM_WAKE_EVENT_PARTIAL_HEAD=false
 fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
-  local path=$1 tail_bytes=$2 result size chunk record line_number
+  local path=$1 tail_bytes=$2 result size partial chunk record line_number
   FM_WAKE_EVENT_LINE=
   FM_WAKE_EVENT_TRUNCATED=false
   FM_WAKE_EVENT_CHUNK=
@@ -508,8 +508,17 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
     my $size = $stat[7];
     exit 1 unless $size =~ /\A\d+\z/;
     my $start = $size > $limit ? $size - $limit : 0;
+    # The byte before the boundary decides this: a boundary that landed just
+    # after a newline leaves the chunk first line complete.
+    my $partial = 0;
+    if ($start > 0) {
+      seek($file, $start - 1, 0) or exit 1;
+      my $read = read($file, my $prior, 1);
+      exit 1 unless defined $read && $read == 1;
+      $partial = 1 unless $prior eq "\n";
+    }
     seek($file, $start, 0) or exit 1;
-    printf "%s\t", $size or exit 1;
+    printf "%s\t%d\t", $size, $partial or exit 1;
     my $remaining = $size - $start;
     while ($remaining > 0) {
       my $read = read($file, my $buffer, $remaining);
@@ -520,11 +529,14 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
     }
   ' "$path" "$tail_bytes" 2>/dev/null) || return 1
   size=${result%%$'\t'*}
+  result=${result#*$'\t'}
+  partial=${result%%$'\t'*}
   chunk=${result#*$'\t'}
   case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  case "$partial" in 0|1) ;; *) return 1 ;; esac
   [ -n "$chunk" ] || return 1
   FM_WAKE_EVENT_CHUNK=$chunk
-  [ "$size" -le "$tail_bytes" ] || FM_WAKE_EVENT_PARTIAL_HEAD=true
+  [ "$partial" = 0 ] || FM_WAKE_EVENT_PARTIAL_HEAD=true
   record=$(printf '%s' "$chunk" | LC_ALL=C awk '
     /[^[:space:]]/ { line = $0; line_number = NR }
     END { if (line_number) printf "%d\t%s", line_number, line }
@@ -533,7 +545,7 @@ fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
   line_number=${record%%	*}
   FM_WAKE_EVENT_LINE=${record#*	}
   FM_WAKE_EVENT_LINE=$(printf '%s' "$FM_WAKE_EVENT_LINE" | LC_ALL=C tr '\t\r' '  ')
-  if [ "$size" -gt "$tail_bytes" ] && [ "$line_number" -eq 1 ]; then
+  if [ "$FM_WAKE_EVENT_PARTIAL_HEAD" = true ] && [ "$line_number" -eq 1 ]; then
     FM_WAKE_EVENT_TRUNCATED=true
   fi
 }
@@ -610,6 +622,9 @@ fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
 _FM_WAKE_ANNOT_OUTPUT=''
 _FM_WAKE_ANNOT_USED=0
 _FM_WAKE_ANNOT_OMITTED=0
+_fm_wake_annotation_omit() {
+  _FM_WAKE_ANNOT_OMITTED=$((_FM_WAKE_ANNOT_OMITTED + 1))
+}
 _fm_wake_annotation_append() {  # <line> <item-bytes> <global-bytes> <marker-reserve>
   local line=$1 item_bytes=$2 global_bytes=$3 marker_reserve=$4 suffix keep bytes
   if [ $(( ${#line} + 1 )) -gt "$item_bytes" ]; then
@@ -619,7 +634,7 @@ _fm_wake_annotation_append() {  # <line> <item-bytes> <global-bytes> <marker-res
   fi
   bytes=$(( ${#line} + 1 ))
   if [ $((_FM_WAKE_ANNOT_USED + bytes + marker_reserve)) -gt "$global_bytes" ]; then
-    _FM_WAKE_ANNOT_OMITTED=$((_FM_WAKE_ANNOT_OMITTED + 1))
+    _fm_wake_annotation_omit
     return 1
   fi
   _FM_WAKE_ANNOT_OUTPUT="$_FM_WAKE_ANNOT_OUTPUT$line
@@ -682,9 +697,12 @@ fm_wake_print_annotations() {  # <deduped-raw-rows>
     if fm_wake_open_decision "$FM_WAKE_EVENT_CHUNK" "$FM_WAKE_EVENT_PARTIAL_HEAD" "$FM_WAKE_EVENT_LINE"; then
       line="wake annotation: open decision or blocker not superseded by the latest event: $status_key: $FM_WAKE_OPEN_DECISION"
       if [ "$FM_WAKE_OPEN_DECISION_OLDER" -gt 0 ]; then
-        line="$line (+$FM_WAKE_OPEN_DECISION_OLDER older still open)"
+        line="$line (+$FM_WAKE_OPEN_DECISION_OLDER older still open in the status tail read)"
       fi
-      _fm_wake_annotation_append "$line" "$item_bytes" "$global_bytes" "$marker_reserve" || true
+      if ! _fm_wake_annotation_append "$line" "$item_bytes" "$global_bytes" "$marker_reserve"; then
+        _fm_wake_annotation_omit
+        continue
+      fi
     fi
     line="$prefix: $status_key: $FM_WAKE_EVENT_LINE"
     suffix=''
