@@ -1579,12 +1579,150 @@ test_absorbed_advancing_run_resurfaces_on_the_long_cadence() {
   grep -F "still advancing" "$out" >/dev/null || fail "the recheck was not labeled a still-advancing recheck: $(cat "$out")"
   grep -F "possible wedge" "$out" >/dev/null && fail "the long-cadence recheck was mislabeled a possible wedge"
   [ -e "$state/.advancing-resurfaced-$key" ] || fail "the recheck throttle marker was not recorded"
+  [ "$(cat "$state/.advancing-absorbs-$key" 2>/dev/null)" = 1 ] || fail "the recheck did not advance the absorb cap count"
   [ ! -s "$state/.wedge-escalations-$key" ] || fail "a recheck must not count as a wedge escalation"
   [ -s "$state/.stale-since-$key" ] || fail "the recheck cleared the wedge timer instead of restarting it"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the advancing-run recheck failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the advancing-run recheck was not queued"
   unset FM_FAKE_CREW_STATE
   pass "an absorbed advancing run stays quiet inside its window, then re-surfaces once as a recheck"
+}
+
+# --- the advancing absorb's own recheck run is capped -------------------------
+# The cadence above spaces the rechecks; it does not bound how many there are.
+# A crew halted on an interactive prompt keeps a live endpoint and an
+# unmeasurable `working` run step, so it would earn that recheck once per window
+# forever and never be named a wedge - and the consecutive-ESCALATION count
+# cannot stop it, because an absorb escalates nothing. The absorb therefore keeps
+# its own count of the rechecks it has raised in a row, capped by the same
+# FM_WEDGE_DEMAND_INSPECT_COUNT, and the recheck reaching that count escalates
+# demanding inspection instead of absorbing again. This is the away-mode daemon's
+# policy applied on the watcher's path.
+test_advancing_absorb_recheck_run_is_capped() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid back
+  dir=$(make_case wedge-advancing-cap); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-halted"
+  printf 'no-mistakes axi run: validating...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/halted.meta"
+  printf 'working: handed off to validation\n' > "$state/halted.status"
+  sig=$(seen_sig "$state/halted.status"); printf '%s' "$sig" > "$state/.seen-halted_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "no-mistakes axi run: validating...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # This absorb has already raised its allowance of rechecks minus one, so the
+  # recheck this poll would raise is the one that must escalate instead.
+  echo 2 > "$state/.advancing-absorbs-$key"
+  # The idle-age anchor: the pane signature record has not been rewritten in
+  # 5000s, so the pane has genuinely sat unchanged that long.
+  back=$(( $(date +%s) - 5000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.hash-$key"
+  else touch -m -d "@$back" "$state/.hash-$key"; fi
+  # Exactly the reading the cap exists for: alive endpoint, `working` run step,
+  # no elapsed figure behind it.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (background run)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=3600 FM_WEDGE_DEMAND_INSPECT_COUNT=3 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "an absorbed advancing run kept absorbing past its recheck cap"
+  grep -F "demand-deep-inspection" "$out" >/dev/null || fail "the cap did not escalate demanding inspection: $(cat "$out")"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the cap escalation was not named a possible wedge: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the capped absorb failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the cap escalation was not queued"
+  # The cap does not stick: the escalation clears the count it describes so a
+  # crew that recovers is not left flagged.
+  [ ! -e "$state/.advancing-absorbs-$key" ] || fail "the absorb count survived the escalation it produced"
+  # The timer the absorb restarted stays, so the episode outlives the escalation
+  # and triage repeats on the long cadence instead of ending here.
+  [ -s "$state/.stale-since-$key" ] || fail "the cap escalation dropped the wedge timer the absorb restarted"
+  # The escalation stands in for the recheck this window owed, so it spends that
+  # window: the next absorb waits a full cadence rather than raising one on top
+  # of the wake firstmate is already reading.
+  [ -e "$state/.advancing-resurfaced-$key" ] || fail "the cap escalation did not spend its recheck window"
+  unset FM_FAKE_CREW_STATE
+  pass "the advancing absorb's rechecks are capped and the cap escalation clears only the count"
+}
+
+# --- the capped absorb keeps triaging an overridden terminal status ----------
+# wedge_timer_check has a second caller: a captain-relevant status line the crew
+# wrote BEFORE handing off (`done:`), overridden by a still-advancing run. That
+# caller only reaches the function while the wedge timer file exists, so the cap
+# escalation deliberately leaves the timer the absorb restarted - dropping it
+# there would buy one demand-inspection and then permanent silence for that hash,
+# since only a NEW pane hash records the marker again. The pane must instead be
+# absorbed again and earn the next demand-inspection a cap of rechecks later.
+test_capped_absorb_keeps_triaging_an_overridden_terminal_status() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid back
+  dir=$(make_case wedge-advancing-cap-terminal); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-handed-off"
+  printf 'no-mistakes axi run: validating...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/handed.meta"
+  # The status log's last line stays captain-relevant for the whole run, so every
+  # poll takes the overridden-terminal branch rather than the non-terminal one.
+  printf 'done: implementation complete, ready to validate\n' > "$state/handed.status"
+  sig=$(seen_sig "$state/handed.status"); printf '%s' "$sig" > "$state/.seen-handed_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "no-mistakes axi run: validating...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # This hash was already overridden as provably-working on an earlier poll, so
+  # the crew state is not re-read and the wedge timer alone carries the triage.
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  back=$(( $(date +%s) - 5000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.hash-$key"
+  else touch -m -d "@$back" "$state/.hash-$key"; fi
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (background run)'
+
+  # Phase A: the cap is one recheck from spent, so this poll escalates.
+  echo 2 > "$state/.advancing-absorbs-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=3600 FM_WEDGE_DEMAND_INSPECT_COUNT=3 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the overridden terminal status kept absorbing past its recheck cap"
+  grep -F "demand-deep-inspection" "$out" >/dev/null \
+    || fail "the cap did not escalate demanding inspection on the overridden-terminal path: $(cat "$out")"
+
+  # Phase B: the pane is still frozen a full cadence later. The episode outlives
+  # the escalation, so the same reading is absorbed again and re-surfaces as a
+  # recheck - the cycle repeats instead of going silent. Only a timer the watcher
+  # itself left is wound forward: re-creating a dropped one would hand this caller
+  # the very file whose absence ends its triage, and hide the silence.
+  [ -e "$state/.stale-since-$key" ] && echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.advancing-resurfaced-$key"
+  else touch -m -d "@$back" "$state/.advancing-resurfaced-$key"; fi
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=3600 FM_WEDGE_DEMAND_INSPECT_COUNT=3 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 \
+    || fail "the overridden terminal status went silent after its cap escalation: $(cat "$out")"
+  grep -F "still advancing" "$out" >/dev/null \
+    || fail "the pane did not re-surface as a still-advancing recheck after the cap escalation: $(cat "$out")"
+  [ "$(cat "$state/.advancing-absorbs-$key" 2>/dev/null)" = 1 ] \
+    || fail "the recheck after the cap escalation did not start a fresh absorb run"
+  # Still armed for the cycle after this one: this caller reaches triage only
+  # while the timer exists, so the absorb has to keep restarting it.
+  [ -s "$state/.stale-since-$key" ] || fail "the repeated cycle left no wedge timer for the next one"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the repeated cycle failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null \
+    || fail "the wakes from the repeated cycle were not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a capped absorb on an overridden terminal status keeps its timer, so triage repeats instead of going silent"
 }
 
 # --- non-terminal stale, crew NOT provably working: surfaced immediately ------
@@ -2845,6 +2983,8 @@ test_demand_deep_inspection_outranks_the_advancing_absorb
 test_advancing_run_over_an_unconfirmed_endpoint_still_escalates
 test_busy_pane_verdict_over_a_live_endpoint_still_escalates
 test_absorbed_advancing_run_resurfaces_on_the_long_cadence
+test_advancing_absorb_recheck_run_is_capped
+test_capped_absorb_keeps_triaging_an_overridden_terminal_status
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced

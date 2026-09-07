@@ -51,8 +51,12 @@
 #                          resume. A threshold reached while the crew's run step
 #                          is still advancing behind a confirmed-live endpoint is
 #                          absorbed instead and restarts the window, re-surfacing
-#                          only on the long recheck cadence (wedge_timer_check
-#                          below owns both). Unless afk is active.
+#                          only on the long recheck cadence; that absorb keeps
+#                          its own count of the rechecks it raises, under the
+#                          same FM_WEDGE_DEMAND_INSPECT_COUNT, so the recheck
+#                          reaching it demands inspection rather than absorbing
+#                          again (wedge_timer_check below owns all three).
+#                          Unless afk is active.
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
@@ -262,16 +266,28 @@ recorded_windows() {
   done
 }
 
-# Consecutive wedge-escalation count for a window past FM_WEDGE_DEMAND_INSPECT_COUNT
-# (default 3): a pane that keeps re-wedging on the SAME stale hash - each
-# escalation gets absorbed again as "still validating" one poll later, since the
-# hash never changes - can otherwise repeat forever with no signal that this is
-# no longer a one-off. At the threshold, wedge_timer_check appends a
-# "demand-deep-inspection" marker to the wake payload so the wake reason itself
-# (not just repetition the supervisor has to notice on its own) forces a closer
-# look instead of another routine supervision resume. Reset wherever a window's
-# pane/hash state resets to genuinely active (see the two rm-on-reset call sites
-# below).
+# The count at which a window that keeps reaching the wedge threshold on the SAME
+# stale hash stops being handled routinely and starts demanding a closer look
+# (default 3). Two independent runs of repetition are capped by it, and both end
+# the same way: wedge_timer_check appends a "demand-deep-inspection" marker to the
+# wake payload, so the wake reason itself - not repetition the supervisor has to
+# notice on its own - forces the look instead of another routine supervision
+# resume.
+#
+#   .wedge-escalations-<key>   consecutive ESCALATIONS. Each one gets absorbed
+#     again as "still validating" one poll later, since the hash never changes,
+#     so without the cap it repeats forever with no signal that this is no longer
+#     a one-off.
+#   .advancing-absorbs-<key>   consecutive long-cadence RECHECKS raised by the
+#     still-advancing-run absorb. wedge_timer_check owns why that run needs its
+#     own cap and why the two counts stay separate.
+#
+# Both reset wherever a window's pane/hash state resets to genuinely active (see
+# the rm-on-reset call sites below). The absorb count additionally clears on every
+# escalation, its own included, because an escalation is what breaks a run of
+# absorbs; the escalation count deliberately survives one, because surviving is
+# how it counts. The away-mode daemon applies the same cap to the same absorb on
+# its own path (bin/fm-supervise-daemon.sh).
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}
 
 # The long-cadence recheck, shared by the two absorbs that can hold ONE unchanged
@@ -322,7 +338,38 @@ raise_resurface() {  # <window> <throttle-file> <reason>
 # That cadence sits strictly BEHIND the stalled reading - a run that has stopped
 # advancing fails the test and escalates immediately, exactly as it always did.
 #
-# Three limits keep this from becoming a way to go quiet. The run step is graded
+# A cadence alone is not a bound, though, and .advancing-absorbs-<key> is what
+# supplies one. The shape that MOTIVATES it is a crew halted on an interactive
+# prompt: a live endpoint and an unmeasurable `working` run step, which earns that
+# recheck once per window forever and is never named a wedge. Counting escalations
+# cannot cap it, because an absorb escalates nothing - so the absorb carries its
+# own count of the rechecks it has RAISED in a row, capped by the same
+# FM_WEDGE_DEMAND_INSPECT_COUNT, and the recheck reaching that count escalates as
+# demanding inspection instead of absorbing again. At the default of three the
+# captain reads absorb, absorb, wedge.
+#
+# Counting rechecks raised rather than thresholds reached is what keeps the cap
+# from undoing the absorb: thresholds arrive every STALE_ESCALATE_SECS, so
+# counting those would wedge a genuinely advancing run within minutes, while
+# rechecks arrive on the cadence of the silence the captain actually experiences.
+# The cap fires on every absorbed recheck, measured advancement or assumed,
+# because crew_run_step_advancing cannot tell the two apart - a chatty test step
+# and a crew halted behind a step that has published nothing are one reading here.
+# Firing on a run that really is moving costs one look per cap, which is bounded;
+# declining to name a halted crew is not.
+#
+# The cap does not stick: the escalation clears the count, so a crew that has
+# since recovered is not left flagged. A crew that has not recovered is absorbed
+# again and earns another demand-inspection one cap of rechecks later, on the
+# long cadence. That is the same policy the away-mode daemon applies, whose
+# still-advancing-run absorb section states the shared reasoning in full; the
+# repeat is where the two paths visibly differ, and only because their episodes
+# end differently. The daemon's escalation drops the whole stale marker, and away
+# mode records a new one only when the pane's captured content changes, so a
+# frozen pane there gets one demand-inspection and no repeat. Here the episode
+# outlives the escalation, so the cycle runs again on its own.
+#
+# Four limits keep this from becoming a way to go quiet. The run step is graded
 # against the endpoint exactly as pause_state_class below grades it, and for the
 # same reason: a no-mistakes run executes in no-mistakes' own bare repo, so a
 # moving run says nothing about whether the crew that started it is still there.
@@ -333,15 +380,17 @@ raise_resurface() {  # <window> <throttle-file> <reason>
 # supported-backends note); everywhere else the timer escalates exactly as
 # before. The read happens at most once per STALE_ESCALATE_SECS, which is the
 # cadence bin/fm-classify-lib.sh's contract asks of a caller that keeps absorbing
-# one unchanged pane. And the absorb stops one window BEFORE the deep-inspection
+# one unchanged pane. The absorb stops one window BEFORE the deep-inspection
 # escalation, so that escalation itself always fires: the gate below compares the
 # escalation that WOULD fire against FM_WEDGE_DEMAND_INSPECT_COUNT, not the count
 # already recorded. That is the point of it - the deep-inspection payload tells
 # firstmate not to re-absorb on the run-step state alone, and a watcher that
 # absorbed the threshold carrying it would contradict the instruction the wake
-# carries.
+# carries. And the absorb's own recheck cap, stated above, applies the same
+# comparison to the recheck that WOULD fire, so the recheck that demands
+# inspection is never itself absorbed.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason key idle idle_age rf
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason key idle idle_age rf af absorbs
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -374,9 +423,34 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           date +%s > "$since_file"
           triage_log "absorbed $label (run step still advancing at the escalation threshold): $win"
           rf="$STATE/.advancing-resurfaced-$key"
+          af="$STATE/.advancing-absorbs-$key"
           if resurface_due "$idle_age" "$rf"; then
-            raise_resurface "$win" "$rf" \
-              "stale: $win (idle ${idle_age}s, run step still advancing - absorbed on a long cadence not a wedge; confirm the run is still moving)"
+            absorbs=$(( $(cat "$af" 2>/dev/null || echo 0) + 1 ))
+            if [ "$absorbs" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
+              # Cap spent. This escalation IS the recheck this window was going to
+              # raise, so it stamps the same throttle raise_resurface would. Unlike
+              # the ordinary escalate path below, it deliberately LEAVES the timer
+              # the absorb restarted just above: this function has a caller whose
+              # branch is guarded on that timer file existing (the overridden
+              # terminal status, `elif [ -e "$ssf" ]`), so dropping it there would
+              # end triage for that hash permanently - one demand-inspection and
+              # then silence - instead of repeating on the long cadence the section
+              # comment above and docs/configuration.md describe. Only the absorb
+              # count clears, so a crew that has since recovered is not left flagged.
+              # Worded without a measured/assumed claim on purpose: the verdict
+              # this stands on publishes neither, so the text cannot tell the
+              # captain which of the two they are looking at.
+              reason="stale: $win (idle ${idle_age}s, possible wedge, absorbed $((absorbs - 1)) times in a row on a run step still reading advancing, demand-deep-inspection: the run-step state alone cannot clear this pane, look at it directly)"
+              triage_log "advancing-run absorb cap spent, demanding inspection: $win"
+              fm_wake_append stale "$win" "$reason" || exit 1
+              date +%s > "$rf"
+              rm -f "$af"
+              wake "$reason"
+            else
+              echo "$absorbs" > "$af"
+              raise_resurface "$win" "$rf" \
+                "stale: $win (idle ${idle_age}s, run step still advancing - absorbed on a long cadence not a wedge; confirm the run is still moving)"
+            fi
           fi
           return 0
         fi
@@ -386,7 +460,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           reason="stale: $win (idle ${idle_age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
-        rm -f "$since_file"
+        # The run of consecutive absorbs is broken by definition here - this pane
+        # escalated - so its count goes with the timer. The recheck throttle stays:
+        # this escalation did not consume a recheck slot, and restarting the
+        # cadence would let the next absorb raise one immediately on top of the
+        # wake firstmate is already reading.
+        rm -f "$since_file" "$STATE/.advancing-absorbs-$key"
         wake "$reason"
       fi
       ;;
@@ -410,7 +489,8 @@ handle_paused_stale() {  # <window> <task> <hash>
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
-  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.advancing-resurfaced-$key"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" \
+    "$STATE/.advancing-resurfaced-$key" "$STATE/.advancing-absorbs-$key"
   statusf="$STATE/$task.status"
   mtime=$(stat_mtime "$statusf")
   case "$mtime" in ''|*[!0-9]*) mtime=$(date +%s) ;; esac
@@ -458,7 +538,8 @@ clear_pause_tracking() {  # <window>
   key=${key//\//_}
   key=${key//./_}
   clear_pause_state "$win"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.advancing-resurfaced-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" \
+    "$STATE/.advancing-resurfaced-$key" "$STATE/.advancing-absorbs-$key"
   task=$(window_to_task "$win" "$STATE")
   if [ -n "$task" ] && ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
     pause_deadline_clear "$STATE" "$task"
@@ -1117,6 +1198,7 @@ EOF
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
     arf="$STATE/.advancing-resurfaced-$key"   # throttle: last long-cadence advancing-run recheck
+    aaf="$STATE/.advancing-absorbs-$key"      # cap: rechecks that absorb has raised in a row
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
     prev=$(cat "$hf" 2>/dev/null || true)
     if [ "$h" = "$prev" ]; then
@@ -1195,7 +1277,7 @@ EOF
                 # expected shape for as long as the PR waits, and timing it would
                 # re-raise the same finished task every escalation window.
                 printf '%s' "$h" > "$sf"
-                rm -f "$ssf" "$ewf" "$arf"
+                rm -f "$ssf" "$ewf" "$arf" "$aaf"
                 triage_log "absorbed stale (finished, awaiting merge; the merge poll owns the next wake): $w"
                 ;;
               deciding)
@@ -1209,7 +1291,7 @@ EOF
                 # to carry, and closing it (a `resolved:` line, or a verified
                 # captain-held transfer) drops this class on the next sighting.
                 printf '%s' "$h" > "$sf"
-                rm -f "$ssf" "$ewf" "$arf"
+                rm -f "$ssf" "$ewf" "$arf" "$aaf"
                 triage_log "absorbed stale (parked on an open decision; the answer owns the next wake): $w"
                 ;;
               *)
@@ -1298,7 +1380,7 @@ EOF
         fi
       else
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping.
-        rm -f "$ssf" "$ewf" "$arf"
+        rm -f "$ssf" "$ewf" "$arf" "$aaf"
         if [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$(window_to_task "$w" "$STATE").status")"; }; then
           clear_pause_tracking "$w"
         fi
@@ -1306,7 +1388,7 @@ EOF
     else
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
-      rm -f "$ssf" "$ewf" "$arf"
+      rm -f "$ssf" "$ewf" "$arf" "$aaf"
       task=$(window_to_task "$w" "$STATE")
       if ! afk_present && status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")" && ! window_is_busy "$w" "$tail40"; then
         case "$(pause_state_class "$w" "$task")" in
