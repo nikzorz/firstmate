@@ -1621,16 +1621,18 @@ test_advancing_absorb_recheck_run_is_capped() {
   grep -F "possible wedge" "$out" >/dev/null || fail "the cap escalation was not named a possible wedge: $(cat "$out")"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the capped absorb failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the cap escalation was not queued"
-  # The cap does not stick: the escalation drops the episode it describes so a
+  # The cap does not stick: the escalation clears the count it describes so a
   # crew that recovers is not left flagged.
   [ ! -e "$state/.advancing-absorbs-$key" ] || fail "the absorb count survived the escalation it produced"
-  [ ! -e "$state/.stale-since-$key" ] || fail "the cap escalation left the wedge timer running"
+  # The timer the absorb restarted stays, so the episode outlives the escalation
+  # and triage repeats on the long cadence instead of ending here.
+  [ -s "$state/.stale-since-$key" ] || fail "the cap escalation dropped the wedge timer the absorb restarted"
   # The escalation stands in for the recheck this window owed, so it spends that
   # window: the next absorb waits a full cadence rather than raising one on top
   # of the wake firstmate is already reading.
   [ -e "$state/.advancing-resurfaced-$key" ] || fail "the cap escalation did not spend its recheck window"
   unset FM_FAKE_CREW_STATE
-  pass "the advancing absorb's rechecks are capped and the cap escalation clears the episode"
+  pass "the advancing absorb's rechecks are capped and the cap escalation clears only the count"
 }
 
 # --- non-terminal stale, crew NOT provably working: surfaced immediately ------

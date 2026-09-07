@@ -358,10 +358,10 @@ raise_resurface() {  # <window> <throttle-file> <reason>
 # Firing on a run that really is moving costs one look per cap, which is bounded;
 # declining to name a halted crew is not.
 #
-# The cap does not stick: the escalation clears the count with the timer, so a
-# crew that has since recovered is not left flagged. A crew that has not recovered
-# is absorbed again and earns another demand-inspection one cap of rechecks later,
-# on the long cadence. That is the same policy the away-mode daemon applies, whose
+# The cap does not stick: the escalation clears the count, so a crew that has
+# since recovered is not left flagged. A crew that has not recovered is absorbed
+# again and earns another demand-inspection one cap of rechecks later, on the
+# long cadence. That is the same policy the away-mode daemon applies, whose
 # still-advancing-run absorb section states the shared reasoning in full; the
 # repeat is where the two paths visibly differ, and only because their episodes
 # end differently. The daemon's escalation drops the whole stale marker, and away
@@ -428,12 +428,15 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
             absorbs=$(( $(cat "$af" 2>/dev/null || echo 0) + 1 ))
             if [ "$absorbs" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
               # Cap spent. This escalation IS the recheck this window was going to
-              # raise, so it stamps the same throttle raise_resurface would and
-              # drops the timer the absorb restarted above, exactly as the
-              # escalate path below does. The count clears with it: a crew that
-              # recovers must not stay flagged, and a crew that does not gets one
-              # demand-inspection per cap on the long cadence rather than one and
-              # then silence.
+              # raise, so it stamps the same throttle raise_resurface would. Unlike
+              # the ordinary escalate path below, it deliberately LEAVES the timer
+              # the absorb restarted just above: this function has a caller whose
+              # branch is guarded on that timer file existing (the overridden
+              # terminal status, `elif [ -e "$ssf" ]`), so dropping it there would
+              # end triage for that hash permanently - one demand-inspection and
+              # then silence - instead of repeating on the long cadence the section
+              # comment above and docs/configuration.md describe. Only the absorb
+              # count clears, so a crew that has since recovered is not left flagged.
               # Worded without a measured/assumed claim on purpose: the verdict
               # this stands on publishes neither, so the text cannot tell the
               # captain which of the two they are looking at.
@@ -441,7 +444,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
               triage_log "advancing-run absorb cap spent, demanding inspection: $win"
               fm_wake_append stale "$win" "$reason" || exit 1
               date +%s > "$rf"
-              rm -f "$since_file" "$af"
+              rm -f "$af"
               wake "$reason"
             else
               echo "$absorbs" > "$af"

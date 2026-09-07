@@ -110,7 +110,7 @@ Ordinary wedge timer means absorbed now and escalated once the pane stays idle p
 At that threshold the crew is asked once more: a run step still advancing over a confirmed-live endpoint restarts the window instead of escalating, because pane idleness is the expected shape of a long pipeline step, while a run that has stopped advancing escalates exactly as before.
 That absorb is bounded, not open-ended: a pane held by it re-surfaces for a recheck once per `FM_PAUSE_RESURFACE_SECS` of accumulated idle age, on the same long cadence as a declared pause, so a run whose advancement cannot be measured cannot go quiet indefinitely.
 The run of rechecks is itself capped, because a cadence alone is not a bound: `FM_WEDGE_DEMAND_INSPECT_COUNT` counts the rechecks one stale episode raises in a row, and the recheck reaching that number escalates as a possible wedge demanding deep inspection instead of absorbing again, so one fewer than that many absorb notices arrive first, which at the default of three reads absorb, absorb, wedge.
-That escalation clears the count with the timer, so a crew that has since recovered is not left flagged, while one that has not is absorbed again and earns another demand-inspection a cap of rechecks later.
+That escalation clears the count but leaves the timer the absorb had just restarted, so a crew that has since recovered is not left flagged, while one that has not is absorbed again and earns another demand-inspection a cap of rechecks later.
 The absorb also stops one window before the deep-inspection escalation on the separate consecutive-escalation count, so that escalation always fires too: it asks firstmate for a closer look than the run-step state alone, and the watcher must not answer that ask on its own.
 Away mode asks the same question on the same terms and applies the same cap: the sub-supervisor's stale-persistence recheck (`bin/fm-supervise-daemon.sh`) absorbs a still-advancing run behind a confirmed-live endpoint rather than reporting it to the captain as a possible wedge.
 The still-advancing-run absorb section of `bin/fm-supervise-daemon.sh` states that contract in full and owns it; what belongs here is which knobs govern it and what they cost.
@@ -119,7 +119,8 @@ That is one read for a non-claude harness or for a run that is still advancing, 
 Unlike the claude usage-limit question beside it, neither read is pre-filtered on the recorded harness, because a run step belongs to no harness.
 The pane capture in front of that read is never throttled, because it is the daemon's only observer of a resumed pane, so a crew that resumes and re-idles inside one window still restarts its idle clock rather than accumulating a false idle age.
 `FM_PAUSE_RESURFACE_SECS` is the cadence on which an absorbed pane re-surfaces, named as an absorb rather than a wedge.
-`FM_WEDGE_DEMAND_INSPECT_COUNT` caps those rechecks within one stale episode, exactly as it does on the watcher's path above.
+`FM_WEDGE_DEMAND_INSPECT_COUNT` caps those rechecks within one stale episode here too, but the repeat the watcher's path promises does not carry over.
+The daemon's escalation drops the stale marker and away mode records a new one only when the pane's captured content changes, so a pane frozen for the whole away window gets one demand-inspection there and nothing after it.
 Immediate wake means surfaced on first sighting of each new idle pane signature, with no threshold in front of it.
 
 Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
