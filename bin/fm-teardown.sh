@@ -48,7 +48,9 @@
 # Per-task records under a home's state/ directory are cleared by one sweep of
 # state/<id>.* in remove_task_state_records, which the task's own cleanup and the
 # retired-secondmate child sweep both call. A new record needs no declaration and
-# no second list to keep in step: the glob already reaches it on both paths.
+# no second list to keep in step: the glob already reaches it on both paths. That
+# glob attributes a record by its id prefix, so teardown refuses outright on a state
+# directory holding an id the record namespace cannot separate.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, discards
@@ -367,12 +369,13 @@ fm_task_record_suffix_retainable() {
 # turn-end hook registrations those records authorize. Sweeping state/<id>.* rather
 # than an enumerated suffix list is what keeps a newly added record from reaching
 # only one of the two removal paths. The dot in that glob is load-bearing: it is
-# what stops a sweep of cm1 from taking cm11's records with it.
+# what stops a sweep of cm1 from taking cm11's records with it, and it only holds
+# while the id itself carries no dot.
 remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
   local state_dir=$1 id=$2 record retained
   shift 2
-  if ! fm_task_id_path_safe "$id"; then
-    echo "REFUSED: unsafe task id $id; preserving task state." >&2
+  if ! fm_task_id_record_namespace_safe "$id"; then
+    echo "REFUSED: task id $id cannot be swept safely; preserving task state." >&2
     return 1
   fi
   for retained in "$@"; do
@@ -390,6 +393,24 @@ remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
       [ "$record" != "$state_dir/$id$retained" ] || continue 2
     done
     rm -f -- "$record" || return 1
+  done
+}
+
+# A state directory can only be swept while every task id in it is separable from
+# the suffixes that follow it. The creation gate enforces that now, but a home seeded
+# before it did can still hold an id that carries a dot or the reserved x- prefix,
+# and no rule recovers which task owns state/v1.2.status once one does. So teardown
+# names the offending id and stops rather than deleting on a guess.
+state_dir_sweep_safe() {  # <state_dir>
+  local state_dir=$1 meta id
+  [ -d "$state_dir" ] || return 0
+  for meta in "$state_dir"/*.meta; do
+    [ -e "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    fm_task_id_record_namespace_safe "$id" && continue
+    echo "REFUSED: task id $id in $state_dir cannot be swept safely; teardown removed nothing." >&2
+    echo "state/<id>.<suffix> is one namespace, so a task id may carry neither a dot nor the reserved x- prefix. Clear that task's records by hand after inspecting them." >&2
+    return 1
   done
 }
 
@@ -1245,9 +1266,9 @@ remove_firstmate_home() {
 }
 
 # Every task id a retired home's state/ still holds a record for. A .meta names a
-# task outright; any other record is read as <id>.<suffix>, minus the x- prefix
-# state/ reserves for X mode's home-level relay entries (x-watch.check.sh,
-# x-poll.error), which wear that same shape without belonging to a task.
+# task outright; any other record is read as <id>.<suffix>, minus the ids the record
+# namespace reserves - which is what keeps X mode's home-level relay entries
+# (x-watch.check.sh, x-poll.error) from being read as a task's records.
 # Records outlive their meta - a child teardown keeps a Herdr journal whose pane
 # close it could not confirm - so keying the sweep on *.meta alone would leave those
 # behind in a home that a treehouse slot return hands to the next occupant.
@@ -1263,10 +1284,9 @@ firstmate_home_child_ids() {  # <sub_state>
     for entry in "$sub_state"/*.*; do
       [ -e "$entry" ] || [ -L "$entry" ] || continue
       name=$(basename "$entry")
-      case "$name" in x-*) continue ;; esac
       # Only a .meta declares a task, so a stray file that does not even name a
       # usable id is left alone rather than turned into a refusal to retire.
-      fm_task_id_path_safe "${name%%.*}" || continue
+      fm_task_id_record_namespace_safe "${name%%.*}" || continue
       printf '%s\n' "${name%%.*}"
     done
   } | sort -u
@@ -1277,6 +1297,7 @@ validate_firstmate_home_children_removal() {
   local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
+  state_dir_sweep_safe "$sub_state" || return 1
   while IFS= read -r child_id; do
     [ -n "$child_id" ] || continue
     child_ids+=("$child_id")
@@ -1317,6 +1338,7 @@ cleanup_firstmate_home_children() {
   local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
+  state_dir_sweep_safe "$sub_state" || return 1
   while IFS= read -r child_id; do
     [ -n "$child_id" ] || continue
     child_ids+=("$child_id")
@@ -1398,6 +1420,7 @@ remove_secondmate_registry_entry() {
   mv "$tmp" "$SECONDMATE_REG"
 }
 
+state_dir_sweep_safe "$STATE" || exit 1
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
 if [ "$KIND" = secondmate ]; then

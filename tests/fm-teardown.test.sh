@@ -698,11 +698,17 @@ SH
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
 run_teardown() {
   local case_dir=$1; shift
+  run_teardown_id "$case_dir" task-x1 "$@"
+}
+
+# run_teardown for a case whose task is not the default task-x1.
+run_teardown_id() {
+  local case_dir=$1 id=$2; shift 2
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:$PATH" \
-    "$TEARDOWN" task-x1 "$@"
+    "$TEARDOWN" "$id" "$@"
 }
 
 test_local_only_fork_remote_allows() {
@@ -2199,6 +2205,84 @@ test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix() {
   pass "the per-task record sweep spares a longer task id that shares the prefix"
 }
 
+# A task id carrying a dot makes state/<id>.* ambiguous: state/task-x1.* reaches
+# task-x1.2's records, and nothing in the name says which task owns them. Teardown
+# must therefore stop on the whole state directory rather than destroy a live
+# sibling's records, even though the id it was handed is itself well formed.
+test_teardown_refuses_a_state_dir_holding_a_dotted_task_id() {
+  local case_dir rc
+  case_dir=$(make_case dotted-sibling)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf 'running\n' > "$case_dir/state/task-x1.status"
+  printf 'window=fm-task-x1.2\n' > "$case_dir/state/task-x1.2.meta"
+  printf 'running\n' > "$case_dir/state/task-x1.2.status"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "dotted-sibling: teardown should refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "dotted-sibling: no REFUSED line in stderr"
+  grep -qF 'task-x1.2' "$case_dir/stderr" || fail "dotted-sibling: the refusal did not name the offending id"
+  assert_present "$case_dir/state/task-x1.2.meta" \
+    "dotted-sibling: the sweep destroyed a dotted sibling's meta"
+  assert_present "$case_dir/state/task-x1.2.status" \
+    "dotted-sibling: the sweep destroyed a dotted sibling's status"
+  assert_present "$case_dir/state/task-x1.status" \
+    "dotted-sibling: teardown removed records after refusing"
+  pass "teardown refuses a state directory holding a task id the record namespace cannot separate"
+}
+
+# Creation-time validation cannot protect ids that already exist in a home, so the
+# refusal has to stand on the resolved id too: a dot or the reserved x- prefix means
+# teardown removes nothing rather than sweeping a glob it cannot attribute.
+test_teardown_refuses_an_unsafe_resolved_task_id() {
+  local case_dir rc
+  case_dir=$(make_case unsafe-resolved-id)
+  fm_write_meta "$case_dir/state/task-x1.2.meta" \
+    "window=fm-task-x1.2" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only"
+  printf 'running\n' > "$case_dir/state/task-x1.2.status"
+
+  set +e
+  run_teardown_id "$case_dir" task-x1.2 > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unsafe-resolved-id: teardown should refuse a dotted id"
+  grep -q REFUSED "$case_dir/stderr" || fail "unsafe-resolved-id: no REFUSED line for a dotted id"
+  assert_present "$case_dir/state/task-x1.2.meta" \
+    "unsafe-resolved-id: teardown removed a dotted task's meta"
+  assert_present "$case_dir/state/task-x1.2.status" \
+    "unsafe-resolved-id: teardown removed a dotted task's status"
+
+  case_dir=$(make_case reserved-prefix-id)
+  fm_write_meta "$case_dir/state/x-poll.meta" \
+    "window=fm-x-poll" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only"
+  printf 'relay poll error\n' > "$case_dir/state/x-poll.error"
+
+  set +e
+  run_teardown_id "$case_dir" x-poll > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "reserved-prefix-id: teardown should refuse a reserved x- id"
+  grep -q REFUSED "$case_dir/stderr" || fail "reserved-prefix-id: no REFUSED line for a reserved x- id"
+  assert_present "$case_dir/state/x-poll.error" \
+    "reserved-prefix-id: teardown swept the home's own X-mode relay record"
+  pass "teardown refuses an unsafe resolved task id instead of sweeping a glob it cannot attribute"
+}
+
 # The sweep takes any state/<id>.* record, so a record no list ever named goes with
 # the task rather than surviving into a reused home. This is the guarantee that
 # replaced the two hand-maintained removal lists.
@@ -2222,6 +2306,8 @@ test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
 test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix
+test_teardown_refuses_a_state_dir_holding_a_dotted_task_id
+test_teardown_refuses_an_unsafe_resolved_task_id
 test_teardown_sweeps_an_undeclared_per_task_record
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
 test_local_only_truly_unpushed_refuses

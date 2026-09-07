@@ -429,6 +429,10 @@ EOF
   done
   fm_task_id_creation_valid _noncanonical \
     || fail "creation validator rejected a task ID after its reserved namespace moved"
+  for id in task.a x-poll; do
+    ! fm_task_id_creation_valid "$id" \
+      || fail "creation validator accepted a task ID the state record namespace cannot separate"
+  done
   id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   fm_pr_task_id_valid "$id" || fail "operational validator rejected a path-safe legacy task ID"
   ! fm_task_id_creation_valid "$id" || fail "creation validator accepted an overlong task ID"
@@ -594,11 +598,19 @@ exit 0
 SH
   chmod 0700 "$dir/fakebin/tmux"
   touch "$dir/home/state/.last-watcher-beat"
+  # The PR flows above stay open to a dotted id, but a home's state/ is one
+  # <id>.<suffix> namespace, so teardown cannot attribute state/Task_A.1.* to
+  # Task_A.1 rather than to Task_A: it refuses by name instead of guessing.
+  set +e
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$dir/fakebin:$BASE_PATH" \
-    "$TEARDOWN" Task_A.1 --force > "$dir/teardown.out" 2> "$dir/teardown.err" \
-    || fail "safe lifecycle-compatible task ID could not be torn down"
-  [ ! -e "$dir/home/state/Task_A.1.meta" ] \
-    || fail "safe lifecycle-compatible task teardown retained metadata"
+    "$TEARDOWN" Task_A.1 --force > "$dir/teardown.out" 2> "$dir/teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown swept a task ID the state record namespace cannot separate"
+  grep -q REFUSED "$dir/teardown.err" || fail "dotted task ID teardown did not refuse loudly"
+  grep -qF 'Task_A.1' "$dir/teardown.err" || fail "dotted task ID refusal did not name the id"
+  [ -e "$dir/home/state/Task_A.1.meta" ] \
+    || fail "refused teardown removed the dotted task's metadata"
 
   for id in _noncanonical aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do
     dir=$(make_case "legacy-teardown-${id:0:12}")
