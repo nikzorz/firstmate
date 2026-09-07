@@ -575,7 +575,7 @@ fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
   # Sourced lazily: most fm-wake-lib.sh consumers never annotate, and the fold is
   # the only thing here that needs the classifier.
   if ! command -v status_open_decisions >/dev/null 2>&1; then
-    # shellcheck source=bin/fm-classify-lib.sh
+    # shellcheck source=/dev/null
     . "$FM_WAKE_LIB_DIR/fm-classify-lib.sh" || return 1
   fi
   status_may_open_decision "$chunk" || return 1
