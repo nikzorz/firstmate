@@ -122,7 +122,7 @@ test_scan_captain_relevant_statuses_classifier() {
 }
 
 test_classifier_primitives() {
-  local dir state open activity
+  local dir state open activity unreadable_rc unreadable_open
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -188,6 +188,21 @@ EOF
   printf 'working: legacy start\ndone: legacy completion\n' > "$state/legacy-activity.status"
   [ -z "$(status_open_activities "$state/legacy-activity.status")" ] \
     || fail "a legacy terminal event did not supersede the default working phase"
+  # A present-but-unreadable status file folds to no open decisions and must not
+  # fail, or bin/fm-decision-hold.sh (set -eu, plain assignment) aborts mid-verify.
+  printf 'needs-decision [key=locked]: unreadable request\n' > "$state/unreadable.status"
+  chmod 000 "$state/unreadable.status"
+  unreadable_rc=0
+  unreadable_open=$(bash -c 'set -eu
+. "$1"
+open=$(status_open_decisions "$2")
+printf "%s" "$open"' _ "$ROOT/bin/fm-classify-lib.sh" "$state/unreadable.status" 2>/dev/null) \
+    || unreadable_rc=$?
+  chmod 644 "$state/unreadable.status"
+  [ "$unreadable_rc" -eq 0 ] \
+    || fail "an unreadable status file aborted a set -eu caller of status_open_decisions"
+  [ -z "$unreadable_open" ] \
+    || fail "an unreadable status file produced a non-empty open-decision set"
   pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
 }
 

@@ -553,7 +553,7 @@ status_open_decisions() {  # <status-file-or-dash>
     return 0
   fi
   [ -f "$f" ] || return 0
-  _fm_status_open_decisions_stream < "$f"
+  _fm_status_open_decisions_stream < "$f" || return 0
 }
 
 # Fold material routed-work phases in the same keyed event stream.
