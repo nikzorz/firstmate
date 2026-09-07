@@ -513,14 +513,10 @@ status_may_open_decision() {  # <text>
 # Fold the WHOLE status stream into the set of decisions still open. Prints one
 # TAB-separated "<key>\t<verb>\t<summary>" line per still-open decision, in
 # most-recently-opened-last order; prints nothing when none are open. Pure read of
-# the file, no globals beyond the optional FM_CLASSIFY_RESOLVE_VERB override. This
+# the stream, no globals beyond the optional FM_CLASSIFY_RESOLVE_VERB override. This
 # is the durable open-set the fleet snapshot and any point-in-time consumer must use
-# instead of trusting the last status line.
-# "-" folds stdin instead of a file, for a caller that already holds a bounded
-# read of the stream and must not open the file a second time. A partial leading
-# line in such a chunk cannot invent an open decision: a fragment either recovers
-# the real verb or parses to no verb at all, and a resolving line is always
-# appended after the request it closes, so it is inside any tail that holds it.
+# instead of trusting the last status line. status_open_decisions below is the entry
+# point consumers call; this body is what both of its input modes share.
 _fm_status_open_decisions_stream() {
   local line verb key note resolve held open='' stripped
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
@@ -546,6 +542,15 @@ _fm_status_open_decisions_stream() {
   printf '%s' "$open"
 }
 
+# Fold a status file, or "-" to fold stdin instead, for a caller that already holds
+# a bounded read of the stream and must not open the file a second time. A partial
+# leading line in such a chunk cannot invent an open decision: a fragment either
+# recovers the real verb or parses to no verb at all, and a resolving line is always
+# appended after the request it closes, so it is inside any tail that holds it.
+# A file that is absent, or present but unreadable, folds to an empty open set
+# rather than failing. Consumers read this in a plain assignment under `set -eu`,
+# where a nonzero return would abort a whole decision verification over one
+# unreadable file.
 status_open_decisions() {  # <status-file-or-dash>
   local f=$1
   if [ "$f" = - ]; then

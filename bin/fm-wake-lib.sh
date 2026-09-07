@@ -693,7 +693,9 @@ fm_wake_print_annotations() {  # <deduped-raw-rows>
     fi
     # The open request goes first: it is the annotation a masked decision
     # depends on, so under cap pressure the latest event yields to it rather
-    # than the other way round.
+    # than the other way round. The append already counts the open-decision line
+    # it refused; the second count is this file's latest-event line dropping
+    # with it, so the omitted marker still totals every annotation withheld.
     if fm_wake_open_decision "$FM_WAKE_EVENT_CHUNK" "$FM_WAKE_EVENT_PARTIAL_HEAD" "$FM_WAKE_EVENT_LINE"; then
       line="wake annotation: open decision or blocker not superseded by the latest event: $status_key: $FM_WAKE_OPEN_DECISION"
       if [ "$FM_WAKE_OPEN_DECISION_OLDER" -gt 0 ]; then
