@@ -395,11 +395,11 @@ status_is_terminal_verb() {
 # (working, resolved, captain-held) and paused never match from free-text prose;
 # only lines without those leading verbs may still match free-text tokens for
 # legacy bare lines such as "merged" or "PR ready".
-# A configured FM_CAPTAIN_RE is tested against the line AS WRITTEN and against its
-# DE-KEYED spelling, because a home wrote that regex against "blocked:" prose and
-# meant the event, not the token: keying an event must not drop it out of a home's
-# own override. The verb gate above still runs first, so de-keying widens which
-# spellings of an already-eligible verb match, never which verbs are eligible.
+# A line that CARRIES a key token is tested against its de-keyed spelling as well
+# as the line as written, because a home wrote its FM_CAPTAIN_RE against "blocked:"
+# prose and meant the event, not the token: keying an event must not drop it out of
+# a home's own override. A line with no token is tested exactly once, as written,
+# so free-form prose is never handed a synthesised colon it did not have.
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
@@ -415,8 +415,11 @@ status_is_captain_relevant() {
       done|needs-decision|blocked|failed) return 0 ;;
     esac
   fi
-  printf '%s\n%s' "$line" "$verb: $(status_line_note "$line")" \
-    | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+  case "$line" in
+    *\[key=*) set -- "$line" "$verb: $(status_line_note "$line")" ;;
+    *) set -- "$line" ;;
+  esac
+  printf '%s\n' "$@" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure
@@ -531,70 +534,90 @@ _fm_key_slug_valid() {  # <slug>
 # accepted token shapes: a leading region either OPENS a token or does not, and
 # when it does, whatever slug comes out is handed to _fm_key_slug_valid. Nothing
 # else decides. A token the writer never closed has no bracket to stop at, so its
-# slug simply runs to end of line and the charset rejects it; that is why an
-# unusable key needs no shape of its own. Extend the question, never a list.
-_fm_key_token_slug() {  # <text carrying the token> -> the slug the token opens
-  local rest=${1#*\[key=}
-  printf '%s' "${rest%%\]*}"
-}
+# slug simply runs to end of line and is judged by the charset like any other,
+# which usually but not always rejects it: a token that IS the rest of the line
+# yields a clean slug and is accepted. That is why an unusable key needs no shape
+# of its own. Extend the question, never a list.
+# One parse per line, into caller-visible variables and with no subshell, because
+# a fold needs the key, its usability and the note together and paying for three
+# separate parses of the same line is what put the activities fold within a
+# quarter of bin/fm-fleet-snapshot.sh's hard timeout. Sets FM_LINE_KEY,
+# FM_LINE_KEY_USABLE and FM_LINE_NOTE; the readers below are thin views of it, so
+# there is exactly one implementation of the question to keep correct.
+#
 # The DECLARED position: the token opens anywhere before the note's colon, and its
 # slug is read from the WHOLE line, so a slug carrying a colon reaches the charset
 # check as the one slug the writer wrote rather than splitting the line behind its
 # back. A line with no colon at all is all prefix, so a token visible there is
 # declared exactly as the verb parser already sees it.
-_fm_prefix_declared_slug() {  # <status-line> -> slug declared before the note, else rc 1
-  case "${1%%:*}" in
-    *\[key=*) ;;
-    *) return 1 ;;
-  esac
-  _fm_key_token_slug "$1"
-}
 # The INFERRED position: the note's LEADING edge is the only key site, so the
 # token must open the note and prose quoting one deeper in is never a key.
-_fm_note_leading_slug() {  # <note-text> -> slug the note opens with, else rc 1
-  local n=$1
+_fm_parse_status_line() {  # <status-line>
+  local line=$1 n rest slug
+  case "${line%%:*}" in
+    *\[key=*)
+      rest=${line#*\[key=}
+      slug=${rest%%\]*}
+      if _fm_key_slug_valid "$slug"; then
+        FM_LINE_KEY=$slug
+        FM_LINE_KEY_USABLE=1
+      else
+        FM_LINE_KEY=default
+        FM_LINE_KEY_USABLE=0
+      fi
+      case "$line" in
+        *:*) ;;
+        *) FM_LINE_NOTE=$line; return 0 ;;
+      esac
+      rest=${rest#"$slug"}
+      rest=${rest#\]}
+      case "$rest" in
+        *:*) n=${rest#*:} ;;
+        *) n=$rest ;;
+      esac
+      n=${n#"${n%%[![:space:]]*}"}
+      [ "$FM_LINE_KEY_USABLE" -eq 1 ] || n="[key=${slug}]${n:+ }${n}"
+      FM_LINE_NOTE=$n
+      return 0
+      ;;
+  esac
+  case "$line" in
+    *:*) n=${line#*:} ;;
+    *)
+      FM_LINE_KEY=default
+      FM_LINE_KEY_USABLE=1
+      FM_LINE_NOTE=$line
+      return 0
+      ;;
+  esac
   n=${n#"${n%%[![:space:]]*}"}
   case "$n" in
-    \[key=*) ;;
-    *) return 1 ;;
+    \[key=*)
+      slug=${n#*\[key=}
+      slug=${slug%%\]*}
+      if _fm_key_slug_valid "$slug"; then
+        FM_LINE_KEY=$slug
+        FM_LINE_KEY_USABLE=1
+        n=${n#*\[key=}
+        n=${n#"$slug"}
+        n=${n#\]}
+        n=${n#"${n%%[![:space:]]*}"}
+      else
+        FM_LINE_KEY=default
+        FM_LINE_KEY_USABLE=0
+      fi
+      ;;
+    *)
+      FM_LINE_KEY=default
+      FM_LINE_KEY_USABLE=1
+      ;;
   esac
-  _fm_key_token_slug "$n"
-}
-# The same reader, narrowed to a slug a caller may actually key an event by.
-_fm_note_leading_key() {  # <note-text> -> USABLE slug the note opens with, else rc 1
-  local slug
-  slug=$(_fm_note_leading_slug "$1") || return 1
-  _fm_key_slug_valid "$slug" || return 1
-  printf '%s' "$slug"
+  FM_LINE_NOTE=$n
 }
 status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
                       # minus a usable key token, plus any unusable one as prose
-  local n slug rest
-  case "$1" in
-    *:*) n=${1#*:} ;;
-    *) printf '%s' "$1"; return 0 ;;
-  esac
-  if slug=$(_fm_prefix_declared_slug "$1"); then
-    rest=${1#*\[key=}
-    rest=${rest#"$slug"}
-    rest=${rest#\]}
-    case "$rest" in
-      *:*) n=${rest#*:} ;;
-      *) n=$rest ;;
-    esac
-    n=${n#"${n%%[![:space:]]*}"}
-    _fm_key_slug_valid "$slug" || n="[key=${slug}]${n:+ }${n}"
-    printf '%s' "$n"
-    return 0
-  fi
-  n=${n#"${n%%[![:space:]]*}"}
-  if slug=$(_fm_note_leading_key "$n"); then
-    n=${n#*\[key=}
-    n=${n#"$slug"}
-    n=${n#\]}
-    n=${n#"${n%%[![:space:]]*}"}
-  fi
-  printf '%s' "$n"
+  _fm_parse_status_line "$1"
+  printf '%s' "$FM_LINE_NOTE"
 }
 # Reads the key from before the colon first, and only then from the note's leading
 # edge, so the historical spelling always wins and prose deeper in the note is never
@@ -603,35 +626,16 @@ status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
 # because "default" here means both "no key was written" and "the key written
 # cannot be used", and only the first of those may close anything.
 _fm_decision_key() {  # <status-line> -> key slug, or "default" when none is usable
-  local note k
-  if k=$(_fm_prefix_declared_slug "$1"); then
-    _fm_key_slug_valid "$k" || { printf 'default'; return 0; }
-    printf '%s' "$k"
-    return 0
-  fi
-  case "$1" in
-    *:*) note=${1#*:} ;;
-    *) printf 'default'; return 0 ;;
-  esac
-  k=$(_fm_note_leading_key "$note") || { printf 'default'; return 0; }
-  printf '%s' "$k"
+  _fm_parse_status_line "$1"
+  printf '%s' "$FM_LINE_KEY"
 }
 # True when the line's key may be used to claim a record another line wrote: it
 # either carries no key token at all, or carries one whose slug is usable. Guards
 # every drop in every fold, on both sides, and every match outside them, so a key
 # nobody can read never silences a record it does not name.
 _fm_decision_key_is_usable() {  # <status-line>
-  local slug note
-  if slug=$(_fm_prefix_declared_slug "$1"); then
-    _fm_key_slug_valid "$slug"
-    return
-  fi
-  case "$1" in
-    *:*) note=${1#*:} ;;
-    *) return 0 ;;
-  esac
-  slug=$(_fm_note_leading_slug "$note") || return 0
-  _fm_key_slug_valid "$slug"
+  _fm_parse_status_line "$1"
+  [ "$FM_LINE_KEY_USABLE" -eq 1 ]
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
@@ -677,18 +681,19 @@ _fm_status_open_decisions_stream() {
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)
-        key=$(_fm_decision_key "$line")
-        note=$(status_line_note "$line")
-        if _fm_decision_key_is_usable "$line"; then
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
           open=$(_fm_decision_drop "$open" "$key")
           [ -n "$open" ] && open="${open}"$'\n'
         fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
-        _fm_decision_key_is_usable "$line" || continue
-        key=$(_fm_decision_key "$line")
-        open=$(_fm_decision_drop "$open" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        open=$(_fm_decision_drop "$open" "$FM_LINE_KEY")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac
@@ -744,18 +749,19 @@ _fm_status_trailing_open_decisions_stream() {
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)
-        key=$(_fm_decision_key "$line")
-        note=$(status_line_note "$line")
-        if _fm_decision_key_is_usable "$line"; then
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
           trailing=$(_fm_decision_drop "$trailing" "$key")
           [ -n "$trailing" ] && trailing="${trailing}"$'\n'
         fi
         trailing="${trailing}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
-        _fm_decision_key_is_usable "$line" || continue
-        key=$(_fm_decision_key "$line")
-        trailing=$(_fm_decision_drop "$trailing" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        trailing=$(_fm_decision_drop "$trailing" "$FM_LINE_KEY")
         [ -n "$trailing" ] && trailing="${trailing}"$'\n'
         ;;
       *)
@@ -798,18 +804,19 @@ _fm_status_open_activities_stream() {
     verb=$(status_line_verb "$line")
     case "$verb" in
       working|"$pause")
-        key=$(_fm_decision_key "$line")
-        note=$(status_line_note "$line")
-        if _fm_decision_key_is_usable "$line"; then
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
           open=$(_fm_decision_drop "$open" "$key")
           [ -n "$open" ] && open="${open}"$'\n'
         fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       done|failed|needs-decision|blocked|"$resolve"|"$held")
-        _fm_decision_key_is_usable "$line" || continue
-        key=$(_fm_decision_key "$line")
-        open=$(_fm_decision_drop "$open" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        open=$(_fm_decision_drop "$open" "$FM_LINE_KEY")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac

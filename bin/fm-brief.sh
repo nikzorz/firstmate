@@ -133,8 +133,6 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
-KEY_SLUG_RULE="A key slug may contain only letters, digits, dot, underscore, and hyphen, and nothing else, and it must name THIS decision, because two decisions sharing one slug supersede each other."
-
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -201,10 +199,8 @@ A marked request requires one correlated answer after the work; it does not requ
 Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
-$KEY_SLUG_RULE
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
 When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying the same slug you opened it with, so it is durably closed instead of resurfacing behind later unrelated events.
-If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done
@@ -212,7 +208,7 @@ You are persistent by default. Do not exit just because your queue is empty.
 On startup and restart, run normal firstmate bootstrap and recovery through \`bin/fm-session-start.sh\` for your own home, but only to RECONCILE work that is already yours: in-flight crewmates, tracked backlog items, and durable watches recorded in this home.
 When you have no assigned or in-flight work after that reconciliation, go idle and wait silently for the main firstmate to route you a task.
 An empty queue is a healthy resting state, not a cue to invent work: never spawn a survey, audit, or any self-directed "find work" task on your own initiative.
-If this charter cannot be carried out, append \`blocked [key=<slug>]: {why}\` or \`failed [key=<slug>]: {why}\` to the main status file and stop.
+If this charter cannot be carried out, append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\` to the main status file and stop.
 EOF
 if [ "$SECONDMATE_CHARTER" = "{TASK}" ]; then
   echo "scaffolded: $BRIEF (secondmate charter; replace {TASK})"
@@ -224,8 +220,8 @@ fi
 
 REPO=${POS[1]}
 
-PAUSE_LIFECYCLE="   A \`$PAUSED_VERB [key=<slug>]:\` line is nonterminal: do not end the turn after it, and close the wait with
-   \`working [key=<slug>]: {what you are doing next}\` carrying that same slug the moment it ends. That close is a state change firstmate
+PAUSE_LIFECYCLE="   A \`$PAUSED_VERB:\` line is nonterminal: do not end the turn after it, and close the wait with
+   \`working: {what you are doing next}\` the moment it ends. That close is a state change firstmate
    acts on, not an FYI progress line; a \`$PAUSED_VERB:\` line left standing keeps firstmate on the
    long recheck cadence when a later quiet pane is a real wedge."
 
@@ -292,11 +288,9 @@ The report is the only thing that survives, so anything worth keeping must be in
    wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
-   $KEY_SLUG_RULE
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate replies with the decision.
    When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
-   If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
    append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
@@ -305,7 +299,7 @@ $PAUSE_LIFECYCLE
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/decision-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
-When the report is complete, append \`done [key=<slug>]: {one-line conclusion}\` to the status file and stop, carrying the slug of the phase it ends.
+When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 echo "scaffolded: $BRIEF (scout; replace {TASK})"
@@ -329,7 +323,7 @@ case "$MODE" in
 # Definition of done
 This project ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done [key=<slug>]: PR {url}\` to the status file and stop, carrying the slug of the phase it ends.
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
 )
@@ -343,7 +337,7 @@ EOF
 This project ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done [key=<slug>]: ready in branch fm/$ID\` to the status file and stop, carrying the slug of the phase it ends.
+When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
 )
@@ -356,7 +350,7 @@ EOF
     DOD=$(cat <<EOF
 # Definition of done
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [key=<slug>]: {summary}\` to the status file and stop, carrying the slug of the phase it ends.
+When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates: the pipeline applies every fix, so never hand-edit, commit, or fix findings yourself while a run is active.
@@ -369,7 +363,7 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done [key=<slug>]: PR {url} checks green\` and stop, carrying the slug of the phase it ends. You are finished.
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
 )
     ;;
@@ -432,20 +426,17 @@ $RULE1
    bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
-   A mid-task \`working [key=<slug>]: {material phase}\` line (including setup complete) is nonterminal: do not end the turn after
-   it; continue the same stage until a defined \`done [key=<slug>]:\` gate under Definition of done.
-   Carry that same slug on the \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event that ends the phase, because only a closer naming the key supersedes the phase it opened.
+   A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the turn after
+   it; continue the same stage until a defined \`done:\` gate under Definition of done.
    Use \`$PAUSED_VERB: {why}\`, not \`blocked\`, ONLY when deliberately idling on a known external
    wait you expect to clear on its own ($PAUSE_EXAMPLE);
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
    wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
-   $KEY_SLUG_RULE
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate applies the configured authority and replies.
    When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
-   If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
    append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.

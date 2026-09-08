@@ -123,7 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
-  local fold stream expected label got want captain_re spelling suppressed
+  local fold stream expected label got want captain_re spelling suppressed prose
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -176,6 +176,15 @@ test_classifier_primitives() {
     'resolved [key=api]: done: chose A' 'captain-held [key=api]: done: tracked'; do
     FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$suppressed" \
       && fail "de-keyed matching newly surfaced a nonterminal verb: $suppressed"
+  done
+  # A line carrying NO key token is tested exactly once, as written. Synthesising
+  # a "$verb: $note" spelling for it injects a colon into free-form prose and turns
+  # a legacy bare line into a verb line that was never captain-relevant before.
+  for prose in 'the retry failed' 'cleanup done' 'all blocked'; do
+    status_is_captain_relevant "$prose" \
+      && fail "de-keyed matching made colonless prose captain-relevant: $prose"
+    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$prose" \
+      && fail "de-keyed matching made colonless prose match a configured override: $prose"
   done
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "blocked [key=api]: x" \
     && fail "de-keyed matching bypassed a home that narrowed its verb set"
@@ -312,6 +321,17 @@ status_open_activities|working: phase one\nworking [key=p:7]: phase two\n|defaul
 # A token the writer never closed has no bracket to stop at, so the same axis
 # covers the unterminated spelling.
 status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=oops: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=oops: CI is flaky]|an unterminated declared token superseded an unrelated open decision
+# --- ACCEPTED LIMIT: a keyed decision verb does not close an unkeyed phase ---
+# The brief teaches keyed 'blocked'/'needs-decision' openers because a mismatch in
+# the DECISIONS fold is an unclosable blocker and a wedged away-return gate, which
+# is loss. It leaves crew 'working:' unkeyed, so in the ACTIVITIES fold that keyed
+# line does not close the phase and a finished phase can render as still open.
+# That is deliberate: bin/fm-fleet-snapshot.sh's parent-activity evidence already
+# disclaims authority over current crew state and scores an unkeyed record
+# 'inconclusive', so this is stale evidence rather than a lost decision. Keying the
+# activities side belongs to the re-filed follow-up ticket, which owns this row.
+status_open_activities|working: setup complete\nblocked [key=deps]: cannot install deps\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
+status_open_activities|working: setup complete\nneeds-decision [key=api]: pick A\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
 # --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
 # "default" is a BUCKET, not an identity: its records are not distinguishable, so
 # nothing can act on one of them alone. These rows are the two consequences, and
