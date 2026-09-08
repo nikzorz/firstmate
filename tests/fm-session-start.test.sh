@@ -881,6 +881,22 @@ $1
 EOF
 }
 
+# utf8_locale: a multi-byte locale this machine actually has installed, empty
+# when it has none. Byte-exact clipping is only provable under one: with a C
+# ambient locale bash counts bytes anyway, so the digest would keep its byte
+# caps even if the script's own byte forcing regressed.
+utf8_locale() {
+  local installed cand
+  installed=$(locale -a 2>/dev/null) || return 1
+  for cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if printf '%s\n' "$installed" | grep -qxF "$cand"; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # utf8_clip_fixture <ascii-prefix-bytes> <char> <repeats>: an ASCII run of an
 # exact byte length followed by whole multi-byte characters, so a byte-exact
 # clip at a known offset lands a chosen number of bytes inside one of them.
@@ -896,7 +912,7 @@ utf8_clip_fixture() {
 # the newest line at higher fidelity than older ones, marks every clip, and
 # leaves the on-disk log untouched and reachable through the printed path.
 test_status_tail_byte_bounding() {
-  local rec root home fakebin out status long_resume older_long before_bytes after_bytes spent
+  local rec root home fakebin out status long_resume older_long before_bytes after_bytes spent older_at_cap
 
   rec=$(new_world status-tail-bytes)
   IFS='|' read -r root home fakebin <<EOF
@@ -952,6 +968,17 @@ EOF
   assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "charging the clip marker cost the newest line its fidelity"
   assert_contains "$out" "CLIPPED, 50 of ${#older_long} bytes shown" "charging the clip marker abandoned the older-line cap the budget still afforded"
 
+  # The per-task total is the backstop behind the per-line caps, not the routine
+  # constraint: at default settings a full tail of multi-kilobyte lines must
+  # still render every older line at its whole older-line cap, markers included.
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  older_at_cap=$(printf '%s\n' "$out" | grep -c "CLIPPED, 200 of ${#older_long} bytes shown")
+  [ "$older_at_cap" -eq 4 ] || fail "the default per-task budget bound before the older-line cap did: $older_at_cap of 4 older lines reached the 200-byte cap"
+  assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "the default per-task budget cost the newest line its fidelity"
+  assert_not_contains "$out" "OMITTED for the per-task byte budget" "the default per-task budget dropped a line a default-length tail affords"
+  spent=$(status_tail_bytes "$out")
+  [ "$spent" -le 2300 ] || fail "status tail spent $spent bytes against the 2300-byte default per-task ceiling"
+
   pass "status tails are bounded by bytes as well as lines, markers included, newest-first, without touching the log"
 }
 
@@ -960,8 +987,13 @@ EOF
 # character, at every depth a 2-, 3-, or 4-byte sequence can be cut at, while a
 # character that fits whole is left untouched.
 test_status_tail_utf8_clip_boundary() {
-  local rec root home fakebin out status two three four whole
+  local rec root home fakebin out status two three four whole locale_utf8
   local cut2a cut3a cut3b cut4a cut4b cut4c
+
+  locale_utf8=$(utf8_locale) || {
+    echo "skip: no multi-byte locale installed (byte-exact clipping is unprovable under C)"
+    return 0
+  }
 
   rec=$(new_world status-tail-utf8)
   IFS='|' read -r root home fakebin <<EOF
@@ -990,7 +1022,10 @@ EOF
   printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\ndone: ok\n' \
     "$cut2a" "$cut3a" "$cut3b" "$cut4a" "$cut4b" "$cut4c" "$whole" > "$status"
 
-  out=$(FM_SESSION_START_STATUS_TAIL=8 FM_SESSION_START_STATUS_TASK_BYTES=8000 \
+  # Under a multi-byte locale every one of these counts is wrong unless the
+  # digest forces byte semantics on itself: bash would otherwise keep 200
+  # CHARACTERS, up to 800 bytes, from each of these lines.
+  out=$(LC_ALL="$locale_utf8" FM_SESSION_START_STATUS_TAIL=8 FM_SESSION_START_STATUS_TASK_BYTES=8000 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "CLIPPED, 199 of $(byte_len "$cut2a") bytes shown" "clip kept the lead byte of a 2-byte character"
