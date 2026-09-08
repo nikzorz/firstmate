@@ -65,13 +65,19 @@
 #
 # Both verbs are statements about the link record, which this home always holds,
 # so neither fails because the item was removed, handed to a secondmate, pruned,
-# renamed, re-kinded, or made unreadable by the backlog backend. The item write
+# renamed, re-kinded, or left unwritable by the backlog backend. The item write
 # is best effort and what this home could observe is recorded. Choose the verb by
 # what actually happened: --answered-by when this gate settled the question, and
-# --not-raised when it never asked it.
+# --not-raised when it never asked it. Both still refuse when the backlog itself
+# could not be read, because absence is then a claim this home never established.
 #
-# docs/decision-hold-lifecycle.md owns the link record's field contract and the
-# symmetry between the two verbs.
+# An answered link whose item write was deferred is reconciled only when no
+# supported verb could ever complete that write. A backend that could not serve
+# the write may come back, so gate-verify keeps refusing on that link and every
+# retry re-attempts the write until it lands.
+#
+# docs/decision-hold-lifecycle.md owns the link record's field contract, the
+# symmetry between the two verbs, and when a deferred write is still outstanding.
 #
 # `gate-verify` reads only the index, never tasks-axi. Its reader has no silent
 # skip: any entry in data/gate-links/<origin-id>/ that is not a fully recognised
@@ -161,16 +167,16 @@ tasks_axi() {
   (cd "$FM_HOME" && tasks-axi "$@")
 }
 
-tasks_axi_gap() {  # prints why the captain-hold contract is unusable, empty when it is usable
-  fm_tasks_axi_compatible || { printf 'compatible tasks-axi is required'; return 0; }
-  tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
-    || printf 'tasks-axi does not expose the captain-hold contract'
+# The captain-hold contract is what an item WRITE needs, so this is a predicate
+# the write path can consult rather than a precondition on a whole verb.
+tasks_axi_can_write_item() {
+  fm_tasks_axi_compatible || return 1
+  tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null
 }
 
 require_tasks_axi() {
-  local gap
-  gap=$(tasks_axi_gap)
-  [ -z "$gap" ] || fail "$gap"
+  tasks_axi_can_write_item \
+    || fail "a tasks-axi exposing the captain-hold contract is required"
 }
 
 task_show() {  # <id>
@@ -328,6 +334,30 @@ write_gate_link() {  # <link-file> <item> <origin> <key> <state> [observed] [dec
   mv "$tmp" "$file"
 }
 
+# The printed reading is built from the same observation and closing authority
+# that go into the record, so the two cannot disagree.
+gate_answer_outcome() {  # <item-observed> <closed-by> <item>
+  case "$1" in
+    present-captain)
+      if [ "$2" = self ]; then
+        printf -- ' -> %s closed' "$3"
+      else
+        printf '; %s was already closed by %s' "$3" "$2"
+      fi
+      ;;
+    present-other-kind)
+      printf '; recorded against the link only because %s is no longer a captain item and was not written' "$3"
+      ;;
+    absent-here)
+      printf '; recorded against the link only because %s is absent from this home and was not written' "$3"
+      ;;
+    backend-unusable)
+      printf '; recorded against the link only because %s could not be written while the backlog backend is unusable' "$3"
+      ;;
+    *) fail "could not describe what this home observes about captain-gated item $3: $1" ;;
+  esac
+}
+
 gate_answer_body() {  # <origin> <key> <decided-by> <digest> <answer>
   printf 'Answered through gate %s/%s.\nDecided by: %s\nAnswer digest: %s\n\n%s\n' \
     "$1" "$2" "$3" "$4" "$5"
@@ -357,8 +387,8 @@ gate_marker_identity() {  # <item-body>
 # reason to stop, not a reason to continue.
 #
 # Emits one tab-separated verdict line per directory entry, dotfiles included:
-#   ok<TAB><file><TAB><key><TAB><state><TAB><item>
-#   unrecognised<TAB><file><TAB><TAB><TAB>
+#   ok<TAB><file><TAB><key><TAB><state><TAB><item><TAB><item-observed>
+#   unrecognised<TAB><file><TAB><TAB><TAB><TAB>
 origin_gate_records() {  # <origin-id>
   local origin=$1 dir file base state item dotglob=off
   validate_gate_slug origin-id "$origin"
@@ -370,7 +400,7 @@ origin_gate_records() {  # <origin-id>
     [ -e "$file" ] || [ -L "$file" ] || continue
     base=${file##*/}
     if [ ! -f "$file" ] || ! gate_slug_ok "$base"; then
-      printf 'unrecognised\t%s\t\t\t\n' "$file"
+      printf 'unrecognised\t%s\t\t\t\t\n' "$file"
       continue
     fi
     item=$(record_value "$file" item)
@@ -378,12 +408,15 @@ origin_gate_records() {  # <origin-id>
     if [ -z "$item" ] \
       || [ "$(record_value "$file" origin)" != "$origin" ] \
       || [ "$(record_value "$file" key)" != "$base" ]; then
-      printf 'unrecognised\t%s\t\t\t\n' "$file"
+      printf 'unrecognised\t%s\t\t\t\t\n' "$file"
       continue
     fi
     case "$state" in
-      open|answered|not-raised) printf 'ok\t%s\t%s\t%s\t%s\n' "$file" "$base" "$state" "$item" ;;
-      *) printf 'unrecognised\t%s\t\t\t\n' "$file" ;;
+      open|answered|not-raised)
+        printf 'ok\t%s\t%s\t%s\t%s\t%s\n' \
+          "$file" "$base" "$state" "$item" "$(record_value "$file" item_observed)"
+        ;;
+      *) printf 'unrecognised\t%s\t\t\t\t\n' "$file" ;;
     esac
   done
   [ "$dotglob" = on ] || shopt -u dotglob
@@ -496,7 +529,7 @@ command_gate_link() {
 
 command_gate_resolve() {
   local origin=${1:-} key=${2:-} decided_by='' answer_file='' not_raised=0
-  local file item state observed item_state item_body answer digest body closed_by recorded note
+  local file item state observed item_state item_body answer digest body closed_by recorded note retried=''
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -591,14 +624,20 @@ command_gate_resolve() {
     recorded=$(record_value "$file" closed_by)
     [ -z "$recorded" ] || [ -z "$closed_by" ] || [ "$recorded" = "$closed_by" ] \
       || fail "gate $origin/$key records a different authority for closing $item"
-    printf 'gate-resolve: %s/%s already answered by %s (%s closed)\n' \
-      "$origin" "$key" "$decided_by" "$item"
-    return 0
+    [ -n "$closed_by" ] || closed_by=$recorded
+    retried=1
   fi
 
+  # A retry runs the item write again rather than short-circuiting, so a write
+  # this command deferred is completed once the backend can perform it. The
+  # write itself is what needs the captain-hold contract, so a backend that can
+  # read but not write defers rather than failing the verb, and the link records
+  # a backend that could not serve this reconciliation.
   if [ "$observed" = present-captain ]; then
-    require_tasks_axi
-    if [ "$item_state" != "done" ]; then
+    if ! tasks_axi_can_write_item; then
+      observed=backend-unusable
+      [ "$item_state" = "done" ] || closed_by=''
+    elif [ "$item_state" != "done" ]; then
       body=$(gate_answer_body "$origin" "$key" "$decided_by" "$digest" "$answer")
       if [ "$GATE_ITEM_HELD" = yes ]; then
         tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
@@ -608,6 +647,7 @@ command_gate_resolve() {
         || { rm -f "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
       rm -f "$STATE/.gate-answer.$$"
       tasks_axi "done" "$item" >/dev/null || fail "could not close answered captain item $item"
+      closed_by=self
     elif [ "$closed_by" != self ]; then
       # The closed item already records who actually answered it, so this gate's
       # outcome is appended rather than allowed to overwrite that record.
@@ -621,38 +661,33 @@ command_gate_resolve() {
   fi
   write_gate_link "$file" "$item" "$origin" "$key" answered "$observed" \
     "$decided_by" "$digest" "$closed_by"
-  case "$observed" in
-    present-captain)
-      if [ "$closed_by" = self ]; then
-        printf 'gate-resolve: %s/%s answered by %s -> %s closed\n' "$origin" "$key" "$decided_by" "$item"
-      else
-        printf 'gate-resolve: %s/%s answered by %s; %s was already closed by %s\n' \
-          "$origin" "$key" "$decided_by" "$item" "$closed_by"
-      fi
-      ;;
-    present-other-kind)
-      printf 'gate-resolve: %s/%s answered by %s; recorded against the link only because %s is no longer a captain item and was not written\n' \
-        "$origin" "$key" "$decided_by" "$item"
-      ;;
-    absent-here)
-      printf 'gate-resolve: %s/%s answered by %s; recorded against the link only because %s is absent from this home and was not written\n' \
-        "$origin" "$key" "$decided_by" "$item"
-      ;;
-    backend-unusable)
-      printf 'gate-resolve: %s/%s answered by %s; recorded against the link only because %s could not be written while the backlog backend is unusable\n' \
-        "$origin" "$key" "$decided_by" "$item"
-      ;;
+  printf 'gate-resolve: %s/%s %sanswered by %s%s\n' \
+    "$origin" "$key" "${retried:+already }" "$decided_by" \
+    "$(gate_answer_outcome "$observed" "$closed_by" "$item")"
+}
+
+# An answered link whose item write was deferred is reconciled only when no
+# supported verb could ever complete that write. An absent item and an item that
+# is no longer captain-kind will never be written by this mechanism, so nothing
+# is outstanding; a backend that could not serve the write may come back, so
+# that link stays unreconciled until the write actually lands.
+gate_link_outstanding() {  # <state> <item-observed> <file>
+  [ "$1" = answered ] || return 1
+  case "$2" in
+    present-captain|present-other-kind|absent-here) return 1 ;;
+    backend-unusable) return 0 ;;
+    *) fail "gate link $3 records an observation this home cannot classify: $2" ;;
   esac
 }
 
 command_gate_status() {
-  local origin=${1:-} verdict file key state item
+  local origin=${1:-} verdict file key state item observed
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
-  while IFS=$'\t' read -r verdict file key state item; do
+  while IFS=$'\t' read -r verdict file key state item observed; do
     [ -n "$verdict" ] || continue
     if [ "$verdict" = ok ]; then
-      printf '%s\t%s\t%s\n' "$key" "$state" "$item"
+      printf '%s\t%s\t%s\t%s\n' "$key" "$state" "$item" "$observed"
     else
       printf '%s\tunrecognised\t%s\n' "${file##*/}" "$file"
     fi
@@ -662,16 +697,18 @@ EOF
 }
 
 command_gate_verify() {
-  local origin=${1:-} verdict file key state item open='' unrecognised='' problems=''
+  local origin=${1:-} verdict file key state item observed open='' unrecognised='' problems=''
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
-  while IFS=$'\t' read -r verdict file key state item; do
+  while IFS=$'\t' read -r verdict file key state item observed; do
     [ -n "$verdict" ] || continue
     if [ "$verdict" != ok ]; then
       unrecognised="${unrecognised}${unrecognised:+, }$file"
       continue
     fi
-    [ "$state" = open ] || continue
+    if [ "$state" != open ] && ! gate_link_outstanding "$state" "$observed" "$file"; then
+      continue
+    fi
     open="${open}${open:+, }$key ($file)"
   done <<EOF
 $(origin_gate_records "$origin")

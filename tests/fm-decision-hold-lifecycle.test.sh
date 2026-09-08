@@ -1242,6 +1242,193 @@ test_retiring_refuses_when_this_gate_itself_closed_the_item() {
   pass "retiring refuses when this gate's own marker shows it closed the item"
 }
 
+# A deferred item write is not a reconciled link. This is the ticket's original
+# stale reading reachable through the best-effort write path: the answer is
+# recorded, the backend comes back, and the captain item is still queued, still
+# held, and still claiming the captain owes an answer while cleanup passes.
+test_a_deferred_item_write_keeps_the_link_unreconciled_until_it_lands() {
+  local home id item link out show
+  id=sample-deferred-write
+  item=sample-deferred-choice
+  home=$(unreadable_item_home deferred-write "$id" "$item")
+  link="$home/data/gate-links/$id/scenario-validation"
+  printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+echo "tasks-axi: backend unavailable" >&2
+exit 1
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "--answered-by must record the answer while the backend is unusable"
+  assert_contains "$out" "could not be written while the backlog backend is unusable" \
+    "the outcome must say the item write was deferred"
+  assert_grep "item_observed=backend-unusable" "$link" "the deferral must be recorded"
+  rm -f "$home/fakebin/tasks-axi"
+
+  if run_decisions "$home" gate-verify "$id" > "$home/dv.out" 2> "$home/dv.err"; then
+    fail "a deferred item write was reported as a reconciled link"
+  fi
+  assert_grep "$link" "$home/dv.err" "the refusal must name the link whose write is outstanding"
+  if run_teardown "$home" "$id" > "$home/dt.out" 2> "$home/dt.err"; then
+    fail "teardown erased a task whose answered item write never landed"
+  fi
+  assert_grep "REFUSED" "$home/dt.err" "teardown must refuse while the write is outstanding"
+  show=$(tasks_in "$home" show "$item" --full)
+  assert_contains "$show" "Captain decision pending" \
+    "the reproduction must leave the stale reading in place before the retry"
+
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "the retry must complete the write the first run deferred"
+  assert_contains "$out" "already answered by firstmate -> $item closed" \
+    "the retry outcome must report the write it just completed"
+  assert_grep "item_observed=present-captain" "$link" \
+    "the completed retry must record that the item was written"
+  assert_grep "closed_by=self" "$link" "the completed retry must record this gate as the closer"
+  show=$(tasks_in "$home" show "$item" --full)
+  assert_contains "$show" "state: done" "the repaired item did not close"
+  assert_contains "$show" "Answered through gate $id/scenario-validation" \
+    "the repaired item did not gain the recorded answer"
+  case "$show" in
+    *"Captain decision pending"*) fail "the repaired item still claims the captain owes an answer" ;;
+  esac
+
+  run_decisions "$home" gate-verify "$id" >/dev/null \
+    || fail "a completed write must leave the link reconciled"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/dt2.err" \
+    || fail "teardown stayed blocked after the write landed: $(cat "$home/dt2.err")"
+  pass "a deferred item write keeps the link unreconciled until the retry lands it"
+}
+
+# A backend that reads the item but cannot perform the captain-hold write must
+# not push the operator onto the one verb that still runs.
+test_answered_gate_defers_rather_than_refusing_on_an_unwritable_backend() {
+  local home id item link out
+  id=sample-unwritable-backend
+  item=sample-unwritable-choice
+  home=$(unreadable_item_home unwritable-backend "$id" "$item")
+  link="$home/data/gate-links/$id/scenario-validation"
+  printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = hold ] && [ "${2:-}" = --help ]; then
+  echo "usage: tasks-axi hold <id> [flags]"
+  exit 0
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "--answered-by must not refuse on a backend that cannot perform the item write"
+  assert_contains "$out" "could not be written while the backlog backend is unusable" \
+    "the outcome must say the item write was deferred"
+  assert_grep "state=answered" "$link" "the answer must be recorded against the link"
+  assert_no_grep "state=open" "$link" "an unwritable backend must not leave the link open"
+  assert_no_grep "state=not-raised" "$link" \
+    "--not-raised must never be the only verb that works here"
+  if run_decisions "$home" gate-verify "$id" >/dev/null 2>&1; then
+    fail "a write deferred by an unwritable backend was reported as reconciled"
+  fi
+
+  rm -f "$home/fakebin/tasks-axi"
+  run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "the retry must land the write once the backend can perform it"
+  run_decisions "$home" gate-verify "$id" >/dev/null \
+    || fail "a completed write must leave the link reconciled"
+  pass "an unwritable backend defers the item write instead of refusing the verb"
+}
+
+# The retry line is built from the recorded observation and closing authority,
+# so it can never claim an item is closed while the record says otherwise.
+test_answered_retry_line_agrees_with_the_recorded_observation() {
+  local home id item link out shape observed tail row rest
+  id=sample-retry-line
+  item=sample-retry-choice
+
+  # <shape>|<expected item_observed>|<expected outcome tail>
+  local -a shapes=(
+    'written|present-captain|-> sample-retry-choice closed'
+    're-kinded|present-other-kind|is no longer a captain item and was not written'
+    'removed|absent-here|is absent from this home and was not written'
+  )
+  for row in "${shapes[@]}"; do
+    shape=${row%%|*}
+    rest=${row#*|}
+    observed=${rest%%|*}
+    tail=${rest#*|}
+    home=$(unreadable_item_home "retry-line-$shape" "$id" "$item")
+    link="$home/data/gate-links/$id/scenario-validation"
+    printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+    case "$shape" in
+      re-kinded)
+        tasks_in "$home" unhold "$item" >/dev/null
+        tasks_in "$home" update "$item" --kind ship >/dev/null
+        ;;
+      removed)
+        tasks_in "$home" unhold "$item" >/dev/null
+        tasks_in "$home" rm "$item" >/dev/null
+        ;;
+    esac
+    run_decisions "$home" gate-resolve "$id" scenario-validation \
+      --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+      || fail "could not record the answer for the $shape item"
+    out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+      --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+      || fail "the retry must stay idempotent for the $shape item"
+    assert_contains "$out" "already answered by firstmate" \
+      "the retry must say it is a retry for the $shape item"
+    assert_contains "$out" "$tail" \
+      "the retry line must agree with the record for the $shape item"
+    assert_grep "item_observed=$observed" "$link" \
+      "the $shape item must keep its own recorded observation"
+    if [ "$shape" != written ]; then
+      case "$out" in
+        *"closed"*) fail "the retry line claimed the $shape item is closed while it is not" ;;
+      esac
+      assert_no_grep "closed_by=" "$link" \
+        "an item that was never observed closed must record no closing authority"
+    fi
+    run_decisions "$home" gate-verify "$id" >/dev/null \
+      || fail "a $shape item leaves nothing outstanding and must verify clean"
+    run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
+      || fail "teardown stayed blocked for a $shape item: $(cat "$home/teardown.err")"
+  done
+  pass "the retry line agrees with the recorded observation and closing authority"
+}
+
+# An answered record whose observation matches no named value must refuse rather
+# than being sorted onto either side of the outstanding-write distinction.
+test_unclassified_answered_observation_refuses_in_verification() {
+  local home id item link
+  id=sample-unclassified
+  item=sample-unclassified-choice
+  home=$(unreadable_item_home unclassified-observation "$id" "$item")
+  link="$home/data/gate-links/$id/scenario-validation"
+  printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+  run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "could not record the answer"
+  sed 's/^item_observed=.*$/item_observed=speculative/' "$link" > "$link.rewritten"
+  mv "$link.rewritten" "$link"
+
+  if run_decisions "$home" gate-verify "$id" > "$home/uc.out" 2> "$home/uc.err"; then
+    fail "an unclassified observation was sorted onto a side instead of refusing"
+  fi
+  assert_grep "records an observation this home cannot classify" "$home/uc.err" \
+    "the refusal must name what it could not classify"
+  assert_grep "speculative" "$home/uc.err" "the refusal must quote the unclassified observation"
+  if run_teardown "$home" "$id" > "$home/uct.out" 2> "$home/uct.err"; then
+    fail "teardown proceeded on a link whose observation cannot be classified"
+  fi
+  pass "an unclassified answered observation refuses in verification"
+}
+
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
   local home id
   home=$(make_home gate-link-teardown)
@@ -1357,6 +1544,10 @@ test_unraised_link_retires_after_another_authority_closed_the_item
 test_unraised_link_retires_whatever_became_of_the_item
 test_unnamed_item_observation_refuses_rather_than_defaulting
 test_answered_gate_records_the_answer_when_the_item_cannot_be_written
+test_a_deferred_item_write_keeps_the_link_unreconciled_until_it_lands
+test_answered_gate_defers_rather_than_refusing_on_an_unwritable_backend
+test_answered_retry_line_agrees_with_the_recorded_observation
+test_unclassified_answered_observation_refuses_in_verification
 test_unreadable_backlog_refuses_instead_of_claiming_the_item_is_absent
 test_retiring_refuses_when_this_gate_itself_closed_the_item
 test_gate_index_refuses_every_unrecognised_record_shape

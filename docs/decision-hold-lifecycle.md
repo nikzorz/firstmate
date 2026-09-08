@@ -51,7 +51,14 @@ The verb is chosen by what actually happened, never by which one the item's curr
 
 `--answered-by` is the verb when this gate settled the question.
 When the item is present and still kind `captain` it releases the hold, writes the answer into the item, and closes it as before.
-When the item is absent, no longer kind `captain`, or unwritable because the backlog backend is unusable, it records `state=answered` with the decider and answer digest against the link, skips the item write it cannot perform, and says so in its outcome line, so an operator is never left thinking the item was updated when it was not.
+When the item is absent, no longer kind `captain`, or unwritable because the backlog backend cannot serve the write, it records `state=answered` with the decider and answer digest against the link, skips the item write it cannot perform, and says so in its outcome line, so an operator is never left thinking the item was updated when it was not.
+The captain-hold contract that the item write needs is required of the write, never of the verb, so a `tasks-axi` that reads the item but cannot perform that write defers rather than pushing the operator onto `--not-raised`.
+
+A deferred item write leaves the answer outstanding, and an answered link is reconciled only when no supported verb could ever complete the write it skipped.
+An item that is absent from this home or is no longer kind `captain` will never be written by this mechanism, so nothing is outstanding and `gate-verify` passes.
+A backend that could not serve the write may come back, so that link stays unreconciled, `gate-verify` refuses and names its file, and teardown keeps refusing until the write lands.
+Every `--answered-by` retry therefore re-attempts the item write instead of short-circuiting, and completes a write an earlier run deferred as soon as the backend can perform it.
+An answered link whose recorded observation matches none of the four named values is refused by name rather than sorted onto either side of that distinction.
 
 `--not-raised` retires a link whose gate never asked the question, whether or not the item has since been closed, appends nothing to the item, and records only what this home could observe.
 
@@ -60,7 +67,7 @@ The link record splits what was observed about the item from who closed it, so t
 `present-captain` means the item is present and still kind `captain`.
 `present-other-kind` means the item is present but its kind has changed away from `captain`, which leaves it readable and unclosed rather than unreadable.
 `absent-here` means `tasks-axi` is usable but the item is not in this home, which covers removal, a handoff to another backlog, a rename, and retention pruning.
-`backend-unusable` means `tasks-axi` itself could not be reached, so nothing about the item was observed.
+`backend-unusable` means the backlog backend could not serve what this reconciliation needed: `tasks-axi` could not be reached at all, or it could be read but could not perform the item write that `--answered-by` owes.
 A situation that matches none of the four is refused by name rather than folded into the nearest value, so a new precondition forces a new named observation instead of silently widening an old one.
 A backlog that could not be read is one such situation: `tasks-axi` reports `NOT_FOUND` for an item that is genuinely not in this backlog and another code when it could not read the backlog at all, so a read failure refuses by name and names the backlog path rather than claiming `absent-here`.
 Teardown then stays blocked, which is the correct outcome while the backlog is unreadable, because no reconciliation recorded against an unreadable backlog would be a claim this home established.
