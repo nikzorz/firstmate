@@ -192,7 +192,7 @@ Handle routine work yourself.
 Report only true captain-relevant outcomes or a declared external wait by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
+Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
 A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
@@ -283,10 +283,10 @@ The report is the only thing that survives, so anything worth keeping must be in
    Each append wakes firstmate: report only supervisor-actionable phase changes and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
-   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked\`, ONLY when deliberately idling on a known external
    wait you expect to clear on its own (an upstream release, a rate-limit reset);
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
-   wedge. Use \`blocked:\` when you are stuck and need help.
+   wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A \`<slug>\` is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes.
@@ -430,10 +430,10 @@ $RULE1
    firstmate reads your pane for that.
    A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the turn after
    it; continue the same stage until a defined \`done:\` gate under Definition of done.
-   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked\`, ONLY when deliberately idling on a known external
    wait you expect to clear on its own ($PAUSE_EXAMPLE);
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
-   wedge. Use \`blocked:\` when you are stuck and need help.
+   wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A \`<slug>\` is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes.

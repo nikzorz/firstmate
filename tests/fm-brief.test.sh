@@ -205,8 +205,12 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
       "$id: brief did not reconcile closing a pause with rule 4's no-FYI-lines bar"
     assert_grep "a \`awaiting:\` line left standing keeps firstmate on the" "$brief" \
       "$id: brief lost why a standing pause is dangerous"
-    assert_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
+    # The verb contrast names a verb to reach for; spelling it with a trailing
+    # colon makes it read as an append template a worker copies whole.
+    assert_grep "Use \`blocked\` when you are stuck and need help." "$brief" \
       "$id: brief lost the paused-versus-blocked distinction"
+    assert_no_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
+      "$id: brief spells the blocked verb contrast as a copyable append template"
     # A scout has no branch, no push, and no PR, so it inherits the lifecycle
     # without the handoff sentence, which would name an impossible wait.
     if [ "$kind" = scout ]; then

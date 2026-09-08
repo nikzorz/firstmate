@@ -467,18 +467,20 @@ status_is_paused_or_captain_held() {  # <status-line>
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
 #
-# The two positions differ in how much a malformed slug is allowed to cost,
-# because they differ in what the writer claimed. A token BEFORE the colon is a
-# DECLARED key: the writer named a key deliberately, so a malformed slug there is a
-# hard failure - the parser returns nonzero and the fold skips the whole line. A
-# leading token after the colon is only an INFERRED key, read out of ordinary note
-# text: a malformed slug there falls back to "default" and the token stays in the
-# note as prose, so such a line keeps exactly the visibility it had before this
-# position was recognised at all rather than vanishing from the fold.
+# A MALFORMED slug never removes the line from a fold, in either position: it
+# yields the key "default" and the unusable token is carried into the note as
+# ordinary prose, which is the whole marker that the writer meant a key and did
+# not get one. That is deliberate for the declared position too, because a refusal
+# nobody can see is not a refusal - skipping the line only deleted a
+# captain-relevant event from the open set, which is the silent loss this fold
+# exists to prevent. Whether the writer DECLARED the key before the colon or a
+# reader INFERS it from the note's leading edge decides which key is read, never
+# whether the event survives.
 #
 # The three parsers are pure reads of a single line; the verb parser strips any
 # key token before the colon so the leading word is recovered cleanly, and the note
-# parser strips an INFERRED key token so one note reads the same in either spelling.
+# parser strips only a USABLE key token so one note reads the same in either
+# spelling while an unusable one stays visible.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
   v=${v%%\[key=*}
@@ -493,7 +495,19 @@ _fm_key_slug_valid() {  # <slug>
     ''|*[!A-Za-z0-9._-]*) return 1 ;;
   esac
 }
-# The ONE reader of an inferred key token, so the key parser and the note parser
+# The ONE reader of a DECLARED key token, so the key parser and the note parser
+# can never disagree about whether the writer named a key before the colon.
+# Prints the slug whether or not it is usable; only the ABSENCE of a token is rc 1.
+_fm_prefix_declared_slug() {  # <status-line> -> slug written before the colon, else rc 1
+  local prefix=${1%%:*} slug
+  case "$prefix" in
+    *\[key=*\]*) ;;
+    *) return 1 ;;
+  esac
+  slug=${prefix#*\[key=}
+  printf '%s' "${slug%%\]*}"
+}
+# The ONE reader of an INFERRED key token, so the key parser and the note parser
 # can never disagree about whether a note's leading token is a key at all.
 _fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, else rc 1
   local n=$1 slug
@@ -508,16 +522,18 @@ _fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, 
   printf '%s' "$slug"
 }
 status_line_note() {  # <status-line> -> text after the first colon, trimmed,
-                      # minus a leading key token the note itself carries
-  local n
+                      # minus a usable key token, plus any unusable one as prose
+  local n slug
   case "$1" in
     *:*) n=${1#*:} ;;
     *) printf '%s' "$1"; return 0 ;;
   esac
   n=${n#"${n%%[![:space:]]*}"}
-  case "${1%%:*}" in
-    *\[key=*\]*) printf '%s' "$n"; return 0 ;;
-  esac
+  if slug=$(_fm_prefix_declared_slug "$1"); then
+    _fm_key_slug_valid "$slug" || n="[key=${slug}]${n:+ }${n}"
+    printf '%s' "$n"
+    return 0
+  fi
   if _fm_note_leading_key "$n" >/dev/null; then
     n=${n#*\]}
     n=${n#"${n%%[![:space:]]*}"}
@@ -526,18 +542,14 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed,
 }
 # Reads the key from before the colon first, and only then from the note's leading
 # edge, so the historical spelling always wins and prose deeper in the note is never
-# a key site.
-_fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
-  local prefix=${1%%:*} note k
-  case "$prefix" in
-    *\[key=*\]*)
-      k=${prefix#*\[key=}
-      k=${k%%\]*}
-      _fm_key_slug_valid "$k" || return 1
-      printf '%s' "$k"
-      return 0
-      ;;
-  esac
+# a key site. Total: every line has a key, so no caller can lose one to a parse.
+_fm_decision_key() {  # <status-line> -> key slug, or "default" when none is usable
+  local note k
+  if k=$(_fm_prefix_declared_slug "$1"); then
+    _fm_key_slug_valid "$k" || { printf 'default'; return 0; }
+    printf '%s' "$k"
+    return 0
+  fi
   case "$1" in
     *:*) note=${1#*:} ;;
     *) printf 'default'; return 0 ;;
@@ -587,7 +599,7 @@ _fm_status_open_decisions_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
+    key=$(_fm_decision_key "$line")
     case "$verb" in
       needs-decision|blocked)
         note=$(status_line_note "$line")
@@ -631,8 +643,8 @@ status_open_decisions() {  # <status-file-or-dash>
 # report on the work itself and ends the trailing run. Same output shape, same
 # keyed grammar, same one owner - this only reports WHERE in the append-only
 # stream a still-open request was raised, so it adds no ordering to the log and
-# reads no clock. A malformed key token is ignored exactly as the fold above
-# ignores it.
+# reads no clock. A malformed key token collapses to "default" exactly as it does
+# in the fold above, carrying its line with it rather than dropping it.
 #
 # It exists because "the crew moved on" and "a later line exists" are different
 # claims. bin/fm-fleet-snapshot.sh clears a stale decision when a task's lifecycle
@@ -652,14 +664,14 @@ _fm_status_trailing_open_decisions_stream() {
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)
-        key=$(_fm_decision_key "$line") || continue
+        key=$(_fm_decision_key "$line")
         note=$(status_line_note "$line")
         trailing=$(_fm_decision_drop "$trailing" "$key")
         [ -n "$trailing" ] && trailing="${trailing}"$'\n'
         trailing="${trailing}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
-        key=$(_fm_decision_key "$line") || continue
+        key=$(_fm_decision_key "$line")
         trailing=$(_fm_decision_drop "$trailing" "$key")
         [ -n "$trailing" ] && trailing="${trailing}"$'\n'
         ;;
@@ -701,7 +713,7 @@ _fm_status_open_activities_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
+    key=$(_fm_decision_key "$line")
     case "$verb" in
       working|"$pause")
         note=$(status_line_note "$line")

@@ -165,7 +165,9 @@ test_classifier_primitives() {
   printf '%s' "$open" | grep -F $'prose\t' >/dev/null \
     && fail "a key token in note prose changed the decision key"
   printf '%s' "$open" | grep -F $'bad key\t' >/dev/null \
-    && fail "an invalid key slug entered the open-decision set"
+    && fail "an invalid key slug became a decision key"
+  printf '%s' "$open" | grep -F $'default\tneeds-decision\t[key=bad key] malformed' >/dev/null \
+    || fail "a line whose declared slug is invalid vanished instead of keying default"
   # A key written AFTER the colon must key the event exactly as the pre-colon
   # spelling does. It used to fall through to "default", where two unrelated open
   # decisions supersede each other and one is lost with no error at all.
@@ -199,11 +201,19 @@ test_classifier_primitives() {
     || fail "a key token past the note's leading edge became the event key"
   [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
     || fail "note prose overrode the declared pre-colon key"
-  # A malformed slug costs only what the writer claimed. Before the colon it is a
-  # DECLARED key, so the line is skipped; after it, the token is only INFERRED out
-  # of note text, so the event stays visible under "default" with the bad token
-  # left standing as prose. Dropping it there would reopen the silent-loss path.
+  # A malformed slug never costs the line, in either position. Every escalation a
+  # worker is taught to write declares its key before the colon, so dropping such a
+  # line would delete the escalation outright: bin/fm-afk-return.sh would see no
+  # blocker and any later status line would mask it, which is the silent loss this
+  # fold exists to prevent. The unusable token surviving at the front of the note
+  # is the only marker that the writer meant a key and did not get one.
   for opener in needs-decision blocked; do
+    printf '%s [key=ci flake]: choose A or B\n' "$opener" > "$state/bad-pre-colon.status"
+    open=$(status_open_decisions "$state/bad-pre-colon.status")
+    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=ci flake] choose A or B' >/dev/null \
+      || fail "$opener with a malformed declared slug vanished from the open set"
+    [ "$(status_line_verb "$opener [key=ci flake]: choose A or B")" = "$opener" ] \
+      || fail "a malformed declared slug disturbed the $opener verb"
     printf '%s: [key=bad key] choose A or B\n' "$opener" > "$state/bad-post-colon.status"
     open=$(status_open_decisions "$state/bad-post-colon.status")
     printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=bad key] choose A or B' >/dev/null \
@@ -212,6 +222,10 @@ test_classifier_primitives() {
       > "$state/bad-post-colon-close.status"
     [ -z "$(status_open_decisions "$state/bad-post-colon-close.status")" ] \
       || fail "a malformed post-colon resolved slug failed to close the default $opener"
+    printf '%s: pick A or B\nresolved [key=ci flake]: captain chose A\n' "$opener" \
+      > "$state/bad-pre-colon-close.status"
+    [ -z "$(status_open_decisions "$state/bad-pre-colon-close.status")" ] \
+      || fail "a malformed declared resolved slug failed to close the default $opener"
   done
   # The note strip applies only where the key was actually written, so a declared
   # pre-colon key never lets the note's own leading token be eaten as if it were one.
@@ -219,8 +233,8 @@ test_classifier_primitives() {
     || fail "a pre-colon keyed line lost genuine note prose to the key strip"
   # Both positions answer to one charset, so a slug neither accepts cannot start
   # being accepted in only one of them.
-  _fm_decision_key 'needs-decision [key=api/shape]: choose A or B' >/dev/null \
-    && fail "a slug outside the key charset was accepted before the colon"
+  [ "$(_fm_decision_key 'needs-decision [key=api/shape]: choose A or B')" = default ] \
+    || fail "a slug outside the key charset was accepted before the colon"
   [ "$(_fm_decision_key 'needs-decision: [key=api/shape] choose A or B')" = default ] \
     || fail "a slug outside the key charset was accepted after the colon"
   cat > "$state/activity.status" <<'EOF'
