@@ -181,7 +181,7 @@ When one of those three is absent from a harness's file it means no verified fac
 | codex | [`references/codex.md`](references/codex.md) | `$`-autocomplete popup settle, directory trust dialog, `codex resume`, bounded foreground watcher checkpoints. |
 | opencode | [`references/opencode.md`](references/opencode.md) | Background self-upgrade and `--continue` relaunch, busy-queued Enter classification, passive `session.idle` guard. |
 | pi | [`references/pi.md`](references/pi.md) | Project trust dialog, single-positional-argument brief rule, `turn_end` extension placement, `agent_settled` follow-up delivery. |
-| grok | [`references/grok.md`](references/grok.md) | Slash-popup double-Enter requirement and its 2026-07-03 incident, TRUECOLOR placeholder styling, project-picker conditions, global turn-end hook and trust model. |
+| grok | [`references/grok.md`](references/grok.md) | Slash-popup double-Enter requirement and its 2026-07-03 incident, TRUECOLOR placeholder styling, project-picker conditions, session resume via `--resume` or `-c`/`--continue`, global turn-end hook and trust model. |
 | kimi | [`references/kimi.md`](references/kimi.md) | Launch-then-send readiness gating, silent pre-readiness drop, moon-phase spinner matching, guarded global turn-end hook. |
 
 A fact that appears in exactly one harness's file is specific to that harness.
