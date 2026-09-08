@@ -207,7 +207,8 @@ test_classifier_primitives() {
   # property binds every path that reads, writes, collapses or supersedes a key,
   # so each fold is driven on BOTH sides - a line that OPENS a record and a line
   # that CLOSES one - against all three key kinds: USABLE, UNUSABLE (a malformed
-  # slug, and the brief's own literal <slug> placeholder), and COLLIDING (a later
+  # slug, and an unfilled '<slug>' placeholder, whose angle brackets are outside
+  # the charset and so make it one), and COLLIDING (a later
   # line reusing a key that is already open). Each row asserts the fold's WHOLE
   # output, so a row fails both when a record vanishes and when one appears that
   # should have been superseded. Rows are `fold|stream|expected-output|label`,
@@ -293,15 +294,14 @@ status_open_activities|working: phase one\nworking [key=p:7]: phase two\n|defaul
 # covers the unterminated spelling.
 status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=oops: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=oops: CI is flaky]|an unterminated declared token superseded an unrelated open decision
 # --- ACCEPTED LIMIT: a keyed decision verb does not close an unkeyed phase ---
-# The brief teaches keyed 'blocked'/'needs-decision' openers because a mismatch in
-# the DECISIONS fold is an unclosable blocker and a wedged away-return gate, which
-# is loss. It leaves crew 'working:' unkeyed, so in the ACTIVITIES fold that keyed
-# line does not close the phase and a finished phase can render as still open.
-# That is deliberate: bin/fm-fleet-snapshot.sh's parent-activity evidence already
-# disclaims authority over current crew state and scores an unkeyed record
-# 'inconclusive', so this is stale evidence rather than a lost decision. Keying the
-# activities side would mean pairing every activity opener with its closer across
-# every brief variant, which is a wider change than this one and is not made here.
+# A closer supersedes only the record its own key names, so a keyed decision verb
+# leaves an unkeyed 'working:' phase open and a finished phase can render as still
+# open. Reaching it takes a hand-written status line that keys one side of a pair
+# and not the other; every key in these rows is written by hand, not produced by
+# any generated instruction. It is a limit rather than a bug because it costs only
+# evidence: bin/fm-fleet-snapshot.sh's parent-activity read already disclaims
+# authority over current crew state and scores an unkeyed record 'inconclusive',
+# so the extra row is stale evidence and never a lost decision.
 status_open_activities|working: setup complete\nblocked [key=deps]: cannot install deps\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
 status_open_activities|working: setup complete\nneeds-decision [key=api]: pick A\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
 # --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
