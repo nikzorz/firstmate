@@ -609,10 +609,6 @@ test_linked_captain_item_is_reconciled_when_the_gate_answers_it() {
     || fail "could not record the gate link"
   run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
     || fail "recording the same gate link twice must be idempotent"
-  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation \
-    > "$home/relink.out" 2> "$home/relink.err"; then
-    :
-  fi
   assert_still_claims_captain_owes "$home" "after linking"
   if run_decisions "$home" gate-verify sample-hosted-boot > "$home/gv.out" 2> "$home/gv.err"; then
     fail "an unreconciled captain-gated link must not verify clean"
@@ -678,7 +674,159 @@ test_gate_that_never_raised_the_question_leaves_the_item_captain_owned() {
     > "$home/late.out" 2> "$home/late.err"; then
     fail "a retired link accepted a later gate answer"
   fi
+
+  tasks_in "$home" unhold sample-scenario-choice >/dev/null \
+    || fail "could not release the captain hold for the ordinary captain close"
+  tasks_in "$home" "done" sample-scenario-choice \
+    --note "Captain answered this in the standup: fall back to the seat default." >/dev/null \
+    || fail "could not close the item through the ordinary captain path"
+  out=$(run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation --not-raised) \
+    || fail "retrying a retired link must stay idempotent after the item closes"
+  assert_not_contains "$out" "left open" \
+    "a retired link must not claim the item is left open once the item is closed"
   pass "a gate that never raised the question leaves the captain-gated item open and captain-owned"
+}
+
+# The captain closes the linked item through the ordinary captain path while the
+# link is still open. The gate is then answered, so the only honest reconciliation
+# is one that records this gate's answer without claiming it closed the item and
+# without pretending the gate never raised the question.
+test_gate_answer_reconciles_an_item_closed_by_another_authority() {
+  local home id link show out
+  home=$(make_home externally-closed-item)
+  id=sample-external-close
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the sample scenario" --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample scenario review\n\nNo captain choice remains in this report.\n' > "$home/data/$id/report.md"
+  run_decisions "$home" complete "$id" --none >/dev/null \
+    || fail "could not pass the unresolved-decision completion gate"
+  tasks_in "$home" add sample-external-choice "Choose the sample scenario behaviour" \
+    --kind captain --repo sample --body "Captain decision pending as of 2026-07-14." >/dev/null
+  tasks_in "$home" hold sample-external-choice --reason "captain scenario choice pending" --kind captain >/dev/null
+  printf 'Fall back to the seat default scenario and log the rejection.\n' > "$home/gate-answer.txt"
+  run_decisions "$home" gate-link sample-external-choice "$id" scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+
+  tasks_in "$home" unhold sample-external-choice >/dev/null \
+    || fail "could not release the captain hold for the ordinary captain close"
+  tasks_in "$home" "done" sample-external-choice \
+    --note "Captain answered this in the standup: fall back to the seat default." >/dev/null \
+    || fail "could not close the item through the ordinary captain path"
+
+  if run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised \
+    > "$home/nr.out" 2> "$home/nr.err"; then
+    fail "--not-raised retired a link whose captain-gated item is already closed"
+  fi
+  assert_grep "reconcile a settled question with --answered-by" "$home/nr.err" \
+    "the refusal must name the verb that reconciles a settled question"
+  assert_not_contains "$(cat "$home/nr.out")" "left open" \
+    "the refused retirement must not print the false left-open reading"
+  assert_contains "$(cat "$home/data/gate-links/$id/scenario-validation")" "state=open" \
+    "a refused retirement must not change the recorded link state"
+
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "--answered-by must reconcile a link whose item another authority closed"
+  assert_contains "$out" "was already closed by external" \
+    "reconciliation must say this command did not close the item"
+
+  link="$home/data/gate-links/$id/scenario-validation"
+  assert_grep "state=answered" "$link" "an externally closed item must leave the link answered"
+  assert_grep "closed_by=external" "$link" "the link must record who closed the item"
+  assert_grep "decided_by=firstmate" "$link" "the link must record the actual decider"
+
+  show=$(tasks_in "$home" show sample-external-choice --full)
+  assert_contains "$show" "Captain answered this in the standup" \
+    "reconciliation overwrote the record of who actually closed the item"
+  assert_contains "$show" "Also answered through gate $id/scenario-validation. Decided by: firstmate." \
+    "the closed item did not gain this gate's truthful outcome note"
+
+  run_decisions "$home" gate-resolve "$id" scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "reconciling an externally closed item must be idempotent"
+  show=$(tasks_in "$home" show sample-external-choice --full)
+  [ "$(printf '%s' "$show" | grep -o "Also answered through gate $id/scenario-validation" | wc -l)" -eq 1 ] \
+    || fail "an idempotent retry duplicated the gate outcome note"
+
+  run_decisions "$home" gate-verify "$id" >/dev/null \
+    || fail "a reconciled link must verify clean"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
+    || fail "teardown stayed blocked after an honest reconciliation: $(cat "$home/teardown.err")"
+  pass "a question settled by another authority reconciles without a false record"
+}
+
+# Two live workers raise the same captain question, so both gates are linked to
+# one item. The second gate must record the first gate as the closing authority
+# instead of overwriting the first gate's record or blocking teardown forever.
+test_second_linked_gate_records_the_first_as_the_closing_authority() {
+  local home link show out
+  home=$(make_home double-linked-gate)
+  stale_captain_item_fixture "$home"
+  tasks_in "$home" add sample-hosted-retry "Fix the hosted retry loop" \
+    --kind ship --repo sample --start >/dev/null \
+    || fail "could not create the second live worker fixture"
+  write_origin_meta "$home" sample-hosted-retry ship
+
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "could not record the first gate link"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-retry scenario-validation >/dev/null \
+    || fail "could not record the second gate link on the same item"
+  run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "could not reconcile the first gate"
+
+  out=$(run_decisions "$home" gate-resolve sample-hosted-retry scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "the second gate must still reconcile after the first gate closed the item"
+  assert_contains "$out" "was already closed by sample-hosted-boot/scenario-validation" \
+    "the second gate must name the gate that actually closed the item"
+
+  link="$home/data/gate-links/sample-hosted-retry/scenario-validation"
+  assert_grep "closed_by=sample-hosted-boot/scenario-validation" "$link" \
+    "the second link must record the first gate as the closing authority"
+
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "Answered through gate sample-hosted-boot/scenario-validation." \
+    "the first gate's record of who answered was destroyed"
+  assert_contains "$show" "Also answered through gate sample-hosted-retry/scenario-validation. Decided by: firstmate." \
+    "the item did not gain the second gate's outcome note"
+
+  run_decisions "$home" gate-verify sample-hosted-retry >/dev/null \
+    || fail "the second reconciled link must verify clean"
+  if run_decisions "$home" gate-resolve sample-hosted-retry scenario-validation --not-raised \
+    > "$home/second-nr.out" 2> "$home/second-nr.err"; then
+    fail "an answered second gate was retired as never raised"
+  fi
+  assert_not_contains "$(cat "$home/second-nr.out")" "not raised" \
+    "no supported path may print a not-raised reading while the linked item is closed"
+  pass "a second gate linked to one item records the first gate as the closing authority"
+}
+
+# An interrupted write must not be able to leave a record the index reads back as
+# a link no verb can ever clear.
+test_gate_index_ignores_a_record_that_is_not_its_own_path() {
+  local home dir out
+  home=$(make_home gate-index-orphan)
+  stale_captain_item_fixture "$home"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  dir="$home/data/gate-links/sample-hosted-boot"
+  cp "$dir/scenario-validation" "$dir/scenario-validation.tmp.4321"
+
+  run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "could not reconcile the link alongside an orphan record"
+  out=$(run_decisions "$home" gate-status sample-hosted-boot)
+  [ "$(printf '%s\n' "$out" | grep -c 'scenario-validation')" -eq 1 ] \
+    || fail "gate status printed a phantom duplicate row: $out"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "an orphan record blocked verification with no verb that can clear it"
+
+  [ "$(find "$dir" -type f | wc -l)" -eq 2 ] \
+    || fail "a completed write staged a file inside the globbed index directory"
+  pass "the gate index reads back only records that name their own path"
 }
 
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
@@ -713,20 +861,28 @@ test_teardown_refuses_an_unreconciled_captain_gated_link() {
 }
 
 test_gate_link_validates_identities_before_touching_state() {
-  local home escaped
+  local home escaped bad
   home=$(make_home gate-link-validation)
   escaped="$home/escaped-gate"
   printf 'sentinel=unchanged\n' > "$escaped"
-  if run_decisions "$home" gate-status ../escaped-gate > "$home/gs.out" 2> "$home/gs.err"; then
-    fail "gate status accepted an origin path traversal"
-  fi
-  if run_decisions "$home" gate-verify ../escaped-gate > "$home/gvv.out" 2> "$home/gvv.err"; then
-    fail "gate verification accepted an origin path traversal"
-  fi
-  if run_decisions "$home" gate-resolve ../escaped-gate key --not-raised \
-    > "$home/gr.out" 2> "$home/gr.err"; then
-    fail "gate reconciliation accepted an origin path traversal"
-  fi
+  # A bare dot component carries no slash, so it escapes the index directory
+  # without tripping any slash check.
+  for bad in ../escaped-gate .. .; do
+    if run_decisions "$home" gate-status "$bad" > "$home/gs.out" 2> "$home/gs.err"; then
+      fail "gate status accepted an origin outside the index directory: $bad"
+    fi
+    if run_decisions "$home" gate-verify "$bad" > "$home/gvv.out" 2> "$home/gvv.err"; then
+      fail "gate verification accepted an origin outside the index directory: $bad"
+    fi
+    if run_decisions "$home" gate-resolve "$bad" key --not-raised \
+      > "$home/gr.out" 2> "$home/gr.err"; then
+      fail "gate reconciliation accepted an origin outside the index directory: $bad"
+    fi
+    if run_decisions "$home" gate-resolve sample-hosted-boot "$bad" --not-raised \
+      > "$home/grk.out" 2> "$home/grk.err"; then
+      fail "gate reconciliation accepted a decision key outside the index directory: $bad"
+    fi
+  done
   [ "$(cat "$escaped")" = "sentinel=unchanged" ] \
     || fail "an invalid origin changed state outside the data directory"
 
@@ -763,5 +919,8 @@ test_resolve_matches_quoted_blocked_by_edges
 test_unlinked_captain_item_goes_stale_when_the_gate_answers_it
 test_linked_captain_item_is_reconciled_when_the_gate_answers_it
 test_gate_that_never_raised_the_question_leaves_the_item_captain_owned
+test_gate_answer_reconciles_an_item_closed_by_another_authority
+test_second_linked_gate_records_the_first_as_the_closing_authority
+test_gate_index_ignores_a_record_that_is_not_its_own_path
 test_teardown_refuses_an_unreconciled_captain_gated_link
 test_gate_link_validates_identities_before_touching_state

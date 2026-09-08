@@ -43,7 +43,9 @@ The pairing is never inferred from prose; it is recorded once and read back.
 3. In the same step as answering the gate, run `bin/fm-decision-hold.sh gate-resolve <origin-id> <decision-key> --answered-by <captain|firstmate> --answer-file <path>`.
    Run it for every gate you answer: an unlinked gate reports that and succeeds.
    `--answered-by` records who actually decided, so a decision firstmate made under standing authority is never filed as the captain's.
+   It is also the verb when the item was already closed by the captain directly or by another linked gate: it leaves that existing record intact and appends this gate's outcome.
 4. When the origin's work ends and a recorded link's gate never raised the question, retire that link with `--not-raised`, which leaves the item open and captain-owned.
+   Use it only while the linked item is still open; a question settled elsewhere is reconciled with `--answered-by`, which records who closed the item.
    Teardown refuses while any recorded link is unreconciled.
 
 `bin/fm-decision-hold.sh --help` owns the command syntax, the link record's location, and retry behavior.

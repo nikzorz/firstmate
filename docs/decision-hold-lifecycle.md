@@ -39,9 +39,16 @@ Nothing infers the pairing from title or body prose.
 It refuses an item that is not kind `captain`, an item that is already closed, an origin the active home does not own, and an attempt to repoint an existing gate identity at a different item.
 
 The `gate-resolve` subcommand is the reconciliation the answering path owes and is safe to run for every gate answered: an unlinked gate reports that and exits zero.
-For a linked gate, `--answered-by` replaces the item's body with the recorded answer, the gate identity, and the actual decider, archives the superseded body through `tasks-axi update --archive-body`, releases the hold, and closes the item.
+For a linked gate whose item is still open, `--answered-by` replaces the item's body with the recorded answer, the gate identity, and the actual decider, archives the superseded body through `tasks-axi update --archive-body`, releases the hold, and closes the item.
+`--answered-by` is also the verb when the item was already closed by another authority, which happens when the captain closes it directly or when a second gate is linked to the same item.
+That path never rewrites or archives the existing body, because that body records whoever actually closed the item; it appends this gate's outcome as a `tasks-axi done --note` line instead.
+The link then carries `closed_by`, read only from this mechanism's own machine-written marker and never from free prose: `self` when this gate closed the item, the other gate's `<origin>/<key>` identity when the marker names one, and `external` otherwise.
 `--not-raised` retires the link and leaves the item open and captain-owned, which is the honest reading when the worker's gate never asked the question.
-Retries are idempotent against the recorded decider and answer digest and reject a changed answer, a changed decider, or a late reversal between the two outcomes.
+It refuses while the linked item is closed, so no supported path can record that a link was retired as never raised against a question that was in fact settled.
+Retries are idempotent against the recorded decider, answer digest, and closing authority, and reject a changed answer, a changed decider, a changed closing authority, or a late reversal between the two outcomes.
+
+The index is read back through the record itself rather than through the file name: a file in `data/gate-links/<origin-id>/` counts as a link only when its own `origin=` and `key=` fields name the path it sits at.
+Writes stage outside that directory, so an interrupted write can leave no record the index would read back as an unreconcilable orphan link.
 
 The read-only `gate-status` and `gate-verify` subcommands parse only that index and never call tasks-axi.
 Teardown calls `gate-verify` for every non-secondmate task before any destructive cleanup, so a landed task cannot quietly leave a linked captain item still claiming the captain owes an answer.
@@ -72,6 +79,9 @@ A later regression covers tasks-axi's quoted multi-entry `blocked_by` output so 
 The captain-gated link regression reproduces the stale reading before proving the fix.
 It files a synthetic captain-kind held item, answers the equivalent gate on a live worker with no link recorded, and asserts the item is still queued, still held, still kind `captain`, and still claims the captain owes an answer.
 It then records the link, answers the same gate, and asserts the item closes with the gate identity and the actual decider in its body, the superseded body archived, and no surviving pending claim.
+Two later cases cover the item being closed before the gate is reconciled, once by the captain directly and once by a second gate linked to the same item.
+Each asserts that `--not-raised` refuses, that `--answered-by` succeeds and records the real closing authority, and that the existing record of who closed the item survives untouched.
+A final case plants an orphan record in the index directory and asserts it produces no phantom status row and cannot block verification.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -89,6 +99,9 @@ ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuin
 ok - an unlinked captain-gated item survives its own gate's answer still claiming the captain owes it
 ok - a recorded gate link reconciles the captain-gated item in the same step as the answer
 ok - a gate that never raised the question leaves the captain-gated item open and captain-owned
+ok - a question settled by another authority reconciles without a false record
+ok - a second gate linked to one item records the first gate as the closing authority
+ok - the gate index reads back only records that name their own path
 ok - teardown refuses until every recorded captain-gated link is reconciled
 ok - gate links validate identity, ownership, and item kind before recording a pairing
 
