@@ -231,10 +231,11 @@ print_backlog_compact() {
 # line, byte-clipped to <keep-bytes> with a visible marker when it did not fit,
 # and CLIP_BYTES to what CLIP_OUT costs the per-task budget - the marker is
 # emitted too, so it is charged as well and the per-task ceiling stays a hard
-# one. Returns 1 when not even a marked clip fits <budget-bytes>, leaving the
-# line for the caller to omit whole. `local LC_ALL=C` makes bash's ${#var} and
-# substring operators count BYTES rather than characters, and is restored on
-# return.
+# one. A line only just past <keep-bytes> is printed whole instead, because the
+# marker would cost more than the bytes it hides. Returns 1 when not even a
+# marked clip fits <budget-bytes>, leaving the line for the caller to omit
+# whole. `local LC_ALL=C` makes bash's ${#var} and substring operators count
+# BYTES rather than characters, and is restored on return.
 CLIP_OUT=
 CLIP_BYTES=0
 clip_status_line() {
@@ -267,6 +268,11 @@ clip_status_line() {
     done
     CLIP_OUT="$clipped [... CLIPPED, ${#clipped} of $total bytes shown; full line is in the log path above]"
     CLIP_BYTES=${#CLIP_OUT}
+    if [ "$total" -le "$budget" ] && [ "$CLIP_BYTES" -ge "$total" ]; then
+      CLIP_OUT=$text
+      CLIP_BYTES=$total
+      return 0
+    fi
     [ "$CLIP_BYTES" -le "$budget" ] && return 0
     # Retry against what the marker itself leaves: the marker can only get
     # shorter as the count it reports does, so this settles in one more pass.

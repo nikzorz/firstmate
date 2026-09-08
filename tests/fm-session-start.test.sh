@@ -16,6 +16,7 @@
 #     fidelity, visible clip markers charged against the budget they mark, and
 #     an untouched on-disk log
 #   - byte-exact clipping across a multi-byte character boundary
+#   - a marked clip never costing more bytes than printing the line whole
 #   - orphan status logs whose task meta has already disappeared
 #   - per-task endpoint-liveness lines for a live and a dead recorded target,
 #     tmux and herdr both
@@ -1008,14 +1009,16 @@ EOF
   four=$(printf '\xf0\x9d\x84\x9e') # U+1D11E, 4 bytes
 
   # The older-line cap is 200 bytes, so a 199-byte ASCII run leaves the clip one
-  # byte into the next character, 198 leaves it two bytes in, 197 three.
-  cut2a=$(utf8_clip_fixture 199 "$two" 5)
-  cut3a=$(utf8_clip_fixture 199 "$three" 5)
-  cut3b=$(utf8_clip_fixture 198 "$three" 5)
-  cut4a=$(utf8_clip_fixture 199 "$four" 5)
-  cut4b=$(utf8_clip_fixture 198 "$four" 5)
-  cut4c=$(utf8_clip_fixture 197 "$four" 5)
-  whole="$(head -c 100 /dev/zero | tr '\0' 'A')$four$(head -c 200 /dev/zero | tr '\0' 'B')"
+  # byte into the next character, 198 leaves it two bytes in, 197 three. The
+  # trailing runs are long enough to carry each line past the band where the
+  # whole line is cheaper than a marked clip, so every line here is clipped.
+  cut2a=$(utf8_clip_fixture 199 "$two" 60)
+  cut3a=$(utf8_clip_fixture 199 "$three" 60)
+  cut3b=$(utf8_clip_fixture 198 "$three" 60)
+  cut4a=$(utf8_clip_fixture 199 "$four" 60)
+  cut4b=$(utf8_clip_fixture 198 "$four" 60)
+  cut4c=$(utf8_clip_fixture 197 "$four" 60)
+  whole="$(head -c 100 /dev/zero | tr '\0' 'A')$four$(head -c 300 /dev/zero | tr '\0' 'B')"
 
   status="$home/state/task-u.status"
   printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-u.meta"
@@ -1043,6 +1046,58 @@ EOF
   fi
 
   pass "byte-exact status clipping drops an incomplete trailing UTF-8 sequence instead of emitting half a character"
+}
+
+# A clip prints a marker as well as the text it keeps, so on a line only just
+# past its cap the marked clip is LARGER than the line it replaces - it would
+# spend more of the per-task budget to show less. This proves the digest prints
+# such a line whole instead, and still clips once clipping is genuinely cheaper.
+test_status_tail_clip_never_costs_more_than_the_line() {
+  local rec root home fakebin out status probe rendered
+  local marker edge_line past_line edge_bytes past_bytes
+
+  rec=$(new_world status-tail-clip-cost)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live"
+
+  status="$home/state/task-a.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-a.meta"
+
+  # Measure the marker the digest actually emits rather than assuming its
+  # wording: a 500-byte older line is far past any whole-line band, so whatever
+  # its rendered form costs beyond the 200-byte older cap IS the marker.
+  probe="older-probe: $(head -c 487 /dev/zero | tr '\0' 'P')"
+  printf '%s\ndone: newest\n' "$probe" > "$status"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  rendered=$(printf '%s\n' "$out" | grep -F "CLIPPED, 200 of $(byte_len "$probe") bytes shown")
+  [ -n "$rendered" ] || fail "probe line was not clipped at the 200-byte older cap"
+  marker=$(( $(byte_len "$rendered") - 200 ))
+  [ "$marker" -gt 0 ] || fail "could not measure the clip marker from the rendered clip"
+
+  # At the cap plus the marker a clip costs exactly what the whole line does,
+  # one byte further it finally saves something.
+  edge_line="older-edge: $(head -c $(( 200 + marker - 12 )) /dev/zero | tr '\0' 'E')"
+  past_line="older-past: $(head -c $(( 200 + marker - 11 )) /dev/zero | tr '\0' 'F')"
+  edge_bytes=$(byte_len "$edge_line")
+  past_bytes=$(byte_len "$past_line")
+  [ "$edge_bytes" -eq $(( 200 + marker )) ] || fail "edge fixture is $edge_bytes bytes, not the $(( 200 + marker ))-byte band edge"
+  [ "$past_bytes" -eq $(( 201 + marker )) ] || fail "past-edge fixture is $past_bytes bytes, not one past the band edge"
+
+  printf '%s\n%s\ndone: newest\n' "$edge_line" "$past_line" > "$status"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "$edge_line" "a line the clip could not shrink was clipped instead of printed whole"
+  assert_not_contains "$out" "CLIPPED, 200 of $edge_bytes bytes shown" "the digest spent a marker to hide bytes it then charged the budget for anyway"
+
+  assert_contains "$out" "CLIPPED, 200 of $past_bytes bytes shown" "a line a clip does shrink was not clipped"
+  rendered=$(printf '%s\n' "$out" | grep -F "CLIPPED, 200 of $past_bytes bytes shown")
+  [ "$(byte_len "$rendered")" -le "$past_bytes" ] || fail "clipping a $past_bytes-byte line cost $(byte_len "$rendered") bytes, more than printing it whole"
+
+  pass "a marked clip never costs more bytes than printing the status line whole"
 }
 
 test_orphan_status_logs_are_printed() {
@@ -1558,6 +1613,7 @@ test_session_start_relaunches_herdr_husk_secondmate
 test_status_tail_bounding
 test_status_tail_byte_bounding
 test_status_tail_utf8_clip_boundary
+test_status_tail_clip_never_costs_more_than_the_line
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
