@@ -227,62 +227,72 @@ print_backlog_compact() {
   fi
 }
 
-# clip_status_line <text> <max-bytes>: sets CLIP_OUT to the line, byte-clipped
-# with a visible marker when it did not fit, and CLIP_BYTES to the bytes the
-# clipped text consumes from the per-task budget. `local LC_ALL=C` makes bash's
-# ${#var} and substring operators count BYTES rather than characters, and is
-# restored on return.
+# clip_status_line <text> <keep-bytes> <budget-bytes>: sets CLIP_OUT to the
+# line, byte-clipped to <keep-bytes> with a visible marker when it did not fit,
+# and CLIP_BYTES to what CLIP_OUT costs the per-task budget - the marker is
+# emitted too, so it is charged as well and the per-task ceiling stays a hard
+# one. Returns 1 when not even a marked clip fits <budget-bytes>, leaving the
+# line for the caller to omit whole. `local LC_ALL=C` makes bash's ${#var} and
+# substring operators count BYTES rather than characters, and is restored on
+# return.
 CLIP_OUT=
 CLIP_BYTES=0
 clip_status_line() {
-  local text=$1 max=$2
+  local text=$1 keep=$2 budget=$3
   local LC_ALL=C
   local total=${#text} clipped n k byte need
-  if [ "$total" -le "$max" ]; then
+  [ "$keep" -gt "$budget" ] && keep=$budget
+  if [ "$total" -le "$keep" ]; then
     CLIP_OUT=$text
     CLIP_BYTES=$total
     return 0
   fi
-  clipped=${text:0:max}
-  # A byte-exact cut can land inside a multi-byte character; drop the
-  # incomplete trailing sequence so the digest stays valid UTF-8.
-  n=${#clipped}
-  for (( k = 1; k <= 4 && k <= n; k++ )); do
-    printf -v byte '%d' "'${clipped:n-k:1}"
-    [ "$byte" -lt 0 ] && byte=$(( byte + 256 ))
-    [ "$byte" -lt 128 ] && break
-    if [ "$byte" -ge 192 ]; then
-      if [ "$byte" -ge 240 ]; then need=4
-      elif [ "$byte" -ge 224 ]; then need=3
-      else need=2
+  while [ "$keep" -gt 0 ]; do
+    clipped=${text:0:keep}
+    # A byte-exact cut can land inside a multi-byte character; drop the
+    # incomplete trailing sequence so the digest stays valid UTF-8.
+    n=${#clipped}
+    for (( k = 1; k <= 4 && k <= n; k++ )); do
+      printf -v byte '%d' "'${clipped:n-k:1}"
+      [ "$byte" -lt 0 ] && byte=$(( byte + 256 ))
+      [ "$byte" -lt 128 ] && break
+      if [ "$byte" -ge 192 ]; then
+        if [ "$byte" -ge 240 ]; then need=4
+        elif [ "$byte" -ge 224 ]; then need=3
+        else need=2
+        fi
+        [ "$need" -gt "$k" ] && clipped=${clipped:0:n-k}
+        break
       fi
-      [ "$need" -gt "$k" ] && clipped=${clipped:0:n-k}
-      break
-    fi
+    done
+    CLIP_OUT="$clipped [... CLIPPED, ${#clipped} of $total bytes shown; full line is in the log path above]"
+    CLIP_BYTES=${#CLIP_OUT}
+    [ "$CLIP_BYTES" -le "$budget" ] && return 0
+    # Retry against what the marker itself leaves: the marker can only get
+    # shorter as the count it reports does, so this settles in one more pass.
+    keep=$(( budget - (CLIP_BYTES - ${#clipped}) ))
   done
-  CLIP_BYTES=${#clipped}
-  CLIP_OUT="$clipped [... CLIPPED, $CLIP_BYTES of $total bytes shown; full line is in the log path above]"
-  return 0
+  return 1
 }
 
 print_status_tail() {
   local status=$1
   printf 'status tail (last %s line(s), byte-clipped to %s newest / %s older / %s per task, wake-EVENT history, not current state; FULL UNCLIPPED LOG: %s):\n' \
     "$STATUS_TAIL" "$STATUS_NEWEST_BYTES" "$STATUS_OLDER_BYTES" "$STATUS_TASK_BYTES" "$status"
-  local lines=() rendered=() used=0 omitted=0 i cap remaining
-  mapfile -t lines < <(tail -n "$STATUS_TAIL" "$status")
+  local lines=() rendered=() used=0 omitted=0 i cap remaining line=
+  while IFS= read -r line || [ -n "$line" ]; do
+    lines[${#lines[@]}]=$line
+  done < <(tail -n "$STATUS_TAIL" "$status")
   # Walk newest to oldest so the budget is spent on the lines a supervisor
   # acts on first, then print back in chronological order.
   for (( i = ${#lines[@]} - 1; i >= 0; i-- )); do
     remaining=$(( STATUS_TASK_BYTES - used ))
-    if [ "$remaining" -le 0 ]; then
+    if [ "$i" -eq $(( ${#lines[@]} - 1 )) ]; then cap=$STATUS_NEWEST_BYTES; else cap=$STATUS_OLDER_BYTES; fi
+    if [ "$remaining" -le 0 ] || ! clip_status_line "${lines[i]}" "$cap" "$remaining"; then
       omitted=$(( i + 1 ))
       break
     fi
-    if [ "$i" -eq $(( ${#lines[@]} - 1 )) ]; then cap=$STATUS_NEWEST_BYTES; else cap=$STATUS_OLDER_BYTES; fi
-    [ "$cap" -gt "$remaining" ] && cap=$remaining
-    clip_status_line "${lines[i]}" "$cap"
-    rendered=( "$CLIP_OUT" "${rendered[@]}" )
+    rendered=( "$CLIP_OUT" "${rendered[@]+"${rendered[@]}"}" )
     used=$(( used + CLIP_BYTES ))
   done
   [ "$omitted" -gt 0 ] && printf '[... %s older line(s) OMITTED for the per-task byte budget; read the full log path above]\n' "$omitted"

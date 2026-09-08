@@ -13,7 +13,9 @@
 #     watcher ownership
 #   - status-tail bounding, default and FM_SESSION_START_STATUS_TAIL override
 #   - status-tail BYTE bounding: per-line and per-task caps, newest-first
-#     fidelity, visible clip markers, and an untouched on-disk log
+#     fidelity, visible clip markers charged against the budget they mark, and
+#     an untouched on-disk log
+#   - byte-exact clipping across a multi-byte character boundary
 #   - orphan status logs whose task meta has already disappeared
 #   - per-task endpoint-liveness lines for a live and a dead recorded target,
 #     tmux and herdr both
@@ -858,12 +860,43 @@ EOF
   pass "status tail is bounded to the configured line count, with the full log path always printed"
 }
 
+# byte_len <text>: the byte length of a status line, which ${#text} would report
+# as characters under a multi-byte locale.
+byte_len() {
+  printf '%s' "$1" | wc -c | tr -d '[:space:]'
+}
+
+# status_tail_bytes <digest>: bytes the task's status-tail LINES spend against
+# the per-task budget. The framing header and the OMITTED notice are excluded:
+# they are fixed-size notices about the tail, not tail content.
+status_tail_bytes() {
+  LC_ALL=C awk '
+    /^status tail \(last / { grab = 1; next }
+    grab && /^$/ { exit }
+    grab && /OMITTED for the per-task byte budget/ { next }
+    grab { total += length($0) }
+    END { print total + 0 }
+  ' <<EOF
+$1
+EOF
+}
+
+# utf8_clip_fixture <ascii-prefix-bytes> <char> <repeats>: an ASCII run of an
+# exact byte length followed by whole multi-byte characters, so a byte-exact
+# clip at a known offset lands a chosen number of bytes inside one of them.
+utf8_clip_fixture() {
+  local prefix_bytes=$1 char=$2 repeats=$3 out i
+  out=$(head -c "$prefix_bytes" /dev/zero | tr '\0' 'A')
+  for (( i = 0; i < repeats; i++ )); do out=$out$char; done
+  printf '%s' "$out"
+}
+
 # A crewmate resume line is routinely multiple kilobytes on ONE line, so the
 # line cap alone bounds nothing. This proves the digest clips by bytes, keeps
 # the newest line at higher fidelity than older ones, marks every clip, and
 # leaves the on-disk log untouched and reachable through the printed path.
 test_status_tail_byte_bounding() {
-  local rec root home fakebin out status long_resume older_long before_bytes after_bytes
+  local rec root home fakebin out status long_resume older_long before_bytes after_bytes spent
 
   rec=$(new_world status-tail-bytes)
   IFS='|' read -r root home fakebin <<EOF
@@ -903,8 +936,78 @@ EOF
   assert_contains "$out" "older line(s) OMITTED for the per-task byte budget" "per-task byte budget did not drop older lines"
   assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "per-task budget sacrificed the newest line instead of older ones"
   assert_not_contains "$out" "working: first" "oldest line survived a per-task byte budget it did not fit in"
+  spent=$(status_tail_bytes "$out")
+  [ "$spent" -le 1100 ] || fail "status tail spent $spent bytes against a declared 1100-byte per-task ceiling"
 
-  pass "status tails are bounded by bytes as well as lines, newest-first, without touching the log"
+  # A clip prints its marker as well as the text it kept, so the marker is
+  # charged against the same budget: shrink the older-line cap until the markers
+  # would outweigh the text they mark and the ceiling must still hold.
+  printf '%s\n%s\n%s\n%s\n%s\n' \
+    "$older_long" "$older_long" "$older_long" "$older_long" "$long_resume" > "$status"
+  out=$(FM_SESSION_START_STATUS_TAIL=5 FM_SESSION_START_STATUS_OLDER_BYTES=50 \
+    FM_SESSION_START_STATUS_TASK_BYTES=1300 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  spent=$(status_tail_bytes "$out")
+  [ "$spent" -le 1300 ] || fail "clip markers pushed the status tail to $spent bytes past a declared 1300-byte per-task ceiling"
+  assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "charging the clip marker cost the newest line its fidelity"
+  assert_contains "$out" "CLIPPED, 50 of ${#older_long} bytes shown" "charging the clip marker abandoned the older-line cap the budget still afforded"
+
+  pass "status tails are bounded by bytes as well as lines, markers included, newest-first, without touching the log"
+}
+
+# A byte-exact clip can land inside a multi-byte character. This proves the
+# digest drops the incomplete trailing sequence instead of emitting half a
+# character, at every depth a 2-, 3-, or 4-byte sequence can be cut at, while a
+# character that fits whole is left untouched.
+test_status_tail_utf8_clip_boundary() {
+  local rec root home fakebin out status two three four whole
+  local cut2a cut3a cut3b cut4a cut4b cut4c
+
+  rec=$(new_world status-tail-utf8)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live"
+
+  two=$(printf '\xc3\xa9')          # U+00E9, 2 bytes
+  three=$(printf '\xe2\x82\xac')    # U+20AC, 3 bytes
+  four=$(printf '\xf0\x9d\x84\x9e') # U+1D11E, 4 bytes
+
+  # The older-line cap is 200 bytes, so a 199-byte ASCII run leaves the clip one
+  # byte into the next character, 198 leaves it two bytes in, 197 three.
+  cut2a=$(utf8_clip_fixture 199 "$two" 5)
+  cut3a=$(utf8_clip_fixture 199 "$three" 5)
+  cut3b=$(utf8_clip_fixture 198 "$three" 5)
+  cut4a=$(utf8_clip_fixture 199 "$four" 5)
+  cut4b=$(utf8_clip_fixture 198 "$four" 5)
+  cut4c=$(utf8_clip_fixture 197 "$four" 5)
+  whole="$(head -c 100 /dev/zero | tr '\0' 'A')$four$(head -c 200 /dev/zero | tr '\0' 'B')"
+
+  status="$home/state/task-u.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-u.meta"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\ndone: ok\n' \
+    "$cut2a" "$cut3a" "$cut3b" "$cut4a" "$cut4b" "$cut4c" "$whole" > "$status"
+
+  out=$(FM_SESSION_START_STATUS_TAIL=8 FM_SESSION_START_STATUS_TASK_BYTES=8000 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "CLIPPED, 199 of $(byte_len "$cut2a") bytes shown" "clip kept the lead byte of a 2-byte character"
+  assert_contains "$out" "CLIPPED, 199 of $(byte_len "$cut3a") bytes shown" "clip kept the lead byte of a 3-byte character"
+  assert_contains "$out" "CLIPPED, 198 of $(byte_len "$cut3b") bytes shown" "clip kept two bytes of a 3-byte character"
+  assert_contains "$out" "CLIPPED, 199 of $(byte_len "$cut4a") bytes shown" "clip kept the lead byte of a 4-byte character"
+  assert_contains "$out" "CLIPPED, 198 of $(byte_len "$cut4b") bytes shown" "clip kept two bytes of a 4-byte character"
+  assert_contains "$out" "CLIPPED, 197 of $(byte_len "$cut4c") bytes shown" "clip kept three bytes of a 4-byte character"
+  assert_contains "$out" "CLIPPED, 200 of $(byte_len "$whole") bytes shown" "clip trimmed a character that fitted whole"
+  assert_contains "$out" "A$four" "a character that fitted whole did not survive the clip"
+
+  if command -v iconv >/dev/null 2>&1; then
+    printf '%s\n' "$out" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 ||
+      fail "the digest is not valid UTF-8 after byte-clipping multi-byte status lines"
+  fi
+
+  pass "byte-exact status clipping drops an incomplete trailing UTF-8 sequence instead of emitting half a character"
 }
 
 test_orphan_status_logs_are_printed() {
@@ -1419,6 +1522,7 @@ test_session_start_preserves_proven_bare_shell_recovery
 test_session_start_relaunches_herdr_husk_secondmate
 test_status_tail_bounding
 test_status_tail_byte_bounding
+test_status_tail_utf8_clip_boundary
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
