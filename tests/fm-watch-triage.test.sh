@@ -3,7 +3,9 @@
 # bin/fm-watch.sh and the shared classifier (bin/fm-classify-lib.sh). The watcher
 # now absorbs the benign majority of wakes in bash and exits ONLY on an actionable
 # wake, so firstmate's LLM re-arms once per actionable event instead of once per
-# wake. These tests cover the classifier predicates as pure functions, then drive
+# wake. These tests cover the classifier predicates as pure functions, including a
+# matrix over the decision-key folds pinning how each fold treats a usable,
+# unusable or colliding key on both its opening and its closing side, then drive
 # a real fm-watch.sh subprocess to assert the behavioral contract:
 # provably-working no-verb wakes absorbed (no exit, no queue entry, suppressor
 # advanced, beacon fresh), stopped-crew no-verb wakes surfaced (queue + exit),

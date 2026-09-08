@@ -540,11 +540,11 @@ _fm_key_slug_valid() {  # <slug>
 # superseding, and a closing verb whose key nobody can read closes nothing. That
 # flag is the whole guard, on both sides of all three folds.
 #
-# Folding a 256-line activity window measured about 0.57s before this helper and
-# about 0.34s after it, roughly 40 percent faster than the base implementation it
-# replaced, against bin/fm-fleet-snapshot.sh's hard 2s timeout. The headroom is
-# comfortable rather than tight, so a later reader weighing the per-line verb and
-# drop forks that remain is optimising, not repairing.
+# Folding a 256-line activity window measures about 0.34s, against the per-read
+# bound bin/fm-fleet-snapshot.sh applies through its
+# FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT. The headroom is comfortable rather than
+# tight, so a later reader weighing the per-line verb and drop forks that remain is
+# optimising, not repairing.
 #
 # The DECLARED position: the token opens anywhere before the note's colon, and its
 # slug is read from the WHOLE line, so a slug carrying a colon reaches the charset
