@@ -64,7 +64,7 @@ herdr 0.8.2
 ["pane.output_matched","pane.agent_status_changed","pane.scroll_changed"]
 ```
 
-The CLI matrix was checked directly:
+The CLI matrix was checked directly on the earlier 0.7.x line, most recently on Herdr 0.7.5 protocol 16 on macOS aarch64, and it was not re-run as a whole on the verified pair:
 
 | Guarantee | Command shape | Result |
 | --- | --- | --- |
@@ -75,6 +75,9 @@ The CLI matrix was checked directly:
 | Native state | `herdr agent get <pane>` | Working and done transitions were visible; long foreground tool waits required rendered-busy corroboration. |
 | Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
 | Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
+
+On the verified pair the adapter smoke suite re-confirmed the literal-send and Enter-key behavior, the restart-persistence row, and the native agent-state row.
+The remaining rows were not re-checked there, including the Capture row's small-N emptiness, which is a 0.7.1-era observation.
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
@@ -87,6 +90,8 @@ The adapter smoke suite ran on 2026-09-07 against Herdr 0.8.2 protocol 20, inclu
 tests/fm-backend-herdr-smoke.test.sh
 FM_HERDR_SMOKE_REAL_CLAUDE=1 tests/fm-backend-herdr-smoke.test.sh
 ```
+
+Both invocations passed in full on the verified pair: the default run exercises 16 of the suite's 17 checkpoints, and the `FM_HERDR_SMOKE_REAL_CLAUDE=1` run adds the 17th, the real-agent busy/idle check.
 
 Observed guarantees included:
 
