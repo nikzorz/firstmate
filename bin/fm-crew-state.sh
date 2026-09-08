@@ -89,8 +89,8 @@
 #      unread forge, a timeout, or GitHub's own UNKNOWN mergeability - leaves
 #      the verdict alone.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
-#      the run-step shows the run moved on, the log is deterministically stale and
-#      is flagged superseded. A genuinely parked run plus a needs-decision log
+#      the run-step shows the run moved on, the run-step read wins and the detail
+#      flags the log superseded. A genuinely parked run plus a needs-decision log
 #      agree, and are reported as parked.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
@@ -1235,8 +1235,11 @@ if [ "$HAVE_RUN" = 1 ]; then
   fi
 
   # Reconcile the status log. A needs-decision/blocked log line that the run-step
-  # has moved past (anything but a genuinely parked run) is deterministically
-  # stale: the gate resolved and the run resumed or finished.
+  # has moved past (anything but a genuinely parked run) is stamped superseded
+  # here. An ACTIVE run proves the gate resolved and the crew resumed; a FINISHED
+  # run does not, since a crew can append a request after its run ends, so the
+  # stamp is prose about this run-step read and never a verdict on whether the
+  # request is still open - fm-classify-lib.sh's keyed fold owns that.
   case "$LOG_VERB" in
     needs-decision|blocked)
       if [ "$RUN_STATE" != parked ]; then

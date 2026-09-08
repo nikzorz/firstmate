@@ -27,8 +27,9 @@
 #     current state.
 #     hints.open_decisions is the keyed open-decision set returned by
 #     fm-classify-lib.sh's authoritative status_open_decisions fold and reconciled
-#     against current_state; hints.pending_decision and hints.blocked_event are
-#     booleans derived from that set.
+#     against current_state, where a finished task keeps the requests it raised
+#     after finishing (status_trailing_open_decisions); hints.pending_decision and
+#     hints.blocked_event are booleans derived from that set.
 #     endpoint.exists is the cheap backend endpoint-presence read.
 #     endpoint.agent_alive is populated for secondmates only, where it is useful
 #     return-channel supervision data; other tasks use "not_checked".
@@ -490,11 +491,25 @@ task_json_lines() {
     # reconciled against the crew LIFECYCLE, which only clears a stale decision the
     # crew has provably moved past. Two lifecycle signals clear it, neither of which
     # reads any report content:
-    #   - a live activity read (run-step or busy pane) that is working/done, so a
-    #     crew that resumed past a gate is not still reported as parked; and
     #   - a TERMINAL done/failed state on a single-owner task (scout or ship), whose
     #     deliverable is its report or PR, so a COMPLETED scout surfaces only as a
-    #     report POINTER, never as a reopened pending decision.
+    #     report POINTER, never as a reopened pending decision. This one clears only
+    #     the requests the crew has since posted PAST (status_trailing_open_decisions
+    #     is what is kept): finishing is evidence about the work that ran, and a crew
+    #     can append a fresh request AFTER its run finished and then idle, leaving
+    #     the head that bound the run untouched. Without the narrowing, that request
+    #     is superseded by the very run it came after. The legitimate stale case -
+    #     raised mid-run, answered off the log, the crew then reporting on - still
+    #     clears, because the crew's later event is what separates the two. A
+    #     surviving request can still carry fm-crew-state.sh's "status-log
+    #     superseded" stamp in current_state.detail, which is prose about that
+    #     run-step read; hints.open_decisions is the authoritative open set.
+    #   - a live activity read (run-step or busy pane) that is working, so a
+    #     crew that resumed past a gate is not still reported as parked. It stays
+    #     unnarrowed: a crew actively working is moving past its gates as it goes,
+    #     and its next request re-opens the fold on its own.
+    # Terminal is tested FIRST because a terminal run reads through the same
+    # run-step source as an active one, so the narrower rule must claim it.
     # Secondmates are excluded from lifecycle clearing: they are persistent and
     # multiplex many concerns onto one stream, so activity on one concern must
     # never clear another concern's keyed decision. A parked/blocked state, a crew
@@ -502,11 +517,13 @@ task_json_lines() {
     # STOPPED, not moved past its gate), or a non-authoritative status-log/none
     # read on a still-live task, keeps the fold's open decision surfacing.
     open_decisions_tsv=$(status_open_decisions "$status_log")
-    if [ "$kind" != secondmate ] && \
-       { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
-           && [ "$current_state" != parked ] && [ "$current_state" != blocked ] \
-           && [ "$current_state" != "$FM_CLASSIFY_USAGE_LIMITED_STATE" ]; } \
-         || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
+    if [ "$kind" = secondmate ]; then
+      :
+    elif [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; then
+      open_decisions_tsv=$(status_trailing_open_decisions "$status_log")
+    elif { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
+         && [ "$current_state" != parked ] && [ "$current_state" != blocked ] \
+         && [ "$current_state" != "$FM_CLASSIFY_USAGE_LIMITED_STATE" ]; then
       open_decisions_tsv=""
     fi
     open_decisions_json=$(printf '%s' "$open_decisions_tsv" | jq -R -s '
