@@ -279,21 +279,21 @@ The report is the only thing that survives, so anything worth keeping must be in
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-   Each append wakes firstmate, so report sparingly: only phase changes a supervisor
-   would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
-   FYI progress lines; firstmate reads your pane for that.
-   Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
-   known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
-   firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
-   treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   Each append wakes firstmate: report only supervisor-actionable phase changes and the
+   needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
+   firstmate reads your pane for that.
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
+   wait you expect to clear on its own (an upstream release, a rate-limit reset);
+   firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
+   wedge. Use \`blocked:\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
-   When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
-   daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`needs-decision: {summary of options}\` and stop; firstmate replies with the decision.
+   When the decision returns or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (same \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing.
+7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
+   lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
+   append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -353,11 +353,9 @@ The task is complete only when committed on your branch.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
-You drive no-mistakes by responding to its gates, not by implementing fixes.
-Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
-Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
-Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`$PAUSED_VERB: {what you are waiting on}\` to the status file, then open and close that wait exactly as rule 4 requires.
-That idle wait is expected, and declaring it is what keeps firstmate from reading your quiet pane as a possible wedge and escalating it repeatedly.
+You drive no-mistakes by responding to its gates: the pipeline applies every fix, so never hand-edit, commit, or fix findings yourself while a run is active.
+For the mechanics follow the guidance no-mistakes itself provides, which loads with /no-mistakes: \`no-mistakes axi run --help\` and the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+Before handing a long stretch back to the pipeline, append \`$PAUSED_VERB: {what you are waiting on}\`, then open and close that wait exactly as rule 4 requires; declaring it keeps firstmate from reading your quiet pane as a possible wedge and escalating it repeatedly.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
@@ -424,24 +422,24 @@ $RULE1
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-   Each append wakes firstmate, so report sparingly: only phase changes a supervisor
-   would act on (setup done, bug reproduced, fix implemented, validation passed) and the
+   Each append wakes firstmate: report only supervisor-actionable phase changes (setup done,
+   bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
-   A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the
-   turn after it; continue the same stage until a defined \`done:\` gate under Definition of done.
-   Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
-   known external wait you expect to clear on its own ($PAUSE_EXAMPLE):
-   firstmate then leaves your idle pane alone and rechecks it on a long
-   cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the turn after
+   it; continue the same stage until a defined \`done:\` gate under Definition of done.
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
+   wait you expect to clear on its own ($PAUSE_EXAMPLE);
+   firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
+   wedge. Use \`blocked:\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
-   When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
-   daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`needs-decision: {summary of options}\` and stop; firstmate applies the configured authority and replies.
+   When the decision returns or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (same \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing.
+7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
+   lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
+   append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 $PROJECT_MEMORY_SECTION
 

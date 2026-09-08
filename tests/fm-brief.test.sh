@@ -106,7 +106,7 @@ test_no_mistakes_dod_wording() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
+  assert_grep "the guidance no-mistakes itself provides" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
@@ -131,7 +131,7 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
     "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`awaiting: {what you are waiting on}\`" "$brief" \
+  assert_grep "Before handing a long stretch back to the pipeline, append \`awaiting: {what you are waiting on}\`" "$brief" \
     "no-mistakes DOD lost the declared pause at the pipeline handoff"
   assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
     "no-mistakes DOD lost the reason the pause declaration matters"
@@ -210,7 +210,7 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
     # A scout has no branch, no push, and no PR, so it inherits the lifecycle
     # without the handoff sentence, which would name an impossible wait.
     if [ "$kind" = scout ]; then
-      assert_no_grep "hand control back to the pipeline" "$brief" \
+      assert_no_grep "handing a long stretch back to the pipeline" "$brief" \
         "$id: scout brief named a pipeline handoff it can never make"
       assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
         "$id: scout brief named a pipeline wait it can never have"
@@ -281,6 +281,37 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     esac
   done <<< "$variants"
   pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
+}
+
+# A ship brief's safety contracts are prose, so a wording pass is the way they
+# get lost. Three of them have no other guard: the isolation assertion that
+# stops a worker launched in the primary checkout, the `--yes` prohibition that
+# keeps firstmate's authority check in the loop, and the CI-green return point.
+# That last one is a subject trap - `/no-mistakes` is what must not keep
+# monitoring, so a shortened form silently makes the WORKER the subject and
+# tells it to stop watching its own PR.
+test_ship_safety_contracts_survive_a_wording_pass() {
+  local home variants id proj kind brief
+  home="$TMP_ROOT/ship-safety-home"
+  variants=$(scaffold_every_crewmate_variant "$home" brief-ship-safety-r paused)
+
+  while IFS=: read -r id proj kind brief; do
+    [ "$kind" = ship ] || continue
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "**Verify isolation before anything else.**" "$brief" \
+      "$id: ship brief lost the worktree-isolation assertion"
+    assert_grep "STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\`" "$brief" \
+      "$id: ship brief lost the stop instruction that follows a failed isolation check"
+  done <<< "$variants"
+
+  brief="$home/data/brief-ship-safety-r1/brief.md"
+  assert_grep "Avoid \`--yes\`: it would silently bypass firstmate" "$brief" \
+    "no-mistakes brief lost the --yes prohibition"
+  assert_grep "do not wait for it to keep monitoring in the background until merge" "$brief" \
+    "no-mistakes brief lost /no-mistakes as the subject of the CI-green monitoring clause"
+  assert_no_grep "point - do not keep monitoring" "$brief" \
+    "no-mistakes brief flipped the CI-green clause onto the worker"
+  pass "fm-brief.sh: ship safety contracts survive a brief wording pass"
 }
 
 test_ship_project_memory_wording() {
@@ -727,6 +758,7 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
 test_every_crewmate_brief_carries_the_whole_pause_lifecycle
 test_every_crewmate_brief_is_complete_for_a_pointed_worker
 test_ship_project_memory_wording
+test_ship_safety_contracts_survive_a_wording_pass
 test_keep_claude_md_project_gets_prohibition_not_omission
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
