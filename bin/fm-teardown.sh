@@ -1427,7 +1427,7 @@ cleanup_firstmate_home_children() {
       child_home=$(meta_value "$child_meta" home)
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
-        cleanup_firstmate_home_children "$child_home"
+        cleanup_firstmate_home_children "$child_home" || return 1
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id"
       fi
     elif [ "$child_backend" = orca ]; then
@@ -1648,7 +1648,7 @@ if [ "$KIND" = secondmate ]; then
   # The sweep itself waits until here, below every gate that can still refuse this
   # teardown, so a refusal never leaves a child's records already deleted; the home
   # return is the only step that can fail after them.
-  cleanup_firstmate_home_children "$HOME_PATH"
+  cleanup_firstmate_home_children "$HOME_PATH" || exit 1
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
   remove_secondmate_registry_entry "$ID"
 fi
