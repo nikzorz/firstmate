@@ -1291,8 +1291,11 @@ print_record_owner_id() {  # <record>
 
 # The quarantine alone keeps its PR-check migration diagnostics under a home-level
 # prefix rather than a task's, in both the current and the pre-migration spelling, so
-# there those two names are never a task id however path-safe they read. state/ holds
-# no such marker, and a task may legitimately carry either name there.
+# there neither name belongs to a task however path-safe it reads. In state/ they are
+# ordinary ids, and a task named _noncanonical is enumerated and swept like any other -
+# except while an incomplete legacy migration marker still sits in the quarantine under
+# that same name, where the migration refusal preserves the whole home for hand
+# inspection rather than sweeping a namespace it cannot yet separate.
 FM_HOME_QUARANTINE_MARKER_IDS=('!noncanonical' _noncanonical)
 
 print_quarantine_record_owner_id() {  # <quarantine-record>
@@ -1660,9 +1663,12 @@ elif [ "$BACKEND" = herdr ] \
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
-  # The sweep itself waits until here, below every gate that can still refuse this
-  # teardown, so a refusal never leaves a child's records already deleted; the home
-  # return is the only step that can fail after them.
+  # The sweep itself waits until here, below the unlanded-work, scout report,
+  # decision-hold and Orca gates, so none of those refusals leaves a child's records
+  # already deleted. It does not sit below every refusal: the sweep's own late-meta
+  # check refuses from here, after the retiring endpoint is already gone, and the home
+  # return, the registry entry and the parent's own record removal can each still fail
+  # once the children's records are cleared.
   cleanup_firstmate_home_children "$HOME_PATH" || exit 1
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
   remove_secondmate_registry_entry "$ID"
