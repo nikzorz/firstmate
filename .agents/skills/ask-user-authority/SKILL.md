@@ -46,7 +46,7 @@ The pairing is never inferred from prose; it is recorded once and read back.
    It is also the verb when the item was already closed by the captain directly or by another linked gate: it leaves that existing record intact and appends this gate's outcome.
 4. When the origin's work ends and a recorded link's gate never raised the question, retire that link with `--not-raised`, whether or not the item has since been closed.
    Retiring a link is a statement about the link, so `--not-raised` needs only the link record and never fails because the item was removed, handed to a secondmate, re-kinded, or is otherwise unreadable here.
-   While the item is open it stays open and captain-owned; once another authority has closed it, the link records who did, and when the item cannot be read the link records `unknown`, in every case with nothing appended to the item.
+   While the item is open it stays open and captain-owned, and in every case nothing is appended to the item; `docs/decision-hold-lifecycle.md` owns what the link record stores about the item and its closing authority.
    A question this gate did settle is reconciled with `--answered-by`, which writes to the item and therefore does require it to be present and still kind `captain`.
    Teardown refuses while any recorded link is unreconciled, and also refuses on an index entry it cannot fully recognise, naming the path in both cases.
    Cleanup can therefore refuse where it previously passed; `--force` remains the captain-approved discard escape hatch.

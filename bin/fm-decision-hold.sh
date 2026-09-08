@@ -59,11 +59,9 @@
 #
 # When the item was already closed by another authority, --answered-by is still
 # the verb: the existing body is left intact because it records whoever actually
-# closed it, this gate's answer is appended as a note, and the link records
-# closed_by. That field is self when this gate closed the item, the other gate's
-# identity when its machine-written marker names one, and external otherwise.
-# Retries are idempotent against the recorded decider, answer digest, and
-# closed_by, and refuse a changed answer, decider, or closing authority.
+# closed it, and this gate's answer is appended as a note. Retries are idempotent
+# against the recorded decider, answer digest, and closing authority, and refuse
+# a changed answer, decider, or closing authority.
 #
 # The two verbs are deliberately asymmetric about the item. --answered-by writes
 # to the item and so requires all of it: a usable tasks-axi, the item present in
@@ -75,13 +73,12 @@
 # backend.
 #
 # --not-raised retires a link whose gate never asked the question, whether or not
-# the item has since been closed, and records only what was observable. While the
-# item is open it stays open and captain-owned; once another authority has closed
-# it, the link records that authority in closed_by and no note is appended,
-# because this gate answered nothing. When the item cannot be read at all the
-# link records closed_by=unknown, which stays distinct from external, the token
-# for an item that is present and closed with no marker. A question this gate did
-# settle uses --answered-by instead.
+# the item has since been closed, records only what this home could observe about
+# the item, and appends nothing to it. A question this gate did settle uses
+# --answered-by instead.
+#
+# docs/decision-hold-lifecycle.md owns the link record's field contract, which
+# separates item_observed from closed_by.
 #
 # `gate-verify` reads only the index, never tasks-axi. Its reader has no silent
 # skip: any entry in data/gate-links/<origin-id>/ that is not a fully recognised
@@ -306,7 +303,7 @@ gate_link_file() {  # <origin-id> <decision-key>
   printf '%s/gate-links/%s/%s\n' "$DATA" "$1" "$2"
 }
 
-write_gate_link() {  # <link-file> <item> <origin> <key> <state> [decided-by] [digest] [closed-by]
+write_gate_link() {  # <link-file> <item> <origin> <key> <state> [observed] [decided-by] [digest] [closed-by]
   local file=$1 tmp
   mkdir -p "$(dirname "$file")"
   # Staged outside the globbed index directory so a killed write leaves no
@@ -317,9 +314,10 @@ write_gate_link() {  # <link-file> <item> <origin> <key> <state> [decided-by] [d
     printf 'origin=%s\n' "$3"
     printf 'key=%s\n' "$4"
     printf 'state=%s\n' "$5"
-    [ -z "${6:-}" ] || printf 'decided_by=%s\n' "$6"
-    [ -z "${7:-}" ] || printf 'answer_digest=%s\n' "$7"
-    [ -z "${8:-}" ] || printf 'closed_by=%s\n' "$8"
+    [ -z "${6:-}" ] || printf 'item_observed=%s\n' "$6"
+    [ -z "${7:-}" ] || printf 'decided_by=%s\n' "$7"
+    [ -z "${8:-}" ] || printf 'answer_digest=%s\n' "$8"
+    [ -z "${9:-}" ] || printf 'closed_by=%s\n' "$9"
   } > "$tmp"
   mv "$tmp" "$file"
 }
@@ -385,6 +383,20 @@ origin_gate_records() {  # <origin-id>
   [ "$dotglob" = on ] || shopt -u dotglob
 }
 
+# What was observed about the item is its own record field, separate from who
+# closed it, so no value ever does duty for two situations. Every situation is
+# named; an unnamed one refuses rather than folding into the nearest token.
+observe_gate_item() {  # <item-id> -> <observation>\t<item-state>\t<item-body>
+  local item=$1 show
+  fm_tasks_axi_version_parts >/dev/null 2>&1 || { printf 'backend-unusable\t\t\n'; return 0; }
+  show=$(task_show "$item") || { printf 'absent-here\t\t\n'; return 0; }
+  if [ "$(show_field "$show" kind)" = captain ]; then
+    printf 'present-captain\t%s\t%s\n' "$(show_field "$show" state)" "$(show_field "$show" body)"
+  else
+    printf 'present-other-kind\t%s\t%s\n' "$(show_field "$show" state)" "$(show_field "$show" body)"
+  fi
+}
+
 # Retiring a link is a statement about the link record, which this home always
 # holds. It is never a statement about the item, which this home does not
 # control, so nothing here requires the item to exist, to still be kind captain,
@@ -392,38 +404,40 @@ origin_gate_records() {  # <origin-id>
 # --answered-by keeps every item precondition, because it writes to the item.
 retire_gate_link() {  # <link-file> <item> <origin> <key>
   local file=$1 item=$2 origin=$3 key=$4
-  local show='' item_state='' item_body='' readable=0 closed_by='' recorded
-  if [ -z "$(tasks_axi_gap)" ] && show=$(task_show "$item") \
-    && [ "$(show_field "$show" kind)" = captain ]; then
-    readable=1
-    item_state=$(show_field "$show" state)
-    item_body=$(show_field "$show" body)
-  fi
-  if [ "$readable" = 0 ]; then
-    closed_by=unknown
-  elif [ "$item_state" = "done" ]; then
-    closed_by=$(gate_marker_identity "$item_body")
-    [ "$closed_by" != "$origin/$key" ] \
-      || fail "captain-gated item $item was closed through gate $origin/$key; reconcile it with --answered-by"
-    [ -n "$closed_by" ] || closed_by=external
-  fi
+  local observed item_state item_body closed_by='' recorded outcome
+  IFS=$'\t' read -r observed item_state item_body <<EOF
+$(observe_gate_item "$item")
+EOF
+  case "$observed" in
+    present-captain)
+      if [ "$item_state" = "done" ]; then
+        closed_by=$(gate_marker_identity "$item_body")
+        [ "$closed_by" != "$origin/$key" ] \
+          || fail "captain-gated item $item was closed through gate $origin/$key; reconcile it with --answered-by"
+        [ -n "$closed_by" ] || closed_by=external
+        outcome="$item was already closed by $closed_by"
+      else
+        outcome="$item left open"
+      fi
+      ;;
+    present-other-kind)
+      if [ "$item_state" = "done" ]; then
+        closed_by=$(gate_marker_identity "$item_body")
+        [ -n "$closed_by" ] || closed_by=external
+        outcome="$item is no longer a captain item and was already closed by $closed_by"
+      else
+        outcome="$item is no longer a captain item and is still open"
+      fi
+      ;;
+    absent-here) outcome="$item is absent from this home" ;;
+    backend-unusable) outcome="$item could not be read because the backlog backend is unusable" ;;
+    *) fail "could not classify what this home observes about captain-gated item $item: $observed" ;;
+  esac
   recorded=$(record_value "$file" closed_by)
-  if [ "$closed_by" = unknown ] && [ -n "$recorded" ]; then
-    closed_by=$recorded
-  elif [ -n "$closed_by" ] && [ -n "$recorded" ] && [ "$recorded" != unknown ] \
-    && [ "$recorded" != "$closed_by" ]; then
-    fail "gate $origin/$key records a different authority for closing $item"
-  fi
-  write_gate_link "$file" "$item" "$origin" "$key" not-raised '' '' "$closed_by"
-  if [ "$readable" = 0 ]; then
-    printf 'gate-resolve: %s/%s not raised; %s could not be read in this home\n' \
-      "$origin" "$key" "$item"
-  elif [ "$item_state" = "done" ]; then
-    printf 'gate-resolve: %s/%s not raised; %s was already closed by %s\n' \
-      "$origin" "$key" "$item" "$closed_by"
-  else
-    printf 'gate-resolve: %s/%s not raised (%s left open)\n' "$origin" "$key" "$item"
-  fi
+  [ -z "$recorded" ] || [ -z "$closed_by" ] || [ "$recorded" = "$closed_by" ] \
+    || fail "gate $origin/$key records a different authority for closing $item"
+  write_gate_link "$file" "$item" "$origin" "$key" not-raised "$observed" '' '' "$closed_by"
+  printf 'gate-resolve: %s/%s not raised; %s\n' "$origin" "$key" "$outcome"
 }
 
 command_gate_link() {
@@ -449,7 +463,7 @@ command_gate_link() {
     printf '%s\n' "$file"
     return 0
   fi
-  write_gate_link "$file" "$item" "$origin" "$key" open
+  write_gate_link "$file" "$item" "$origin" "$key" open present-captain
   printf '%s\n' "$file"
 }
 
@@ -566,7 +580,8 @@ command_gate_resolve() {
            || fail "could not record this gate's answer on already closed $item" ;;
     esac
   fi
-  write_gate_link "$file" "$item" "$origin" "$key" answered "$decided_by" "$digest" "$closed_by"
+  write_gate_link "$file" "$item" "$origin" "$key" answered present-captain \
+    "$decided_by" "$digest" "$closed_by"
   if [ "$closed_by" = self ]; then
     printf 'gate-resolve: %s/%s answered by %s -> %s closed\n' "$origin" "$key" "$decided_by" "$item"
   else

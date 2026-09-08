@@ -1519,10 +1519,12 @@ if [ "$KIND" = secondmate ]; then
 fi
 
 if [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then
-  if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" gate-verify "$ID" >/dev/null; then
-    echo "REFUSED: task $ID still has a captain-gated backlog item linked to an unreconciled decision." >&2
-    echo "Run bin/fm-decision-hold.sh gate-status $ID, then reconcile each link with gate-resolve before teardown." >&2
+  if ! GATE_VERIFY_DETAIL=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" gate-verify "$ID" 2>&1 >/dev/null); then
+    echo "REFUSED: task $ID has captain-gated link records this home cannot treat as reconciled." >&2
+    [ -z "$GATE_VERIFY_DETAIL" ] || echo "$GATE_VERIFY_DETAIL" >&2
+    echo "Run bin/fm-decision-hold.sh gate-status $ID to see every record for this task." >&2
+    echo "Reconcile an open link with gate-resolve; an unrecognised record names no reconcilable link, so remove the file reported above." >&2
     exit 1
   fi
 fi

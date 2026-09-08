@@ -966,11 +966,24 @@ unreadable_item_home() {  # <name> <origin-id> <item-id>
 }
 
 test_unraised_link_retires_whatever_became_of_the_item() {
-  local home id item link out shape
+  local home id item link out shape observed tail row rest
+
   id=sample-item-shape
   item=sample-shape-choice
 
-  for shape in removed handed-off re-kinded backend-unavailable; do
+  # <shape>|<expected item_observed>|<expected outcome tail after the item id>
+  local -a shapes=(
+    'removed|absent-here|is absent from this home'
+    'handed-off|absent-here|is absent from this home'
+    're-kinded|present-other-kind|is no longer a captain item and is still open'
+    'backend-unavailable|backend-unusable|could not be read because the backlog backend is unusable'
+    'hold-flag-missing|present-captain|left open'
+  )
+  for row in "${shapes[@]}"; do
+    shape=${row%%|*}
+    rest=${row#*|}
+    observed=${rest%%|*}
+    tail=${rest#*|}
     home=$(unreadable_item_home "item-shape-$shape" "$id" "$item")
     case "$shape" in
       removed)
@@ -996,18 +1009,31 @@ exit 1
 SH
         chmod +x "$home/fakebin/tasks-axi"
         ;;
+      hold-flag-missing)
+        # A tasks-axi that still reads the item but no longer advertises the
+        # captain-hold flag says nothing about whether the item is readable.
+        cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = hold ] && [ "${2:-}" = --help ]; then
+  echo "usage: tasks-axi hold <id> [flags]"
+  exit 0
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+        chmod +x "$home/fakebin/tasks-axi"
+        ;;
     esac
 
+    link="$home/data/gate-links/$id/scenario-validation"
     out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
       || fail "--not-raised must retire a link whose item is $shape"
-    assert_contains "$out" "not raised; $item could not be read in this home" \
-      "the outcome for a $shape item must say what was actually observable"
-    assert_not_contains "$out" "left open" \
-      "an unreadable item must never be reported as left open"
-    link="$home/data/gate-links/$id/scenario-validation"
+    assert_contains "$out" "not raised; $item $tail" \
+      "the outcome for a $shape item must say what was actually observed"
     assert_grep "state=not-raised" "$link" "the $shape item left the link unretired"
-    assert_grep "closed_by=unknown" "$link" \
-      "an unreadable $shape item must record unknown, never external"
+    assert_grep "item_observed=$observed" "$link" \
+      "the $shape item must record its own observation, never another situation's"
+    assert_no_grep "closed_by=" "$link" \
+      "an item not observed closed must record no closing authority at all"
 
     rm -f "$home/fakebin/tasks-axi"
     run_decisions "$home" gate-verify "$id" >/dev/null \
@@ -1016,16 +1042,70 @@ SH
       || fail "teardown stayed blocked after retiring against a $shape item: $(cat "$home/teardown.err")"
   done
 
-  home=$(unreadable_item_home item-shape-present "$id" "$item")
+  # external must stay reachable under both present observations, which is the
+  # value a single unreadable token used to swallow.
+  for shape in present-captain present-other-kind; do
+    home=$(unreadable_item_home "item-closed-$shape" "$id" "$item")
+    link="$home/data/gate-links/$id/scenario-validation"
+    tasks_in "$home" unhold "$item" >/dev/null
+    [ "$shape" = present-captain ] \
+      || tasks_in "$home" update "$item" --kind ship >/dev/null
+    tasks_in "$home" "done" "$item" --note "Captain answered this in the standup." >/dev/null
+    out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
+      || fail "--not-raised must retire a link whose $shape item is closed"
+    assert_contains "$out" "was already closed by external" \
+      "a closed $shape item with no marker must be reported as external"
+    assert_grep "item_observed=$shape" "$link" \
+      "a closed $shape item must record its own observation"
+    assert_grep "closed_by=external" "$link" \
+      "a closed $shape item with no marker must record external"
+  done
+
+  # The printed line and the durable record come from the same values, so a
+  # record that once knew a closing authority cannot keep claiming one while the
+  # outcome says the item is no longer observable.
+  home=$(unreadable_item_home item-shape-mixed "$id" "$item")
+  link="$home/data/gate-links/$id/scenario-validation"
   tasks_in "$home" unhold "$item" >/dev/null
   tasks_in "$home" "done" "$item" --note "Captain answered this in the standup." >/dev/null
+  run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised >/dev/null \
+    || fail "could not record the first observation"
+  assert_grep "closed_by=external" "$link" "the first observation must record external"
+  tasks_in "$home" rm "$item" >/dev/null || fail "could not remove the closed item"
   out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
-    || fail "--not-raised must retire a link whose item is present and closed"
-  assert_contains "$out" "was already closed by external" \
-    "a present closed item with no marker must be reported as external"
-  assert_grep "closed_by=external" "$home/data/gate-links/$id/scenario-validation" \
-    "a present closed item must record external, never unknown"
-  pass "an unraised link retires whatever became of the item, and unknown stays distinct from external"
+    || fail "a retry must not be rejected merely because the item became unobservable"
+  assert_contains "$out" "$item is absent from this home" \
+    "the retry outcome must state the current observation"
+  assert_grep "item_observed=absent-here" "$link" \
+    "the retry record must state the current observation, not a stale one"
+  assert_no_grep "closed_by=" "$link" \
+    "the record must not keep a closing authority the outcome line no longer claims"
+  pass "an unraised link records what it observed about the item, never a placeholder"
+}
+
+# A situation the classifier cannot name must refuse rather than absorb into the
+# nearest token, so a future precondition forces a new named observation. The
+# named four are exhaustive today, so the seam is the classifier itself.
+test_unnamed_item_observation_refuses_rather_than_defaulting() {
+  local home link out
+  home=$(make_home unnamed-observation)
+  stale_captain_item_fixture "$home"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  link="$home/data/gate-links/sample-hosted-boot/scenario-validation"
+  if out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" bash -c '
+      . "$0" --help >/dev/null
+      observe_gate_item() { printf "speculative\t\t\n"; }
+      retire_gate_link "$1" sample-scenario-choice sample-hosted-boot scenario-validation
+    ' "$ROOT/bin/fm-decision-hold.sh" "$link" 2>&1); then
+    fail "an unnamed observation was absorbed instead of refused: $out"
+  fi
+  assert_contains "$out" "could not classify what this home observes" \
+    "the refusal must name the situation it could not classify"
+  assert_contains "$out" "speculative" "the refusal must quote the unnamed observation"
+  assert_grep "state=open" "$link" "a refused classification must not retire the link"
+  pass "an observation the classifier cannot name refuses rather than defaulting"
 }
 
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
@@ -1062,6 +1142,8 @@ test_teardown_refuses_an_unreconciled_captain_gated_link() {
   assert_grep "REFUSED" "$home/gate-teardown3.err" "unrecognised-record teardown refusal must be explicit"
   assert_grep "$home/data/gate-links/$id/truncated-write" "$home/gate-teardown3.err" \
     "the refusal must name the offending index file"
+  assert_grep "remove the file reported above" "$home/gate-teardown3.err" \
+    "the refusal must name the recovery that actually clears an unrecognised record"
   assert_present "$home/state/$id.meta" "refused teardown removed task metadata"
   rm -f "$home/data/gate-links/$id/truncated-write"
 
@@ -1139,6 +1221,7 @@ test_gate_answer_reconciles_an_item_closed_by_another_authority
 test_second_linked_gate_records_the_first_as_the_closing_authority
 test_unraised_link_retires_after_another_authority_closed_the_item
 test_unraised_link_retires_whatever_became_of_the_item
+test_unnamed_item_observation_refuses_rather_than_defaulting
 test_gate_index_refuses_every_unrecognised_record_shape
 test_teardown_refuses_an_unreconciled_captain_gated_link
 test_gate_link_validates_identities_before_touching_state
