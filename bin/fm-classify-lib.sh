@@ -561,6 +561,55 @@ status_open_decisions() {  # <status-file-or-dash>
   _fm_status_open_decisions_stream < "$f" || return 0
 }
 
+# The subset of status_open_decisions the crew has posted NO other event past:
+# each one's opening line sits in the stream's trailing run of decision-opening
+# lines, with nothing after it but further requests. Same output shape, same keyed
+# grammar, same one owner - this only reports WHERE in the append-only stream a
+# still-open request was raised, so it adds no ordering to the log and reads no
+# clock. A malformed key token is ignored exactly as the fold above ignores it.
+#
+# It exists because "the crew moved on" and "a later line exists" are different
+# claims. bin/fm-fleet-snapshot.sh clears a stale decision when a task's lifecycle
+# has provably moved past it, and a run that finished is the weakest of those
+# signals: the crew can append a fresh request AFTER its run reaches a terminal
+# state, and the finished run is then evidence about work done before the request,
+# not about the request. Pairing terminal-run evidence with this set is what keeps
+# a genuinely stale request (raised mid-run, answered off the log, the crew then
+# reporting on) cleared while a post-run request survives.
+_fm_status_trailing_open_decisions_stream() {
+  local line verb key note stripped trailing=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    stripped=${line//[[:space:]]/}
+    [ -n "$stripped" ] || continue
+    verb=$(status_line_verb "$line")
+    case "$verb" in
+      needs-decision|blocked)
+        key=$(_fm_decision_key "$line") || continue
+        note=$(status_line_note "$line")
+        trailing=$(_fm_decision_drop "$trailing" "$key")
+        [ -n "$trailing" ] && trailing="${trailing}"$'\n'
+        trailing="${trailing}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
+        ;;
+      *)
+        trailing=''
+        ;;
+    esac
+  done
+  printf '%s' "$trailing"
+}
+
+# File-or-stdin entry point, with the same absent/unreadable and rc contract as
+# status_open_decisions above.
+status_trailing_open_decisions() {  # <status-file-or-dash>
+  local f=$1
+  if [ "$f" = - ]; then
+    _fm_status_trailing_open_decisions_stream
+    return 0
+  fi
+  [ -f "$f" ] || return 0
+  _fm_status_trailing_open_decisions_stream < "$f" || return 0
+}
+
 # Fold material routed-work phases in the same keyed event stream.
 # A working or declared-pause event opens or replaces one phase for its key.
 # A later done, failed, needs-decision, blocked, or resolved event carrying that

@@ -1249,6 +1249,127 @@ test_lost_payload_on_an_earlier_task_fails_loudly() {
   pass "a lost payload on a task the loop passes over early fails loudly"
 }
 
+# --- a finished run must not swallow a request raised after it ---------------
+#
+# Once a run is attributed, a crew that finishes validating, appends a decision
+# request and then idles leaves the head that bound the run untouched, so the run
+# still reads terminal. The terminal lifecycle clear then superseded the request,
+# and the standing entry vanished from the fleet view even though nobody had
+# answered it. The narrowing keeps the requests the crew has posted no other event
+# past, so the two cases below - which differ ONLY in whether the crew reported on
+# after raising the request - come out opposite ways, with no clock and no change
+# to the status log's format.
+make_terminal_run_fakebin() {  # <home> <worktree> <branch>
+  local fb head
+  fb=$(fm_fakebin "$1")
+  head=$(git -C "$2" rev-parse HEAD)
+  cat > "$fb/no-mistakes" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-} \${2:-}" in
+  "axi status")
+    cat <<'TOON'
+run:
+  id: "01RUN"
+  branch: $3
+  status: completed
+  outcome: checks-passed
+  head: "$head"
+  pr: "https://github.com/o/r/pull/9"
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    ci,completed,0,0
+TOON
+    ;;
+esac
+exit 0
+SH
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  list-windows) sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta ;;
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf 'codex\n' ;;
+      *) printf '%%1\n' ;;
+    esac ;;
+  capture-pane) printf 'all quiet\n> \n' ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  printf '%s\n' "$fb"
+}
+
+# Both cases share one fixture shape: a ship task on a real branch whose head the
+# fake run is bound to, so current_state reads done from the run-step.
+setup_terminal_run_task() {  # <home-name> <task-id> -> prints "<home> <fakebin>"
+  local home wt
+  home=$(make_home "$1")
+  wt="$home/projects/$2-wt"
+  mkdir -p "$wt"
+  fm_git_identity fmtest fmtest@example.invalid
+  git -C "$wt" init -q
+  git -C "$wt" commit -q --allow-empty -m init
+  git -C "$wt" checkout -q -b "fm/$2"
+  cat > "$home/data/backlog.md" <<EOF
+## In flight
+- [ ] $2 - Terminal Run Task (repo: alpha) (kind: ship) (since 2026-09-07)
+EOF
+  fm_write_meta "$home/state/$2.meta" \
+    "window=firstmate:fm-$2" \
+    "worktree=$wt" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  printf '%s %s\n' "$home" "$(make_terminal_run_fakebin "$home" "$wt" "fm/$2")"
+}
+
+test_post_run_decision_survives_terminal_run() {
+  local home fakebin out
+  read -r home fakebin <<<"$(setup_terminal_run_task post-run-decision post-run)"
+  # The crew validated, reported the green PR, and only THEN found the question.
+  {
+    printf 'working: implementing\n'
+    printf 'done: PR https://github.com/o/r/pull/9 checks green\n'
+    printf 'needs-decision [key=rollout]: stage the rollout or ship it whole\n'
+  } > "$home/state/post-run.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "post-run")
+    | .current_state.state == "done"
+      and .hints.pending_decision == true
+      and (.hints.open_decisions | length) == 1
+      and .hints.open_decisions[0].key == "rollout"
+  ' >/dev/null || fail "a request raised after the run finished must survive: $out"
+  pass "a decision request appended after a terminal run stays in the fleet view"
+}
+
+test_mid_run_decision_cleared_by_terminal_run() {
+  local home fakebin out
+  read -r home fakebin <<<"$(setup_terminal_run_task mid-run-decision mid-run)"
+  # The same request, raised MID-run and answered by a steer that left no keyed
+  # resolution behind - the crew simply reported on and the run finished. The only
+  # difference from the case above is the crew's later event.
+  {
+    printf 'working: implementing\n'
+    printf 'needs-decision [key=rollout]: stage the rollout or ship it whole\n'
+    printf 'working: applying the agreed rollout\n'
+    printf 'done: PR https://github.com/o/r/pull/9 checks green\n'
+  } > "$home/state/mid-run.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "mid-run")
+    | .current_state.state == "done"
+      and .hints.pending_decision == false
+      and (.hints.open_decisions | length) == 0
+  ' >/dev/null || fail "a request the crew reported on past must still clear: $out"
+  pass "a mid-run request the crew reported on past is still cleared by the finished run"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
@@ -1271,6 +1392,8 @@ test_open_decision_transfers_to_captain_hold
 test_open_decision_clears_on_keyed_resolution
 test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
+test_post_run_decision_survives_terminal_run
+test_mid_run_decision_cleared_by_terminal_run
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
