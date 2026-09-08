@@ -33,7 +33,7 @@ The supervision knowledge lives here: busy signature, exit command, interrupt, d
 Never dispatch a crewmate or secondmate on an unverified adapter.
 If `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, tell the captain under `AGENTS.md` section 9 that the requested worker runtime is not verified yet, use firstmate's own verified runtime for current work, and ask only whether to verify the requested runtime before future use.
 Do not pause current work for that future-verification choice, and never launch an unverified adapter.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, the busy signature in `fm-watch.sh` and `fm-tmux-lib.sh` defaults, any needed `FM_COMPOSER_IDLE_RE` empty-composer override plus any novel bare agent prompt glyph in `bin/fm-composer-lib.sh`'s shared composer classifier (the one fleet-wide owner of the empty/dead-shell/pending decision, so a new harness's own idle composer is not misread as a dead shell), the tmux agent-process liveness classification in `bin/backends/tmux.sh` when the harness can launch a secondmate, and the verified knowledge in a new `references/<harness>.md` plus its row in the per-harness reference table below.
+If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, the busy signature in `fm-watch.sh` and `fm-tmux-lib.sh` defaults, any needed `FM_COMPOSER_IDLE_RE` empty-composer override plus any novel bare agent prompt glyph in `bin/fm-composer-lib.sh`'s shared composer classifier (the one fleet-wide owner of the empty/dead-shell/pending decision, so a new harness's own idle composer is not misread as a dead shell), the tmux agent-process liveness classification in `bin/backends/tmux.sh` when the harness can launch a secondmate, and the verified knowledge in a new `references/<harness>.md` plus its row in the per-harness reference table below, registered in `docs/documentation-audiences.json` so `bin/fm-doc-audience-check.sh` keeps it classified.
 
 ## Detection
 
@@ -56,7 +56,7 @@ The primary integrations for `claude`, `codex`, `opencode`, `pi`, and `grok` hav
 Kimi is outside the primary turn-end guard scope, while `docs/turnend-guard.md` owns its separate guarded global hook for crew wake signals.
 The exact hook files, commands, scoping rules, and fail-open tradeoffs are owned by `docs/turnend-guard.md`.
 `docs/verification/supervision.md` "Turn-end guard" owns active validation evidence.
-When changing any primary turn-end hook, validate the real harness behavior in a scratch project or throwaway home before trusting it, then update that doc and the relevant concise fact in that harness's reference file.
+When changing any primary turn-end hook, validate the real harness behavior in a scratch project or throwaway home before trusting it, then update that doc, the concise fact in the turn-end guard section of this router, and the relevant fact in that harness's reference file.
 
 ## Primary pre-arm (PreToolUse) seatbelt
 
@@ -98,7 +98,7 @@ Claude's Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns tokenles
 Codex uses bounded foreground checkpoints through `bin/fm-watch-checkpoint.sh` because Codex cannot reason while a foreground tool call is running.
 OpenCode uses `.opencode/plugins/fm-primary-watch-arm.js`, which coordinates with the turn-end guard plugin and wakes the TUI with `client.session.promptAsync`.
 Pi uses the tracked `.pi/extensions/fm-primary-turnend-guard.ts` plus the tracked `.pi/extensions/fm-primary-pi-watch.ts`, both project-local extensions Pi auto-discovers once trusted.
-When changing any primary watcher adapter, update `docs/supervision-protocols/`, `docs/turnend-guard.md` if a shared idle or turn-end hook changed, and the relevant concise fact in that harness's reference file.
+When changing any primary watcher adapter, update `docs/supervision-protocols/`, `docs/turnend-guard.md` if a shared idle or turn-end hook changed, the concise fact in the watcher-supervision section of this router, and the relevant fact in that harness's reference file.
 
 ## Launch profile axes
 
@@ -169,8 +169,11 @@ Everything specific to one harness lives in one file per harness, read only when
 Read the file named by the target's `harness=` value, or by `bin/fm-harness.sh` for firstmate's own session.
 The table below is also the verified-adapter list: a harness with a row here is verified and dispatchable, and a harness with no row is not verified and must never be dispatched.
 
-Every per-harness file carries the same fact set for its harness: verification date and version, busy-pane signature, exit command, interrupt, skill-invocation form, trust or startup dialog, resume behavior, launch and autonomy shape, env marker, composer and submission quirks, the harness's own primary-session guard fact, and any harness-specific stall or incident procedure.
-So a question of the form "how do I interrupt, exit, resume, accept the trust dialog for, or recover a stalled X" is always answered by X's own file, with no need to know in advance which file holds it.
+Every per-harness file carries the same core fact set for its harness: the verification date in its heading, the busy-pane signature, the exit command, the interrupt, the trust or startup dialog, and the harness's own turn-end guard fact.
+So a question of the form "how do I interrupt X, exit X, accept the trust dialog for X, or recognize a busy X pane" is always answered by X's own file, with no need to know in advance which file holds it.
+Coverage beyond that core set varies by harness: resume behavior, launch and autonomy shape, env marker, composer and submission quirks, and any stall or incident procedure appear only where they were verified empirically.
+When one of those is absent from a harness's file it means no verified fact exists for that harness, not that the fact lives somewhere else.
+Treat the silence as unverified rather than improvising a procedure or hunting for it in another harness's file or in this router.
 
 | Harness | Reference | Harness-specific procedures it owns beyond the common fact set |
 |---|---|---|
