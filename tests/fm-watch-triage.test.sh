@@ -123,7 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
-  local fold stream expected label got want captain_re spelling suppressed prose
+  local fold stream expected label got want captain_re spelling suppressed prose keyed
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -177,14 +177,24 @@ test_classifier_primitives() {
     FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$suppressed" \
       && fail "de-keyed matching newly surfaced a nonterminal verb: $suppressed"
   done
-  # A line carrying NO key token is tested exactly once, as written. Synthesising
-  # a "$verb: $note" spelling for it injects a colon into free-form prose and turns
-  # a legacy bare line into a verb line that was never captain-relevant before.
-  for prose in 'the retry failed' 'cleanup done' 'all blocked'; do
+  # A line with no verb/note colon is tested exactly once, as written, whether or
+  # not it carries a key token. Synthesising a "$verb: $note" spelling for one
+  # injects a colon into free-form prose and turns a legacy bare line into a verb
+  # line that was never captain-relevant before; for a colonless line that carries
+  # a token, status_line_note returns the WHOLE line, so the synthesised spelling
+  # repeats the verb too and matches text no spelling of the line ever had.
+  for prose in 'the retry failed' 'cleanup done' 'all blocked' \
+    'setup failed [key=boot] but retried ok' 'nothing is done [key=x] yet'; do
     status_is_captain_relevant "$prose" \
-      && fail "de-keyed matching made colonless prose captain-relevant: $prose"
+      && fail "de-keyed matching made a colonless line captain-relevant: $prose"
     FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$prose" \
-      && fail "de-keyed matching made colonless prose match a configured override: $prose"
+      && fail "de-keyed matching made a colonless line match a configured override: $prose"
+  done
+  # The other direction: a keyed line that DOES carry a colon still reaches a home's
+  # override through its de-keyed spelling, which is the only thing de-keying is for.
+  for keyed in 'blocked [key=boot]: setup failed' 'done [key=x]: nothing left'; do
+    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$keyed" \
+      || fail "a keyed line with a colon stopped reaching a configured override: $keyed"
   done
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "blocked [key=api]: x" \
     && fail "de-keyed matching bypassed a home that narrowed its verb set"
