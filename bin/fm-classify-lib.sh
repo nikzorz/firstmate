@@ -449,13 +449,64 @@ status_is_paused_or_captain_held() {  # <status-line>
 # terminal line never clears an open captain decision.
 #
 # Decision key grammar (backward-compatible with the existing "<verb>: <note>"
-# format): an OPTIONAL "[key=<slug>]" token sits between the verb and the colon,
+# format): an OPTIONAL "[key=<slug>]" token sits on either side of the colon,
 #   needs-decision [key=api-shape]: <summary>
+#   needs-decision: [key=api-shape] <summary>
 #   resolved       [key=api-shape]: <how it was decided>
+# with <slug> drawn from letters, digits, dot, underscore and hyphen and no other
+# character; _fm_key_slug_valid below is the one place that charset is enforced,
+# for both positions alike, and a token is read whole before it is judged so no
+# character can slip past by splitting the line the reader parses. The code asks
+# ONE question about a token rather than matching a list of shapes, so a spelling
+# nobody anticipated is judged by the same rule as every other.
+# Both spellings key the event identically. Accepting the post-colon position is a
+# correctness requirement, not a convenience: a key written there used to fall
+# through to "default", where two unrelated open decisions supersede each other and
+# one disappears with no error at all. Refusing such a line instead would only move
+# the silence, because a refused status line is a wake event nobody ever sees.
+# Post-colon recognition is bounded to the note's LEADING edge, before any other
+# prose, so a status line that merely QUOTES a "[key=...]" token in its text keeps
+# the key it actually declared.
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
+#
+# A MALFORMED slug is UNUSABLE, and one property covers it: when a key is
+# unusable, err toward leaving the decision VISIBLE. A refusal nobody can see is
+# not a refusal, so neither dropping the line nor guessing which record it meant
+# is allowed - both end with a captain-relevant event gone from the open set with
+# no error, which is the silent loss this fold exists to prevent.
+#
+# The property is exactly this, and no wider. Read both halves together, because
+# the second is what the first costs:
+#   - An unusable key never causes a record to be dropped AT THE MOMENT it is
+#     written. An OPENING verb with an unusable key is appended under the shared
+#     "default" bucket instead of superseding, with the unusable token riding
+#     through into the note as ordinary prose, which is the only marker that the
+#     writer meant a key and did not get one. A CLOSING verb with an unusable key
+#     closes nothing, so whatever was open stays open.
+#   - A record parked in the shared bucket then stays visible UNTIL a later line
+#     NAMES that bucket. Any later line that names it, an ordinary unkeyed opener
+#     or a bare close alike, acts on EVERY record in it, including records that
+#     landed there only because their own key was unusable.
+#
+# Both halves follow from one fact: "default" is a BUCKET, not an identity. The
+# records in it are not distinguishable from one another, so nothing can act on
+# one of them alone. That is why an unkeyed opener evicts a parked record, why one
+# bare "resolved:" closes every record in the bucket together, and why the open
+# set can carry two records reading the same key. A close the operator can see,
+# naming what it closed, is not the silent loss this fold exists to stop, and a
+# consumer that treats a key as the identity of one decision is reading more into
+# it than the bucket promises.
+#
+# Whether the writer DECLARED the key before the colon or a reader INFERS it from
+# the note's leading edge decides which key is read, never whether an event
+# survives its own line. A line carrying no token at all is not unusable: it keys
+# "default" and closes "default", the historical one-decision-per-task behavior.
+#
 # The three parsers are pure reads of a single line; the verb parser strips any
-# key token before the colon so the leading word is recovered cleanly.
+# key token before the colon so the leading word is recovered cleanly, and the note
+# parser strips only a USABLE key token so one note reads the same in either
+# spelling while an unusable one stays visible.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
   v=${v%%\[key=*}
@@ -463,25 +514,122 @@ status_line_verb() {  # <status-line> -> leading verb word
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"
 }
-status_line_note() {  # <status-line> -> text after the first colon, trimmed
+# The ONE enforcement point for the slug charset, so widening it cannot make the
+# two key positions disagree about what a legal slug is.
+_fm_key_slug_valid() {  # <slug>
   case "$1" in
-    *:*) local n=${1#*:}; printf '%s' "${n#"${n%%[![:space:]]*}"}" ;;
-    *) printf '%s' "$1" ;;
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
   esac
 }
-_fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
-  local prefix=${1%%:*} k
-  case "$prefix" in
-    *\[key=*\]*)
-      k=${prefix#*\[key=}
-      k=${k%%\]*}
-      case "$k" in
-        ''|*[!A-Za-z0-9._-]*) return 1 ;;
-        *) printf '%s' "$k" ;;
+# The ONE question this file asks about a key token, and it replaces every list of
+# accepted token shapes: a leading region either OPENS a token or does not, and
+# when it does, whatever slug comes out is handed to _fm_key_slug_valid. Nothing
+# else decides. A token the writer never closed has no bracket to stop at, so its
+# slug simply runs to end of line and is judged by the charset like any other,
+# which usually but not always rejects it: a token that IS the rest of the line
+# yields a clean slug and is accepted. That is why an unusable key needs no shape
+# of its own. Extend the question, never a list.
+# One parse per line, into caller-visible variables and with no subshell, because
+# a fold needs the key, its usability and the note together. Sets FM_LINE_KEY,
+# FM_LINE_KEY_USABLE and FM_LINE_NOTE; the readers below are thin views of it, so
+# there is exactly one implementation of the question to keep correct.
+#
+# FM_LINE_KEY_USABLE is where the visible-decision property is enforced, and every
+# fold below reads it directly: a record may be DROPPED only on a usable key, so an
+# opening verb whose key nobody can read is appended to the shared bucket without
+# superseding, and a closing verb whose key nobody can read closes nothing. That
+# flag is the whole guard, on both sides of all three folds.
+#
+# Folding a 256-line activity window measures about 0.34s, against the per-read
+# bound bin/fm-fleet-snapshot.sh applies through its
+# FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT. The headroom is comfortable rather than
+# tight, so a later reader weighing the per-line verb and drop forks that remain is
+# optimising, not repairing.
+#
+# The DECLARED position: the token opens anywhere before the note's colon, and its
+# slug is read from the WHOLE line, so a slug carrying a colon reaches the charset
+# check as the one slug the writer wrote rather than splitting the line behind its
+# back. A line with no colon at all is all prefix, so a token visible there is
+# declared exactly as the verb parser already sees it.
+# The INFERRED position: the note's LEADING edge is the only key site, so the
+# token must open the note and prose quoting one deeper in is never a key.
+_fm_parse_status_line() {  # <status-line>
+  local line=$1 n rest slug
+  case "${line%%:*}" in
+    *\[key=*)
+      rest=${line#*\[key=}
+      slug=${rest%%\]*}
+      if _fm_key_slug_valid "$slug"; then
+        FM_LINE_KEY=$slug
+        FM_LINE_KEY_USABLE=1
+      else
+        FM_LINE_KEY=default
+        FM_LINE_KEY_USABLE=0
+      fi
+      case "$line" in
+        *:*) ;;
+        *) FM_LINE_NOTE=$line; return 0 ;;
       esac
+      rest=${rest#"$slug"}
+      rest=${rest#\]}
+      case "$rest" in
+        *:*) n=${rest#*:} ;;
+        *) n=$rest ;;
+      esac
+      n=${n#"${n%%[![:space:]]*}"}
+      [ "$FM_LINE_KEY_USABLE" -eq 1 ] || n="[key=${slug}]${n:+ }${n}"
+      FM_LINE_NOTE=$n
+      return 0
       ;;
-    *) printf 'default' ;;
   esac
+  case "$line" in
+    *:*) n=${line#*:} ;;
+    *)
+      FM_LINE_KEY=default
+      FM_LINE_KEY_USABLE=1
+      FM_LINE_NOTE=$line
+      return 0
+      ;;
+  esac
+  n=${n#"${n%%[![:space:]]*}"}
+  case "$n" in
+    \[key=*)
+      slug=${n#*\[key=}
+      slug=${slug%%\]*}
+      if _fm_key_slug_valid "$slug"; then
+        FM_LINE_KEY=$slug
+        FM_LINE_KEY_USABLE=1
+        n=${n#*\[key=}
+        n=${n#"$slug"}
+        n=${n#\]}
+        n=${n#:}
+        n=${n#"${n%%[![:space:]]*}"}
+      else
+        FM_LINE_KEY=default
+        FM_LINE_KEY_USABLE=0
+      fi
+      ;;
+    *)
+      FM_LINE_KEY=default
+      FM_LINE_KEY_USABLE=1
+      ;;
+  esac
+  FM_LINE_NOTE=$n
+}
+status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
+                      # minus a usable key token, plus any unusable one as prose
+  _fm_parse_status_line "$1"
+  printf '%s' "$FM_LINE_NOTE"
+}
+# Reads the key from before the colon first, and only then from the note's leading
+# edge, so the historical spelling always wins and prose deeper in the note is never
+# a key site. Total: every line has a key, so no caller can lose one to a parse.
+# A caller that DROPS a record must additionally read FM_LINE_KEY_USABLE, because
+# "default" here means both "no key was written" and "the key written cannot be
+# used", and only the first of those may close anything.
+_fm_decision_key() {  # <status-line> -> key slug, or "default" when none is usable
+  _fm_parse_status_line "$1"
+  printf '%s' "$FM_LINE_KEY"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
@@ -525,16 +673,21 @@ _fm_status_open_decisions_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
     case "$verb" in
       needs-decision|blocked)
-        note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
+          open=$(_fm_decision_drop "$open" "$key")
+          [ -n "$open" ] && open="${open}"$'\n'
+        fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
-        open=$(_fm_decision_drop "$open" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        open=$(_fm_decision_drop "$open" "$FM_LINE_KEY")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac
@@ -569,8 +722,8 @@ status_open_decisions() {  # <status-file-or-dash>
 # report on the work itself and ends the trailing run. Same output shape, same
 # keyed grammar, same one owner - this only reports WHERE in the append-only
 # stream a still-open request was raised, so it adds no ordering to the log and
-# reads no clock. A malformed key token is ignored exactly as the fold above
-# ignores it.
+# reads no clock. An unusable key token behaves exactly as it does in the fold
+# above: it opens under "default" and closes nothing.
 #
 # It exists because "the crew moved on" and "a later line exists" are different
 # claims. bin/fm-fleet-snapshot.sh clears a stale decision when a task's lifecycle
@@ -590,15 +743,19 @@ _fm_status_trailing_open_decisions_stream() {
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)
-        key=$(_fm_decision_key "$line") || continue
-        note=$(status_line_note "$line")
-        trailing=$(_fm_decision_drop "$trailing" "$key")
-        [ -n "$trailing" ] && trailing="${trailing}"$'\n'
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
+          trailing=$(_fm_decision_drop "$trailing" "$key")
+          [ -n "$trailing" ] && trailing="${trailing}"$'\n'
+        fi
         trailing="${trailing}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
-        key=$(_fm_decision_key "$line") || continue
-        trailing=$(_fm_decision_drop "$trailing" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        trailing=$(_fm_decision_drop "$trailing" "$FM_LINE_KEY")
         [ -n "$trailing" ] && trailing="${trailing}"$'\n'
         ;;
       *)
@@ -639,16 +796,21 @@ _fm_status_open_activities_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
     case "$verb" in
       working|"$pause")
-        note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
+        _fm_parse_status_line "$line"
+        key=$FM_LINE_KEY
+        note=$FM_LINE_NOTE
+        if [ "$FM_LINE_KEY_USABLE" -eq 1 ]; then
+          open=$(_fm_decision_drop "$open" "$key")
+          [ -n "$open" ] && open="${open}"$'\n'
+        fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       done|failed|needs-decision|blocked|"$resolve"|"$held")
-        open=$(_fm_decision_drop "$open" "$key")
+        _fm_parse_status_line "$line"
+        [ "$FM_LINE_KEY_USABLE" -eq 1 ] || continue
+        open=$(_fm_decision_drop "$open" "$FM_LINE_KEY")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac

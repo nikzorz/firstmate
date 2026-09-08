@@ -3,7 +3,9 @@
 # bin/fm-watch.sh and the shared classifier (bin/fm-classify-lib.sh). The watcher
 # now absorbs the benign majority of wakes in bash and exits ONLY on an actionable
 # wake, so firstmate's LLM re-arms once per actionable event instead of once per
-# wake. These tests cover the classifier predicates as pure functions, then drive
+# wake. These tests cover the classifier predicates as pure functions, including a
+# matrix over the decision-key folds pinning how each fold treats a usable,
+# unusable or colliding key on both its opening and its closing side, then drive
 # a real fm-watch.sh subprocess to assert the behavioral contract:
 # provably-working no-verb wakes absorbed (no exit, no queue entry, suppressor
 # advanced, beacon fresh), stopped-crew no-verb wakes surfaced (queue + exit),
@@ -122,7 +124,8 @@ test_scan_captain_relevant_statuses_classifier() {
 }
 
 test_classifier_primitives() {
-  local dir state open activity unreadable_rc unreadable_open
+  local dir state open activity unreadable_rc unreadable_open opener
+  local fold stream expected label got want
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -165,7 +168,203 @@ test_classifier_primitives() {
   printf '%s' "$open" | grep -F $'prose\t' >/dev/null \
     && fail "a key token in note prose changed the decision key"
   printf '%s' "$open" | grep -F $'bad key\t' >/dev/null \
-    && fail "an invalid key slug entered the open-decision set"
+    && fail "an invalid key slug became a decision key"
+  printf '%s' "$open" | grep -F $'default\tneeds-decision\t[key=bad key] malformed' >/dev/null \
+    || fail "a line whose declared slug is invalid vanished instead of keying default"
+  # A key written AFTER the colon must key the event exactly as the pre-colon
+  # spelling does. It used to fall through to "default", where two unrelated open
+  # decisions supersede each other and one is lost with no error at all.
+  printf 'needs-decision: [key=alpha] choose alpha A or B\nneeds-decision: [key=beta] choose beta A or B\n' \
+    > "$state/post-colon.status"
+  open=$(status_open_decisions "$state/post-colon.status")
+  printf '%s' "$open" | grep -F $'alpha\tneeds-decision\tchoose alpha A or B' >/dev/null \
+    || fail "a post-colon key did not open its own decision"
+  printf '%s' "$open" | grep -F $'beta\tneeds-decision\tchoose beta A or B' >/dev/null \
+    || fail "a second post-colon key was collapsed onto the first"
+  printf '%s' "$open" | grep -F $'default\t' >/dev/null \
+    && fail "a post-colon key silently fell through to the shared default bucket"
+  # Either spelling opens and closes the same decision, in either direction.
+  printf 'needs-decision [key=mix]: choose A or B\nresolved: [key=mix] captain chose A\n' \
+    > "$state/mix-close.status"
+  [ -z "$(status_open_decisions "$state/mix-close.status")" ] \
+    || fail "a post-colon resolved key did not close a pre-colon needs-decision"
+  printf 'needs-decision: [key=mix] choose A or B\nresolved [key=mix]: captain chose A\n' \
+    > "$state/mix-open.status"
+  [ -z "$(status_open_decisions "$state/mix-open.status")" ] \
+    || fail "a pre-colon resolved key did not close a post-colon needs-decision"
+  # The note reads the same whichever side the key sits on, so a consumer that
+  # renders the note cannot tell the two spellings apart either.
+  [ "$(status_line_note 'needs-decision: [key=mix] choose A or B')" = 'choose A or B' ] \
+    || fail "a post-colon key token was left inside the note text"
+  [ "$(status_line_verb 'needs-decision: [key=mix] choose A or B')" = 'needs-decision' ] \
+    || fail "a post-colon key token disturbed the verb"
+  # The bound: only the note's LEADING edge is a key site. A token quoted deeper
+  # in the prose keeps the key the line actually declared.
+  [ "$(_fm_decision_key 'needs-decision: pick the [key=prose] wording')" = default ] \
+    || fail "a key token past the note's leading edge became the event key"
+  [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
+    || fail "note prose overrode the declared pre-colon key"
+  # --- the unusable-key property, as a matrix -----------------------------
+  # "When a key is unusable, err toward the decision staying VISIBLE." The
+  # property binds every path that reads, writes, collapses or supersedes a key,
+  # so each fold is driven on BOTH sides - a line that OPENS a record and a line
+  # that CLOSES one - against all three key kinds: USABLE, UNUSABLE (a malformed
+  # slug, and an unfilled '<slug>' placeholder, whose angle brackets are outside
+  # the charset and so make it one), and COLLIDING (a later
+  # line reusing a key that is already open). Each row asserts the fold's WHOLE
+  # output, so a row fails both when a record vanishes and when one appears that
+  # should have been superseded. Rows are `fold|stream|expected-output|label`,
+  # with \n and \t expanded, and an empty expectation meaning nothing stays open.
+  #
+  # Two cells are unreachable rather than untested, and are named here instead of
+  # being silently omitted:
+  #   - "closing verb with a COLLIDING key" is not a distinct kind. A close whose
+  #     key is already open IS the usable-close row; that is what closing means.
+  #   - "unusable key that collides" cannot supersede anything, so it has no
+  #     separate colliding behaviour. The two-unusable-openers row below is the
+  #     evidence: both stay open under "default".
+  while IFS='|' read -r fold stream expected label; do
+    [ -n "$fold" ] || continue
+    case "$fold" in \#*) continue ;; esac
+    printf '%b' "$stream" > "$state/matrix.status"
+    got=$("$fold" "$state/matrix.status")
+    want=$(printf '%b' "$expected")
+    [ "$got" = "$want" ] || fail "$label (want [$want], got [$got])"
+  done <<'MATRIX'
+# --- status_open_decisions, OPENING side --------------------------------
+status_open_decisions|needs-decision [key=api]: pick A\n|api\tneeds-decision\tpick A|a usable declared key did not open its own decision
+status_open_decisions|needs-decision: [key=api] pick A\n|api\tneeds-decision\tpick A|a usable inferred key did not open its own decision
+status_open_decisions|needs-decision [key=ci flake]: pick A\n|default\tneeds-decision\t[key=ci flake] pick A|an unusable declared key removed the opener from the fold
+status_open_decisions|needs-decision: [key=ci flake] pick A\n|default\tneeds-decision\t[key=ci flake] pick A|an unusable inferred key removed the opener from the fold
+status_open_decisions|blocked [key=<slug>]: CI is flaky\n|default\tblocked\t[key=<slug>] CI is flaky|a copied <slug> placeholder removed the blocker from the fold
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|an unusable-keyed opener superseded an unrelated open decision
+status_open_decisions|blocked [key=ci flake]: first\nblocked [key=another bad]: second\n|default\tblocked\t[key=ci flake] first\ndefault\tblocked\t[key=another bad] second|two unusable-keyed openers collided in the shared bucket
+status_open_decisions|needs-decision [key=api]: pick A\nneeds-decision [key=api]: pick B\n|api\tneeds-decision\tpick B|a colliding usable key stopped superseding its own earlier request
+status_open_decisions|needs-decision: pick A\nneeds-decision: pick B\n|default\tneeds-decision\tpick B|two unkeyed requests stopped collapsing onto one default
+# --- status_open_decisions, CLOSING side --------------------------------
+status_open_decisions|needs-decision [key=api]: pick A\nresolved [key=api]: chose A\n||a usable declared close failed to close the decision it names
+status_open_decisions|needs-decision [key=api]: pick A\nresolved: [key=api] chose A\n||a usable inferred close failed to close the decision it names
+status_open_decisions|needs-decision: pick A\nresolved: chose A\n||a bare close stopped closing the default decision
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved [key=regsitry ]: fixed\n|default\tneeds-decision\tshould we drop the v1 API\nregistry\tblocked\tcannot reach registry|an unusable declared close silenced a record it does not name
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved: [key=regsitry ] fixed\n|default\tneeds-decision\tshould we drop the v1 API\nregistry\tblocked\tcannot reach registry|an unusable inferred close silenced a record it does not name
+status_open_decisions|needs-decision: real product question\nresolved [key=<slug>]: copied placeholder\n|default\tneeds-decision\treal product question|a copied <slug> placeholder closed a real decision
+status_open_decisions|needs-decision [key=api]: pick A\ncaptain-held [key=bad key]: tracked\n|api\tneeds-decision\tpick A|an unusable captain-held transfer closed a decision it does not name
+status_open_decisions|needs-decision [key=api]: pick A\ncaptain-held [key=api]: tracked\n||a usable captain-held transfer failed to close the decision it names
+# ACCEPTED behaviour, pinned so it is not mistaken for the silent loss above: two
+# records sharing the default bucket are closed TOGETHER by one bare resolved.
+# A close the operator can see, naming what it closed, is not a silent loss.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\nresolved: both handled\n||a bare close stopped closing every record in the shared default bucket
+# --- status_trailing_open_decisions, both sides -------------------------
+status_trailing_open_decisions|needs-decision [key=api]: pick A\n|api\tneeds-decision\tpick A|a usable key did not open a trailing decision
+status_trailing_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|an unusable-keyed opener superseded an unrelated trailing decision
+status_trailing_open_decisions|blocked [key=<slug>]: CI is flaky\n|default\tblocked\t[key=<slug>] CI is flaky|a copied <slug> placeholder removed the blocker from the trailing fold
+status_trailing_open_decisions|needs-decision [key=api]: pick A\nneeds-decision [key=api]: pick B\n|api\tneeds-decision\tpick B|a colliding usable key stopped superseding in the trailing fold
+status_trailing_open_decisions|needs-decision [key=api]: pick A\nresolved [key=api]: chose A\n||a usable close failed to close the trailing decision it names
+status_trailing_open_decisions|needs-decision: v1 API\nresolved [key=bad key]: fixed\n|default\tneeds-decision\tv1 API|an unusable close silenced a trailing record it does not name
+status_trailing_open_decisions|needs-decision: pick A\nworking: back at it\n||a report on the work stopped ending the trailing run
+# --- status_open_activities, both sides ---------------------------------
+status_open_activities|working [key=p7]: phase one\n|p7\tworking\tphase one|a usable key did not open its own activity
+status_open_activities|working [key=p 7]: phase one\n|default\tworking\t[key=p 7] phase one|an unusable key removed the activity from the fold
+status_open_activities|working: phase one\nworking [key=p 7]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=p 7] phase two|an unusable-keyed activity superseded an unrelated open activity
+status_open_activities|working: phase one\nworking [key=<slug>]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=<slug>] phase two|a copied <slug> placeholder superseded an unrelated open activity
+status_open_activities|working [key=p7]: phase one\nworking [key=p7]: phase two\n|p7\tworking\tphase two|a colliding usable key stopped superseding its own earlier phase
+status_open_activities|working [key=p7]: phase one\ndone [key=p7]: finished\n||a usable terminal failed to close the activity it names
+status_open_activities|working: phase one\ndone: finished\n||a bare terminal stopped closing the default activity
+status_open_activities|working: phase one\ndone [key=p 7]: finished\n|default\tworking\tphase one|an unusable terminal silenced an activity it does not name
+status_open_activities|working: phase one\ndone [key=<slug>]: finished\n|default\tworking\tphase one|a copied <slug> placeholder closed an activity it does not name
+status_open_activities|working: phase one\nworking [key=p 7]: phase two\ndone: all finished\n||a bare terminal stopped closing every activity in the shared default bucket
+# --- AXIS: a token the shape grid did not see -------------------------------
+# The parser used to accept a token only in the shapes it enumerated, so a
+# spelling nobody listed read as NO token at all: usable, keyed "default", free to
+# evict every record in the shared bucket. These rows are the shapes that list
+# missed. The code now asks one question instead of matching shapes, so keep this
+# axis covered by adding the next unanticipated spelling rather than a new branch.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=deps] cannot install deps\n|default\tneeds-decision\tshould we drop the v1 API\ndeps\tblocked\tblocked [key=deps] cannot install deps|a colonless keyed line evicted an unrelated open decision
+status_open_activities|working: phase one\nworking [key=p7] phase two\n|default\tworking\tphase one\np7\tworking\tworking [key=p7] phase two|a colonless keyed line evicted an unrelated open activity
+status_open_decisions|needs-decision: real product question\nresolved: [key=ci-flake fixed\n|default\tneeds-decision\treal product question|an unterminated inferred token closed a decision it does not name
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked: [key=ci-flake CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci-flake CI is flaky|an unterminated inferred token evicted an unrelated open decision
+status_open_activities|working: phase one\ndone: [key=p 7 finished\n|default\tworking\tphase one|an unterminated inferred token closed an activity it does not name
+# --- AXIS: a slug the pre-colon split cannot see ----------------------------
+# Every other unusable slug in this matrix survives being cut at the first colon,
+# so a slug that CONTAINS one is its own axis: the reader has to take the token
+# whole before the charset can judge it. Keep this axis covered when extending.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci:flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci:flake] CI is flaky|a colon-bearing declared slug superseded an unrelated open decision
+status_open_decisions|needs-decision: real product question\nresolved [key=ci:flake]: fixed\n|default\tneeds-decision\treal product question|a colon-bearing declared slug closed a decision it does not name
+status_open_decisions|blocked [key=ci:flake]: CI is flaky\n|default\tblocked\t[key=ci:flake] CI is flaky|a colon-bearing declared slug lost its note or its token
+status_open_activities|working: phase one\nworking [key=p:7]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=p:7] phase two|a colon-bearing declared slug superseded an unrelated open activity
+# A token the writer never closed has no bracket to stop at, so the same axis
+# covers the unterminated spelling.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=oops: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=oops: CI is flaky]|an unterminated declared token superseded an unrelated open decision
+# --- ACCEPTED LIMIT: a keyed decision verb does not close an unkeyed phase ---
+# A closer supersedes only the record its own key names, so a keyed decision verb
+# leaves an unkeyed 'working:' phase open and a finished phase can render as still
+# open. Reaching it takes a hand-written status line that keys one side of a pair
+# and not the other; every key in these rows is written by hand, not produced by
+# any generated instruction. It is a limit rather than a bug because it costs only
+# evidence: bin/fm-fleet-snapshot.sh's parent-activity read already disclaims
+# authority over current crew state and scores an unkeyed record 'inconclusive',
+# so the extra row is stale evidence and never a lost decision.
+status_open_activities|working: setup complete\nblocked [key=deps]: cannot install deps\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
+status_open_activities|working: setup complete\nneeds-decision [key=api]: pick A\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
+# --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
+# "default" is a BUCKET, not an identity: its records are not distinguishable, so
+# nothing can act on one of them alone. These rows are the two consequences, and
+# they are accepted limits rather than bugs. They live here as assertions so a
+# later change cannot quietly move them.
+#
+# LIMIT 1 - a parked record is evicted by a later line that NAMES the bucket. The
+# unusable-keyed opener is parked under "default"; the ordinary unkeyed opener
+# that follows names "default", and the bucket cannot tell the two apart, so the
+# parked record goes with it. The property covers the moment a line is written,
+# not the whole life of the record it wrote.
+status_open_decisions|blocked [key=ci flake]: CI is flaky\nneeds-decision: should we drop the v1 API\n|default\tneeds-decision\tshould we drop the v1 API|LIMIT 1 (accepted): a later unkeyed opener stopped evicting the record parked in the shared bucket
+status_trailing_open_decisions|blocked [key=ci flake]: CI is flaky\nneeds-decision: should we drop the v1 API\n|default\tneeds-decision\tshould we drop the v1 API|LIMIT 1 (accepted): the trailing fold stopped evicting the record parked in the shared bucket
+status_open_activities|working [key=p 7]: phase two\nworking: phase one\n|default\tworking\tphase one|LIMIT 1 (accepted): the activities fold stopped evicting the phase parked in the shared bucket
+# LIMIT 2 - the open set CAN carry two records reading the same key, which the
+# forward order of the row above already produces. Any consumer treating a key as
+# the identity of one decision is on notice, and bin/fm-decision-hold.sh does; that
+# consumer is not touched here, so the key does not answer its inventory question.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|LIMIT 2 (accepted): the shared bucket stopped carrying two records under one key
+MATRIX
+  # LIMIT 2, stated as the shape rather than as one expected string: the open set
+  # can hold more records than it holds distinct keys, so a key is not an identity.
+  got=$(printf '%b' 'needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n' \
+    | status_open_decisions -)
+  [ "$(printf '%s\n' "$got" | grep -c .)" -eq 2 ] \
+    || fail "LIMIT 2 (accepted): the shared bucket stopped carrying two records"
+  [ "$(printf '%s\n' "$got" | cut -f1 | sort -u | grep -c .)" -eq 1 ] \
+    || fail "LIMIT 2 (accepted): two records in the shared bucket stopped sharing one key"
+  # The verb survives an unusable key in both positions, so a fold still routes
+  # the line to the branch its writer meant.
+  for opener in needs-decision blocked; do
+    [ "$(status_line_verb "$opener [key=ci flake]: choose A or B")" = "$opener" ] \
+      || fail "an unusable declared slug disturbed the $opener verb"
+    [ "$(status_line_verb "$opener: [key=ci flake] choose A or B")" = "$opener" ] \
+      || fail "an unusable inferred slug disturbed the $opener verb"
+  done
+  # The note strip applies only where the key was actually written, so a declared
+  # pre-colon key never lets the note's own leading token be eaten as if it were one.
+  [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
+    || fail "a pre-colon keyed line lost genuine note prose to the key strip"
+  # One event renders one note whichever side the key sits on, so a consumer cannot
+  # tell the spellings apart. A writer who punctuates both sides leaves a colon
+  # behind the inferred token, and that colon belongs to the token, not the note.
+  [ "$(status_line_note 'needs-decision [key=x]: summary')" = 'summary' ] \
+    || fail "a declared keyed line stopped rendering its note alone"
+  [ "$(status_line_note 'needs-decision: [key=x]: summary')" = 'summary' ] \
+    || fail "an inferred keyed line kept the colon that closed its own token"
+  [ "$(status_line_note 'needs-decision: [key=x] summary')" = 'summary' ] \
+    || fail "an unpunctuated inferred keyed line stopped rendering its note alone"
+  # The colon consumed is the token's own, so a note that opens with one of its own
+  # after real prose keeps it.
+  [ "$(status_line_note 'needs-decision: [key=x] ratio 3:1 chosen')" = 'ratio 3:1 chosen' ] \
+    || fail "an inferred keyed line lost prose punctuation to the token colon strip"
+  # Both positions answer to one charset, so a slug neither accepts cannot start
+  # being accepted in only one of them.
+  [ "$(_fm_decision_key 'needs-decision [key=api/shape]: choose A or B')" = default ] \
+    || fail "a slug outside the key charset was accepted before the colon"
+  [ "$(_fm_decision_key 'needs-decision: [key=api/shape] choose A or B')" = default ] \
+    || fail "a slug outside the key charset was accepted after the colon"
   cat > "$state/activity.status" <<'EOF'
 working [key=phase7]: Phase 7 started
 working [key=phase6]: Phase 6 started
