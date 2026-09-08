@@ -133,7 +133,7 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
-KEY_SLUG_RULE="A key slug is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes, and it must name THIS decision, because two decisions sharing one slug supersede each other."
+KEY_SLUG_RULE="A key slug may contain only letters, digits, dot, underscore, and hyphen, and nothing else, and it must name THIS decision, because two decisions sharing one slug supersede each other."
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -204,6 +204,7 @@ If its first reportable event is \`working [key=<work-slug>]: {material phase}\`
 $KEY_SLUG_RULE
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
 When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying the same slug you opened it with, so it is durably closed instead of resurfacing behind later unrelated events.
+If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done
@@ -295,6 +296,7 @@ $PAUSE_LIFECYCLE
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate replies with the decision.
    When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
    append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
@@ -442,6 +444,7 @@ $PAUSE_LIFECYCLE
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate applies the configured authority and replies.
    When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   If a key was mistyped and the keyed closer will not clear it, append \`resolved: {how it was decided or unblocked}\` with no key at all: that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
    append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.

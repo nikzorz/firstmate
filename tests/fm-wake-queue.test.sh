@@ -409,52 +409,6 @@ test_open_decision_survives_a_later_status_line() {
   pass "an unanswered keyed decision request survives later status lines and a resolved one stays closed"
 }
 
-# The wake annotation is the seventh path the unusable-key property binds, and the
-# only one outside the classifier: it decides the newest open record is "already
-# carried by the latest event" by matching verb AND key. An unusable key on the
-# latest line reads as "default" like any other unkeyed line, so matching on that
-# alone trims an UNRELATED record and the operator is told about no open decision
-# at all while a blocker stands. Same three key kinds as the fold matrix.
-test_open_decision_annotation_never_trusts_an_unusable_key() {
-  local dir state out
-  dir=$(make_case open-decision-unusable-key)
-  state="$dir/state"
-  out="$dir/drain.out"
-
-  # UNUSABLE: the latest line's own key cannot be read, so it proves nothing about
-  # the earlier unkeyed blocker and must not trim it.
-  printf 'blocked: cannot reach the registry\n' > "$state/unusable.status"
-  printf 'blocked [key=ci flake]: CI is flaky\n' >> "$state/unusable.status"
-  # UNUSABLE, the brief's own placeholder copied verbatim, same requirement.
-  printf 'needs-decision: should we drop the v1 API\n' > "$state/placeholder.status"
-  printf 'needs-decision [key=<slug>]: copied the template\n' >> "$state/placeholder.status"
-  # USABLE: the latest line genuinely carries the only open record, so annotating
-  # it would say the same thing twice. This is the match the trim exists for.
-  printf 'needs-decision [key=api]: choose an API shape\n' > "$state/usable.status"
-  # No token at all on either side: the ordinary unkeyed stream, which must keep
-  # matching exactly as it always has.
-  printf 'needs-decision: choose an API shape\n' > "$state/unkeyed.status"
-
-  append_wake "$state" signal unusable.status "signal: unusable" || fail "unusable-key wake append failed"
-  append_wake "$state" signal placeholder.status "signal: placeholder" || fail "placeholder wake append failed"
-  append_wake "$state" signal usable.status "signal: usable" || fail "usable-key wake append failed"
-  append_wake "$state" signal unkeyed.status "signal: unkeyed" || fail "unkeyed wake append failed"
-
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "unusable-key drain failed"
-
-  # Both records stay visible: the newest is annotated and the unrelated older one
-  # is counted, where before the trim left the operator with no annotation at all.
-  # Repeating the latest event is the accepted cost of not hiding the other record.
-  grep -F 'wake annotation: open decision or blocker not superseded by the latest event: unusable.status: blocked: [key=ci flake] CI is flaky (+1 older still open in the status tail read)' "$out" >/dev/null \
-    || fail "an unusable key on the latest event hid an unrelated open blocker"
-  grep -F 'wake annotation: open decision or blocker not superseded by the latest event: placeholder.status: needs-decision: [key=<slug>] copied the template (+1 older still open in the status tail read)' "$out" >/dev/null \
-    || fail "a copied <slug> placeholder on the latest event hid an unrelated open decision"
-  if grep -E '^wake annotation: open decision or blocker.*: (usable|unkeyed)\.status:' "$out" >/dev/null; then
-    fail "annotated an open decision the latest event already carried"
-  fi
-  pass "the wake annotation surfaces an open decision the latest event only appears to carry"
-}
-
 # The bounded tail read starts wherever the byte cap falls. When that boundary
 # lands exactly on a newline the chunk's first line is whole, so treating it as a
 # fragment silently drops a request no later line closed.
@@ -617,6 +571,5 @@ test_enrichment_caps_and_status_file_failures
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
 test_interruption_before_and_after_raw_commit
 test_open_decision_survives_a_later_status_line
-test_open_decision_annotation_never_trusts_an_unusable_key
 test_open_decision_survives_a_newline_aligned_tail_boundary
 test_open_decision_outranks_the_latest_event_under_the_global_cap

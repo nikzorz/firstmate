@@ -123,7 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
-  local fold stream expected label got want
+  local fold stream expected label got want captain_re spelling suppressed
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -159,6 +159,26 @@ test_classifier_primitives() {
     && fail "FM_CAPTAIN_RE override bypassed paused: suppression"
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "custom-verb: x" \
     || fail "nonterminal suppression weakened custom bare-line behavior"
+  # A home that set FM_CAPTAIN_RE wrote it against the unkeyed spelling, so keying
+  # an event must not drop it out of that home's own override. The regex is tested
+  # against the line as written AND against its de-keyed spelling.
+  captain_re='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
+  for spelling in 'blocked: CI is flaky' 'blocked [key=ci-flake]: CI is flaky' \
+    'blocked: [key=ci-flake] CI is flaky' 'needs-decision: pick A' \
+    'needs-decision [key=api]: pick A' 'needs-decision: [key=api] pick A'; do
+    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$spelling" \
+      || fail "a documented FM_CAPTAIN_RE override stopped surfacing: $spelling"
+  done
+  # De-keying must widen which SPELLINGS of an eligible verb match, never which
+  # verbs are eligible, so the verb gate still runs first and nothing new matches.
+  for suppressed in 'working [key=w]: rebased onto merged #76' \
+    'paused [key=w]: checks green pending approval' \
+    'resolved [key=api]: done: chose A' 'captain-held [key=api]: done: tracked'; do
+    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$suppressed" \
+      && fail "de-keyed matching newly surfaced a nonterminal verb: $suppressed"
+  done
+  FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "blocked [key=api]: x" \
+    && fail "de-keyed matching bypassed a home that narrowed its verb set"
   printf 'needs-decision: should docs mention [key=prose]?\nneeds-decision [key=q1]: real choice\nresolved: docs still mention [key=q1]\nneeds-decision [key=bad key]: malformed\n' > "$state/keys.status"
   open=$(status_open_decisions "$state/keys.status")
   printf '%s' "$open" | grep -F $'q1\t' >/dev/null \
@@ -270,6 +290,17 @@ status_open_activities|working: phase one\ndone: finished\n||a bare terminal sto
 status_open_activities|working: phase one\ndone [key=p 7]: finished\n|default\tworking\tphase one|an unusable terminal silenced an activity it does not name
 status_open_activities|working: phase one\ndone [key=<slug>]: finished\n|default\tworking\tphase one|a copied <slug> placeholder closed an activity it does not name
 status_open_activities|working: phase one\nworking [key=p 7]: phase two\ndone: all finished\n||a bare terminal stopped closing every activity in the shared default bucket
+# --- AXIS: a slug the pre-colon split cannot see ----------------------------
+# Every other unusable slug in this matrix survives being cut at the first colon,
+# so a slug that CONTAINS one is its own axis: the reader has to take the token
+# whole before the charset can judge it. Keep this axis covered when extending.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci:flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci:flake] CI is flaky|a colon-bearing declared slug superseded an unrelated open decision
+status_open_decisions|needs-decision: real product question\nresolved [key=ci:flake]: fixed\n|default\tneeds-decision\treal product question|a colon-bearing declared slug closed a decision it does not name
+status_open_decisions|blocked [key=ci:flake]: CI is flaky\n|default\tblocked\t[key=ci:flake] CI is flaky|a colon-bearing declared slug lost its note or its token
+status_open_activities|working: phase one\nworking [key=p:7]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=p:7] phase two|a colon-bearing declared slug superseded an unrelated open activity
+# A token the writer never closed has no bracket to stop at, so the same axis
+# covers the unterminated spelling.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=oops: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=oops: CI is flaky]|an unterminated declared token superseded an unrelated open decision
 # --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
 # "default" is a BUCKET, not an identity: its records are not distinguishable, so
 # nothing can act on one of them alone. These rows are the two consequences, and

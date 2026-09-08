@@ -258,8 +258,16 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # The key must be SHOWN inside the template, not described beside a template
     # that already carries the colon: a worker following that prose literally
     # appends the token after the colon, where it used to be silently dropped.
-    assert_no_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
-      "$id: brief still shows an unkeyed resolved template with the key only in prose"
+    assert_no_grep "(keyed with \`[key=<slug>]\` if you opened it with one)" "$brief" \
+      "$id: brief went back to describing the key in prose beside an unkeyed template"
+    assert_no_grep "(same \`[key=<slug>]\` if you opened it with one)" "$brief" \
+      "$id: brief went back to describing the key in prose beside an unkeyed template"
+    # A closer carrying the same unreadable slug is rejected before any key
+    # comparison, so the bare form is the only line that can close a mis-keyed
+    # record. Without it a fumbled slug opens a blocker nothing taught can clear,
+    # and bin/fm-afk-return.sh holds the away-return gate open on it.
+    assert_grep "that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read" "$brief" \
+      "$id: brief lost the bare resolved recovery line for an unreadable key"
     # A blocker is folded by the same keyed grammar as a decision, so an unkeyed
     # `blocked:` opener paired with a keyed `resolved [key=...]:` closer can
     # never be closed at all: the closer names a key the opener never opened.
@@ -268,8 +276,12 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     assert_grep "append \`blocked [key=<slug>]: {the daemon error}\`" "$brief" \
       "$id: brief teaches an unkeyed daemon-error blocker its keyed closure can never close"
     # Without the accepted charset a worker invents a slug the classifier rejects.
-    assert_grep "letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes" "$brief" \
+    assert_grep "may contain only letters, digits, dot, underscore, and hyphen, and nothing else" "$brief" \
       "$id: brief shows a key slug without saying what a slug may contain"
+    # An exclusion list is only as good as whoever wrote it: the colon-bearing slug
+    # class was missed because nothing forbade a colon by name.
+    assert_no_grep "with no spaces and no slashes" "$brief" \
+      "$id: brief states the slug rule as a forbidden-character list again"
     assert_grep "it must name THIS decision, because two decisions sharing one slug supersede each other" "$brief" \
       "$id: brief lost why a slug has to name the decision it keys"
     # A worker copies the template verbatim, so a concrete example slug would hand
@@ -608,8 +620,10 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost resolved closure for a keyed material phase"
   assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\`" "$brief" \
     "secondmate charter lost the keyed blocker its keyed closure has to close"
-  assert_grep 'letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes' "$brief" \
+  assert_grep 'may contain only letters, digits, dot, underscore, and hyphen, and nothing else' "$brief" \
     "secondmate charter shows a key slug without saying what a slug may contain"
+  assert_grep 'that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read' "$brief" \
+    "secondmate charter lost the bare resolved recovery line for an unreadable key"
   assert_no_grep "[key=charter-scope]" "$brief" \
     "secondmate charter hands every blocker one shared example slug to collide on"
 

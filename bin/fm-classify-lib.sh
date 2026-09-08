@@ -395,6 +395,11 @@ status_is_terminal_verb() {
 # (working, resolved, captain-held) and paused never match from free-text prose;
 # only lines without those leading verbs may still match free-text tokens for
 # legacy bare lines such as "merged" or "PR ready".
+# A configured FM_CAPTAIN_RE is tested against the line AS WRITTEN and against its
+# DE-KEYED spelling, because a home wrote that regex against "blocked:" prose and
+# meant the event, not the token: keying an event must not drop it out of a home's
+# own override. The verb gate above still runs first, so de-keying widens which
+# spellings of an already-eligible verb match, never which verbs are eligible.
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
@@ -410,7 +415,8 @@ status_is_captain_relevant() {
       done|needs-decision|blocked|failed) return 0 ;;
     esac
   fi
-  printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+  printf '%s\n%s' "$line" "$verb: $(status_line_note "$line")" \
+    | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure
@@ -455,7 +461,8 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   resolved       [key=api-shape]: <how it was decided>
 # with <slug> drawn from letters, digits, dot, underscore and hyphen and no other
 # character; _fm_key_slug_valid below is the one place that charset is enforced,
-# for both positions alike.
+# for both positions alike, and a token is read whole before it is judged so no
+# character can slip past by splitting the line the reader parses.
 # Both spellings key the event identically. Accepting the post-colon position is a
 # correctness requirement, not a convenience: a key written there used to fall
 # through to "default", where two unrelated open decisions supersede each other and
@@ -519,16 +526,28 @@ _fm_key_slug_valid() {  # <slug>
   esac
 }
 # The ONE reader of a DECLARED key token, so the key parser and the note parser
-# can never disagree about whether the writer named a key before the colon.
+# can never disagree about whether the writer named a key before the colon. The
+# token OPENS before the verb's colon but is read to its own closing bracket
+# wherever that falls, so a slug carrying a colon reaches the charset check as the
+# one slug the writer wrote instead of splitting the line in half behind its back.
+# A token the writer never closed has no bracket to stop at, so its slug runs to
+# end of line and the charset rejects it, which is what makes it unusable.
 # Prints the slug whether or not it is usable; only the ABSENCE of a token is rc 1.
 _fm_prefix_declared_slug() {  # <status-line> -> slug written before the colon, else rc 1
-  local prefix=${1%%:*} slug
-  case "$prefix" in
-    *\[key=*\]*) ;;
+  local line=$1 rest
+  case "$line" in
+    *:*) ;;
     *) return 1 ;;
   esac
-  slug=${prefix#*\[key=}
-  printf '%s' "${slug%%\]*}"
+  case "${line%%:*}" in
+    *\[key=*) ;;
+    *) return 1 ;;
+  esac
+  rest=${line#*\[key=}
+  case "$rest" in
+    *\]*) printf '%s' "${rest%%\]*}" ;;
+    *) printf '%s' "$rest" ;;
+  esac
 }
 # The ONE reader of an INFERRED key token, so the key parser and the note parser
 # can never disagree about whether a note's leading token is a key at all.
@@ -544,19 +563,29 @@ _fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, 
   _fm_key_slug_valid "$slug" || return 1
   printf '%s' "$slug"
 }
-status_line_note() {  # <status-line> -> text after the first colon, trimmed,
+status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
                       # minus a usable key token, plus any unusable one as prose
-  local n slug
+  local n slug rest
   case "$1" in
     *:*) n=${1#*:} ;;
     *) printf '%s' "$1"; return 0 ;;
   esac
-  n=${n#"${n%%[![:space:]]*}"}
   if slug=$(_fm_prefix_declared_slug "$1"); then
+    rest=${1#*\[key=}
+    case "$rest" in
+      *\]*) rest=${rest#*\]} ;;
+      *) rest='' ;;
+    esac
+    case "$rest" in
+      *:*) n=${rest#*:} ;;
+      *) n=$rest ;;
+    esac
+    n=${n#"${n%%[![:space:]]*}"}
     _fm_key_slug_valid "$slug" || n="[key=${slug}]${n:+ }${n}"
     printf '%s' "$n"
     return 0
   fi
+  n=${n#"${n%%[![:space:]]*}"}
   if _fm_note_leading_key "$n" >/dev/null; then
     n=${n#*\]}
     n=${n#"${n%%[![:space:]]*}"}
