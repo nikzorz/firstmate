@@ -1370,6 +1370,28 @@ test_mid_run_decision_cleared_by_terminal_run() {
   pass "a mid-run request the crew reported on past is still cleared by the finished run"
 }
 
+test_answered_post_run_decision_keeps_its_unanswered_sibling() {
+  local home fakebin out
+  read -r home fakebin <<<"$(setup_terminal_run_task two-post-run-decisions two-post)"
+  # Two questions after the finished run, one of them answered. A keyed
+  # resolution speaks for its own key only, so the other stays pending.
+  {
+    printf 'done: PR https://github.com/o/r/pull/9 checks green\n'
+    printf 'needs-decision [key=rollout]: stage the rollout or ship it whole\n'
+    printf 'needs-decision [key=schema]: migrate the schema now or next release\n'
+    printf 'resolved [key=rollout]: captain chose staged\n'
+  } > "$home/state/two-post.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "two-post")
+    | .current_state.state == "done"
+      and .hints.pending_decision == true
+      and (.hints.open_decisions | length) == 1
+      and .hints.open_decisions[0].key == "schema"
+  ' >/dev/null || fail "resolving one post-run request must not clear the other: $out"
+  pass "resolving one post-run request leaves its unanswered sibling pending"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
@@ -1394,6 +1416,7 @@ test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
 test_post_run_decision_survives_terminal_run
 test_mid_run_decision_cleared_by_terminal_run
+test_answered_post_run_decision_keeps_its_unanswered_sibling
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot

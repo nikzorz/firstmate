@@ -500,7 +500,10 @@ task_json_lines() {
     #     the head that bound the run untouched. Without the narrowing, that request
     #     is superseded by the very run it came after. The legitimate stale case -
     #     raised mid-run, answered off the log, the crew then reporting on - still
-    #     clears, because the crew's later event is what separates the two.
+    #     clears, because the crew's later event is what separates the two. A
+    #     surviving request can still carry fm-crew-state.sh's "status-log
+    #     superseded" stamp in current_state.detail, which is prose about that
+    #     run-step read; hints.open_decisions is the authoritative open set.
     #   - a live activity read (run-step or busy pane) that is working, so a
     #     crew that resumed past a gate is not still reported as parked. It stays
     #     unnarrowed: a crew actively working is moving past its gates as it goes,
