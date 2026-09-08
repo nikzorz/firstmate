@@ -12,6 +12,8 @@
 #   - context-aware next-step guidance for read-only, AFK, X mode, and normal
 #     watcher ownership
 #   - status-tail bounding, default and FM_SESSION_START_STATUS_TAIL override
+#   - status-tail BYTE bounding: per-line and per-task caps, newest-first
+#     fidelity, visible clip markers, and an untouched on-disk log
 #   - orphan status logs whose task meta has already disappeared
 #   - per-task endpoint-liveness lines for a live and a dead recorded target,
 #     tmux and herdr both
@@ -856,6 +858,55 @@ EOF
   pass "status tail is bounded to the configured line count, with the full log path always printed"
 }
 
+# A crewmate resume line is routinely multiple kilobytes on ONE line, so the
+# line cap alone bounds nothing. This proves the digest clips by bytes, keeps
+# the newest line at higher fidelity than older ones, marks every clip, and
+# leaves the on-disk log untouched and reachable through the printed path.
+test_status_tail_byte_bounding() {
+  local rec root home fakebin out status long_resume older_long before_bytes after_bytes
+
+  rec=$(new_world status-tail-bytes)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live"
+
+  long_resume="done: resume $(head -c 5000 /dev/zero | tr '\0' 'R')"
+  older_long="working: older $(head -c 5000 /dev/zero | tr '\0' 'O')"
+  status="$home/state/task-a.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-a.meta"
+  printf '%s\n%s\n' "$older_long" "$long_resume" > "$status"
+  before_bytes=$(wc -c < "$status")
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "newest status line was not byte-clipped at the newest-line cap"
+  assert_contains "$out" "CLIPPED, 200 of ${#older_long} bytes shown" "older status line was not clipped harder than the newest one"
+  assert_contains "$out" "$status" "byte-clipped tail did not print the full log path for a deeper read"
+  assert_not_contains "$out" "$long_resume" "the full multi-kilobyte resume line still reached the digest"
+
+  after_bytes=$(wc -c < "$status")
+  [ "$before_bytes" -eq "$after_bytes" ] || fail "the digest mutated the status log: $before_bytes -> $after_bytes bytes"
+  grep -qxF "$long_resume" "$status" || fail "the full resume line is no longer intact in $status"
+
+  # The per-task budget is the ceiling behind the per-line caps: raise the line
+  # count past what the budget affords and the oldest lines drop out entirely,
+  # newest-first, rather than the newest line being sacrificed.
+  local pad
+  pad=$(head -c 900 /dev/zero | tr '\0' 'P')
+  printf 'working: first %s\nworking: second %s\nworking: third %s\n%s\n' \
+    "$pad" "$pad" "$pad" "$long_resume" > "$status"
+  out=$(FM_SESSION_START_STATUS_TAIL=4 FM_SESSION_START_STATUS_TASK_BYTES=1100 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "older line(s) OMITTED for the per-task byte budget" "per-task byte budget did not drop older lines"
+  assert_contains "$out" "CLIPPED, 1000 of ${#long_resume} bytes shown" "per-task budget sacrificed the newest line instead of older ones"
+  assert_not_contains "$out" "working: first" "oldest line survived a per-task byte budget it did not fit in"
+
+  pass "status tails are bounded by bytes as well as lines, newest-first, without touching the log"
+}
+
 test_orphan_status_logs_are_printed() {
   local rec root home fakebin out matched_count orphan_count
   rec=$(new_world orphan-status)
@@ -1367,6 +1418,7 @@ test_session_start_preserves_transiently_unreadable_tmux
 test_session_start_preserves_proven_bare_shell_recovery
 test_session_start_relaunches_herdr_husk_secondmate
 test_status_tail_bounding
+test_status_tail_byte_bounding
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
