@@ -236,6 +236,78 @@ test_handle_wake_terminal_signal_clears_pause_tracking() {
   pass "a terminal signal clears pause and stale tracking across both supervisors"
 }
 
+# The cross-clear must end the whole episode, counts included. A count that
+# survives is not inert: the watcher resumes on the same records, and the next
+# episode's first absorb inherits it and escalates as demanding deep inspection
+# on absorbs it never earned. Driven end to end - the real daemon clear, then the
+# real watcher on the same state dir - because only the watcher can show the
+# inherited count's consequence, and the fixture that would prove the daemon ran
+# an `rm` proves nothing about it.
+test_cross_clear_leaves_no_watcher_advancing_count_for_the_next_episode() {
+  local dir state fakebin watch_out capture_file win task key sibling_key pane_hash pid
+  dir=$(make_case cross-clear-advancing); state="$dir/state"; fakebin="$dir/fakebin"
+  watch_out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  win="fm:build"; task=build
+  key=$(_stale_key "$win")
+  # A sibling whose key ENDS WITH this one's: the exact shape a .*-<key> sweep
+  # would take collateral damage from, since window names keep their hyphens.
+  sibling_key=$(_stale_key "sub-fm:build")
+  printf 'no-mistakes: applying review fixes' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$win" > "$state/$task.meta"
+
+  # The pause the watcher absorbed twice under, and the sibling's own untouched
+  # records.
+  printf 'paused: awaiting the vendor rate-limit reset\n' > "$state/$task.status"
+  : > "$state/.paused-$key"
+  printf '2\n' > "$state/.advancing-absorbs-$key"
+  date +%s > "$state/.advancing-resurfaced-$key"
+  # Aged past the recheck cadence, so a surviving throttle is not what a fresh
+  # episode would trip over: the count alone decides the next absorb's verdict.
+  backdate_record "$state/.advancing-resurfaced-$key" 4000
+  printf '2\n' > "$state/.advancing-absorbs-$sibling_key"
+  printf '1\n' > "$state/.count-$sibling_key"
+
+  # The pause ends: the crew's own status line is what the daemon reconciles on.
+  printf 'working: back on the fix\n' > "$state/$task.status"
+  FM_STATE_OVERRIDE="$state" handle_wake "signal: $state/$task.status" "$state"
+
+  [ ! -e "$state/.advancing-absorbs-$key" ] || fail "the cross-clear left the absorb count behind"
+  [ ! -e "$state/.advancing-resurfaced-$key" ] || fail "the cross-clear left the advancing recheck throttle behind"
+  [ -e "$state/.advancing-absorbs-$sibling_key" ] || fail "the cross-clear swept a sibling key's absorb count"
+  [ -e "$state/.count-$sibling_key" ] || fail "the cross-clear swept a sibling key's detection state"
+
+  # A FRESH episode: the pane goes quiet again on a run that still reads
+  # advancing, and the watcher re-detects it from scratch.
+  pane_hash=$(hash_text "no-mistakes: applying review fixes")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  backdate_record "$state/.hash-$key" 4000
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$state/$task.status" > "$state/.seen-${task}_status"
+  else stat -c '%s:%Y' "$state/$task.status" > "$state/.seen-${task}_status"; fi
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=60 FM_WEDGE_DEMAND_INSPECT_COUNT=3 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch.sh" > "$watch_out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    unset FM_FAKE_CREW_STATE; fail "the fresh episode raised no recheck at all: $(cat "$watch_out")"; }
+  unset FM_FAKE_CREW_STATE
+  if grep -F "demand-deep-inspection" "$watch_out" >/dev/null; then
+    fail "the fresh episode inherited the cleared episode's absorb count and demanded inspection at once"
+  fi
+  grep -F "run step still advancing" "$watch_out" >/dev/null \
+    || fail "the fresh episode did not raise the ordinary long-cadence recheck: $(cat "$watch_out")"
+  [ "$(cat "$state/.advancing-absorbs-$key")" = 1 ] \
+    || fail "the fresh episode's first absorb did not start counting from zero"
+  pass "a cross-clear leaves no advancing count for the next episode to inherit"
+}
+
 test_housekeeping_migrates_watcher_pause_marker() {
   local dir state key win
   dir=$(make_supercase migrate-watcher-pause)
@@ -2427,6 +2499,7 @@ test_stale_paused_classifies_pause
 test_handle_wake_paused_records_pause_marker
 test_handle_wake_paused_signal_records_pause_marker
 test_handle_wake_terminal_signal_clears_pause_tracking
+test_cross_clear_leaves_no_watcher_advancing_count_for_the_next_episode
 test_housekeeping_migrates_watcher_pause_marker
 test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
