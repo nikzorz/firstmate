@@ -167,10 +167,14 @@ ok - real Herdr lab: missing, renamed, and duplicate tokens trigger zero destruc
 ok - real Herdr lab validation completed on Herdr 0.7.5 with the default-session tripwire intact
 ```
 
-On 2026-09-07 the same projection suite was rerun against Herdr 0.8.2 protocol 20.
-Every projection, ordering, lock-contention, move-failure, and concurrent-abort guarantee still held with the default-session tripwire intact and captain focus preserved.
-The one exception is the suite's final assertion, which requires the exact task-pane close to first demonstrate Herdr's focus steal and then restore it.
+On 2026-09-07 the same projection suite was rerun against Herdr 0.8.2 protocol 20, where it exits non-zero.
+The suite has 22 pass checkpoints, and the run reached 7 of them before aborting on `assert_cleanup_focus_steal_was_restored`, the 8th checkpoint's guarding assertion in `tests/fm-backend-herdr-presentation-e2e.test.sh`.
+The 7 observed checkpoints are flag-off spawn ordering, create/tab-create/prune/move focus preservation, active seeded-tab prune refusal, bounded lock-contention flat fallback, the concurrent primary contiguous block, forced `workspace.move` failure, and concurrent post-create abort cleanup.
+The 14 checkpoints after the abort never executed on this pair, so no restart-reclaim, multi-home, teardown-focus, or token-safety guarantee is claimed for it here.
+That assertion requires the exact task-pane close to first demonstrate Herdr's focus steal and then restore it.
 The recorded focus audit shows that close leaving the active workspace and tab unchanged on this pair, so the steal the assertion demands no longer occurs and the adapter's restoration step is a verified no-op rather than a failure.
+The suite's own default-session tripwire is not evidence on this path, because the abort route discards the lab teardown's output and exit status.
+Captain isolation rests instead on a separate operator check run outside the suite: `herdr session list --json` before and after the runs showed the default session present with `default:true` and `running:true`, and no leftover `fm-lab-` sessions.
 
 The restored-shell session-start cleanup ran on 2026-07-24 against Herdr 0.7.5 protocol 17:
 

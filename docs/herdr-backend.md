@@ -85,7 +85,9 @@ The worker remains on the ordinary flat or Herdr-current-order path.
 Normal task metadata remains the sole endpoint authority after creation.
 Cleanup closes only the exact recorded task pane and never calls `workspace close`.
 Herdr can move focus when closing the last pane of a non-focused projected workspace, so projected cleanup runs under the same session lock, captures the exact active tab, refuses to delete the active tab, closes the exact task pane, and restores only the exact prior tab when needed.
-The verified pair no longer moves focus on that close, which makes the restore step a verified no-op there rather than an unnecessary guard, because supported builds down to the floor still exhibit the steal.
+The verified pair no longer moves focus on that close, which makes the restore step a verified no-op there rather than an unnecessary guard.
+The guard is retained conservatively, not because every supported build is known to steal focus: the steal is recorded on the earlier 0.7.4 and 0.7.5 runs and is unobserved rather than disproven below the verified pair.
+It costs nothing on a build that does not steal, because the restore short-circuits on an unchanged focus snapshot.
 If lock, snapshot, pane identity, or restoration is ambiguous, cleanup warns and preserves the journal for manual inspection.
 
 Recovery is deliberately conservative and presentation-only.
