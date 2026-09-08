@@ -300,14 +300,14 @@ validate_pr_poll_cleanup() {
     if [ ! -f "$artifact" ] || [ -L "$artifact" ] \
       || [ "$(fm_pr_file_device "$artifact")" != "$state_device" ] \
       || [ "$(fm_pr_file_link_count "$artifact")" != 1 ]; then
-      echo "REFUSED: unsafe task PR-check artifact; preserving task state." >&2
+      echo "REFUSED: unsafe task PR-check artifact $artifact for $id in $state_dir; preserving task state." >&2
       return 1
     fi
   done
   if [ -e "$state_dir/$id.pr-poll-retirement" ] \
     || [ -L "$state_dir/$id.pr-poll-retirement" ]; then
     fm_pr_poll_retirement_state_valid "$state_dir" "$id" || {
-      echo "REFUSED: invalid PR-poll retirement receipt; preserving task state." >&2
+      echo "REFUSED: invalid PR-poll retirement receipt for $id in $state_dir; preserving task state." >&2
       return 1
     }
   fi
@@ -325,7 +325,7 @@ validate_pr_poll_cleanup() {
   for artifact in "$quarantine/$id."*; do
     [ -e "$artifact" ] || [ -L "$artifact" ] || continue
     if ! fm_pr_private_file_valid "$artifact" 600 "$state_device"; then
-      echo "REFUSED: unsafe task quarantine entry; preserving task state." >&2
+      echo "REFUSED: unsafe task quarantine entry $artifact for $id in $state_dir; preserving task state." >&2
       return 1
     fi
   done
@@ -1277,16 +1277,25 @@ remove_firstmate_home() {
   safe_rm_rf "$abs_home_path" "$label"
 }
 
+# The PR-check quarantine keeps its migration diagnostics under a home-level prefix
+# rather than a task's, in both the current and the pre-migration spelling, so those
+# two names are never a task id however path-safe they read.
+FM_HOME_QUARANTINE_MARKER_IDS=('!noncanonical' _noncanonical)
+
 # A record names its owning task with everything ahead of its first dot, and only
 # an id the record namespace can separate is read that way - which is what keeps X
 # mode's home-level relay entries (x-watch.check.sh, x-poll.error) from being read as
 # some task's records. Only a .meta declares a task, so a record naming no usable id
 # is left alone rather than turned into a refusal to retire.
 print_record_owner_id() {  # <record>
-  local name
+  local name owner marker
   name=$(basename "$1")
-  fm_task_id_record_namespace_safe "${name%%.*}" || return 0
-  printf '%s\n' "${name%%.*}"
+  owner=${name%%.*}
+  for marker in "${FM_HOME_QUARANTINE_MARKER_IDS[@]}"; do
+    [ "$owner" != "$marker" ] || return 0
+  done
+  fm_task_id_record_namespace_safe "$owner" || return 0
+  printf '%s\n' "$owner"
 }
 
 # Every task id a retired home's state/ still holds a record for. A .meta names a
@@ -1428,19 +1437,19 @@ cleanup_firstmate_home_children() {
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
         cleanup_firstmate_home_children "$child_home" || return 1
-        remove_firstmate_home "$child_home" "child firstmate home" "$child_id"
+        remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return 1
       fi
     elif [ "$child_backend" = orca ]; then
       if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
         rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" \
-          "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend"
+          "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend" || return 1
       fi
       fm_backend_remove_worktree "$child_backend" "$child_orca_worktree_id" || return 1
     elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
       rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" \
-        "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend"
+        "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend" || return 1
       if [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
         if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree"; then
           :
@@ -1449,10 +1458,10 @@ cleanup_firstmate_home_children() {
           if [ "$child_return_rc" -eq "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" ]; then
             return "$child_return_rc"
           fi
-          safe_rm_rf_child_worktree "$child_wt" "$child_proj"
+          safe_rm_rf_child_worktree "$child_wt" "$child_proj" || return 1
         fi
       else
-        safe_rm_rf_child_worktree "$child_wt" "$child_proj"
+        safe_rm_rf_child_worktree "$child_wt" "$child_proj" || return 1
       fi
     fi
     remove_task_state_records "$sub_state" "$child_id" || return 1

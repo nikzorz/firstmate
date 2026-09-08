@@ -1801,6 +1801,123 @@ EOF
   pass "secondmate retirement clears a child whose only surviving record is quarantined"
 }
 
+test_secondmate_force_teardown_refuses_failed_child_home_return() {
+  local home subhome grandhome grandhome_abs fakebin log fmroot err rc
+  home="$TMP_ROOT/child-return-fail-home"
+  subhome="$TMP_ROOT/child-return-fail-subhome"
+  grandhome="$TMP_ROOT/child-return-fail-grandhome"
+  fmroot="$TMP_ROOT/child-return-fail-fmroot"
+  err="$TMP_ROOT/child-return-fail.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  git -C "$fmroot" worktree add --quiet --detach "$grandhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/data" "$grandhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'sub\n' > "$grandhome/.fm-secondmate-home"
+  grandhome_abs=$(cd "$grandhome" && pwd -P)
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  cat > "$subhome/state/sub.meta" <<EOF
+window=domain:fm-sub
+worktree=$grandhome
+project=$grandhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$grandhome
+projects=beta
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  printf '%s\n' '- sub - design sub (home: '"$grandhome"'; scope: design sub; projects: beta; added 2026-06-22)' > "$subhome/data/secondmates.md"
+  printf 'child journal\n' > "$subhome/state/sub.herdr-presentation"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/child-return-fail-fake")
+  log="$TMP_ROOT/child-return-fail-fake/tmux.log"
+
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/child-return-fail-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "forced teardown succeeded despite a failed child firstmate home return"
+  grep -F "treehouse return --force $grandhome_abs" "$log" >/dev/null \
+    || fail "forced teardown did not try to return the child firstmate home"
+  grep -F 'treehouse return failed for child firstmate home' "$err" >/dev/null \
+    || fail "forced teardown did not report the failed child firstmate home return"
+  [ -d "$grandhome" ] || fail "forced teardown removed a still-leased child firstmate home"
+  [ -e "$subhome/state/sub.meta" ] \
+    || fail "forced teardown swept the child records of a home whose lease it could not release"
+  [ -e "$subhome/state/sub.herdr-presentation" ] \
+    || fail "forced teardown swept a child record after the child home return failed"
+  [ -e "$home/state/domain.meta" ] || fail "forced teardown cleared the parent meta after a child home return failed"
+  grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null \
+    || fail "forced teardown dropped the registry route after a child home return failed"
+  pass "forced secondmate teardown refuses to hide a failed child firstmate home return"
+}
+
+test_secondmate_teardown_is_not_blocked_by_a_legacy_quarantine_marker() {
+  local mode home subhome fakebin log lease fmroot quarantine marker err
+  for mode in ordinary force; do
+    home="$TMP_ROOT/legacy-marker-$mode-home"
+    subhome="$TMP_ROOT/legacy-marker-$mode-subhome"
+    fmroot="$TMP_ROOT/legacy-marker-$mode-fmroot"
+    make_firstmate_git_root "$fmroot"
+    git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+    mkdir -p "$home/state" "$home/data" "$subhome/state"
+    printf 'domain\n' > "$subhome/.fm-secondmate-home"
+    cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+    printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+    quarantine="$subhome/state/.pr-check-quarantine"
+    mkdir -p "$quarantine"
+    chmod 0700 "$quarantine"
+    marker="$quarantine/_noncanonical.diagnostic.pending-noncanonical"
+    printf 'legacy migration diagnostic\n' > "$marker"
+    chmod 0600 "$marker"
+
+    fakebin=$(make_fake_tmux "$TMP_ROOT/legacy-marker-$mode-fake")
+    log="$TMP_ROOT/legacy-marker-$mode-fake/tmux.log"
+    lease="$TMP_ROOT/legacy-marker-$mode-fake/lease"
+    err="$TMP_ROOT/legacy-marker-$mode-fake/teardown.err"
+    printf 'domain\n' > "$lease"
+    if [ "$mode" = force ]; then
+      set -- domain --force
+    else
+      set -- domain
+    fi
+    PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+      FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/legacy-marker-$mode-fake/pane.txt" \
+      FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+      "$ROOT/bin/fm-teardown.sh" "$@" >/dev/null 2>"$err" \
+      || fail "$mode teardown refused a home whose quarantine holds a legacy migration marker: $(cat "$err")"
+
+    [ ! -e "$home/state/domain.meta" ] || fail "$mode teardown left the secondmate meta behind"
+    [ -e "$marker" ] || fail "$mode teardown deleted a home-level migration marker as if it were a task record"
+  done
+  pass "secondmate retirement reads a legacy quarantine migration marker as no task's record"
+}
+
 test_secondmate_force_teardown_refuses_child_quarantine_symlink() {
   local home subhome childproj childwt external fakebin log err rc
   home="$TMP_ROOT/force-quarantine-home"
@@ -2576,6 +2693,8 @@ test_secondmate_teardown_prevalidates_every_child_before_clearing_any
 test_secondmate_teardown_refuses_a_child_meta_that_lands_mid_retirement
 test_secondmate_teardown_refuses_late_child_meta_before_sweeping_a_sibling
 test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined
+test_secondmate_force_teardown_refuses_failed_child_home_return
+test_secondmate_teardown_is_not_blocked_by_a_legacy_quarantine_marker
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home
