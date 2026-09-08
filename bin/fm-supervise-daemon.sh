@@ -491,6 +491,29 @@ pause_marker_remove() {  # <window> <state>
   rm -f "$state/.subsuper-paused-$key"
 }
 
+# The watcher's own per-key records that describe ONE stale-or-pause episode:
+# its pause flag and the two pause-cadence throttles, its stale suppressor and
+# wedge timer, and the two counts an episode accumulates - .wedge-escalations-
+# for escalations raised and .advancing-absorbs- for long-cadence rechecks the
+# still-advancing-run absorb raised in a row. Every one of them is meaningless
+# once the episode ends, and a count that outlives its episode makes the next one
+# escalate early on absorbs it never earned, so a cross-clear drops all of them.
+#
+# Deliberately NOT swept, and the reason this is an explicit list rather than a
+# .*-<watcher_key> glob: .hash-<key> and .count-<key> are the watcher's pane
+# DETECTION state, not episode state. They decide when a pane reads stale at all,
+# and .hash-'s mtime is the idle age a wedge escalation is triaged on, so
+# removing them would change when the next escalation fires rather than only what
+# state it starts from. A glob would also not be exact: keys are window names
+# with only ':/.' folded to '_', so hyphens survive, and one key can be a
+# hyphenated suffix of another ("fm_build" and "sub-fm_build"), which would let a
+# sweep for the first delete the second's records.
+watcher_episode_clear() {  # <state> <watcher_key>
+  rm -f "$1/.paused-$2" "$1/.paused-rechecked-$2" "$1/.paused-resurfaced-$2" \
+    "$1/.stale-$2" "$1/.stale-since-$2" "$1/.wedge-escalations-$2" \
+    "$1/.advancing-resurfaced-$2" "$1/.advancing-absorbs-$2"
+}
+
 # Drops every artifact of a pause the crew is no longer declaring, including the
 # one-shot recheck deadline: this is where that guarantee lives, so a deadline
 # recorded for one wait can never outlive it and fire against whatever pause the
@@ -500,9 +523,8 @@ clear_pause_tracking() {  # <window> <state>
   task=$(window_to_task "$win" "$state")
   key=$(_stale_key "$task")
   watcher_key=$(_stale_key "$win")
-  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-stale-$key" \
-    "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
-    "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
+  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-stale-$key"
+  watcher_episode_clear "$state" "$watcher_key"
   stale_absorb_clear "$state" "$key"
   [ -n "$task" ] && pause_deadline_clear "$state" "$task"
   return 0
