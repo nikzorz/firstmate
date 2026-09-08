@@ -453,8 +453,10 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   needs-decision [key=api-shape]: <summary>
 #   needs-decision: [key=api-shape] <summary>
 #   resolved       [key=api-shape]: <how it was decided>
-# with <slug> drawn from letters, digits, dot, underscore and hyphen. Both
-# spellings key the event identically. Accepting the post-colon position is a
+# with <slug> drawn from letters, digits, dot, underscore and hyphen and no other
+# character; _fm_key_slug_valid below is the one place that charset is enforced,
+# for both positions alike.
+# Both spellings key the event identically. Accepting the post-colon position is a
 # correctness requirement, not a convenience: a key written there used to fall
 # through to "default", where two unrelated open decisions supersede each other and
 # one disappears with no error at all. Refusing such a line instead would only move
@@ -484,6 +486,13 @@ status_line_verb() {  # <status-line> -> leading verb word
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"
 }
+# The ONE enforcement point for the slug charset, so widening it cannot make the
+# two key positions disagree about what a legal slug is.
+_fm_key_slug_valid() {  # <slug>
+  case "$1" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+}
 # The ONE reader of an inferred key token, so the key parser and the note parser
 # can never disagree about whether a note's leading token is a key at all.
 _fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, else rc 1
@@ -495,9 +504,7 @@ _fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, 
   esac
   slug=${n#\[key=}
   slug=${slug%%\]*}
-  case "$slug" in
-    ''|*[!A-Za-z0-9._-]*) return 1 ;;
-  esac
+  _fm_key_slug_valid "$slug" || return 1
   printf '%s' "$slug"
 }
 status_line_note() {  # <status-line> -> text after the first colon, trimmed,
@@ -526,9 +533,7 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
     *\[key=*\]*)
       k=${prefix#*\[key=}
       k=${k%%\]*}
-      case "$k" in
-        ''|*[!A-Za-z0-9._-]*) return 1 ;;
-      esac
+      _fm_key_slug_valid "$k" || return 1
       printf '%s' "$k"
       return 0
       ;;

@@ -315,8 +315,11 @@ test_ship_safety_contracts_survive_a_wording_pass() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "**Verify isolation before anything else.**" "$brief" \
       "$id: ship brief lost the worktree-isolation assertion"
-    assert_grep "STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\`" "$brief" \
-      "$id: ship brief lost the stop instruction that follows a failed isolation check"
+    # The blocker this opens is closed by rule 6's keyed `resolved [key=<slug>]:`,
+    # so an unkeyed opener here can never be closed at all and wedges the
+    # away-mode return gate until a human clears it.
+    assert_grep "STOP - do not branch or commit here - append \`blocked [key=worktree-isolation]: launched in primary checkout, not an isolated worktree\`" "$brief" \
+      "$id: ship brief lost the keyed stop instruction that follows a failed isolation check"
   done <<< "$variants"
 
   brief="$home/data/brief-ship-safety-r1/brief.md"

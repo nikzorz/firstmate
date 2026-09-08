@@ -217,6 +217,12 @@ test_classifier_primitives() {
   # pre-colon key never lets the note's own leading token be eaten as if it were one.
   [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
     || fail "a pre-colon keyed line lost genuine note prose to the key strip"
+  # Both positions answer to one charset, so a slug neither accepts cannot start
+  # being accepted in only one of them.
+  _fm_decision_key 'needs-decision [key=api/shape]: choose A or B' >/dev/null \
+    && fail "a slug outside the key charset was accepted before the colon"
+  [ "$(_fm_decision_key 'needs-decision: [key=api/shape] choose A or B')" = default ] \
+    || fail "a slug outside the key charset was accepted after the colon"
   cat > "$state/activity.status" <<'EOF'
 working [key=phase7]: Phase 7 started
 working [key=phase6]: Phase 6 started
