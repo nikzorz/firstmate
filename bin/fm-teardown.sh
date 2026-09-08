@@ -1371,6 +1371,9 @@ validate_firstmate_home_children_removal() {
 
 # The ids are read up front rather than iterated as a live glob, because this loop
 # removes records as it goes and the recursive child-home arm removes whole homes.
+# Every child that still declares work is refused before the loop deletes anything,
+# so a home the captain never authorized to discard keeps all of its children's
+# records, not just the ones sorting after the first meta.
 cleanup_firstmate_home_children() {
   local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc
   local -a child_ids=()
@@ -1378,6 +1381,13 @@ cleanup_firstmate_home_children() {
   [ -d "$sub_state" ] || return 0
   read_firstmate_home_child_ids "$sub_state" || return 1
   child_ids=(${FM_HOME_CHILD_IDS[@]+"${FM_HOME_CHILD_IDS[@]}"})
+  if [ "$FORCE" != "--force" ]; then
+    for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
+      [ -e "$sub_state/$child_id.meta" ] || continue
+      echo "REFUSED: child $child_id in $sub_state still has a meta; discarding its work needs --force." >&2
+      return 1
+    done
+  fi
   for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
     child_meta="$sub_state/$child_id.meta"
     if [ ! -e "$child_meta" ]; then

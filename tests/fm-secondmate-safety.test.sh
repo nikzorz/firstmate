@@ -1701,6 +1701,60 @@ EOF
   pass "ordinary secondmate retirement refuses a child meta that lands after prevalidation"
 }
 
+# Retiring a home is all-or-nothing: a child that still declares work refuses the
+# whole sweep, so a sibling whose deliberately retained records sort ahead of it
+# keeps them. Here cma's journal must outlive the refusal cmb's late meta triggers.
+test_secondmate_teardown_refuses_late_child_meta_before_sweeping_a_sibling() {
+  local home subhome fakebin log lease fmroot rc err
+  home="$TMP_ROOT/late-meta-sibling-home"
+  subhome="$TMP_ROOT/late-meta-sibling-subhome"
+  fmroot="$TMP_ROOT/late-meta-sibling-fmroot"
+  err="$TMP_ROOT/late-meta-sibling.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  printf 'journal\n' > "$subhome/state/cma.herdr-presentation"
+  printf 'deadbeef 12345\n' > "$subhome/state/cma.park-sighting"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/late-meta-sibling-fake")
+  log="$TMP_ROOT/late-meta-sibling-fake/tmux.log"
+  lease="$TMP_ROOT/late-meta-sibling-fake/lease"
+  printf 'domain\n' > "$lease"
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/late-meta-sibling-fake/pane.txt" \
+    FM_FAKE_TMUX_KILL_WINDOW_LANDS_META="$subhome/state/cmb.meta" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "ordinary retirement discarded a child meta that landed mid-teardown"
+  grep -qF 'still has a meta' "$err" \
+    || fail "the sweep did not refuse the late child meta; a different gate stopped the teardown"
+  grep -qF cmb "$err" || fail "the late-child refusal did not name the child"
+  [ -e "$subhome/state/cmb.meta" ] || fail "ordinary retirement discarded the late child's meta"
+  [ -e "$subhome/state/cma.herdr-presentation" ] \
+    || fail "the refused sweep deleted a sibling child's journal before refusing"
+  [ -e "$subhome/state/cma.park-sighting" ] \
+    || fail "the refused sweep deleted a sibling child's park sighting before refusing"
+  [ -e "$lease" ] || fail "ordinary retirement released the home lease after refusing"
+  pass "a late child meta refuses the sweep before any sibling child's records are cleared"
+}
+
 # A quarantined PR check is cleared only for an id the sweep visits, and a child can
 # outlive every top-level record while one of these remains. The returned home would
 # otherwise hand a dead task's neutralized check to the next task reusing that id.
@@ -2520,6 +2574,7 @@ test_secondmate_force_teardown_clears_a_child_record_that_outlived_its_meta
 test_secondmate_teardown_clears_child_records_without_force
 test_secondmate_teardown_prevalidates_every_child_before_clearing_any
 test_secondmate_teardown_refuses_a_child_meta_that_lands_mid_retirement
+test_secondmate_teardown_refuses_late_child_meta_before_sweeping_a_sibling
 test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
