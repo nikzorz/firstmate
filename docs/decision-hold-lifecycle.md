@@ -43,14 +43,17 @@ For a linked gate whose item is still open, `--answered-by` replaces the item's 
 `--answered-by` is also the verb when the item was already closed by another authority, which happens when the captain closes it directly or when a second gate is linked to the same item.
 That path never rewrites or archives the existing body, because that body records whoever actually closed the item; it appends this gate's outcome as a `tasks-axi done --note` line instead.
 The link then carries `closed_by`, whose field contract is stated once below.
-The two verbs are deliberately asymmetric about the item, and that asymmetry is the design rather than an accident of two precondition lists.
-`--answered-by` writes to the item, so it requires all of it: a usable tasks-axi, the item present in this home, and the item still kind `captain`.
-`--not-raised` requires only the link record.
-Retiring a link is a statement about the link, which this home always holds; it is never a statement about the item, which this home does not control.
-So `--not-raised` never fails because the item was removed, handed to a secondmate, pruned out of the live backlog, renamed, moved to Done by another path, re-kinded away from `captain`, or made unreadable because the backlog backend is unavailable or manual.
+Both verbs are statements about the link record, which this home always holds, and neither is a statement about the item, which this home does not control.
+So both require only the link record, and the item write is best effort: whichever verb runs, it records what this home could observe about the item and never fails because the item was removed, handed to a secondmate, pruned out of the live backlog, renamed, moved to Done by another path, re-kinded away from `captain`, or made unreadable because the backlog backend is unavailable.
+That symmetry is the design.
+An earlier revision required the item for `--answered-by` only, which pushed an operator whose item had left the home onto `--not-raised`, the one verb that still ran, and so recorded that the gate never asked a question it had in fact answered.
+The verb is chosen by what actually happened, never by which one the item's current shape still permits.
+
+`--answered-by` is the verb when this gate settled the question.
+When the item is present and still kind `captain` it releases the hold, writes the answer into the item, and closes it as before.
+When the item is absent, no longer kind `captain`, or unwritable because the backlog backend is unusable, it records `state=answered` with the decider and answer digest against the link, skips the item write it cannot perform, and says so in its outcome line, so an operator is never left thinking the item was updated when it was not.
 
 `--not-raised` retires a link whose gate never asked the question, whether or not the item has since been closed, appends nothing to the item, and records only what this home could observe.
-A question this gate did settle uses `--answered-by` instead.
 
 The link record splits what was observed about the item from who closed it, so that no value ever does duty for two situations.
 `item_observed` is what this home could see of the item at reconciliation time, and it carries exactly one of four named values.
@@ -59,6 +62,8 @@ The link record splits what was observed about the item from who closed it, so t
 `absent-here` means `tasks-axi` is usable but the item is not in this home, which covers removal, a handoff to another backlog, a rename, and retention pruning.
 `backend-unusable` means `tasks-axi` itself could not be reached, so nothing about the item was observed.
 A situation that matches none of the four is refused by name rather than folded into the nearest value, so a new precondition forces a new named observation instead of silently widening an old one.
+A backlog that could not be read is one such situation: `tasks-axi` reports `NOT_FOUND` for an item that is genuinely not in this backlog and another code when it could not read the backlog at all, so a read failure refuses by name and names the backlog path rather than claiming `absent-here`.
+Teardown then stays blocked, which is the correct outcome while the backlog is unreadable, because no reconciliation recorded against an unreadable backlog would be a claim this home established.
 
 `closed_by` carries one meaning only: the authority that actually closed the item.
 It is read only from this mechanism's own machine-written marker and never from free prose: `self` when this gate closed the item, the other gate's `<origin>/<key>` identity when the marker names one, and `external` when the item is closed with no marker.
@@ -117,6 +122,9 @@ The FIFO row runs the reader under a bounded timeout and fails on a block rather
 It also asserts the open-link refusal names the record's path alongside its decision key.
 An end-to-end case then plants a truncated record and asserts `bin/fm-teardown.sh` refuses, names that file and the recovery that clears it, and preserves the task metadata.
 A separate case drives the classifier to a value none of the four names covers and asserts it refuses by name rather than retiring the link under the nearest token.
+A further case answers a gate whose item has since been re-kinded or removed, and asserts `--answered-by` succeeds, records `state=answered` with the decider, digest, and matching observation, never writes the false `not-raised` record, leaves the item untouched, and lets `gate-verify` and `bin/fm-teardown.sh` pass.
+Another replaces the backlog with a directory and asserts reconciliation refuses by name, names the backlog path, writes nothing to the link, and keeps teardown blocked, while a genuinely missing item still records `absent-here` and succeeds.
+The last reproduces a resolve interrupted between closing the item and writing the link, under both present observations, and asserts retiring refuses instead of letting this gate record itself as the other authority that closed the item.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -139,6 +147,9 @@ ok - a second gate linked to one item records the first gate as the closing auth
 ok - an unraised link retires honestly after another authority closed the item
 ok - an unraised link records what it observed about the item, never a placeholder
 ok - an observation the classifier cannot name refuses rather than defaulting
+ok - an answered gate records the answer against the link when the item cannot be written
+ok - an unreadable backlog refuses by name while a genuinely missing item still reconciles
+ok - retiring refuses when this gate's own marker shows it closed the item
 ok - every index record the reader cannot recognise blocks verification and is named
 ok - teardown refuses until every recorded captain-gated link is reconciled
 ok - gate links validate identity, ownership, and item kind before recording a pairing

@@ -1096,7 +1096,7 @@ test_unnamed_item_observation_refuses_rather_than_defaulting() {
   if out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" bash -c '
       . "$0" --help >/dev/null
-      observe_gate_item() { printf "speculative\t\t\n"; }
+      observe_gate_item() { GATE_ITEM_OBSERVED=speculative; GATE_ITEM_STATE=; GATE_ITEM_BODY=; }
       retire_gate_link "$1" sample-scenario-choice sample-hosted-boot scenario-validation
     ' "$ROOT/bin/fm-decision-hold.sh" "$link" 2>&1); then
     fail "an unnamed observation was absorbed instead of refused: $out"
@@ -1106,6 +1106,140 @@ test_unnamed_item_observation_refuses_rather_than_defaulting() {
   assert_contains "$out" "speculative" "the refusal must quote the unnamed observation"
   assert_grep "state=open" "$link" "a refused classification must not retire the link"
   pass "an observation the classifier cannot name refuses rather than defaulting"
+}
+
+# A gate that raised and was answered must record that, whatever became of the
+# item. Pushing the operator onto --not-raised because it is the verb that still
+# runs is how a false "never asked" record gets written.
+test_answered_gate_records_the_answer_when_the_item_cannot_be_written() {
+  local home id item link out shape observed tail row rest before
+
+  id=sample-answered-shape
+  item=sample-answered-choice
+
+  # <shape>|<expected item_observed>|<expected outcome tail>
+  local -a shapes=(
+    're-kinded|present-other-kind|is no longer a captain item and was not written'
+    'removed|absent-here|is absent from this home and was not written'
+  )
+  for row in "${shapes[@]}"; do
+    shape=${row%%|*}
+    rest=${row#*|}
+    observed=${rest%%|*}
+    tail=${rest#*|}
+    home=$(unreadable_item_home "answered-shape-$shape" "$id" "$item")
+    printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+    tasks_in "$home" unhold "$item" >/dev/null
+    case "$shape" in
+      re-kinded)
+        tasks_in "$home" update "$item" --kind ship >/dev/null \
+          || fail "could not change the linked item's kind"
+        before=$(tasks_in "$home" show "$item" --full)
+        ;;
+      removed)
+        tasks_in "$home" rm "$item" >/dev/null || fail "could not remove the linked item"
+        before=''
+        ;;
+    esac
+
+    link="$home/data/gate-links/$id/scenario-validation"
+    out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
+      --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+      || fail "--answered-by must record the answer when the $shape item cannot be written"
+    assert_contains "$out" "answered by firstmate; recorded against the link only because $item $tail" \
+      "the outcome must say the answer was recorded against the link alone"
+    assert_grep "state=answered" "$link" \
+      "a gate that answered the question must never be recorded as not raised"
+    assert_no_grep "state=not-raised" "$link" \
+      "the false never-asked record must stay unreachable for an answered gate"
+    assert_grep "item_observed=$observed" "$link" "the $shape item must record its own observation"
+    assert_grep "decided_by=firstmate" "$link" "the actual decider must still be recorded"
+    assert_grep "answer_digest=" "$link" "the answer digest must still be recorded"
+    if [ -n "$before" ]; then
+      [ "$before" = "$(tasks_in "$home" show "$item" --full)" ] \
+        || fail "the $shape item was written even though it is not a captain item"
+    fi
+
+    run_decisions "$home" gate-resolve "$id" scenario-validation \
+      --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+      || fail "an identical retry must stay idempotent for a $shape item"
+    run_decisions "$home" gate-verify "$id" >/dev/null \
+      || fail "a link answered against a $shape item must verify clean"
+    run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
+      || fail "teardown stayed blocked after answering against a $shape item: $(cat "$home/teardown.err")"
+  done
+  pass "an answered gate records the answer against the link when the item cannot be written"
+}
+
+# A backlog that could not be READ is not an item that is not THERE, and the
+# difference is exactly what tasks-axi's error code reports.
+test_unreadable_backlog_refuses_instead_of_claiming_the_item_is_absent() {
+  local home id item link before out
+  id=sample-unreadable-backlog
+  item=sample-unreadable-choice
+  home=$(unreadable_item_home unreadable-backlog "$id" "$item")
+  link="$home/data/gate-links/$id/scenario-validation"
+  before=$(cat "$link")
+
+  mv "$home/data/backlog.md" "$home/data/backlog.saved"
+  mkdir -p "$home/data/backlog.md"
+  if run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised \
+    > "$home/unreadable.out" 2> "$home/unreadable.err"; then
+    fail "an unreadable backlog was recorded as an absent item"
+  fi
+  assert_grep "could not read $home/data/backlog.md" "$home/unreadable.err" \
+    "the refusal must name the backlog it could not read"
+  [ "$before" = "$(cat "$link")" ] \
+    || fail "a refused reconciliation wrote to the link record"
+  if run_teardown "$home" "$id" > "$home/unreadable-teardown.out" 2> "$home/unreadable-teardown.err"; then
+    fail "teardown proceeded while the backlog was unreadable"
+  fi
+  assert_grep "REFUSED" "$home/unreadable-teardown.err" \
+    "teardown must stay blocked while the backlog is unreadable"
+
+  rmdir "$home/data/backlog.md"
+  mv "$home/data/backlog.saved" "$home/data/backlog.md"
+  tasks_in "$home" unhold "$item" >/dev/null
+  tasks_in "$home" rm "$item" >/dev/null || fail "could not remove the linked item"
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
+    || fail "a genuinely missing item must still reconcile"
+  assert_contains "$out" "$item is absent from this home" \
+    "a genuinely missing item must still be observed as absent"
+  assert_grep "item_observed=absent-here" "$link" \
+    "a genuinely missing item must still record absent-here"
+  pass "an unreadable backlog refuses by name while a genuinely missing item still reconciles"
+}
+
+# Both present observations share one closing-authority derivation, so neither
+# can drift into letting this gate name itself as the other authority.
+test_retiring_refuses_when_this_gate_itself_closed_the_item() {
+  local home id item link shape out
+  id=sample-self-closed
+  item=sample-self-closed-choice
+  for shape in present-captain present-other-kind; do
+    home=$(unreadable_item_home "self-closed-$shape" "$id" "$item")
+    link="$home/data/gate-links/$id/scenario-validation"
+    printf 'Fall back to the seat default scenario.\n' > "$home/gate-answer.txt"
+    run_decisions "$home" gate-resolve "$id" scenario-validation \
+      --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+      || fail "could not answer the gate"
+    # Reproduce a resolve interrupted between closing the item and writing the
+    # link, which is the only way a closed item meets an open link record.
+    sed 's/^state=answered$/state=open/' "$link" > "$link.rewritten"
+    mv "$link.rewritten" "$link"
+    [ "$shape" = present-captain ] \
+      || tasks_in "$home" update "$item" --kind ship >/dev/null
+
+    if run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised \
+      > "$home/self.out" 2> "$home/self.err"; then
+      fail "a $shape item closed through this very gate was retired as never raised"
+    fi
+    assert_grep "was closed through gate $id/scenario-validation" "$home/self.err" \
+      "the refusal must name the gate that actually closed the $shape item"
+    assert_no_grep "closed_by=$id/scenario-validation" "$link" \
+      "this gate must never record itself as the other authority that closed the item"
+  done
+  pass "retiring refuses when this gate's own marker shows it closed the item"
 }
 
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
@@ -1222,6 +1356,9 @@ test_second_linked_gate_records_the_first_as_the_closing_authority
 test_unraised_link_retires_after_another_authority_closed_the_item
 test_unraised_link_retires_whatever_became_of_the_item
 test_unnamed_item_observation_refuses_rather_than_defaulting
+test_answered_gate_records_the_answer_when_the_item_cannot_be_written
+test_unreadable_backlog_refuses_instead_of_claiming_the_item_is_absent
+test_retiring_refuses_when_this_gate_itself_closed_the_item
 test_gate_index_refuses_every_unrecognised_record_shape
 test_teardown_refuses_an_unreconciled_captain_gated_link
 test_gate_link_validates_identities_before_touching_state
