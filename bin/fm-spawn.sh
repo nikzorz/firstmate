@@ -375,7 +375,11 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   exit "$rc"
 fi
 ID=${POS[0]}
-fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
+if ! fm_task_id_creation_valid "$ID"; then
+  echo "error: invalid task id '$ID'" >&2
+  echo "A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, and may not take the reserved x- prefix: a home's state/ is one flat <id>.<suffix> namespace, so a dot in the id leaves its records unattributable." >&2
+  exit 2
+fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
 if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
   echo "error: another spawn is already creating task $ID" >&2

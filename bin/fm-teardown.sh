@@ -52,13 +52,15 @@
 # glob attributes a record by its id prefix, so teardown refuses rather than sweep
 # when a task that still has a meta carries an id the record namespace cannot
 # separate. Only ids that still have a meta are visible to that check.
-# Secondmates (kind=secondmate in meta) are retired explicitly. Normal
-# teardown refuses while their home has in-flight crewmate meta files; --force
-# is the approved discard path that prevalidates child removal targets, discards
-# child work, kills child runtime endpoints, and removes the retired home. Removing a
-# leased home releases its durable treehouse lease so the pool slot is freed,
-# never left leased forever. If the treehouse return fails, teardown leaves the
-# leased home and state in place instead of hiding a still-held lease.
+# Secondmates (kind=secondmate in meta) are retired explicitly. Either retirement
+# path prevalidates child removal targets, clears the child records a returned home
+# would otherwise hand to the next task that reuses their ids, and removes the
+# retired home. Normal teardown refuses while that home still has in-flight crewmate
+# meta files; --force is the approved discard path that discards child work and kills
+# child runtime endpoints. Removing a leased home releases its durable treehouse
+# lease so the pool slot is freed, never left leased forever. If the treehouse
+# return fails, teardown leaves the leased home and state in place instead of
+# hiding a still-held lease.
 # Usage: fm-teardown.sh <task-id> [--force]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -1275,16 +1277,29 @@ remove_firstmate_home() {
   safe_rm_rf "$abs_home_path" "$label"
 }
 
+# A record names its owning task with everything ahead of its first dot, and only
+# an id the record namespace can separate is read that way - which is what keeps X
+# mode's home-level relay entries (x-watch.check.sh, x-poll.error) from being read as
+# some task's records. Only a .meta declares a task, so a record naming no usable id
+# is left alone rather than turned into a refusal to retire.
+print_record_owner_id() {  # <record>
+  local name
+  name=$(basename "$1")
+  fm_task_id_record_namespace_safe "${name%%.*}" || return 0
+  printf '%s\n' "${name%%.*}"
+}
+
 # Every task id a retired home's state/ still holds a record for. A .meta names a
-# task outright; any other record is read as <id>.<suffix>, minus the ids the record
-# namespace reserves - which is what keeps X mode's home-level relay entries
-# (x-watch.check.sh, x-poll.error) from being read as a task's records.
+# task outright; every other record names its task by prefix, whether it sits in
+# state/ or in the quarantine directory below it, which removal reaches only for an
+# id this list names.
 # Records outlive their meta - a child teardown keeps a Herdr journal whose pane
 # close it could not confirm - so keying the sweep on *.meta alone would leave those
 # behind in a home that a treehouse slot return hands to the next occupant.
 firstmate_home_child_ids() {  # <sub_state>
-  local sub_state=$1 entry name
+  local sub_state=$1 quarantine entry name
   [ -d "$sub_state" ] || return 0
+  quarantine="$sub_state/.pr-check-quarantine"
   {
     for entry in "$sub_state"/*.meta; do
       [ -e "$entry" ] || continue
@@ -1293,13 +1308,31 @@ firstmate_home_child_ids() {  # <sub_state>
     done
     for entry in "$sub_state"/*.*; do
       [ -e "$entry" ] || [ -L "$entry" ] || continue
-      name=$(basename "$entry")
-      # Only a .meta declares a task, so a stray file that does not even name a
-      # usable id is left alone rather than turned into a refusal to retire.
-      fm_task_id_record_namespace_safe "${name%%.*}" || continue
-      printf '%s\n' "${name%%.*}"
+      print_record_owner_id "$entry"
     done
-  } | sort -u
+    if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
+      for entry in "$quarantine"/*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        print_record_owner_id "$entry"
+      done
+    fi
+  } | LC_ALL=C sort -u
+}
+
+# Prevalidation and the sweep have to walk one identical id list, or the sweep
+# reaches a child that prevalidation never checked and retirement stops being
+# all-or-nothing. Both read it here.
+FM_HOME_CHILD_IDS=()
+read_firstmate_home_child_ids() {  # <sub_state>; sets FM_HOME_CHILD_IDS
+  local sub_state=$1 child_id
+  FM_HOME_CHILD_IDS=()
+  state_dir_sweep_safe "$sub_state" || return 1
+  while IFS= read -r child_id; do
+    [ -n "$child_id" ] || continue
+    FM_HOME_CHILD_IDS+=("$child_id")
+  done <<EOF
+$(firstmate_home_child_ids "$sub_state")
+EOF
 }
 
 validate_firstmate_home_children_removal() {
@@ -1307,13 +1340,8 @@ validate_firstmate_home_children_removal() {
   local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
-  state_dir_sweep_safe "$sub_state" || return 1
-  while IFS= read -r child_id; do
-    [ -n "$child_id" ] || continue
-    child_ids+=("$child_id")
-  done <<EOF
-$(firstmate_home_child_ids "$sub_state")
-EOF
+  read_firstmate_home_child_ids "$sub_state" || return 1
+  child_ids=(${FM_HOME_CHILD_IDS[@]+"${FM_HOME_CHILD_IDS[@]}"})
   for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
     validate_pr_poll_cleanup "$sub_state" "$child_id" || return 1
     child_meta="$sub_state/$child_id.meta"
@@ -1348,18 +1376,17 @@ cleanup_firstmate_home_children() {
   local -a child_ids=()
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
-  state_dir_sweep_safe "$sub_state" || return 1
-  while IFS= read -r child_id; do
-    [ -n "$child_id" ] || continue
-    child_ids+=("$child_id")
-  done <<EOF
-$(firstmate_home_child_ids "$sub_state")
-EOF
+  read_firstmate_home_child_ids "$sub_state" || return 1
+  child_ids=(${FM_HOME_CHILD_IDS[@]+"${FM_HOME_CHILD_IDS[@]}"})
   for child_id in ${child_ids[@]+"${child_ids[@]}"}; do
     child_meta="$sub_state/$child_id.meta"
     if [ ! -e "$child_meta" ]; then
       remove_task_state_records "$sub_state" "$child_id" || return 1
       continue
+    fi
+    if [ "$FORCE" != "--force" ]; then
+      echo "REFUSED: child $child_id in $sub_state still has a meta; discarding its work needs --force." >&2
+      return 1
     fi
     child_wt=$(meta_value "$child_meta" worktree)
     child_proj=$(meta_value "$child_meta" project)
@@ -1450,16 +1477,14 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-# Both retirement paths sweep, not just the forced one. A home that occupies a
-# treehouse slot is returned for reuse rather than deleted, and its state/ is
-# gitignored, so any child record left here is inherited by the next task that
-# reuses that id. The refusal above already bars in-flight children from the
-# ordinary path, which leaves it only the records of children that are already gone.
-# Prevalidating first is what makes either sweep all-or-nothing: a child that refuses
-# halfway through would otherwise leave the children before it already cleared.
+# Both retirement paths clear the children, not just the forced one: a home that
+# occupies a treehouse slot is returned for reuse rather than deleted, and its state/
+# is gitignored, so any child record left behind is inherited by the next task that
+# reuses that id. Prevalidation stays here, ahead of every destructive step, so a
+# home whose children cannot all be cleared refuses before this secondmate's own
+# endpoint dies, and so the sweep further down is all-or-nothing.
 if [ "$KIND" = secondmate ]; then
   validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
-  cleanup_firstmate_home_children "$HOME_PATH"
 fi
 
 if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
@@ -1610,6 +1635,10 @@ elif [ "$BACKEND" = herdr ] \
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
+  # The sweep itself waits until here, below every gate that can still refuse this
+  # teardown, so a refusal never leaves a child's records already deleted; the home
+  # return is the only step that can fail after them.
+  cleanup_firstmate_home_children "$HOME_PATH"
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
   remove_secondmate_registry_entry "$ID"
 fi

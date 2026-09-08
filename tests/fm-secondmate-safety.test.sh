@@ -1649,6 +1649,104 @@ EOF
   pass "ordinary secondmate teardown clears leftover child records in a returned treehouse slot"
 }
 
+# The in-flight refusal is a prevalidation, not the discard authority. A child meta
+# that lands after it - here while the fake backend kills the retiring secondmate's
+# window - reaches the sweep on a path the captain never authorized to discard work,
+# so the sweep itself has to refuse rather than kill that child and delete its home.
+test_secondmate_teardown_refuses_a_child_meta_that_lands_mid_retirement() {
+  local home subhome fakebin log lease fmroot rc err
+  home="$TMP_ROOT/late-meta-home"
+  subhome="$TMP_ROOT/late-meta-subhome"
+  fmroot="$TMP_ROOT/late-meta-fmroot"
+  err="$TMP_ROOT/late-meta.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  printf 'journal\n' > "$subhome/state/cm1.herdr-presentation"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/late-meta-fake")
+  log="$TMP_ROOT/late-meta-fake/tmux.log"
+  lease="$TMP_ROOT/late-meta-fake/lease"
+  printf 'domain\n' > "$lease"
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/late-meta-fake/pane.txt" \
+    FM_FAKE_TMUX_KILL_WINDOW_LANDS_META="$subhome/state/cm1.meta" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "ordinary retirement discarded a child meta that landed mid-teardown"
+  grep -q REFUSED "$err" || fail "ordinary retirement did not refuse loudly on the late child meta"
+  grep -qF cm1 "$err" || fail "the late-child refusal did not name the child"
+  [ -e "$subhome/state/cm1.meta" ] \
+    || fail "ordinary retirement discarded the late child's meta"
+  [ -e "$subhome/state/cm1.herdr-presentation" ] \
+    || fail "ordinary retirement swept the late child's records"
+  [ -e "$lease" ] || fail "ordinary retirement released the home lease after refusing"
+  pass "ordinary secondmate retirement refuses a child meta that lands after prevalidation"
+}
+
+# A quarantined PR check is cleared only for an id the sweep visits, and a child can
+# outlive every top-level record while one of these remains. The returned home would
+# otherwise hand a dead task's neutralized check to the next task reusing that id.
+test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined() {
+  local home subhome fakebin log lease fmroot quarantine
+  home="$TMP_ROOT/quarantine-only-home"
+  subhome="$TMP_ROOT/quarantine-only-subhome"
+  fmroot="$TMP_ROOT/quarantine-only-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  quarantine="$subhome/state/.pr-check-quarantine"
+  mkdir -p "$quarantine"
+  chmod 0700 "$quarantine"
+  printf 'neutralized check\n' > "$quarantine/cm1.check.aB3xY9"
+  chmod 0600 "$quarantine/cm1.check.aB3xY9"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/quarantine-only-fake")
+  log="$TMP_ROOT/quarantine-only-fake/tmux.log"
+  lease="$TMP_ROOT/quarantine-only-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/quarantine-only-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "ordinary teardown failed to retire a secondmate holding a quarantined child check"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$quarantine/cm1.check.aB3xY9" ] \
+    || fail "a child's quarantined check survived retirement into the returned home"
+  pass "secondmate retirement clears a child whose only surviving record is quarantined"
+}
+
 test_secondmate_force_teardown_refuses_child_quarantine_symlink() {
   local home subhome childproj childwt external fakebin log err rc
   home="$TMP_ROOT/force-quarantine-home"
@@ -2421,6 +2519,8 @@ test_secondmate_force_teardown_clears_child_records_in_a_returned_slot
 test_secondmate_force_teardown_clears_a_child_record_that_outlived_its_meta
 test_secondmate_teardown_clears_child_records_without_force
 test_secondmate_teardown_prevalidates_every_child_before_clearing_any
+test_secondmate_teardown_refuses_a_child_meta_that_lands_mid_retirement
+test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home
