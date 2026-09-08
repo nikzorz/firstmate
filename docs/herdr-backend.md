@@ -72,7 +72,7 @@ Only the exact seeded default tab returned by the same workspace-create response
 Before and after create, prune, order, abort cleanup, and normal cleanup, Firstmate verifies exact workspace, tab, pane, and active-focus ids.
 An ambiguous response grants no mutation or cleanup authority.
 
-Protocol 16 exposes `workspace.move` over the named session socket, and no Herdr release through the verified pair exposes it as a `workspace` CLI subcommand.
+Protocol 16 exposes `workspace.move` over the named session socket, and the verified pair still exposes no `workspace move` CLI subcommand, so the whitelisted raw-socket request remains required.
 `bin/backends/herdr-workspace-move.py` sends only that whitelisted method and verifies the complete returned workspace order.
 Projected children are placed in one contiguous block immediately after their owning home when the session layout, protocol, socket, `python3`, and machine-private per-session lock are all verifiable.
 Existing legacy child labels may extend an already adjacent block read-only but are never renamed or migrated.

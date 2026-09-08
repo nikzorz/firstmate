@@ -206,14 +206,15 @@ FM_SEND_MARKER_HERDR_E2E=1 \
 
 ### Native blocked event
 
-The protocol-16 event path was measured on 2026-07-11 with Herdr 0.7.3 and Python 3.13, and remeasured on 2026-09-07 with Herdr 0.8.2 protocol 20:
+The protocol-16 event path was first measured on 2026-07-11 with Herdr 0.7.3 and Python 3.13, and was remeasured on 2026-09-07 with Herdr 0.8.2 protocol 20.
+The remeasurement supersedes the earlier 0.7.3 timing, which is no longer quoted here:
 
 ```sh
 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
   tests/fm-backend-herdr-eventwait-smoke.test.sh
 ```
 
-Observed output:
+Observed output from the 2026-09-07 remeasurement on Herdr 0.8.2:
 
 ```text
 ok - real herdr (herdr 0.8.2): events.subscribe capability gate passes (protocol >= 16, events surface present in api schema)
