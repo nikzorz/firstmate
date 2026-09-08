@@ -122,7 +122,7 @@ test_scan_captain_relevant_statuses_classifier() {
 }
 
 test_classifier_primitives() {
-  local dir state open activity unreadable_rc unreadable_open
+  local dir state open activity unreadable_rc unreadable_open opener
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -199,6 +199,24 @@ test_classifier_primitives() {
     || fail "a key token past the note's leading edge became the event key"
   [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
     || fail "note prose overrode the declared pre-colon key"
+  # A malformed slug costs only what the writer claimed. Before the colon it is a
+  # DECLARED key, so the line is skipped; after it, the token is only INFERRED out
+  # of note text, so the event stays visible under "default" with the bad token
+  # left standing as prose. Dropping it there would reopen the silent-loss path.
+  for opener in needs-decision blocked; do
+    printf '%s: [key=bad key] choose A or B\n' "$opener" > "$state/bad-post-colon.status"
+    open=$(status_open_decisions "$state/bad-post-colon.status")
+    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=bad key] choose A or B' >/dev/null \
+      || fail "$opener with a malformed post-colon slug vanished from the open set"
+    printf '%s: pick A or B\nresolved: [key=bad key] captain chose A\n' "$opener" \
+      > "$state/bad-post-colon-close.status"
+    [ -z "$(status_open_decisions "$state/bad-post-colon-close.status")" ] \
+      || fail "a malformed post-colon resolved slug failed to close the default $opener"
+  done
+  # The note strip applies only where the key was actually written, so a declared
+  # pre-colon key never lets the note's own leading token be eaten as if it were one.
+  [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
+    || fail "a pre-colon keyed line lost genuine note prose to the key strip"
   cat > "$state/activity.status" <<'EOF'
 working [key=phase7]: Phase 7 started
 working [key=phase6]: Phase 6 started

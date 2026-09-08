@@ -453,7 +453,8 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   needs-decision [key=api-shape]: <summary>
 #   needs-decision: [key=api-shape] <summary>
 #   resolved       [key=api-shape]: <how it was decided>
-# Both spellings key the event identically. Accepting the post-colon position is a
+# with <slug> drawn from letters, digits, dot, underscore and hyphen. Both
+# spellings key the event identically. Accepting the post-colon position is a
 # correctness requirement, not a convenience: a key written there used to fall
 # through to "default", where two unrelated open decisions supersede each other and
 # one disappears with no error at all. Refusing such a line instead would only move
@@ -463,9 +464,19 @@ status_is_paused_or_captain_held() {  # <status-line>
 # the key it actually declared.
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
+#
+# The two positions differ in how much a malformed slug is allowed to cost,
+# because they differ in what the writer claimed. A token BEFORE the colon is a
+# DECLARED key: the writer named a key deliberately, so a malformed slug there is a
+# hard failure - the parser returns nonzero and the fold skips the whole line. A
+# leading token after the colon is only an INFERRED key, read out of ordinary note
+# text: a malformed slug there falls back to "default" and the token stays in the
+# note as prose, so such a line keeps exactly the visibility it had before this
+# position was recognised at all rather than vanishing from the fold.
+#
 # The three parsers are pure reads of a single line; the verb parser strips any
 # key token before the colon so the leading word is recovered cleanly, and the note
-# parser strips a leading key token so one note reads the same in either spelling.
+# parser strips an INFERRED key token so one note reads the same in either spelling.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
   v=${v%%\[key=*}
@@ -473,24 +484,37 @@ status_line_verb() {  # <status-line> -> leading verb word
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"
 }
+# The ONE reader of an inferred key token, so the key parser and the note parser
+# can never disagree about whether a note's leading token is a key at all.
+_fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, else rc 1
+  local n=$1 slug
+  n=${n#"${n%%[![:space:]]*}"}
+  case "$n" in
+    \[key=*\]*) ;;
+    *) return 1 ;;
+  esac
+  slug=${n#\[key=}
+  slug=${slug%%\]*}
+  case "$slug" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  printf '%s' "$slug"
+}
 status_line_note() {  # <status-line> -> text after the first colon, trimmed,
-                      # minus a leading key token
-  local n rest slug
+                      # minus a leading key token the note itself carries
+  local n
   case "$1" in
     *:*) n=${1#*:} ;;
     *) printf '%s' "$1"; return 0 ;;
   esac
   n=${n#"${n%%[![:space:]]*}"}
-  case "$n" in
-    \[key=*\]*)
-      rest=${n#\[key=}
-      slug=${rest%%\]*}
-      case "$slug" in
-        ''|*[!A-Za-z0-9._-]*) : ;;
-        *) n=${rest#*\]}; n=${n#"${n%%[![:space:]]*}"} ;;
-      esac
-      ;;
+  case "${1%%:*}" in
+    *\[key=*\]*) printf '%s' "$n"; return 0 ;;
   esac
+  if _fm_note_leading_key "$n" >/dev/null; then
+    n=${n#*\]}
+    n=${n#"${n%%[![:space:]]*}"}
+  fi
   printf '%s' "$n"
 }
 # Reads the key from before the colon first, and only then from the note's leading
@@ -502,26 +526,19 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
     *\[key=*\]*)
       k=${prefix#*\[key=}
       k=${k%%\]*}
-      ;;
-    *)
-      case "$1" in
-        *:*) note=${1#*:} ;;
-        *) printf 'default'; return 0 ;;
+      case "$k" in
+        ''|*[!A-Za-z0-9._-]*) return 1 ;;
       esac
-      note=${note#"${note%%[![:space:]]*}"}
-      case "$note" in
-        \[key=*\]*)
-          k=${note#\[key=}
-          k=${k%%\]*}
-          ;;
-        *) printf 'default'; return 0 ;;
-      esac
+      printf '%s' "$k"
+      return 0
       ;;
   esac
-  case "$k" in
-    ''|*[!A-Za-z0-9._-]*) return 1 ;;
-    *) printf '%s' "$k" ;;
+  case "$1" in
+    *:*) note=${1#*:} ;;
+    *) printf 'default'; return 0 ;;
   esac
+  k=$(_fm_note_leading_key "$note") || { printf 'default'; return 0; }
+  printf '%s' "$k"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.

@@ -256,6 +256,16 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # appends the token after the colon, where it used to be silently dropped.
     assert_no_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
       "$id: brief still shows an unkeyed resolved template with the key only in prose"
+    # A blocker is folded by the same keyed grammar as a decision, so an unkeyed
+    # `blocked:` opener paired with a keyed `resolved [key=<slug>]:` closer can
+    # never be closed at all: the closer names a key the opener never opened.
+    assert_grep "append \`blocked [key=<slug>]: {why}\`" "$brief" \
+      "$id: brief teaches an unkeyed blocker its keyed closure can never close"
+    assert_grep "append \`blocked [key=<slug>]: {the daemon error}\`" "$brief" \
+      "$id: brief teaches an unkeyed daemon-error blocker its keyed closure can never close"
+    # Without the accepted charset a worker invents a slug the classifier rejects.
+    assert_grep "letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes" "$brief" \
+      "$id: brief shows a key slug without saying what a slug may contain"
     assert_grep "7. Never stop, restart, or update the shared" "$brief" \
       "$id: brief lost the shared-daemon rule"
     assert_grep "# Definition of done" "$brief" \
@@ -582,6 +592,10 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost same-key closure for a reportable material phase"
   assert_grep 'resolved [key=<work-slug>]' "$brief" \
     "secondmate charter lost resolved closure for a keyed material phase"
+  assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\`" "$brief" \
+    "secondmate charter lost the keyed blocker its keyed closure has to close"
+  assert_grep 'letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes' "$brief" \
+    "secondmate charter shows a key slug without saying what a slug may contain"
 
   assert_grep 'include that exact token in your parent status reply' "$brief" \
     "secondmate charter lost correlated parent results"
