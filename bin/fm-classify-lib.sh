@@ -449,13 +449,23 @@ status_is_paused_or_captain_held() {  # <status-line>
 # terminal line never clears an open captain decision.
 #
 # Decision key grammar (backward-compatible with the existing "<verb>: <note>"
-# format): an OPTIONAL "[key=<slug>]" token sits between the verb and the colon,
+# format): an OPTIONAL "[key=<slug>]" token sits on either side of the colon,
 #   needs-decision [key=api-shape]: <summary>
+#   needs-decision: [key=api-shape] <summary>
 #   resolved       [key=api-shape]: <how it was decided>
+# Both spellings key the event identically. Accepting the post-colon position is a
+# correctness requirement, not a convenience: a key written there used to fall
+# through to "default", where two unrelated open decisions supersede each other and
+# one disappears with no error at all. Refusing such a line instead would only move
+# the silence, because a refused status line is a wake event nobody ever sees.
+# Post-colon recognition is bounded to the note's LEADING edge, before any other
+# prose, so a status line that merely QUOTES a "[key=...]" token in its text keeps
+# the key it actually declared.
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
 # The three parsers are pure reads of a single line; the verb parser strips any
-# key token before the colon so the leading word is recovered cleanly.
+# key token before the colon so the leading word is recovered cleanly, and the note
+# parser strips a leading key token so one note reads the same in either spelling.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
   v=${v%%\[key=*}
@@ -463,24 +473,54 @@ status_line_verb() {  # <status-line> -> leading verb word
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"
 }
-status_line_note() {  # <status-line> -> text after the first colon, trimmed
+status_line_note() {  # <status-line> -> text after the first colon, trimmed,
+                      # minus a leading key token
+  local n rest slug
   case "$1" in
-    *:*) local n=${1#*:}; printf '%s' "${n#"${n%%[![:space:]]*}"}" ;;
-    *) printf '%s' "$1" ;;
+    *:*) n=${1#*:} ;;
+    *) printf '%s' "$1"; return 0 ;;
   esac
+  n=${n#"${n%%[![:space:]]*}"}
+  case "$n" in
+    \[key=*\]*)
+      rest=${n#\[key=}
+      slug=${rest%%\]*}
+      case "$slug" in
+        ''|*[!A-Za-z0-9._-]*) : ;;
+        *) n=${rest#*\]}; n=${n#"${n%%[![:space:]]*}"} ;;
+      esac
+      ;;
+  esac
+  printf '%s' "$n"
 }
+# Reads the key from before the colon first, and only then from the note's leading
+# edge, so the historical spelling always wins and prose deeper in the note is never
+# a key site.
 _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
-  local prefix=${1%%:*} k
+  local prefix=${1%%:*} note k
   case "$prefix" in
     *\[key=*\]*)
       k=${prefix#*\[key=}
       k=${k%%\]*}
-      case "$k" in
-        ''|*[!A-Za-z0-9._-]*) return 1 ;;
-        *) printf '%s' "$k" ;;
+      ;;
+    *)
+      case "$1" in
+        *:*) note=${1#*:} ;;
+        *) printf 'default'; return 0 ;;
+      esac
+      note=${note#"${note%%[![:space:]]*}"}
+      case "$note" in
+        \[key=*\]*)
+          k=${note#\[key=}
+          k=${k%%\]*}
+          ;;
+        *) printf 'default'; return 0 ;;
       esac
       ;;
-    *) printf 'default' ;;
+  esac
+  case "$k" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) printf '%s' "$k" ;;
   esac
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.

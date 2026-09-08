@@ -247,10 +247,15 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # Rule 6 is the only place a worker is taught to CLOSE a decision or blocker
     # it opened; without it a standing needs-decision masks later events exactly
     # as a standing pause would.
-    assert_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
+    assert_grep "append \`resolved [key=<slug>]: {how it was decided or unblocked}\`" "$brief" \
       "$id: brief lost rule 6's closure for a decision or blocker it opens"
-    assert_grep "[key=<slug>]" "$brief" \
-      "$id: brief lost the correlation key that ties a closure to what it opened"
+    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+      "$id: brief lost the keyed form of the escalation it teaches the worker to open"
+    # The key must be SHOWN inside the template, not described beside a template
+    # that already carries the colon: a worker following that prose literally
+    # appends the token after the colon, where it used to be silently dropped.
+    assert_no_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
+      "$id: brief still shows an unkeyed resolved template with the key only in prose"
     assert_grep "7. Never stop, restart, or update the shared" "$brief" \
       "$id: brief lost the shared-daemon rule"
     assert_grep "# Definition of done" "$brief" \

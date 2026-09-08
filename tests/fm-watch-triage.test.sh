@@ -166,6 +166,39 @@ test_classifier_primitives() {
     && fail "a key token in note prose changed the decision key"
   printf '%s' "$open" | grep -F $'bad key\t' >/dev/null \
     && fail "an invalid key slug entered the open-decision set"
+  # A key written AFTER the colon must key the event exactly as the pre-colon
+  # spelling does. It used to fall through to "default", where two unrelated open
+  # decisions supersede each other and one is lost with no error at all.
+  printf 'needs-decision: [key=alpha] choose alpha A or B\nneeds-decision: [key=beta] choose beta A or B\n' \
+    > "$state/post-colon.status"
+  open=$(status_open_decisions "$state/post-colon.status")
+  printf '%s' "$open" | grep -F $'alpha\tneeds-decision\tchoose alpha A or B' >/dev/null \
+    || fail "a post-colon key did not open its own decision"
+  printf '%s' "$open" | grep -F $'beta\tneeds-decision\tchoose beta A or B' >/dev/null \
+    || fail "a second post-colon key was collapsed onto the first"
+  printf '%s' "$open" | grep -F $'default\t' >/dev/null \
+    && fail "a post-colon key silently fell through to the shared default bucket"
+  # Either spelling opens and closes the same decision, in either direction.
+  printf 'needs-decision [key=mix]: choose A or B\nresolved: [key=mix] captain chose A\n' \
+    > "$state/mix-close.status"
+  [ -z "$(status_open_decisions "$state/mix-close.status")" ] \
+    || fail "a post-colon resolved key did not close a pre-colon needs-decision"
+  printf 'needs-decision: [key=mix] choose A or B\nresolved [key=mix]: captain chose A\n' \
+    > "$state/mix-open.status"
+  [ -z "$(status_open_decisions "$state/mix-open.status")" ] \
+    || fail "a pre-colon resolved key did not close a post-colon needs-decision"
+  # The note reads the same whichever side the key sits on, so a consumer that
+  # renders the note cannot tell the two spellings apart either.
+  [ "$(status_line_note 'needs-decision: [key=mix] choose A or B')" = 'choose A or B' ] \
+    || fail "a post-colon key token was left inside the note text"
+  [ "$(status_line_verb 'needs-decision: [key=mix] choose A or B')" = 'needs-decision' ] \
+    || fail "a post-colon key token disturbed the verb"
+  # The bound: only the note's LEADING edge is a key site. A token quoted deeper
+  # in the prose keeps the key the line actually declared.
+  [ "$(_fm_decision_key 'needs-decision: pick the [key=prose] wording')" = default ] \
+    || fail "a key token past the note's leading edge became the event key"
+  [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
+    || fail "note prose overrode the declared pre-colon key"
   cat > "$state/activity.status" <<'EOF'
 working [key=phase7]: Phase 7 started
 working [key=phase6]: Phase 6 started
