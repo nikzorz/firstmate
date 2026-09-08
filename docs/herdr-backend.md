@@ -118,7 +118,7 @@ Operational compromises:
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces; session start removes only the exact home-local, uniquely journal-correlated, childless idle-shell shape above.
 - Spaces have no cross-home cleanup path, and a secondmate child can clean up only from its exact home.
-- Retiring a secondmate home with `--force` clears each child's journal along with its other per-task records, while ordinary retirement refuses on any child that still has a meta and so clears only the journals that outlived one; either path has to clear them because a home occupying a treehouse slot is returned for reuse rather than deleted and a surviving journal would bind the next task that reuses that id.
+- Retiring a secondmate home clears its children's journals along with their other per-task records, because a home occupying a treehouse slot is returned for reuse rather than deleted and a surviving journal would bind the next task that reuses that id; [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) owns which children each retirement path clears and when it refuses instead.
 - Every stale-looking space outside that narrow startup proof still requires manual cleanup in Herdr's UI after human inspection.
 - Regaining a dedicated space after degradation requires stopping the flat task, manually checking the stale projection, and clearing its journal before a genuinely fresh launch.
 - The visible token is only a restart-stable correlator and never substitutes for the exact binding.

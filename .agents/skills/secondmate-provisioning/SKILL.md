@@ -171,11 +171,14 @@ Run `bin/fm-teardown.sh <id>` for `kind=secondmate` only when the captain or mai
 
 The safety check is the secondmate's own home.
 Teardown refuses while its `state/*.meta` contains in-flight work.
+Either retirement path clears the per-task records the secondmate's children left in that home's `state/`, because a leased home is returned to the pool rather than deleted and any surviving record is inherited by the next task that reuses its id.
+Ordinary retirement therefore clears only the records that outlived their child's meta.
+When a child's records cannot be attributed and cleared safely, retirement refuses ahead of every destructive step and the home keeps all of them for hand inspection; a child meta that lands mid-retirement still refuses, but only after the secondmate's own endpoint is gone.
 When safe, teardown kills the direct tmux window, removes the `data/secondmates.md` route, clears the main home metadata, and removes the retired secondmate home.
 Removing a leased home releases its durable treehouse lease via `treehouse return`, so the pool slot is freed for reuse rather than left leased forever.
 A plain-clone home with no pool slot is simply removed.
 If `treehouse return` fails for a leased home, teardown stops with state intact rather than raw-removing the directory and hiding a held lease.
 
 With `--force`, teardown is the explicit discard path.
-It kills child windows, discards child work and state inside the secondmate home, removes the route, releases the lease, and removes the retired secondmate home.
+It kills child windows, discards the work of children that still have a meta, clears every child's records inside the secondmate home, removes the route, releases the lease, and removes the retired secondmate home.
 Never use `--force` unless the captain explicitly said to discard the work.
