@@ -8,7 +8,8 @@
 #
 # Answers one question repeatably: what does a session cost before it does any
 # work? It reads the always-loaded surfaces, renders the generated brief
-# boilerplate into a throwaway home, and prints each surface's size.
+# boilerplate for the scout variant and for each delivery-mode ship variant,
+# and prints each surface's size.
 #
 # BYTES, NOT TOKENS. Every figure is bytes. This script applies no
 # bytes-to-token conversion because it has no calibrated measurement to derive
@@ -21,8 +22,7 @@
 # job; deciding what to do about it is not this script's call.
 #
 # It mutates nothing under the active home: the only writes go to a temp
-# directory used as a throwaway FM_HOME for the brief scaffolds, removed on
-# exit.
+# directory holding one throwaway FM_HOME per brief scaffold, removed on exit.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
