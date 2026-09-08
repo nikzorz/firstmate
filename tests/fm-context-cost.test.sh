@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Behavior tests for the read-only context-cost report.
 # Covers surface coverage (AGENTS.md, digest context, fleet state, supervision
-# blocks, both brief variants, every agent skill with its trigger), the absent
-# vs zero distinction, the honest bytes-not-tokens statement, and the read-only
-# guarantee that the report never mutates the home it measures.
+# blocks, every generated brief variant, every agent skill with its trigger),
+# the absent vs unreadable vs zero distinctions, the honest bytes-not-tokens
+# statement, and the read-only guarantee that the report never mutates the home
+# it measures - contents included, not just the set of paths.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -29,8 +30,15 @@ printf 'working: under way\n' > "$HOME_DIR/state/task-one.status"
 
 BEFORE_MANIFEST="$TMP_ROOT/before.txt"
 AFTER_MANIFEST="$TMP_ROOT/after.txt"
+# The manifest carries content, not just paths: an in-place truncate, append, or
+# overwrite of a measured file is exactly the mutation this guarantee is about,
+# and a path-only diff cannot see it.
 manifest() {  # <out>
+  local f
   find "$HOME_DIR" | LC_ALL=C sort > "$1"
+  find "$HOME_DIR" -type f | LC_ALL=C sort | while IFS= read -r f; do
+    printf '%s %s\n' "$(cksum < "$f")" "$f"
+  done >> "$1"
 }
 
 manifest "$BEFORE_MANIFEST"
@@ -44,6 +52,16 @@ manifest "$AFTER_MANIFEST"
 diff -q "$BEFORE_MANIFEST" "$AFTER_MANIFEST" >/dev/null ||
   fail 'report mutated the home it measured'
 pass 'report leaves the measured home untouched'
+
+# The manifest must actually be able to see an in-place edit, or the guarantee
+# above is vacuous.
+MUTATED_MANIFEST="$TMP_ROOT/mutated.txt"
+printf '# captain, edited\n' > "$HOME_DIR/data/captain.md"
+manifest "$MUTATED_MANIFEST"
+diff -q "$BEFORE_MANIFEST" "$MUTATED_MANIFEST" >/dev/null &&
+  fail 'the read-only manifest cannot detect an in-place file edit'
+printf '# captain\n' > "$HOME_DIR/data/captain.md"
+pass 'the read-only manifest detects an in-place file edit'
 
 # --- honest bytes-versus-tokens position ------------------------------------
 
@@ -82,11 +100,20 @@ for harness in claude codex pi; do
 done
 pass 'each primary harness supervision block is measured'
 
-for variant in 'ship brief' 'scout brief'; do
+for variant in 'ship brief \(no-mistakes\)' 'ship brief \(direct-PR\)' \
+               'ship brief \(local-only\)' 'scout brief'; do
   printf '%s' "$OUT" | grep -Eq "^ +[0-9]+  $variant\$" ||
-    fail "$variant boilerplate is missing a measured size"
+    fail "${variant//\\/} boilerplate is missing a measured size"
 done
-pass 'both generated brief variants are measured'
+pass 'every generated brief variant is measured, ship modes named'
+
+# The delivery mode must really reach fm-brief.sh: three identical numbers mean
+# the probe registry was ignored and all three rows measured the same brief.
+ship_sizes=$(printf '%s\n' "$OUT" |
+  sed -n 's/^ *\([0-9][0-9]*\)  ship brief (.*)$/\1/p' | LC_ALL=C sort -u | wc -l)
+[ "$ship_sizes" -gt 1 ] ||
+  fail 'every ship brief mode reported the same size; the delivery mode was not applied'
+pass 'the ship brief rows differ by delivery mode'
 
 # --- skills and their triggers ----------------------------------------------
 
@@ -103,6 +130,29 @@ skill_count=$(find "$ROOT/.agents/skills" -mindepth 1 -maxdepth 1 -type d | wc -
   fail "expected $skill_count skill triggers, got $trigger_lines"
 assert_not_contains "$OUT" 'trigger: >-' 'folded frontmatter descriptions are unfolded'
 pass 'every skill carries a readable load trigger'
+
+# ahoy states what it does before it states when to load it, so a trigger taken
+# from the head of the description would miss the trigger entirely.
+assert_contains "$OUT" 'trigger: when the captain explicitly invokes /ahoy' \
+  "a trigger stated late in the description is the one reported"
+pass 'the reported trigger is the real trigger, not the description opening'
+
+# A description with no trigger clause at all says so, instead of printing a
+# leading excerpt that only looks like a trigger.
+FAKE_ROOT="$TMP_ROOT/fakeroot"
+mkdir -p "$FAKE_ROOT/.agents/skills/triggerless"
+cat > "$FAKE_ROOT/.agents/skills/triggerless/SKILL.md" <<'SKILLEOF'
+---
+name: triggerless
+description: A probe skill whose description states no load trigger at all.
+---
+
+# triggerless
+SKILLEOF
+FAKE_OUT=$(FM_ROOT_OVERRIDE="$FAKE_ROOT" "$COST" 2>&1)
+expect_code 0 "$?" 'a skill with no stated trigger does not break the report'
+assert_contains "$FAKE_OUT" 'trigger: (not detected)' 'an undetectable trigger is named as such'
+pass 'a description with no trigger clause reports (not detected)'
 
 # --- absent surfaces are distinguished from empty ones ----------------------
 
@@ -121,6 +171,33 @@ ZERO_OUT=$(FM_HOME="$EMPTY_HOME" "$COST" 2>&1)
 assert_contains "$ZERO_OUT" '0  data/captain.md' 'an empty note reports zero bytes'
 assert_not_contains "$ZERO_OUT" 'ABSENT  data/captain.md' 'an empty note is not reported absent'
 pass 'an empty note is distinguished from a missing one'
+
+# --- a record that cannot be read is reported, not fatal --------------------
+#
+# A live fleet tears records down while the report runs, so a measured file can
+# stop being readable between the test and the read. That must cost one honest
+# row, never the whole report.
+if [ "$(id -u)" -eq 0 ]; then
+  pass 'unreadable-record coverage skipped: running as root reads any mode'
+else
+  DENIED_HOME="$TMP_ROOT/denied"
+  mkdir -p "$DENIED_HOME/data" "$DENIED_HOME/state"
+  printf '# captain\n' > "$DENIED_HOME/data/captain.md"
+  printf '# learnings\n' > "$DENIED_HOME/data/learnings.md"
+  fm_write_meta "$DENIED_HOME/state/task-one.meta" 'window=firstmate:task-one'
+  chmod 000 "$DENIED_HOME/data/captain.md" "$DENIED_HOME/state/task-one.meta"
+  DENIED_OUT=$(FM_HOME="$DENIED_HOME" "$COST" 2>&1)
+  denied_rc=$?
+  chmod 644 "$DENIED_HOME/data/captain.md" "$DENIED_HOME/state/task-one.meta"
+  expect_code 0 "$denied_rc" 'a home with an unreadable record still exits clean'
+  assert_contains "$DENIED_OUT" 'UNREADABLE  data/captain.md' 'an unreadable note is named unreadable'
+  assert_not_contains "$DENIED_OUT" 'ABSENT  data/captain.md' 'an unreadable note is not reported absent'
+  assert_contains "$DENIED_OUT" 'state/*.meta (1 files, 1 unreadable)' \
+    'an unreadable record is counted, not folded into zero bytes'
+  printf '%s' "$DENIED_OUT" | grep -Eq '^ +[0-9]+  data/learnings.md$' ||
+    fail 'a readable sibling stopped being measured after an unreadable record'
+  pass 'an unreadable record is reported honestly and does not abort the report'
+fi
 
 # --- no enforcement ---------------------------------------------------------
 

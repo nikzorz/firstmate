@@ -55,10 +55,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 SUBTOTAL=0
 
-# size_of <path>: echo the byte size of a regular file, or -1 when absent.
+# size_of <path>: echo the byte size of a regular file, -1 when absent, or -2
+# when it is there but cannot be read. A file measured on a live fleet can be
+# unlinked or made unreadable between the test and the read, and a report that
+# died on an arithmetic error there would be useless exactly when it is wanted.
 size_of() {
+  local bytes
   [ -f "$1" ] || { printf '%s\n' -1; return 0; }
-  wc -c < "$1" | tr -d ' '
+  bytes=$(wc -c < "$1" 2>/dev/null | tr -d ' ')
+  case "$bytes" in
+    '' | *[!0-9]*) printf '%s\n' -2 ;;
+    *) printf '%s\n' "$bytes" ;;
+  esac
 }
 
 # tree_bytes <dir>: echo the summed byte size of every regular file below <dir>.
@@ -69,19 +77,19 @@ tree_bytes() {
 }
 
 # row <bytes> <label>: print one measured line and accumulate the subtotal.
-# A bytes value of -1 prints ABSENT and contributes nothing.
+# The size_of sentinels -1 and -2 print as words and contribute nothing.
 row() {
-  if [ "$1" -lt 0 ]; then
-    printf '   ABSENT  %s\n' "$2"
-    return 0
-  fi
+  case "$1" in
+    -1) printf '%10s  %s\n' ABSENT "$2"; return 0 ;;
+    -2) printf '%10s  %s\n' UNREADABLE "$2"; return 0 ;;
+  esac
   SUBTOTAL=$((SUBTOTAL + $1))
-  printf '%9d  %s\n' "$1" "$2"
+  printf '%10d  %s\n' "$1" "$2"
 }
 
 # subtotal <label>: print and reset the running subtotal.
 subtotal() {
-  printf '  -------\n%9d  %s\n' "$SUBTOTAL" "$1"
+  printf '  --------\n%10d  %s\n' "$SUBTOTAL" "$1"
   SUBTOTAL=0
 }
 
@@ -92,24 +100,38 @@ section() {
 }
 
 # glob_group <label> <dir> <pattern>: print one aggregated row for every file
-# in <dir> matching <pattern>, naming how many files it covers.
+# in <dir> matching <pattern>, naming how many files it covers and how many of
+# those it could not read rather than folding an unreadable file into zero.
 glob_group() {
-  local label=$1 dir=$2 pattern=$3 total=0 count=0 f
+  local label=$1 dir=$2 pattern=$3 total=0 count=0 unread=0 f bytes
   if [ -d "$dir" ]; then
     for f in "$dir"/$pattern; do
       [ -f "$f" ] || continue
       count=$((count + 1))
-      total=$((total + $(wc -c < "$f" | tr -d ' ')))
+      bytes=$(size_of "$f")
+      if [ "$bytes" -lt 0 ]; then
+        unread=$((unread + 1))
+      else
+        total=$((total + bytes))
+      fi
     done
   fi
-  row "$total" "$label ($count files)"
+  if [ "$unread" -gt 0 ]; then
+    row "$total" "$label ($count files, $unread unreadable)"
+  else
+    row "$total" "$label ($count files)"
+  fi
 }
 
 # skill_trigger <skill.md>: echo the skill's load trigger, taken from the
 # frontmatter description and trimmed to one readable line. Handles both a
 # plain scalar description and a folded block scalar continued on later lines.
+# The trigger clause is searched for across the whole description, not just its
+# opening, because a description may state what the skill does before it states
+# when to load it; a leading excerpt that contains no trigger is worse than
+# saying plainly that none was found.
 skill_trigger() {
-  [ -f "$1" ] || return 0
+  [ -f "$1" ] || { printf '%s\n' '(not detected)'; return 0; }
   awk '
     NR == 1 && $0 == "---" { infm = 1; next }
     infm && $0 == "---" { exit }
@@ -127,9 +149,17 @@ skill_trigger() {
       desc = (desc == "" ? $0 : desc " " $0)
     }
     END {
+      start = 0
       if (match(desc, /(Use|Load) (when|before|on|this|it)/)) {
-        desc = substr(desc, RSTART)
+        start = RSTART
+      } else {
+        if (match(desc, /[Ww]hen(ever)?[^[:alpha:]]/)) { start = RSTART }
+        if (match(desc, /[Bb]efore[^[:alpha:]]/) && (start == 0 || RSTART < start)) {
+          start = RSTART
+        }
       }
+      if (start == 0) { print "(not detected)"; exit }
+      desc = substr(desc, start)
       if (length(desc) > 104) { desc = substr(desc, 1, 101) "..." }
       print desc
     }
@@ -161,12 +191,14 @@ row "$(size_of "$DATA/learnings.md")" 'data/learnings.md'
 subtotal 'private notes and fleet records'
 
 section 'Always loaded: session digest fleet state, every session'
-printf 'Upper bounds: the digest prints bounded projections of the backlog and a\n'
-printf 'bounded tail of each status log, not these whole files.\n'
+printf 'Neither an upper nor a lower bound: the digest prints a bounded projection of\n'
+printf 'the backlog and a bounded tail of each status log, so those two rows over-state,\n'
+printf 'while it prints every meta record in full plus per-task framing counted nowhere\n'
+printf 'here.\n'
 row "$(size_of "$DATA/backlog.md")" 'data/backlog.md'
 glob_group 'state/*.meta' "$STATE" '*.meta'
 glob_group 'state/*.status' "$STATE" '*.status'
-subtotal 'fleet state upper bound'
+subtotal 'fleet state, approximate'
 
 section 'Always loaded: supervision block, one harness per session'
 printf 'A session pays exactly one of these, for its own primary harness.\n'
@@ -183,23 +215,35 @@ done
 
 section 'Per worker: generated brief boilerplate, one per crewmate'
 printf 'Scaffolded into a throwaway home with the {TASK} placeholder unfilled, so\n'
-printf 'this is the boilerplate cost before any task text is added.\n'
-brief_bytes() {  # <label> <flag...>
-  local label=$1 id
-  shift
-  id=$(printf '%s' "$label" | tr ' ' '-')
+printf 'this is the boilerplate cost before any task text is added. A ship task pays\n'
+printf 'exactly one delivery-mode variant, the one its project is registered for.\n'
+PROBE_ID=probe-task
+PROBE_PROJECT=probe-project
+
+# brief_bytes <slot> <mode> <label> [flag...]: scaffold one brief into its own
+# throwaway home and measure it. Each slot gets an equal-length home path and
+# the same task id and project name, so the only thing that moves between the
+# ship rows is the delivery mode the probe registry selects.
+brief_bytes() {
+  local slot=$1 mode=$2 label=$3 home
+  shift 3
+  home="$TMP/brief$slot"
+  mkdir -p "$home/data"
+  printf -- '- %s [%s] - context cost probe\n' "$PROBE_PROJECT" "$mode" > "$home/data/projects.md"
   if (
     unset FM_DATA_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
-    FM_HOME="$TMP/briefhome" \
-      "$FM_ROOT/bin/fm-brief.sh" "$id" fm-context-cost-probe "$@" >/dev/null 2>&1
+    FM_HOME="$home" \
+      "$FM_ROOT/bin/fm-brief.sh" "$PROBE_ID" "$PROBE_PROJECT" "$@" >/dev/null 2>&1
   ); then
-    row "$(size_of "$TMP/briefhome/data/$id/brief.md")" "$label"
+    row "$(size_of "$home/data/$PROBE_ID/brief.md")" "$label"
   else
     row -1 "$label (scaffold failed)"
   fi
 }
-brief_bytes 'ship brief'
-brief_bytes 'scout brief' --scout
+brief_bytes 1 no-mistakes 'ship brief (no-mistakes)'
+brief_bytes 2 direct-PR 'ship brief (direct-PR)'
+brief_bytes 3 local-only 'ship brief (local-only)'
+brief_bytes 4 no-mistakes 'scout brief' --scout
 
 section 'On trigger: agent skills, paid only by sessions that load them'
 for skill in "$FM_ROOT"/.agents/skills/*/; do
@@ -207,7 +251,7 @@ for skill in "$FM_ROOT"/.agents/skills/*/; do
   name=$(basename "$skill")
   row "$(tree_bytes "$skill")" "$name"
   trigger=$(skill_trigger "$skill/SKILL.md" 2>/dev/null || true)
-  [ -n "$trigger" ] && printf '           trigger: %s\n' "$trigger"
+  printf '            trigger: %s\n' "${trigger:-(not detected)}"
 done
 subtotal 'every agent skill, if a single session loaded all of them'
 
@@ -222,7 +266,7 @@ for note in "$DATA"/learnings-*.md "$DATA"/captain-*.md; do
   found=1
   row "$(size_of "$note")" "data/$(basename "$note")"
 done
-[ "$found" = 1 ] || printf '        -  none present\n'
+[ "$found" = 1 ] || printf '%10s  %s\n' '-' 'none present'
 subtotal 'conditional project notes'
 
 cat <<'EOF'
