@@ -592,11 +592,17 @@ fm_wake_open_decision() {  # <tail-chunk> <partial-head> <latest-event-line>
   [ -n "$record" ] || return 1
   rest=${record#*$'\t'}
   if [ "${rest%%$'\t'*}" = "$(status_line_verb "$latest")" ] &&
-    [ "${record%%$'\t'*}" = "$(_fm_decision_key "$latest")" ]; then
+    [ "${record%%$'\t'*}" = "$(_fm_decision_key "$latest")" ] &&
+    _fm_decision_key_is_usable "$latest"; then
     # The latest-event line is already carrying this one, so repeating it would
-    # only say the same thing twice. Anything OLDER is still unanswered and would
-    # still be silent, which is the masking this fold exists to stop, so drop
-    # just the redundant record and fall through to the next-newest.
+    # only say the same thing twice. Equal keys alone do not prove that: a latest
+    # line whose token nobody could read also reads as "default", so trusting the
+    # match would trim an unrelated record the operator has not been told about.
+    # A line carrying no token at all is trustworthy, and is the ordinary
+    # unkeyed stream this match exists for.
+    # Anything OLDER is still unanswered and would still be silent, which is the
+    # masking this fold exists to stop, so drop just the redundant record and
+    # fall through to the next-newest.
     open=$(printf '%s' "$open" | LC_ALL=C awk 'NF { keep[n++] = $0 } END { for (i = 0; i + 1 < n; i++) print keep[i] }') || return 1
     record=$(_fm_wake_newest_open_decision "$open") || return 1
     [ -n "$record" ] || return 1

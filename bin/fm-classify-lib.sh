@@ -472,12 +472,20 @@ status_is_paused_or_captain_held() {  # <status-line>
 # is not a refusal, so neither dropping the line nor guessing which record it
 # meant is allowed - both end with a captain-relevant event gone from the open
 # set with no error, which is the silent loss this fold exists to prevent.
-# That single property has two consequences, one per side of the fold:
-#   - an OPENING verb keeps its line. It takes the key "default" and the unusable
-#     token rides through into the note as ordinary prose, which is the only
-#     marker that the writer meant a key and did not get one.
-#   - a CLOSING verb closes NOTHING. It names no record any fold may drop, so
-#     whatever was open stays open and keeps being reported.
+# The property binds EVERY path that reads, writes, collapses or supersedes a key,
+# not one side of one fold: an unusable key may never be the reason some record
+# stops being reported, whether that record is the line's own or another's. So no
+# fold may DROP on an unusable key, and nothing outside the folds may treat two
+# records as the same decision on the strength of one:
+#   - an OPENING verb keeps its line and supersedes nothing. It takes the key
+#     "default" and the unusable token rides through into the note as ordinary
+#     prose, which is the only marker that the writer meant a key and did not get
+#     one. It cannot claim an earlier record, because the key it would claim it by
+#     is exactly the key nobody could read.
+#   - a CLOSING verb closes NOTHING, so whatever was open stays open.
+# An accepted consequence, not a defect: two records can then share the "default"
+# bucket, and one bare "resolved:" closes both together. A close the operator can
+# see, naming what it closed, is not the silent loss this fold exists to stop.
 # Whether the writer DECLARED the key before the colon or a reader INFERS it from
 # the note's leading edge decides which key is read, never whether an event
 # survives. A line carrying no token at all is not unusable: it keys "default"
@@ -566,9 +574,10 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when none is usa
   k=$(_fm_note_leading_key "$note") || { printf 'default'; return 0; }
   printf '%s' "$k"
 }
-# True when the line's key may be used to DROP a record: it either carries no key
-# token at all, or carries one whose slug is usable. Guards every closing branch,
-# so a key nobody can read never silences a record it does not name.
+# True when the line's key may be used to claim a record another line wrote: it
+# either carries no key token at all, or carries one whose slug is usable. Guards
+# every drop in every fold, on both sides, and every match outside them, so a key
+# nobody can read never silences a record it does not name.
 _fm_decision_key_is_usable() {  # <status-line>
   local slug note
   if slug=$(_fm_prefix_declared_slug "$1"); then
@@ -630,8 +639,10 @@ _fm_status_open_decisions_stream() {
     case "$verb" in
       needs-decision|blocked)
         note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
+        if _fm_decision_key_is_usable "$line"; then
+          open=$(_fm_decision_drop "$open" "$key")
+          [ -n "$open" ] && open="${open}"$'\n'
+        fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
@@ -694,8 +705,10 @@ _fm_status_trailing_open_decisions_stream() {
       needs-decision|blocked)
         key=$(_fm_decision_key "$line")
         note=$(status_line_note "$line")
-        trailing=$(_fm_decision_drop "$trailing" "$key")
-        [ -n "$trailing" ] && trailing="${trailing}"$'\n'
+        if _fm_decision_key_is_usable "$line"; then
+          trailing=$(_fm_decision_drop "$trailing" "$key")
+          [ -n "$trailing" ] && trailing="${trailing}"$'\n'
+        fi
         trailing="${trailing}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       "$resolve"|"$held")
@@ -746,8 +759,10 @@ _fm_status_open_activities_stream() {
     case "$verb" in
       working|"$pause")
         note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
+        if _fm_decision_key_is_usable "$line"; then
+          open=$(_fm_decision_drop "$open" "$key")
+          [ -n "$open" ] && open="${open}"$'\n'
+        fi
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       done|failed|needs-decision|blocked|"$resolve"|"$held")

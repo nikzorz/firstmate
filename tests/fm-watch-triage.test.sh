@@ -123,6 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
+  local fold stream expected label got want
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -201,71 +202,83 @@ test_classifier_primitives() {
     || fail "a key token past the note's leading edge became the event key"
   [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
     || fail "note prose overrode the declared pre-colon key"
-  # One property covers an unusable key everywhere: err toward leaving the decision
-  # VISIBLE. An OPENING verb therefore keeps its line under "default" with the bad
-  # token riding through in the note, and a CLOSING verb drops nothing at all.
-  # Both consequences guard the same silent loss: dropping the opener would delete
-  # the escalation outright, and letting the closer fall back to "default" would
-  # silence whatever unrelated decision happened to be sitting there.
+  # --- the unusable-key property, as a matrix -----------------------------
+  # "When a key is unusable, err toward the decision staying VISIBLE." The
+  # property binds every path that reads, writes, collapses or supersedes a key,
+  # so each fold is driven on BOTH sides - a line that OPENS a record and a line
+  # that CLOSES one - against all three key kinds: USABLE, UNUSABLE (a malformed
+  # slug, and the brief's own literal <slug> placeholder), and COLLIDING (a later
+  # line reusing a key that is already open). Each row asserts the fold's WHOLE
+  # output, so a row fails both when a record vanishes and when one appears that
+  # should have been superseded. Rows are `fold|stream|expected-output|label`,
+  # with \n and \t expanded, and an empty expectation meaning nothing stays open.
+  #
+  # Two cells are unreachable rather than untested, and are named here instead of
+  # being silently omitted:
+  #   - "closing verb with a COLLIDING key" is not a distinct kind. A close whose
+  #     key is already open IS the usable-close row; that is what closing means.
+  #   - "unusable key that collides" cannot supersede anything, so it has no
+  #     separate colliding behaviour. The two-unusable-openers row below is the
+  #     evidence: both stay open under "default".
+  while IFS='|' read -r fold stream expected label; do
+    [ -n "$fold" ] || continue
+    case "$fold" in \#*) continue ;; esac
+    printf '%b' "$stream" > "$state/matrix.status"
+    got=$("$fold" "$state/matrix.status")
+    want=$(printf '%b' "$expected")
+    [ "$got" = "$want" ] || fail "$label (want [$want], got [$got])"
+  done <<'MATRIX'
+# --- status_open_decisions, OPENING side --------------------------------
+status_open_decisions|needs-decision [key=api]: pick A\n|api\tneeds-decision\tpick A|a usable declared key did not open its own decision
+status_open_decisions|needs-decision: [key=api] pick A\n|api\tneeds-decision\tpick A|a usable inferred key did not open its own decision
+status_open_decisions|needs-decision [key=ci flake]: pick A\n|default\tneeds-decision\t[key=ci flake] pick A|an unusable declared key removed the opener from the fold
+status_open_decisions|needs-decision: [key=ci flake] pick A\n|default\tneeds-decision\t[key=ci flake] pick A|an unusable inferred key removed the opener from the fold
+status_open_decisions|blocked [key=<slug>]: CI is flaky\n|default\tblocked\t[key=<slug>] CI is flaky|a copied <slug> placeholder removed the blocker from the fold
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|an unusable-keyed opener superseded an unrelated open decision
+status_open_decisions|blocked [key=ci flake]: first\nblocked [key=another bad]: second\n|default\tblocked\t[key=ci flake] first\ndefault\tblocked\t[key=another bad] second|two unusable-keyed openers collided in the shared bucket
+status_open_decisions|needs-decision [key=api]: pick A\nneeds-decision [key=api]: pick B\n|api\tneeds-decision\tpick B|a colliding usable key stopped superseding its own earlier request
+status_open_decisions|needs-decision: pick A\nneeds-decision: pick B\n|default\tneeds-decision\tpick B|two unkeyed requests stopped collapsing onto one default
+# --- status_open_decisions, CLOSING side --------------------------------
+status_open_decisions|needs-decision [key=api]: pick A\nresolved [key=api]: chose A\n||a usable declared close failed to close the decision it names
+status_open_decisions|needs-decision [key=api]: pick A\nresolved: [key=api] chose A\n||a usable inferred close failed to close the decision it names
+status_open_decisions|needs-decision: pick A\nresolved: chose A\n||a bare close stopped closing the default decision
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved [key=regsitry ]: fixed\n|default\tneeds-decision\tshould we drop the v1 API\nregistry\tblocked\tcannot reach registry|an unusable declared close silenced a record it does not name
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved: [key=regsitry ] fixed\n|default\tneeds-decision\tshould we drop the v1 API\nregistry\tblocked\tcannot reach registry|an unusable inferred close silenced a record it does not name
+status_open_decisions|needs-decision: real product question\nresolved [key=<slug>]: copied placeholder\n|default\tneeds-decision\treal product question|a copied <slug> placeholder closed a real decision
+status_open_decisions|needs-decision [key=api]: pick A\ncaptain-held [key=bad key]: tracked\n|api\tneeds-decision\tpick A|an unusable captain-held transfer closed a decision it does not name
+status_open_decisions|needs-decision [key=api]: pick A\ncaptain-held [key=api]: tracked\n||a usable captain-held transfer failed to close the decision it names
+# ACCEPTED behaviour, pinned so it is not mistaken for the silent loss above: two
+# records sharing the default bucket are closed TOGETHER by one bare resolved.
+# A close the operator can see, naming what it closed, is not a silent loss.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\nresolved: both handled\n||a bare close stopped closing every record in the shared default bucket
+# --- status_trailing_open_decisions, both sides -------------------------
+status_trailing_open_decisions|needs-decision [key=api]: pick A\n|api\tneeds-decision\tpick A|a usable key did not open a trailing decision
+status_trailing_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|an unusable-keyed opener superseded an unrelated trailing decision
+status_trailing_open_decisions|blocked [key=<slug>]: CI is flaky\n|default\tblocked\t[key=<slug>] CI is flaky|a copied <slug> placeholder removed the blocker from the trailing fold
+status_trailing_open_decisions|needs-decision [key=api]: pick A\nneeds-decision [key=api]: pick B\n|api\tneeds-decision\tpick B|a colliding usable key stopped superseding in the trailing fold
+status_trailing_open_decisions|needs-decision [key=api]: pick A\nresolved [key=api]: chose A\n||a usable close failed to close the trailing decision it names
+status_trailing_open_decisions|needs-decision: v1 API\nresolved [key=bad key]: fixed\n|default\tneeds-decision\tv1 API|an unusable close silenced a trailing record it does not name
+status_trailing_open_decisions|needs-decision: pick A\nworking: back at it\n||a report on the work stopped ending the trailing run
+# --- status_open_activities, both sides ---------------------------------
+status_open_activities|working [key=p7]: phase one\n|p7\tworking\tphase one|a usable key did not open its own activity
+status_open_activities|working [key=p 7]: phase one\n|default\tworking\t[key=p 7] phase one|an unusable key removed the activity from the fold
+status_open_activities|working: phase one\nworking [key=p 7]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=p 7] phase two|an unusable-keyed activity superseded an unrelated open activity
+status_open_activities|working: phase one\nworking [key=<slug>]: phase two\n|default\tworking\tphase one\ndefault\tworking\t[key=<slug>] phase two|a copied <slug> placeholder superseded an unrelated open activity
+status_open_activities|working [key=p7]: phase one\nworking [key=p7]: phase two\n|p7\tworking\tphase two|a colliding usable key stopped superseding its own earlier phase
+status_open_activities|working [key=p7]: phase one\ndone [key=p7]: finished\n||a usable terminal failed to close the activity it names
+status_open_activities|working: phase one\ndone: finished\n||a bare terminal stopped closing the default activity
+status_open_activities|working: phase one\ndone [key=p 7]: finished\n|default\tworking\tphase one|an unusable terminal silenced an activity it does not name
+status_open_activities|working: phase one\ndone [key=<slug>]: finished\n|default\tworking\tphase one|a copied <slug> placeholder closed an activity it does not name
+status_open_activities|working: phase one\nworking [key=p 7]: phase two\ndone: all finished\n||a bare terminal stopped closing every activity in the shared default bucket
+MATRIX
+  # The verb survives an unusable key in both positions, so a fold still routes
+  # the line to the branch its writer meant.
   for opener in needs-decision blocked; do
-    printf '%s [key=ci flake]: choose A or B\n' "$opener" > "$state/bad-pre-colon.status"
-    open=$(status_open_decisions "$state/bad-pre-colon.status")
-    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=ci flake] choose A or B' >/dev/null \
-      || fail "$opener with a malformed declared slug vanished from the open set"
     [ "$(status_line_verb "$opener [key=ci flake]: choose A or B")" = "$opener" ] \
-      || fail "a malformed declared slug disturbed the $opener verb"
-    printf '%s: [key=bad key] choose A or B\n' "$opener" > "$state/bad-post-colon.status"
-    open=$(status_open_decisions "$state/bad-post-colon.status")
-    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=bad key] choose A or B' >/dev/null \
-      || fail "$opener with a malformed post-colon slug vanished from the open set"
-    # The collision the closing rule exists for: an unrelated unkeyed decision is
-    # already open under "default" when a close naming a mistyped key arrives.
-    printf '%s: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved [key=regsitry ]: registry reachable\n' \
-      "$opener" > "$state/bad-pre-colon-close.status"
-    open=$(status_open_decisions "$state/bad-pre-colon-close.status")
-    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\tshould we drop the v1 API' >/dev/null \
-      || fail "a malformed declared resolved slug closed the unrelated default $opener"
-    printf '%s' "$open" | grep -F $'registry\tblocked\tcannot reach registry' >/dev/null \
-      || fail "a malformed declared resolved slug closed the keyed blocker it misnamed"
-    printf '%s: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved: [key=regsitry ] registry reachable\n' \
-      "$opener" > "$state/bad-post-colon-close.status"
-    open=$(status_open_decisions "$state/bad-post-colon-close.status")
-    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\tshould we drop the v1 API' >/dev/null \
-      || fail "a malformed post-colon resolved slug closed the unrelated default $opener"
-    printf '%s' "$open" | grep -F $'registry\tblocked\tcannot reach registry' >/dev/null \
-      || fail "a malformed post-colon resolved slug closed the keyed blocker it misnamed"
-    # The brief's own example slug copied verbatim is a close nobody can read.
-    printf '%s: real product question\nresolved [key=<slug>]: copied placeholder\n' "$opener" \
-      > "$state/placeholder-close.status"
-    printf '%s' "$(status_open_decisions "$state/placeholder-close.status")" \
-      | grep -F $'default\t'"$opener"$'\treal product question' >/dev/null \
-      || fail "a copied [key=<slug>] placeholder closed the real $opener"
-    # A line carrying no token at all is not unusable: a bare close still closes.
-    printf '%s: pick A or B\nresolved: captain chose A\n' "$opener" \
-      > "$state/bare-close.status"
-    [ -z "$(status_open_decisions "$state/bare-close.status")" ] \
-      || fail "a bare resolved line stopped closing the default $opener"
-    # A well-formed close still closes, from either key position.
-    printf '%s [key=real]: pick A or B\nresolved [key=real]: captain chose A\n' "$opener" \
-      > "$state/good-pre-close.status"
-    [ -z "$(status_open_decisions "$state/good-pre-close.status")" ] \
-      || fail "a well-formed declared resolved slug failed to close the keyed $opener"
-    printf '%s [key=real]: pick A or B\nresolved: [key=real] captain chose A\n' "$opener" \
-      > "$state/good-post-close.status"
-    [ -z "$(status_open_decisions "$state/good-post-close.status")" ] \
-      || fail "a well-formed post-colon resolved slug failed to close the keyed $opener"
+      || fail "an unusable declared slug disturbed the $opener verb"
+    [ "$(status_line_verb "$opener: [key=ci flake] choose A or B")" = "$opener" ] \
+      || fail "an unusable inferred slug disturbed the $opener verb"
   done
-  # The activities fold closes on the same terminals, so it inherits the same rule.
-  printf 'working: phase one\ndone [key=p 7]: finished\n' > "$state/bad-activity-close.status"
-  printf '%s' "$(status_open_activities "$state/bad-activity-close.status")" \
-    | grep -F $'default\tworking\tphase one' >/dev/null \
-    || fail "a malformed declared done slug closed the unrelated default activity"
-  printf 'working: phase one\ndone: finished\n' > "$state/bare-activity-close.status"
-  [ -z "$(status_open_activities "$state/bare-activity-close.status")" ] \
-    || fail "a bare done line stopped closing the default activity"
-  printf 'working [key=p7]: phase one\ndone [key=p7]: finished\n' > "$state/good-activity-close.status"
-  [ -z "$(status_open_activities "$state/good-activity-close.status")" ] \
-    || fail "a well-formed done slug failed to close the activity it names"
   # The note strip applies only where the key was actually written, so a declared
   # pre-colon key never lets the note's own leading token be eaten as if it were one.
   [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
