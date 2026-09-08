@@ -1,7 +1,8 @@
 # Herdr runtime backend
 
 Herdr is an experimental agent-native terminal backend with native per-pane agent state and push events.
-Firstmate requires Herdr protocol 14 or newer; versions 0.7.1, 0.7.3, 0.7.4, and 0.7.5 are verified, with protocol-16 features enabled only when available.
+Firstmate requires Herdr protocol 14 or newer; Herdr 0.8.2 speaking protocol 20 is the current verified pair, with earlier 0.7.1, 0.7.3, 0.7.4, and 0.7.5 evidence retained where it defines the protocol-14 and protocol-16 fallbacks.
+Protocol-16 features are therefore in normal use rather than exceptional, and they stay capability-gated so a supported build between the floor and protocol 16 still falls back cleanly.
 Herdr provides the terminal session while Treehouse continues to provide task worktrees.
 [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns shared backend selection and metadata semantics.
 
@@ -71,7 +72,7 @@ Only the exact seeded default tab returned by the same workspace-create response
 Before and after create, prune, order, abort cleanup, and normal cleanup, Firstmate verifies exact workspace, tab, pane, and active-focus ids.
 An ambiguous response grants no mutation or cleanup authority.
 
-Protocol 16 exposes `workspace.move` over the named session socket but no CLI subcommand.
+Protocol 16 exposes `workspace.move` over the named session socket, and the verified pair still exposes no `workspace move` CLI subcommand, so the whitelisted raw-socket request remains required.
 `bin/backends/herdr-workspace-move.py` sends only that whitelisted method and verifies the complete returned workspace order.
 Projected children are placed in one contiguous block immediately after their owning home when the session layout, protocol, socket, `python3`, and machine-private per-session lock are all verifiable.
 Existing legacy child labels may extend an already adjacent block read-only but are never renamed or migrated.
@@ -84,6 +85,9 @@ The worker remains on the ordinary flat or Herdr-current-order path.
 Normal task metadata remains the sole endpoint authority after creation.
 Cleanup closes only the exact recorded task pane and never calls `workspace close`.
 Herdr can move focus when closing the last pane of a non-focused projected workspace, so projected cleanup runs under the same session lock, captures the exact active tab, refuses to delete the active tab, closes the exact task pane, and restores only the exact prior tab when needed.
+The verified pair no longer moves focus on that close, which makes the restore step a verified no-op there rather than an unnecessary guard.
+The guard is retained conservatively, not because every supported build is known to steal focus: the steal is recorded on the earlier 0.7.4 and 0.7.5 runs and is neither observed nor disproven on the rest of the supported range below that pair.
+It costs nothing on a build that does not steal, because the restore short-circuits on an unchanged focus snapshot.
 If lock, snapshot, pane identity, or restoration is ambiguous, cleanup warns and preserves the journal for manual inspection.
 
 Recovery is deliberately conservative and presentation-only.
@@ -215,7 +219,7 @@ Mid-session secondmate liveness is not implemented because idle secondmates are 
 
 ## Push events and polling fallback
 
-Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader.
+Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader, and the verified pair takes this path normally.
 `bin/fm-transition-lib.sh` owns the backend-neutral transition vocabulary and policy.
 The Herdr adapter subscribes before reconciling current levels, buffers edges during reconciliation, and returns fresh blocked transitions for this home's panes.
 The watcher maps the pane back to the task and skips secondmate endpoints and declared `paused:` waits.
@@ -260,7 +264,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 - Herdr remains experimental.
 - The declared-pause absorb's outcome for every verdict and endpoint reading is owned by [`configuration.md`](configuration.md#declared-pause-absorb-by-verdict-and-endpoint-liveness).
 - Herdr is one of the two backends that implement `agent_state`, so it can produce the `alive` and `dead` readings that table's first two columns need.
-- Presentation ordering needs protocol 16 and Python and is best-effort only.
+- Presentation ordering needs protocol 16 and Python; the verified pair satisfies the protocol side, and the ordering itself stays best-effort regardless of protocol.
 - Mutable labels can collide; they are never destructive authority.
 - Ghost and placeholder recognition depends on ANSI de-emphasis and fails safely to pending when unavailable.
 - Mid-session secondmate liveness is not implemented.
