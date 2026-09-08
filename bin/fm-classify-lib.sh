@@ -462,7 +462,9 @@ status_is_paused_or_captain_held() {  # <status-line>
 # with <slug> drawn from letters, digits, dot, underscore and hyphen and no other
 # character; _fm_key_slug_valid below is the one place that charset is enforced,
 # for both positions alike, and a token is read whole before it is judged so no
-# character can slip past by splitting the line the reader parses.
+# character can slip past by splitting the line the reader parses. The code asks
+# ONE question about a token rather than matching a list of shapes, so a spelling
+# nobody anticipated is judged by the same rule as every other.
 # Both spellings key the event identically. Accepting the post-colon position is a
 # correctness requirement, not a convenience: a key written there used to fall
 # through to "default", where two unrelated open decisions supersede each other and
@@ -525,41 +527,43 @@ _fm_key_slug_valid() {  # <slug>
     ''|*[!A-Za-z0-9._-]*) return 1 ;;
   esac
 }
-# The ONE reader of a DECLARED key token, so the key parser and the note parser
-# can never disagree about whether the writer named a key before the colon. The
-# token OPENS before the verb's colon but is read to its own closing bracket
-# wherever that falls, so a slug carrying a colon reaches the charset check as the
-# one slug the writer wrote instead of splitting the line in half behind its back.
-# A token the writer never closed has no bracket to stop at, so its slug runs to
-# end of line and the charset rejects it, which is what makes it unusable.
-# Prints the slug whether or not it is usable; only the ABSENCE of a token is rc 1.
-_fm_prefix_declared_slug() {  # <status-line> -> slug written before the colon, else rc 1
-  local line=$1 rest
-  case "$line" in
-    *:*) ;;
-    *) return 1 ;;
-  esac
-  case "${line%%:*}" in
+# The ONE question this file asks about a key token, and it replaces every list of
+# accepted token shapes: a leading region either OPENS a token or does not, and
+# when it does, whatever slug comes out is handed to _fm_key_slug_valid. Nothing
+# else decides. A token the writer never closed has no bracket to stop at, so its
+# slug simply runs to end of line and the charset rejects it; that is why an
+# unusable key needs no shape of its own. Extend the question, never a list.
+_fm_key_token_slug() {  # <text carrying the token> -> the slug the token opens
+  local rest=${1#*\[key=}
+  printf '%s' "${rest%%\]*}"
+}
+# The DECLARED position: the token opens anywhere before the note's colon, and its
+# slug is read from the WHOLE line, so a slug carrying a colon reaches the charset
+# check as the one slug the writer wrote rather than splitting the line behind its
+# back. A line with no colon at all is all prefix, so a token visible there is
+# declared exactly as the verb parser already sees it.
+_fm_prefix_declared_slug() {  # <status-line> -> slug declared before the note, else rc 1
+  case "${1%%:*}" in
     *\[key=*) ;;
     *) return 1 ;;
   esac
-  rest=${line#*\[key=}
-  case "$rest" in
-    *\]*) printf '%s' "${rest%%\]*}" ;;
-    *) printf '%s' "$rest" ;;
-  esac
+  _fm_key_token_slug "$1"
 }
-# The ONE reader of an INFERRED key token, so the key parser and the note parser
-# can never disagree about whether a note's leading token is a key at all.
-_fm_note_leading_key() {  # <note-text> -> slug of a well-formed leading token, else rc 1
-  local n=$1 slug
+# The INFERRED position: the note's LEADING edge is the only key site, so the
+# token must open the note and prose quoting one deeper in is never a key.
+_fm_note_leading_slug() {  # <note-text> -> slug the note opens with, else rc 1
+  local n=$1
   n=${n#"${n%%[![:space:]]*}"}
   case "$n" in
-    \[key=*\]*) ;;
+    \[key=*) ;;
     *) return 1 ;;
   esac
-  slug=${n#\[key=}
-  slug=${slug%%\]*}
+  _fm_key_token_slug "$n"
+}
+# The same reader, narrowed to a slug a caller may actually key an event by.
+_fm_note_leading_key() {  # <note-text> -> USABLE slug the note opens with, else rc 1
+  local slug
+  slug=$(_fm_note_leading_slug "$1") || return 1
   _fm_key_slug_valid "$slug" || return 1
   printf '%s' "$slug"
 }
@@ -572,10 +576,8 @@ status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
   esac
   if slug=$(_fm_prefix_declared_slug "$1"); then
     rest=${1#*\[key=}
-    case "$rest" in
-      *\]*) rest=${rest#*\]} ;;
-      *) rest='' ;;
-    esac
+    rest=${rest#"$slug"}
+    rest=${rest#\]}
     case "$rest" in
       *:*) n=${rest#*:} ;;
       *) n=$rest ;;
@@ -586,8 +588,10 @@ status_line_note() {  # <status-line> -> text after the note's colon, trimmed,
     return 0
   fi
   n=${n#"${n%%[![:space:]]*}"}
-  if _fm_note_leading_key "$n" >/dev/null; then
-    n=${n#*\]}
+  if slug=$(_fm_note_leading_key "$n"); then
+    n=${n#*\[key=}
+    n=${n#"$slug"}
+    n=${n#\]}
     n=${n#"${n%%[![:space:]]*}"}
   fi
   printf '%s' "$n"
@@ -626,10 +630,8 @@ _fm_decision_key_is_usable() {  # <status-line>
     *:*) note=${1#*:} ;;
     *) return 0 ;;
   esac
-  note=${note#"${note%%[![:space:]]*}"}
-  case "$note" in
-    \[key=*\]*) _fm_note_leading_key "$note" >/dev/null; return ;;
-  esac
+  slug=$(_fm_note_leading_slug "$note") || return 0
+  _fm_key_slug_valid "$slug"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.

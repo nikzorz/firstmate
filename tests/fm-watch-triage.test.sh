@@ -290,6 +290,17 @@ status_open_activities|working: phase one\ndone: finished\n||a bare terminal sto
 status_open_activities|working: phase one\ndone [key=p 7]: finished\n|default\tworking\tphase one|an unusable terminal silenced an activity it does not name
 status_open_activities|working: phase one\ndone [key=<slug>]: finished\n|default\tworking\tphase one|a copied <slug> placeholder closed an activity it does not name
 status_open_activities|working: phase one\nworking [key=p 7]: phase two\ndone: all finished\n||a bare terminal stopped closing every activity in the shared default bucket
+# --- AXIS: a token the shape grid did not see -------------------------------
+# The parser used to accept a token only in the shapes it enumerated, so a
+# spelling nobody listed read as NO token at all: usable, keyed "default", free to
+# evict every record in the shared bucket. These rows are the shapes that list
+# missed. The code now asks one question instead of matching shapes, so keep this
+# axis covered by adding the next unanticipated spelling rather than a new branch.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=deps] cannot install deps\n|default\tneeds-decision\tshould we drop the v1 API\ndeps\tblocked\tblocked [key=deps] cannot install deps|a colonless keyed line evicted an unrelated open decision
+status_open_activities|working: phase one\nworking [key=p7] phase two\n|default\tworking\tphase one\np7\tworking\tworking [key=p7] phase two|a colonless keyed line evicted an unrelated open activity
+status_open_decisions|needs-decision: real product question\nresolved: [key=ci-flake fixed\n|default\tneeds-decision\treal product question|an unterminated inferred token closed a decision it does not name
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked: [key=ci-flake CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci-flake CI is flaky|an unterminated inferred token evicted an unrelated open decision
+status_open_activities|working: phase one\ndone: [key=p 7 finished\n|default\tworking\tphase one|an unterminated inferred token closed an activity it does not name
 # --- AXIS: a slug the pre-colon split cannot see ----------------------------
 # Every other unusable slug in this matrix survives being cut at the first colon,
 # so a slug that CONTAINS one is its own axis: the reader has to take the token

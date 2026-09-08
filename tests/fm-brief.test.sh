@@ -66,7 +66,7 @@ test_ship_modes_generate_clean_briefs() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
-    assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
+    assert_grep "mid-task \`working [key=<slug>]: {material phase}\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
@@ -193,14 +193,17 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
 
   while IFS=: read -r id proj kind brief; do
     assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "A \`awaiting:\` line is nonterminal: do not end the turn after it" "$brief" \
+    assert_grep "A \`awaiting [key=<slug>]:\` line is nonterminal: do not end the turn after it" "$brief" \
       "$id: brief lost the nonterminal guard on the pause line"
     assert_no_grep "nonterminal too" "$brief" \
       "$id: shared pause block back-references a sentence its variant may not have"
     assert_grep "close the wait with" "$brief" \
       "$id: brief lost the instruction to close a declared pause"
-    assert_grep "\`working: {what you are doing next}\` the moment it ends" "$brief" \
-      "$id: brief lost the verb that actually ends a declared pause"
+    # A pause is an activity record, and status_open_activities closes one only
+    # with a closer carrying its key, so an unkeyed close leaves the pause standing
+    # and adds a second record beside it.
+    assert_grep "\`working [key=<slug>]: {what you are doing next}\` carrying that same slug the moment it ends" "$brief" \
+      "$id: brief lost the keyed close that actually ends a declared pause"
     assert_grep "not an FYI progress line" "$brief" \
       "$id: brief did not reconcile closing a pause with rule 4's no-FYI-lines bar"
     assert_grep "a \`awaiting:\` line left standing keeps firstmate on the" "$brief" \
@@ -289,6 +292,10 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # is a fill-in, and an unfilled one now stays visible under "default".
     assert_no_grep "[key=api-shape]" "$brief" \
       "$id: brief hands every decision one shared example slug to collide on"
+    assert_grep "carrying the slug of the phase it ends" "$brief" \
+      "$id: brief teaches a terminal that cannot close the working phase it pairs with"
+    assert_no_grep "append \`done: " "$brief" \
+      "$id: brief teaches an unkeyed done that leaves its working phase open"
     assert_grep "7. Never stop, restart, or update the shared" "$brief" \
       "$id: brief lost the shared-daemon rule"
     assert_grep "# Definition of done" "$brief" \
@@ -297,13 +304,13 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
       direct-proj)
         assert_grep "This project ships **direct-PR**" "$brief" \
           "$id: brief lost the delivery mode its done gate belongs to"
-        assert_grep "push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\`" "$brief" \
+        assert_grep "push your branch and open a PR with \`gh-axi\`, then append \`done [key=<slug>]: PR {url}\`" "$brief" \
           "$id: a direct-PR worker would be left thinking it is finished at a local commit"
         ;;
       local-proj)
         assert_grep "Keep your branch a clean fast-forward onto the current default branch" "$brief" \
           "$id: brief lost the local-only fast-forward rebase requirement"
-        assert_grep "append \`done: ready in branch fm/$id\`" "$brief" \
+        assert_grep "append \`done [key=<slug>]: ready in branch fm/$id\`" "$brief" \
           "$id: brief lost the local-only ready-branch report"
         ;;
       scout-proj)
@@ -608,6 +615,8 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter did not reject a separate receipt/start acknowledgement"
   assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
     "secondmate charter did not forbid a generic working acknowledgement"
+  assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed [key=<slug>]: {why}\`" "$brief" \
+    "secondmate charter teaches a failure that cannot close the phase it pairs with"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
@@ -618,8 +627,6 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost same-key closure for a reportable material phase"
   assert_grep 'resolved [key=<work-slug>]' "$brief" \
     "secondmate charter lost resolved closure for a keyed material phase"
-  assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\`" "$brief" \
-    "secondmate charter lost the keyed blocker its keyed closure has to close"
   assert_grep 'may contain only letters, digits, dot, underscore, and hyphen, and nothing else' "$brief" \
     "secondmate charter shows a key slug without saying what a slug may contain"
   assert_grep 'that bare form is the recovery line, and it is the only closer that reaches a record whose key cannot be read' "$brief" \
