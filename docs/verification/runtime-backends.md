@@ -76,9 +76,9 @@ The CLI matrix was checked directly on the earlier 0.7.x line, most recently on 
 | Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
 | Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
 
-On the verified pair the adapter smoke suite re-confirmed specific behaviors rather than whole rows: the two-step send-text-then-Enter submit path, workspace, pane, and label persistence across a session stop and fresh server restart, and native agent state read through `herdr agent get`.
-Three clauses in those rows were not re-proven there: the Literal send row's non-auto-submission, because the suite captures only after Enter; the Restart row's tab-id persistence and its claim that the agent process and registration did not survive, neither of which it checks; and the Native state row's rendered-busy corroboration for long foreground tool waits.
-The remaining rows were not re-checked there, including the Capture row's small-N emptiness, which is a 0.7.1-era observation.
+On the verified pair the adapter smoke suite re-confirmed specific behaviors rather than whole rows: the two-step send-text-then-Enter submit path, workspace, pane, and label persistence across a session stop and fresh server restart, and that a real claude turn's output is capturable after a two-step send.
+Three clauses in those rows were not re-proven there: the Literal send row's non-auto-submission, because the suite captures only after Enter; the Restart row's tab-id persistence and its claim that the agent process and registration did not survive, neither of which it checks; and the Native state row as a whole, including its rendered-busy corroboration for long foreground tool waits, because the real-agent checkpoint's only fatal condition is the captured marker and it passes even when the `herdr agent get` read returns nothing.
+The remaining rows were not re-checked there, including the Capture row's small-N emptiness.
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
@@ -102,6 +102,9 @@ ok - real herdr: BOTH workspace ids/labels AND both tasks' pane ids survive a se
 ok - real herdr: send_literal + send_key Enter submit as two separate steps (verified: send-text does NOT auto-submit)
 ok - real herdr: agent_status busy/idle detection tracks a real claude turn, and capture shows its output
 ```
+
+The `agent_status busy/idle detection` line is the suite's own label rather than a busy observation.
+The same run printed `note: never observed agent_status=working for the real claude run (timing-dependent, not fatal)`, so the busy half of that checkpoint was not seen on the run recorded here.
 
 `herdr workspace --help` on the verified pair still lists no `move` subcommand, so the presentation path's narrowly whitelisted raw-socket request remains required.
 
