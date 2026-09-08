@@ -171,9 +171,9 @@ The table below is also the verified-adapter list: a harness with a row here is 
 
 Every per-harness file carries the same core fact set for its harness: the verification date in its heading, the busy-pane signature, the exit command, the interrupt, the trust or startup dialog, and the harness's own turn-end guard fact.
 So a question of the form "how do I interrupt X, exit X, accept the trust dialog for X, or recognize a busy X pane" is always answered by X's own file, with no need to know in advance which file holds it.
-Coverage beyond that core set varies by harness: resume behavior, launch and autonomy shape, env marker, composer and submission quirks, and any stall or incident procedure appear only where they were verified empirically.
-When one of those is absent from a harness's file it means no verified fact exists for that harness, not that the fact lives somewhere else.
-Treat the silence as unverified rather than improvising a procedure or hunting for it in another harness's file or in this router.
+Two categories have an owner outside the reference files: a harness's env marker is owned by `bin/fm-harness.sh` and its launch and autonomy shape by `bin/fm-spawn.sh`, so read those owners when a reference file does not repeat the fact.
+Coverage of the rest varies by harness: resume behavior, composer and submission quirks, and any stall or incident procedure appear only where they were verified empirically.
+When one of those three is absent from a harness's file it means no verified fact exists for that harness, so treat the silence as unverified rather than improvising a procedure.
 
 | Harness | Reference | Harness-specific procedures it owns beyond the common fact set |
 |---|---|---|
@@ -184,4 +184,5 @@ Treat the silence as unverified rather than improvising a procedure or hunting f
 | grok | [`references/grok.md`](references/grok.md) | Slash-popup double-Enter requirement and its 2026-07-03 incident, TRUECOLOR placeholder styling, project-picker conditions, global turn-end hook and trust model. |
 | kimi | [`references/kimi.md`](references/kimi.md) | Launch-then-send readiness gating, silent pre-readiness drop, moon-phase spinner matching, guarded global turn-end hook. |
 
-A fact that appears in exactly one harness's file is specific to that harness; nothing here is a summary of a per-harness file, so never act on a per-harness procedure without opening its file.
+A fact that appears in exactly one harness's file is specific to that harness.
+The per-harness facts this router does carry, in the turn-end guard, session-start nudge, and watcher-supervision sections, are deliberately concise rather than the full procedure, so never act on a per-harness procedure without opening its file.
