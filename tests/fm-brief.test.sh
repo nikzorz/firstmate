@@ -251,9 +251,9 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # Rule 6 is the only place a worker is taught to CLOSE a decision or blocker
     # it opened; without it a standing needs-decision masks later events exactly
     # as a standing pause would.
-    assert_grep "append \`resolved [key=<slug>]: {how it was decided or unblocked}\`" "$brief" \
+    assert_grep "append \`resolved [key=api-shape]: {how it was decided or unblocked}\`" "$brief" \
       "$id: brief lost rule 6's closure for a decision or blocker it opens"
-    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+    assert_grep "append \`needs-decision [key=api-shape]: {summary of options}\`" "$brief" \
       "$id: brief lost the keyed form of the escalation it teaches the worker to open"
     # The key must be SHOWN inside the template, not described beside a template
     # that already carries the colon: a worker following that prose literally
@@ -261,15 +261,21 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     assert_no_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
       "$id: brief still shows an unkeyed resolved template with the key only in prose"
     # A blocker is folded by the same keyed grammar as a decision, so an unkeyed
-    # `blocked:` opener paired with a keyed `resolved [key=<slug>]:` closer can
+    # `blocked:` opener paired with a keyed `resolved [key=...]:` closer can
     # never be closed at all: the closer names a key the opener never opened.
-    assert_grep "append \`blocked [key=<slug>]: {why}\`" "$brief" \
+    assert_grep "append \`blocked [key=missing-fixture]: {why}\`" "$brief" \
       "$id: brief teaches an unkeyed blocker its keyed closure can never close"
-    assert_grep "append \`blocked [key=<slug>]: {the daemon error}\`" "$brief" \
+    assert_grep "append \`blocked [key=no-mistakes-daemon]: {the daemon error}\`" "$brief" \
       "$id: brief teaches an unkeyed daemon-error blocker its keyed closure can never close"
     # Without the accepted charset a worker invents a slug the classifier rejects.
     assert_grep "letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes" "$brief" \
       "$id: brief shows a key slug without saying what a slug may contain"
+    assert_grep "it must name THIS decision, because two decisions sharing one slug supersede each other" "$brief" \
+      "$id: brief lost why a slug has to name the decision it keys"
+    # A worker copies the template verbatim, so an angle-bracket placeholder would
+    # put an unusable key on every escalation the brief teaches.
+    assert_no_grep "[key=<" "$brief" \
+      "$id: brief teaches a key placeholder that is not itself a usable slug"
     assert_grep "7. Never stop, restart, or update the shared" "$brief" \
       "$id: brief lost the shared-daemon rule"
     assert_grep "# Definition of done" "$brief" \
@@ -319,7 +325,7 @@ test_ship_safety_contracts_survive_a_wording_pass() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "**Verify isolation before anything else.**" "$brief" \
       "$id: ship brief lost the worktree-isolation assertion"
-    # The blocker this opens is closed by rule 6's keyed `resolved [key=<slug>]:`,
+    # The blocker this opens is closed by rule 6's keyed `resolved [key=...]:`,
     # so an unkeyed opener here can never be closed at all and wedges the
     # away-mode return gate until a human clears it.
     assert_grep "STOP - do not branch or commit here - append \`blocked [key=worktree-isolation]: launched in primary checkout, not an isolated worktree\`" "$brief" \
@@ -548,9 +554,9 @@ test_secondmate_no_projects_charter() {
     "project-less charter operating model lost the pooled-worktree note"
   assert_no_grep "The projects above are local clones" "$brief" \
     "project-less charter kept the with-projects operating-model line"
-  assert_grep 'working [key=<work-slug>]' "$brief" \
+  assert_grep 'working [key=schema-rewrite]' "$brief" \
     "secondmate charter did not key material routed-work phases"
-  assert_grep 'resolved [key=<work-slug>]' "$brief" \
+  assert_grep 'resolved [key=schema-rewrite]' "$brief" \
     "secondmate charter did not close a quietly ended routed-work phase"
   assert_grep 'use the same key on its later' "$brief" \
     "secondmate charter did not supersede working phases with later states"
@@ -593,16 +599,18 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
     "secondmate charter did not limit keyed phases to reportable material changes"
-  assert_grep "If its first reportable event is \`working [key=<work-slug>]: {material phase}\`" "$brief" \
+  assert_grep "If its first reportable event is \`working [key=schema-rewrite]: {material phase}\`" "$brief" \
     "secondmate charter lost keyed working syntax for a reportable material phase"
   assert_grep "use the same key on its later \`paused\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event" "$brief" \
     "secondmate charter lost same-key closure for a reportable material phase"
-  assert_grep 'resolved [key=<work-slug>]' "$brief" \
+  assert_grep 'resolved [key=schema-rewrite]' "$brief" \
     "secondmate charter lost resolved closure for a keyed material phase"
-  assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\`" "$brief" \
+  assert_grep "append \`blocked [key=charter-scope]: {why}\` or \`failed: {why}\`" "$brief" \
     "secondmate charter lost the keyed blocker its keyed closure has to close"
   assert_grep 'letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes' "$brief" \
     "secondmate charter shows a key slug without saying what a slug may contain"
+  assert_no_grep "[key=<" "$brief" \
+    "secondmate charter teaches a key placeholder that is not itself a usable slug"
 
   assert_grep 'include that exact token in your parent status reply' "$brief" \
     "secondmate charter lost correlated parent results"

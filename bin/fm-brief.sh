@@ -133,6 +133,8 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
+KEY_SLUG_RULE="A key slug is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes, and it must name THIS decision, because two decisions sharing one slug supersede each other."
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -198,10 +200,10 @@ This is also how you return the answer to a marked from-firstmate request above.
 A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
 Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
-If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
-Any key slug is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes.
-When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
-When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying the same slug you opened it with, so it is durably closed instead of resurfacing behind later unrelated events.
+If its first reportable event is \`working [key=schema-rewrite]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
+$KEY_SLUG_RULE
+When a keyed phase ends without another reportable state, append \`resolved [key=schema-rewrite]: {why it is no longer active}\`.
+When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved [key=api-shape]: {how it was decided or unblocked}\` carrying the same slug you opened it with, so it is durably closed instead of resurfacing behind later unrelated events.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done
@@ -209,7 +211,7 @@ You are persistent by default. Do not exit just because your queue is empty.
 On startup and restart, run normal firstmate bootstrap and recovery through \`bin/fm-session-start.sh\` for your own home, but only to RECONCILE work that is already yours: in-flight crewmates, tracked backlog items, and durable watches recorded in this home.
 When you have no assigned or in-flight work after that reconciliation, go idle and wait silently for the main firstmate to route you a task.
 An empty queue is a healthy resting state, not a cue to invent work: never spawn a survey, audit, or any self-directed "find work" task on your own initiative.
-If this charter cannot be carried out, append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\` to the main status file and stop.
+If this charter cannot be carried out, append \`blocked [key=charter-scope]: {why}\` or \`failed: {why}\` to the main status file and stop.
 EOF
 if [ "$SECONDMATE_CHARTER" = "{TASK}" ]; then
   echo "scaffolded: $BRIEF (secondmate charter; replace {TASK})"
@@ -288,14 +290,14 @@ The report is the only thing that survives, so anything worth keeping must be in
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
    wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
-   A \`<slug>\` is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes.
+5. If you hit the same obstacle twice, append \`blocked [key=missing-fixture]: {why}\` and stop; firstmate will help.
+   $KEY_SLUG_RULE
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate replies with the decision.
-   When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   append \`needs-decision [key=api-shape]: {summary of options}\` and stop; firstmate replies with the decision.
+   When the decision returns or a blocker clears and you resume, append \`resolved [key=api-shape]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
-   append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`blocked [key=no-mistakes-daemon]: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -435,14 +437,14 @@ $RULE1
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
    wedge. Use \`blocked\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
-   A \`<slug>\` is letters, digits, dot, underscore, and hyphen only, with no spaces and no slashes.
+5. If you hit the same obstacle twice, append \`blocked [key=missing-fixture]: {why}\` and stop; firstmate will help.
+   $KEY_SLUG_RULE
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate applies the configured authority and replies.
-   When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   append \`needs-decision [key=api-shape]: {summary of options}\` and stop; firstmate applies the configured authority and replies.
+   When the decision returns or a blocker clears and you resume, append \`resolved [key=api-shape]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
-   append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`blocked [key=no-mistakes-daemon]: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 $PROJECT_MEMORY_SECTION
 

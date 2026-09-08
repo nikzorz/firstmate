@@ -201,12 +201,12 @@ test_classifier_primitives() {
     || fail "a key token past the note's leading edge became the event key"
   [ "$(_fm_decision_key 'needs-decision [key=real]: also mentions [key=prose]')" = real ] \
     || fail "note prose overrode the declared pre-colon key"
-  # A malformed slug never costs the line, in either position. Every escalation a
-  # worker is taught to write declares its key before the colon, so dropping such a
-  # line would delete the escalation outright: bin/fm-afk-return.sh would see no
-  # blocker and any later status line would mask it, which is the silent loss this
-  # fold exists to prevent. The unusable token surviving at the front of the note
-  # is the only marker that the writer meant a key and did not get one.
+  # One property covers an unusable key everywhere: err toward leaving the decision
+  # VISIBLE. An OPENING verb therefore keeps its line under "default" with the bad
+  # token riding through in the note, and a CLOSING verb drops nothing at all.
+  # Both consequences guard the same silent loss: dropping the opener would delete
+  # the escalation outright, and letting the closer fall back to "default" would
+  # silence whatever unrelated decision happened to be sitting there.
   for opener in needs-decision blocked; do
     printf '%s [key=ci flake]: choose A or B\n' "$opener" > "$state/bad-pre-colon.status"
     open=$(status_open_decisions "$state/bad-pre-colon.status")
@@ -218,15 +218,54 @@ test_classifier_primitives() {
     open=$(status_open_decisions "$state/bad-post-colon.status")
     printf '%s' "$open" | grep -F $'default\t'"$opener"$'\t[key=bad key] choose A or B' >/dev/null \
       || fail "$opener with a malformed post-colon slug vanished from the open set"
-    printf '%s: pick A or B\nresolved: [key=bad key] captain chose A\n' "$opener" \
-      > "$state/bad-post-colon-close.status"
-    [ -z "$(status_open_decisions "$state/bad-post-colon-close.status")" ] \
-      || fail "a malformed post-colon resolved slug failed to close the default $opener"
-    printf '%s: pick A or B\nresolved [key=ci flake]: captain chose A\n' "$opener" \
-      > "$state/bad-pre-colon-close.status"
-    [ -z "$(status_open_decisions "$state/bad-pre-colon-close.status")" ] \
-      || fail "a malformed declared resolved slug failed to close the default $opener"
+    # The collision the closing rule exists for: an unrelated unkeyed decision is
+    # already open under "default" when a close naming a mistyped key arrives.
+    printf '%s: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved [key=regsitry ]: registry reachable\n' \
+      "$opener" > "$state/bad-pre-colon-close.status"
+    open=$(status_open_decisions "$state/bad-pre-colon-close.status")
+    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\tshould we drop the v1 API' >/dev/null \
+      || fail "a malformed declared resolved slug closed the unrelated default $opener"
+    printf '%s' "$open" | grep -F $'registry\tblocked\tcannot reach registry' >/dev/null \
+      || fail "a malformed declared resolved slug closed the keyed blocker it misnamed"
+    printf '%s: should we drop the v1 API\nblocked [key=registry]: cannot reach registry\nresolved: [key=regsitry ] registry reachable\n' \
+      "$opener" > "$state/bad-post-colon-close.status"
+    open=$(status_open_decisions "$state/bad-post-colon-close.status")
+    printf '%s' "$open" | grep -F $'default\t'"$opener"$'\tshould we drop the v1 API' >/dev/null \
+      || fail "a malformed post-colon resolved slug closed the unrelated default $opener"
+    printf '%s' "$open" | grep -F $'registry\tblocked\tcannot reach registry' >/dev/null \
+      || fail "a malformed post-colon resolved slug closed the keyed blocker it misnamed"
+    # The brief's own example slug copied verbatim is a close nobody can read.
+    printf '%s: real product question\nresolved [key=<slug>]: copied placeholder\n' "$opener" \
+      > "$state/placeholder-close.status"
+    printf '%s' "$(status_open_decisions "$state/placeholder-close.status")" \
+      | grep -F $'default\t'"$opener"$'\treal product question' >/dev/null \
+      || fail "a copied [key=<slug>] placeholder closed the real $opener"
+    # A line carrying no token at all is not unusable: a bare close still closes.
+    printf '%s: pick A or B\nresolved: captain chose A\n' "$opener" \
+      > "$state/bare-close.status"
+    [ -z "$(status_open_decisions "$state/bare-close.status")" ] \
+      || fail "a bare resolved line stopped closing the default $opener"
+    # A well-formed close still closes, from either key position.
+    printf '%s [key=real]: pick A or B\nresolved [key=real]: captain chose A\n' "$opener" \
+      > "$state/good-pre-close.status"
+    [ -z "$(status_open_decisions "$state/good-pre-close.status")" ] \
+      || fail "a well-formed declared resolved slug failed to close the keyed $opener"
+    printf '%s [key=real]: pick A or B\nresolved: [key=real] captain chose A\n' "$opener" \
+      > "$state/good-post-close.status"
+    [ -z "$(status_open_decisions "$state/good-post-close.status")" ] \
+      || fail "a well-formed post-colon resolved slug failed to close the keyed $opener"
   done
+  # The activities fold closes on the same terminals, so it inherits the same rule.
+  printf 'working: phase one\ndone [key=p 7]: finished\n' > "$state/bad-activity-close.status"
+  printf '%s' "$(status_open_activities "$state/bad-activity-close.status")" \
+    | grep -F $'default\tworking\tphase one' >/dev/null \
+    || fail "a malformed declared done slug closed the unrelated default activity"
+  printf 'working: phase one\ndone: finished\n' > "$state/bare-activity-close.status"
+  [ -z "$(status_open_activities "$state/bare-activity-close.status")" ] \
+    || fail "a bare done line stopped closing the default activity"
+  printf 'working [key=p7]: phase one\ndone [key=p7]: finished\n' > "$state/good-activity-close.status"
+  [ -z "$(status_open_activities "$state/good-activity-close.status")" ] \
+    || fail "a well-formed done slug failed to close the activity it names"
   # The note strip applies only where the key was actually written, so a declared
   # pre-colon key never lets the note's own leading token be eaten as if it were one.
   [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
