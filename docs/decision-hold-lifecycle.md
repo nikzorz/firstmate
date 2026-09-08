@@ -43,16 +43,23 @@ For a linked gate whose item is still open, `--answered-by` replaces the item's 
 `--answered-by` is also the verb when the item was already closed by another authority, which happens when the captain closes it directly or when a second gate is linked to the same item.
 That path never rewrites or archives the existing body, because that body records whoever actually closed the item; it appends this gate's outcome as a `tasks-axi done --note` line instead.
 The link then carries `closed_by`, read only from this mechanism's own machine-written marker and never from free prose: `self` when this gate closed the item, the other gate's `<origin>/<key>` identity when the marker names one, and `external` otherwise.
-`--not-raised` retires the link and leaves the item open and captain-owned, which is the honest reading when the worker's gate never asked the question.
-It refuses while the linked item is closed, so no supported path can record that a link was retired as never raised against a question that was in fact settled.
+`--not-raised` retires a link whose gate never asked the question, whether or not the item has since been closed.
+While the item is open it stays open and captain-owned, which is the honest reading there, and the outcome line says so.
+Once another authority has closed the item, the link records that authority in `closed_by`, the outcome line names it, and no note is appended, because this gate answered nothing.
+A question this gate did settle uses `--answered-by` instead.
 Retries are idempotent against the recorded decider, answer digest, and closing authority, and reject a changed answer, a changed decider, a changed closing authority, or a late reversal between the two outcomes.
 
-The index is read back through the record itself rather than through the file name: a file in `data/gate-links/<origin-id>/` counts as a link only when its own `origin=` and `key=` fields name the path it sits at.
-Writes stage outside that directory, so an interrupted write can leave no record the index would read back as an unreconcilable orphan link.
+The index reader has no silent skip.
+Any entry in `data/gate-links/<origin-id>/` that is not a fully recognised link record is itself an unreconciled link.
+A record is recognised only when it is a regular file whose basename is a valid gate slug, whose `item=` is non-empty, whose `origin=` equals the enumerated origin, whose `key=` equals its own basename, and whose `state=` is exactly one of `open`, `answered`, or `not-raised`.
+Enumeration includes dotfiles, and writes stage one directory above the per-origin index, so an interrupted write leaves nothing the reader could quietly pass over.
+Every earlier narrowing here was correct on its own and each one added another way to be skipped, because the reader's default was permissive; a file the reader cannot understand is now a reason to stop.
 
 The read-only `gate-status` and `gate-verify` subcommands parse only that index and never call tasks-axi.
+`gate-status` prints an unrecognised entry as such rather than omitting it, so what `gate-verify` refuses on is visible.
 Teardown calls `gate-verify` for every non-secondmate task before any destructive cleanup, so a landed task cannot quietly leave a linked captain item still claiming the captain owes an answer.
-The `--force` path remains the explicit captain-approved discard escape hatch.
+Cleanup can therefore now refuse where it previously passed, on an unrecognised or hand-edited index entry as well as on an open link, and the refusal names the offending file.
+The `--force` path remains the explicit captain-approved discard escape hatch and still bypasses this check.
 
 ## Structured read surfaces
 
@@ -80,8 +87,10 @@ The captain-gated link regression reproduces the stale reading before proving th
 It files a synthetic captain-kind held item, answers the equivalent gate on a live worker with no link recorded, and asserts the item is still queued, still held, still kind `captain`, and still claims the captain owes an answer.
 It then records the link, answers the same gate, and asserts the item closes with the gate identity and the actual decider in its body, the superseded body archived, and no surviving pending claim.
 Two later cases cover the item being closed before the gate is reconciled, once by the captain directly and once by a second gate linked to the same item.
-Each asserts that `--not-raised` refuses, that `--answered-by` succeeds and records the real closing authority, and that the existing record of who closed the item survives untouched.
-A final case plants an orphan record in the index directory and asserts it produces no phantom status row and cannot block verification.
+Each asserts that `--answered-by` succeeds, records the real closing authority, and leaves the existing record of who closed the item untouched.
+A further case retires a link whose gate never raised the question after another authority closed the item, and asserts the outcome names that authority, never says the item was left open, and leaves the item's body byte-identical.
+The last case plants each unrecognised record shape in the index directory in turn, including a dotted key, a missing `origin=`, a missing `key=`, an unknown `state=`, and an empty file, and asserts every one blocks verification, is named in the refusal, and is visible in `gate-status`.
+An end-to-end case then plants a truncated record and asserts `bin/fm-teardown.sh` refuses, names that file, and preserves the task metadata.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -101,7 +110,8 @@ ok - a recorded gate link reconciles the captain-gated item in the same step as 
 ok - a gate that never raised the question leaves the captain-gated item open and captain-owned
 ok - a question settled by another authority reconciles without a false record
 ok - a second gate linked to one item records the first gate as the closing authority
-ok - the gate index reads back only records that name their own path
+ok - an unraised link retires honestly after another authority closed the item
+ok - every index record the reader cannot recognise blocks verification and is named
 ok - teardown refuses until every recorded captain-gated link is reconciled
 ok - gate links validate identity, ownership, and item kind before recording a pairing
 

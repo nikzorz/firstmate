@@ -715,16 +715,8 @@ test_gate_answer_reconciles_an_item_closed_by_another_authority() {
     --note "Captain answered this in the standup: fall back to the seat default." >/dev/null \
     || fail "could not close the item through the ordinary captain path"
 
-  if run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised \
-    > "$home/nr.out" 2> "$home/nr.err"; then
-    fail "--not-raised retired a link whose captain-gated item is already closed"
-  fi
-  assert_grep "reconcile a settled question with --answered-by" "$home/nr.err" \
-    "the refusal must name the verb that reconciles a settled question"
-  assert_not_contains "$(cat "$home/nr.out")" "left open" \
-    "the refused retirement must not print the false left-open reading"
   assert_contains "$(cat "$home/data/gate-links/$id/scenario-validation")" "state=open" \
-    "a refused retirement must not change the recorded link state"
+    "closing the item outside this mechanism must not change the recorded link state"
 
   out=$(run_decisions "$home" gate-resolve "$id" scenario-validation \
     --answered-by firstmate --answer-file "$home/gate-answer.txt") \
@@ -804,29 +796,114 @@ test_second_linked_gate_records_the_first_as_the_closing_authority() {
   pass "a second gate linked to one item records the first gate as the closing authority"
 }
 
-# An interrupted write must not be able to leave a record the index reads back as
-# a link no verb can ever clear.
-test_gate_index_ignores_a_record_that_is_not_its_own_path() {
-  local home dir out
-  home=$(make_home gate-index-orphan)
+# A recorded link's gate never raised the question, and the item was closed by
+# another authority before the link was retired. Retiring it must stay possible
+# and must not claim the item was left open or that this gate answered anything.
+test_unraised_link_retires_after_another_authority_closed_the_item() {
+  local home id link before after out
+  home=$(make_home unraised-after-close)
+  id=sample-unraised-close
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the sample scenario" --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample scenario review\n\nNo captain choice remains in this report.\n' > "$home/data/$id/report.md"
+  run_decisions "$home" complete "$id" --none >/dev/null \
+    || fail "could not pass the unresolved-decision completion gate"
+  tasks_in "$home" add sample-unraised-choice "Choose the sample scenario behaviour" \
+    --kind captain --repo sample --body "Captain decision pending as of 2026-07-14." >/dev/null
+  tasks_in "$home" hold sample-unraised-choice --reason "captain scenario choice pending" --kind captain >/dev/null
+  run_decisions "$home" gate-link sample-unraised-choice "$id" scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+
+  tasks_in "$home" unhold sample-unraised-choice >/dev/null \
+    || fail "could not release the captain hold for the ordinary captain close"
+  tasks_in "$home" "done" sample-unraised-choice \
+    --note "Captain answered this in the standup: fall back to the seat default." >/dev/null \
+    || fail "could not close the item through the ordinary captain path"
+  before=$(tasks_in "$home" show sample-unraised-choice --full)
+
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
+    || fail "a gate that never raised the question must still retire after the item closed"
+  assert_contains "$out" "not raised; sample-unraised-choice was already closed by external" \
+    "retiring the link must name the authority that actually closed the item"
+  assert_not_contains "$out" "left open" \
+    "no supported path may claim the item is left open once it is closed"
+
+  link="$home/data/gate-links/$id/scenario-validation"
+  assert_grep "state=not-raised" "$link" "the retired link must record that the gate never raised the question"
+  assert_grep "closed_by=external" "$link" "the retired link must record who closed the item"
+  after=$(tasks_in "$home" show sample-unraised-choice --full)
+  [ "$before" = "$after" ] \
+    || fail "retiring an unraised link modified the captain item it never answered"
+
+  run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised >/dev/null \
+    || fail "retiring an already retired link must be idempotent"
+  run_decisions "$home" gate-verify "$id" >/dev/null \
+    || fail "a retired link must verify clean"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
+    || fail "teardown stayed blocked after an honest retirement: $(cat "$home/teardown.err")"
+  pass "an unraised link retires honestly after another authority closed the item"
+}
+
+# The index reader has no silent skip, so every record shape it cannot fully
+# recognise blocks verification and names the file, and gate-status shows it.
+test_gate_index_refuses_every_unrecognised_record_shape() {
+  local home dir row name category body file status
+  home=$(make_home gate-index-shapes)
   stale_captain_item_fixture "$home"
   run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
     || fail "could not record the gate link"
-  dir="$home/data/gate-links/sample-hosted-boot"
-  cp "$dir/scenario-validation" "$dir/scenario-validation.tmp.4321"
-
   run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
     --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
-    || fail "could not reconcile the link alongside an orphan record"
-  out=$(run_decisions "$home" gate-status sample-hosted-boot)
-  [ "$(printf '%s\n' "$out" | grep -c 'scenario-validation')" -eq 1 ] \
-    || fail "gate status printed a phantom duplicate row: $out"
+    || fail "could not reconcile the baseline link"
+  dir="$home/data/gate-links/sample-hosted-boot"
   run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
-    || fail "an orphan record blocked verification with no verb that can clear it"
+    || fail "the baseline index must verify clean before planting record shapes"
 
-  [ "$(find "$dir" -type f | wc -l)" -eq 2 ] \
-    || fail "a completed write staged a file inside the globbed index directory"
-  pass "the gate index reads back only records that name their own path"
+  # <file name>|<open or unrecognised>|<planted record, \n separated>
+  local -a shapes=(
+    'still-open|open|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=still-open\nstate=open\n'
+    '.hidden-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=.hidden-key\nstate=open\n'
+    'absent-state|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=absent-state\n'
+    'unknown-state|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=unknown-state\nstate=retired\n'
+    'absent-origin|unrecognised|item=sample-scenario-choice\nkey=absent-origin\nstate=open\n'
+    'absent-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nstate=open\n'
+    'mismatched-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=other-key\nstate=open\n'
+    'empty-record|unrecognised|'
+  )
+  for row in "${shapes[@]}"; do
+    name=${row%%|*}
+    body=${row#*|}
+    category=${body%%|*}
+    body=${body#*|}
+    file="$dir/$name"
+    printf '%b' "$body" > "$file"
+    if run_decisions "$home" gate-verify sample-hosted-boot \
+      > "$home/shape.out" 2> "$home/shape.err"; then
+      fail "gate-verify passed an index holding record shape $name"
+    fi
+    if [ "$category" = unrecognised ]; then
+      assert_grep "unrecognised captain-gated link records" "$home/shape.err" \
+        "record shape $name must refuse as unrecognised"
+      assert_grep "$file" "$home/shape.err" \
+        "the refusal for record shape $name must name the offending file"
+      status=$(run_decisions "$home" gate-status sample-hosted-boot)
+      assert_contains "$status" "unrecognised" "gate-status hid record shape $name"
+      assert_contains "$status" "$file" \
+        "gate-status must name the file gate-verify refuses on for record shape $name"
+    else
+      assert_grep "unreconciled captain-gated links: $name" "$home/shape.err" \
+        "record shape $name must refuse as an open link"
+    fi
+    rm -f "$file"
+    run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+      || fail "removing record shape $name did not restore a clean index"
+  done
+
+  [ "$(find "$dir" -mindepth 1 | wc -l)" -eq 1 ] \
+    || fail "a completed write left a staged file inside the per-origin index directory"
+  pass "every index record the reader cannot recognise blocks verification and is named"
 }
 
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
@@ -855,6 +932,17 @@ test_teardown_refuses_an_unreconciled_captain_gated_link() {
 
   run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised >/dev/null \
     || fail "could not reconcile the link before teardown"
+
+  printf 'item=sample-linked-choice\norigin=%s\n' "$id" > "$home/data/gate-links/$id/truncated-write"
+  if run_teardown "$home" "$id" > "$home/gate-teardown3.out" 2> "$home/gate-teardown3.err"; then
+    fail "teardown erased a task whose index holds a record it cannot recognise"
+  fi
+  assert_grep "REFUSED" "$home/gate-teardown3.err" "unrecognised-record teardown refusal must be explicit"
+  assert_grep "$home/data/gate-links/$id/truncated-write" "$home/gate-teardown3.err" \
+    "the refusal must name the offending index file"
+  assert_present "$home/state/$id.meta" "refused teardown removed task metadata"
+  rm -f "$home/data/gate-links/$id/truncated-write"
+
   run_teardown "$home" "$id" >/dev/null 2> "$home/gate-teardown2.err" \
     || fail "teardown failed after link reconciliation: $(cat "$home/gate-teardown2.err")"
   pass "teardown refuses until every recorded captain-gated link is reconciled"
@@ -867,7 +955,7 @@ test_gate_link_validates_identities_before_touching_state() {
   printf 'sentinel=unchanged\n' > "$escaped"
   # A bare dot component carries no slash, so it escapes the index directory
   # without tripping any slash check.
-  for bad in ../escaped-gate .. .; do
+  for bad in ../escaped-gate .. . .hidden-origin; do
     if run_decisions "$home" gate-status "$bad" > "$home/gs.out" 2> "$home/gs.err"; then
       fail "gate status accepted an origin outside the index directory: $bad"
     fi
@@ -887,6 +975,12 @@ test_gate_link_validates_identities_before_touching_state() {
     || fail "an invalid origin changed state outside the data directory"
 
   stale_captain_item_fixture "$home"
+  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot .hidden-key \
+    > "$home/dot.out" 2> "$home/dot.err"; then
+    fail "gate link accepted a decision key that begins with a dot"
+  fi
+  [ ! -e "$home/data/gate-links/sample-hosted-boot/.hidden-key" ] \
+    || fail "a rejected decision key still created an index record"
   tasks_in "$home" add sample-plain-item "A plain ship item" --kind ship --repo sample >/dev/null
   if run_decisions "$home" gate-link sample-plain-item sample-hosted-boot scenario-validation \
     > "$home/kind.out" 2> "$home/kind.err"; then
@@ -921,6 +1015,7 @@ test_linked_captain_item_is_reconciled_when_the_gate_answers_it
 test_gate_that_never_raised_the_question_leaves_the_item_captain_owned
 test_gate_answer_reconciles_an_item_closed_by_another_authority
 test_second_linked_gate_records_the_first_as_the_closing_authority
-test_gate_index_ignores_a_record_that_is_not_its_own_path
+test_unraised_link_retires_after_another_authority_closed_the_item
+test_gate_index_refuses_every_unrecognised_record_shape
 test_teardown_refuses_an_unreconciled_captain_gated_link
 test_gate_link_validates_identities_before_touching_state

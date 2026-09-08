@@ -44,9 +44,11 @@ The pairing is never inferred from prose; it is recorded once and read back.
    Run it for every gate you answer: an unlinked gate reports that and succeeds.
    `--answered-by` records who actually decided, so a decision firstmate made under standing authority is never filed as the captain's.
    It is also the verb when the item was already closed by the captain directly or by another linked gate: it leaves that existing record intact and appends this gate's outcome.
-4. When the origin's work ends and a recorded link's gate never raised the question, retire that link with `--not-raised`, which leaves the item open and captain-owned.
-   Use it only while the linked item is still open; a question settled elsewhere is reconciled with `--answered-by`, which records who closed the item.
-   Teardown refuses while any recorded link is unreconciled.
+4. When the origin's work ends and a recorded link's gate never raised the question, retire that link with `--not-raised`, whether or not the item has since been closed.
+   While the item is open it stays open and captain-owned; once another authority has closed it, the link records who did and nothing is appended to the item.
+   A question this gate did settle is reconciled with `--answered-by`, which records who closed the item.
+   Teardown refuses while any recorded link is unreconciled, and also refuses on an index entry it cannot fully recognise, naming the offending file.
+   Cleanup can therefore refuse where it previously passed; `--force` remains the captain-approved discard escape hatch.
 
 `bin/fm-decision-hold.sh --help` owns the command syntax, the link record's location, and retry behavior.
 This is a separate trigger from `decision-hold-lifecycle`, which owns unresolved decisions discovered by an investigation or visual review.

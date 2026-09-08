@@ -65,15 +65,23 @@
 # Retries are idempotent against the recorded decider, answer digest, and
 # closed_by, and refuse a changed answer, decider, or closing authority.
 #
-# --not-raised retires a link whose gate never asked the question, which leaves
-# the item open and captain-owned. It refuses while the item is closed, because
-# a question settled elsewhere is reconciled with --answered-by, not retired as
-# never raised.
+# --not-raised retires a link whose gate never asked the question, whether or not
+# the item has since been closed. While the item is open it stays open and
+# captain-owned; once another authority has closed it, the link records that
+# authority in closed_by and no note is appended, because this gate answered
+# nothing. A question this gate did settle uses --answered-by instead.
 #
-# `gate-verify` reads only the index, never tasks-axi, and fails while any link
-# for the origin is still unreconciled. Teardown calls it so a landed task cannot
-# quietly leave its linked captain item asserting the captain still owes an
-# answer.
+# `gate-verify` reads only the index, never tasks-axi. Its reader has no silent
+# skip: any entry in data/gate-links/<origin-id>/ that is not a fully recognised
+# link record is itself an unreconciled link, and the refusal names the offending
+# file. Teardown calls it so a landed task cannot quietly leave its linked
+# captain item asserting the captain still owes an answer. Cleanup therefore now
+# refuses where it previously passed, on an unrecognised or hand-edited index
+# entry as well as on an open link. --force remains the captain-approved discard
+# escape hatch and still bypasses the check.
+#
+# `gate-status` reads the same index and prints an unrecognised entry as such,
+# so what gate-verify refuses on is visible rather than silently absent.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -109,11 +117,16 @@ validate_slug() {  # <label> <value>
   esac
 }
 
+gate_slug_ok() {  # <value>
+  case "$1" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
 validate_gate_slug() {  # <label> <value>
   validate_slug "$1" "$2"
-  case "$2" in
-    .|..) fail "$1 must not be a bare path component: $2" ;;
-  esac
+  gate_slug_ok "$2" || fail "$1 must not begin with a dot: $2"
 }
 
 validate_one_line() {  # <label> <value>
@@ -180,7 +193,7 @@ sorted_key_union() {  # <comma-list> <newline-or-space-separated-new-keys>
   } | sed '/^$/d' | LC_ALL=C sort -u | paste -sd, -
 }
 
-meta_value() {  # <meta> <key>
+record_value() {  # <key=value-file> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
@@ -189,7 +202,7 @@ origin_open_decisions() {  # <origin-id>
   open=$(status_open_decisions "$status_file")
   [ -n "$open" ] || return 0
   [ -f "$meta" ] || { printf '%s' "$open"; return 0; }
-  kind=$(meta_value "$meta" kind)
+  kind=$(record_value "$meta" kind)
   [ -n "$kind" ] || kind=ship
   if [ "$kind" != secondmate ]; then
     last=$(last_status_line "$status_file")
@@ -273,10 +286,6 @@ gate_link_file() {  # <origin-id> <decision-key>
   printf '%s/gate-links/%s/%s\n' "$DATA" "$1" "$2"
 }
 
-gate_field() {  # <link-file> <field>
-  grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
-}
-
 write_gate_link() {  # <link-file> <item> <origin> <key> <state> [decided-by] [digest] [closed-by]
   local file=$1 tmp
   mkdir -p "$(dirname "$file")"
@@ -317,19 +326,39 @@ gate_marker_identity() {  # <item-body>
   esac
 }
 
-# A file is an index entry only when its own record names the path it sits at,
-# so a staged or truncated write is never read back as a link.
-origin_gate_links() {  # <origin-id>
-  local origin=$1 dir file
+# The index reader has no silent skip: an entry it cannot fully recognise is an
+# unreconciled link, not a file to pass over. Every earlier narrowing here was
+# correct on its own and each one added another way to be skipped, because the
+# reader's default was permissive. A file the reader cannot understand is a
+# reason to stop, not a reason to continue.
+#
+# Emits one tab-separated verdict line per directory entry, dotfiles included:
+#   ok<TAB><file><TAB><key><TAB><state><TAB><item>
+#   unrecognised<TAB><file><TAB><TAB><TAB>
+origin_gate_records() {  # <origin-id>
+  local origin=$1 dir file base state item dotglob=off
   validate_gate_slug origin-id "$origin"
   dir="$DATA/gate-links/$origin"
   [ -d "$dir" ] || return 0
+  shopt -q dotglob && dotglob=on
+  shopt -s dotglob
   for file in "$dir"/*; do
-    [ -f "$file" ] || continue
-    [ "$(gate_field "$file" origin)" = "$origin" ] || continue
-    [ "$(gate_field "$file" key)" = "${file##*/}" ] || continue
-    printf '%s\n' "$file"
+    [ -e "$file" ] || continue
+    base=${file##*/}
+    item=$(record_value "$file" item)
+    state=$(record_value "$file" state)
+    if [ ! -f "$file" ] || ! gate_slug_ok "$base" || [ -z "$item" ] \
+      || [ "$(record_value "$file" origin)" != "$origin" ] \
+      || [ "$(record_value "$file" key)" != "$base" ]; then
+      printf 'unrecognised\t%s\t\t\t\n' "$file"
+      continue
+    fi
+    case "$state" in
+      open|answered|not-raised) printf 'ok\t%s\t%s\t%s\t%s\n' "$file" "$base" "$state" "$item" ;;
+      *) printf 'unrecognised\t%s\t\t\t\n' "$file" ;;
+    esac
   done
+  [ "$dotglob" = on ] || shopt -u dotglob
 }
 
 command_gate_link() {
@@ -347,10 +376,10 @@ command_gate_link() {
   [ "$kind" = captain ] || fail "backlog item $item is not kind captain"
   [ "$state" != "done" ] || fail "backlog item $item is already closed"
   if [ -f "$file" ]; then
-    existing=$(gate_field "$file" item)
+    existing=$(record_value "$file" item)
     [ "$existing" = "$item" ] \
       || fail "gate $origin/$key is already linked to a different captain item: $existing"
-    [ "$(gate_field "$file" state)" = open ] \
+    [ "$(record_value "$file" state)" = open ] \
       || fail "gate link $origin/$key is already reconciled; use a new decision key for a new question"
     printf '%s\n' "$file"
     return 0
@@ -361,7 +390,7 @@ command_gate_link() {
 
 command_gate_resolve() {
   local origin=${1:-} key=${2:-} decided_by='' answer_file='' not_raised=0
-  local file item show state item_state item_body answer digest body closed_by note
+  local file item show state item_state item_body answer digest body closed_by recorded note
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -396,10 +425,10 @@ command_gate_resolve() {
     printf 'gate-resolve: %s/%s has no linked captain-gated item\n' "$origin" "$key"
     return 0
   fi
-  item=$(gate_field "$file" item)
+  item=$(record_value "$file" item)
   [ -n "$item" ] || fail "gate link $file records no captain-gated item"
   validate_slug item-id "$item"
-  state=$(gate_field "$file" state)
+  state=$(record_value "$file" state)
   case "$state" in
     open) : ;;
     not-raised)
@@ -421,10 +450,16 @@ command_gate_resolve() {
 
   if [ "$not_raised" = 1 ]; then
     if [ "$item_state" = "done" ]; then
-      [ "$state" = not-raised ] \
-        || fail "captain-gated item $item is already closed; reconcile a settled question with --answered-by, not --not-raised"
-      printf 'gate-resolve: %s/%s was retired as not raised; %s has since been closed\n' \
-        "$origin" "$key" "$item"
+      closed_by=$(gate_marker_identity "$item_body")
+      [ "$closed_by" != "$origin/$key" ] \
+        || fail "captain-gated item $item was closed through gate $origin/$key; reconcile it with --answered-by"
+      [ -n "$closed_by" ] || closed_by=external
+      recorded=$(record_value "$file" closed_by)
+      [ -z "$recorded" ] || [ "$recorded" = "$closed_by" ] \
+        || fail "gate $origin/$key records a different authority for closing $item"
+      write_gate_link "$file" "$item" "$origin" "$key" not-raised '' '' "$closed_by"
+      printf 'gate-resolve: %s/%s not raised; %s was already closed by %s\n' \
+        "$origin" "$key" "$item" "$closed_by"
       return 0
     fi
     write_gate_link "$file" "$item" "$origin" "$key" not-raised
@@ -449,11 +484,11 @@ command_gate_resolve() {
   fi
 
   if [ "$state" = answered ]; then
-    [ "$(gate_field "$file" decided_by)" = "$decided_by" ] \
+    [ "$(record_value "$file" decided_by)" = "$decided_by" ] \
       || fail "gate $origin/$key records a different decider"
-    [ "$(gate_field "$file" answer_digest)" = "$digest" ] \
+    [ "$(record_value "$file" answer_digest)" = "$digest" ] \
       || fail "gate $origin/$key records a different answer"
-    [ "$(gate_field "$file" closed_by)" = "$closed_by" ] \
+    [ "$(record_value "$file" closed_by)" = "$closed_by" ] \
       || fail "gate $origin/$key records a different authority for closing $item"
     printf 'gate-resolve: %s/%s already answered by %s (%s closed)\n' \
       "$origin" "$key" "$decided_by" "$item"
@@ -490,31 +525,40 @@ command_gate_resolve() {
 }
 
 command_gate_status() {
-  local origin=${1:-} file
+  local origin=${1:-} verdict file key state item
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    printf '%s\t%s\t%s\n' \
-      "$(gate_field "$file" key)" "$(gate_field "$file" state)" "$(gate_field "$file" item)"
+  while IFS=$'\t' read -r verdict file key state item; do
+    [ -n "$verdict" ] || continue
+    if [ "$verdict" = ok ]; then
+      printf '%s\t%s\t%s\n' "$key" "$state" "$item"
+    else
+      printf '%s\tunrecognised\t%s\n' "${file##*/}" "$file"
+    fi
   done <<EOF
-$(origin_gate_links "$origin")
+$(origin_gate_records "$origin")
 EOF
 }
 
 command_gate_verify() {
-  local origin=${1:-} file open=''
+  local origin=${1:-} verdict file key state item open='' unrecognised='' problems=''
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    [ "$(gate_field "$file" state)" = open ] || continue
-    open="${open}${open:+ }$(gate_field "$file" key)"
+  while IFS=$'\t' read -r verdict file key state item; do
+    [ -n "$verdict" ] || continue
+    if [ "$verdict" != ok ]; then
+      unrecognised="${unrecognised}${unrecognised:+ }$file"
+      continue
+    fi
+    [ "$state" = open ] || continue
+    open="${open}${open:+ }$key"
   done <<EOF
-$(origin_gate_links "$origin")
+$(origin_gate_records "$origin")
 EOF
+  [ -z "$unrecognised" ] || problems="unrecognised captain-gated link records: $unrecognised"
   [ -z "$open" ] \
-    || fail "origin $origin has unreconciled captain-gated links: $open"
+    || problems="${problems}${problems:+; }unreconciled captain-gated links: $open"
+  [ -z "$problems" ] || fail "origin $origin has $problems"
   printf 'verified: %s captain-gated links\n' "$origin"
 }
 
@@ -553,7 +597,7 @@ command_hold() {
     [ "$existing_title" = "$title" ] || fail "existing captain hold $id has a different title"
   else
     if [ -z "$repo" ] && [ -f "$STATE/$origin.meta" ]; then
-      repo=$(meta_value "$STATE/$origin.meta" project)
+      repo=$(record_value "$STATE/$origin.meta" project)
       repo=${repo%/}
       repo=${repo##*/}
     fi
@@ -589,7 +633,7 @@ command_complete() {
     done
   fi
   if [ "$has_meta" = 1 ]; then
-    previous=$(meta_value "$meta" decision_keys)
+    previous=$(record_value "$meta" decision_keys)
   fi
   keys=$(sorted_key_union "$previous" "$supplied")
   if [ -n "$keys" ]; then
@@ -613,7 +657,7 @@ $open
 EOF
 
   if [ "$has_meta" = 1 ]; then
-    if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
+    if [ "$(record_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
       printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
     fi
 
@@ -639,9 +683,9 @@ command_verify() {
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
   require_tasks_axi
-  reviewed=$(meta_value "$meta" decisions_reviewed)
+  reviewed=$(record_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed unresolved-decision inventory"
-  keys=$(meta_value "$meta" decision_keys)
+  keys=$(record_value "$meta" decision_keys)
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
