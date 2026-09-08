@@ -848,8 +848,24 @@ test_unraised_link_retires_after_another_authority_closed_the_item() {
 
 # The index reader has no silent skip, so every record shape it cannot fully
 # recognise blocks verification and names the file, and gate-status shows it.
+# A reader that opens an index entry before checking its type blocks forever and
+# takes teardown with it. These run the reader under a bound and return 124 on a
+# block, so the caller can fail loudly instead of stalling the suite.
+fm_bounded_decisions() {  # <home> <command args...>
+  local home=$1
+  shift
+  if ! command -v timeout >/dev/null 2>&1; then
+    run_decisions "$home" "$@"
+    return
+  fi
+  PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
+    FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" \
+    timeout 30 "$ROOT/bin/fm-decision-hold.sh" "$@"
+}
+
 test_gate_index_refuses_every_unrecognised_record_shape() {
-  local home dir row name category body file status
+  local home dir row name category shape body file status rc
   home=$(make_home gate-index-shapes)
   stale_captain_item_fixture "$home"
   run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
@@ -861,40 +877,61 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
   run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
     || fail "the baseline index must verify clean before planting record shapes"
 
-  # <file name>|<open or unrecognised>|<planted record, \n separated>
+  # <file name>|<open or unrecognised>|<record|symlink|fifo>|<payload>
   local -a shapes=(
-    'still-open|open|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=still-open\nstate=open\n'
-    '.hidden-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=.hidden-key\nstate=open\n'
-    'absent-state|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=absent-state\n'
-    'unknown-state|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=unknown-state\nstate=retired\n'
-    'absent-origin|unrecognised|item=sample-scenario-choice\nkey=absent-origin\nstate=open\n'
-    'absent-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nstate=open\n'
-    'mismatched-key|unrecognised|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=other-key\nstate=open\n'
-    'empty-record|unrecognised|'
+    'still-open|open|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=still-open\nstate=open\n'
+    '.hidden-key|unrecognised|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=.hidden-key\nstate=open\n'
+    'absent-state|unrecognised|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=absent-state\n'
+    'unknown-state|unrecognised|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=unknown-state\nstate=retired\n'
+    'absent-origin|unrecognised|record|item=sample-scenario-choice\nkey=absent-origin\nstate=open\n'
+    'absent-key|unrecognised|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nstate=open\n'
+    'mismatched-key|unrecognised|record|item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=other-key\nstate=open\n'
+    'empty-record|unrecognised|record|'
+    'dangling-link|unrecognised|symlink|no-such-target'
+    'blocking-fifo|unrecognised|fifo|'
   )
   for row in "${shapes[@]}"; do
     name=${row%%|*}
     body=${row#*|}
     category=${body%%|*}
     body=${body#*|}
+    shape=${body%%|*}
+    body=${body#*|}
     file="$dir/$name"
-    printf '%b' "$body" > "$file"
-    if run_decisions "$home" gate-verify sample-hosted-boot \
-      > "$home/shape.out" 2> "$home/shape.err"; then
-      fail "gate-verify passed an index holding record shape $name"
-    fi
+    case "$shape" in
+      record) printf '%b' "$body" > "$file" ;;
+      symlink) ln -s "$dir/$body" "$file" ;;
+      fifo)
+        if ! command -v mkfifo >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+          echo "skip: mkfifo or timeout not found, FIFO index row not exercised"
+          continue
+        fi
+        mkfifo "$file"
+        ;;
+    esac
+    rc=0
+    fm_bounded_decisions "$home" gate-verify sample-hosted-boot \
+      > "$home/shape.out" 2> "$home/shape.err" || rc=$?
+    [ "$rc" -ne 124 ] \
+      || fail "gate-verify blocked on record shape $name instead of refusing"
+    [ "$rc" -ne 0 ] || fail "gate-verify passed an index holding record shape $name"
     if [ "$category" = unrecognised ]; then
       assert_grep "unrecognised captain-gated link records" "$home/shape.err" \
         "record shape $name must refuse as unrecognised"
       assert_grep "$file" "$home/shape.err" \
         "the refusal for record shape $name must name the offending file"
-      status=$(run_decisions "$home" gate-status sample-hosted-boot)
+      rc=0
+      fm_bounded_decisions "$home" gate-status sample-hosted-boot \
+        > "$home/shape-status.out" 2>/dev/null || rc=$?
+      [ "$rc" -ne 124 ] \
+        || fail "gate-status blocked on record shape $name instead of reporting it"
+      status=$(cat "$home/shape-status.out")
       assert_contains "$status" "unrecognised" "gate-status hid record shape $name"
       assert_contains "$status" "$file" \
         "gate-status must name the file gate-verify refuses on for record shape $name"
     else
-      assert_grep "unreconciled captain-gated links: $name" "$home/shape.err" \
-        "record shape $name must refuse as an open link"
+      assert_grep "unreconciled captain-gated links: $name ($file)" "$home/shape.err" \
+        "record shape $name must refuse as an open link and name its path"
     fi
     rm -f "$file"
     run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
@@ -904,6 +941,91 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
   [ "$(find "$dir" -mindepth 1 | wc -l)" -eq 1 ] \
     || fail "a completed write left a staged file inside the per-origin index directory"
   pass "every index record the reader cannot recognise blocks verification and is named"
+}
+
+# Retiring a link is a statement about the link, never about the item, so every
+# way the item can leave this home must still leave the link retirable and the
+# origin tearable down. The alternative is a link no verb can clear and a
+# teardown that only --force can complete.
+unreadable_item_home() {  # <name> <origin-id> <item-id>
+  local home=$1 id=$2 item=$3
+  home=$(make_home "$home")
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the sample scenario" --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample scenario review\n\nNo captain choice remains in this report.\n' > "$home/data/$id/report.md"
+  run_decisions "$home" complete "$id" --none >/dev/null \
+    || fail "could not pass the unresolved-decision completion gate"
+  tasks_in "$home" add "$item" "Choose the sample scenario behaviour" \
+    --kind captain --repo sample --body "Captain decision pending as of 2026-07-14." >/dev/null
+  tasks_in "$home" hold "$item" --reason "captain scenario choice pending" --kind captain >/dev/null
+  run_decisions "$home" gate-link "$item" "$id" scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  printf '%s\n' "$home"
+}
+
+test_unraised_link_retires_whatever_became_of_the_item() {
+  local home id item link out shape
+  id=sample-item-shape
+  item=sample-shape-choice
+
+  for shape in removed handed-off re-kinded backend-unavailable; do
+    home=$(unreadable_item_home "item-shape-$shape" "$id" "$item")
+    case "$shape" in
+      removed)
+        tasks_in "$home" unhold "$item" >/dev/null
+        tasks_in "$home" rm "$item" >/dev/null \
+          || fail "could not remove the linked item"
+        ;;
+      handed-off)
+        printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/secondmate-backlog.md"
+        tasks_in "$home" mv "$item" --to data/secondmate-backlog.md >/dev/null \
+          || fail "could not hand the linked item to another backlog"
+        ;;
+      re-kinded)
+        tasks_in "$home" unhold "$item" >/dev/null
+        tasks_in "$home" update "$item" --kind ship >/dev/null \
+          || fail "could not change the linked item's kind"
+        ;;
+      backend-unavailable)
+        cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+echo "tasks-axi: backend unavailable" >&2
+exit 1
+SH
+        chmod +x "$home/fakebin/tasks-axi"
+        ;;
+    esac
+
+    out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
+      || fail "--not-raised must retire a link whose item is $shape"
+    assert_contains "$out" "not raised; $item could not be read in this home" \
+      "the outcome for a $shape item must say what was actually observable"
+    assert_not_contains "$out" "left open" \
+      "an unreadable item must never be reported as left open"
+    link="$home/data/gate-links/$id/scenario-validation"
+    assert_grep "state=not-raised" "$link" "the $shape item left the link unretired"
+    assert_grep "closed_by=unknown" "$link" \
+      "an unreadable $shape item must record unknown, never external"
+
+    rm -f "$home/fakebin/tasks-axi"
+    run_decisions "$home" gate-verify "$id" >/dev/null \
+      || fail "a link retired against a $shape item must verify clean"
+    run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
+      || fail "teardown stayed blocked after retiring against a $shape item: $(cat "$home/teardown.err")"
+  done
+
+  home=$(unreadable_item_home item-shape-present "$id" "$item")
+  tasks_in "$home" unhold "$item" >/dev/null
+  tasks_in "$home" "done" "$item" --note "Captain answered this in the standup." >/dev/null
+  out=$(run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised) \
+    || fail "--not-raised must retire a link whose item is present and closed"
+  assert_contains "$out" "was already closed by external" \
+    "a present closed item with no marker must be reported as external"
+  assert_grep "closed_by=external" "$home/data/gate-links/$id/scenario-validation" \
+    "a present closed item must record external, never unknown"
+  pass "an unraised link retires whatever became of the item, and unknown stays distinct from external"
 }
 
 test_teardown_refuses_an_unreconciled_captain_gated_link() {
@@ -1016,6 +1138,7 @@ test_gate_that_never_raised_the_question_leaves_the_item_captain_owned
 test_gate_answer_reconciles_an_item_closed_by_another_authority
 test_second_linked_gate_records_the_first_as_the_closing_authority
 test_unraised_link_retires_after_another_authority_closed_the_item
+test_unraised_link_retires_whatever_became_of_the_item
 test_gate_index_refuses_every_unrecognised_record_shape
 test_teardown_refuses_an_unreconciled_captain_gated_link
 test_gate_link_validates_identities_before_touching_state

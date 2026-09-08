@@ -65,20 +65,34 @@
 # Retries are idempotent against the recorded decider, answer digest, and
 # closed_by, and refuse a changed answer, decider, or closing authority.
 #
+# The two verbs are deliberately asymmetric about the item. --answered-by writes
+# to the item and so requires all of it: a usable tasks-axi, the item present in
+# this home, and the item still kind captain. --not-raised requires only the link
+# record. Retiring a link is a statement about the link, which this home always
+# holds; it is never a statement about the item, which this home does not
+# control. So --not-raised never fails because the item was removed, handed to a
+# secondmate, pruned, renamed, re-kinded, or made unreadable by the backlog
+# backend.
+#
 # --not-raised retires a link whose gate never asked the question, whether or not
-# the item has since been closed. While the item is open it stays open and
-# captain-owned; once another authority has closed it, the link records that
-# authority in closed_by and no note is appended, because this gate answered
-# nothing. A question this gate did settle uses --answered-by instead.
+# the item has since been closed, and records only what was observable. While the
+# item is open it stays open and captain-owned; once another authority has closed
+# it, the link records that authority in closed_by and no note is appended,
+# because this gate answered nothing. When the item cannot be read at all the
+# link records closed_by=unknown, which stays distinct from external, the token
+# for an item that is present and closed with no marker. A question this gate did
+# settle uses --answered-by instead.
 #
 # `gate-verify` reads only the index, never tasks-axi. Its reader has no silent
 # skip: any entry in data/gate-links/<origin-id>/ that is not a fully recognised
-# link record is itself an unreconciled link, and the refusal names the offending
-# file. Teardown calls it so a landed task cannot quietly leave its linked
-# captain item asserting the captain still owes an answer. Cleanup therefore now
-# refuses where it previously passed, on an unrecognised or hand-edited index
-# entry as well as on an open link. --force remains the captain-approved discard
-# escape hatch and still bypasses the check.
+# regular link record is itself an unreconciled link, including a dangling
+# symlink or a device node, and no field is read from an entry before it is known
+# to be a regular file. The refusal names the path for an unrecognised record and
+# for an open link alike. Teardown calls it so a landed task cannot quietly leave
+# its linked captain item asserting the captain still owes an answer. Cleanup
+# therefore now refuses where it previously passed, on an unrecognised or
+# hand-edited index entry as well as on an open link. --force remains the
+# captain-approved discard escape hatch and still bypasses the check.
 #
 # `gate-status` reads the same index and prints an unrecognised entry as such,
 # so what gate-verify refuses on is visible rather than silently absent.
@@ -157,10 +171,16 @@ tasks_axi() {
   (cd "$FM_HOME" && tasks-axi "$@")
 }
 
-require_tasks_axi() {
-  fm_tasks_axi_compatible || fail "compatible tasks-axi is required"
+tasks_axi_gap() {  # prints why the captain-hold contract is unusable, empty when it is usable
+  fm_tasks_axi_compatible || { printf 'compatible tasks-axi is required'; return 0; }
   tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
-    || fail "tasks-axi does not expose the captain-hold contract"
+    || printf 'tasks-axi does not expose the captain-hold contract'
+}
+
+require_tasks_axi() {
+  local gap
+  gap=$(tasks_axi_gap)
+  [ -z "$gap" ] || fail "$gap"
 }
 
 task_show() {  # <id>
@@ -343,11 +363,15 @@ origin_gate_records() {  # <origin-id>
   shopt -q dotglob && dotglob=on
   shopt -s dotglob
   for file in "$dir"/*; do
-    [ -e "$file" ] || continue
+    [ -e "$file" ] || [ -L "$file" ] || continue
     base=${file##*/}
+    if [ ! -f "$file" ] || ! gate_slug_ok "$base"; then
+      printf 'unrecognised\t%s\t\t\t\n' "$file"
+      continue
+    fi
     item=$(record_value "$file" item)
     state=$(record_value "$file" state)
-    if [ ! -f "$file" ] || ! gate_slug_ok "$base" || [ -z "$item" ] \
+    if [ -z "$item" ] \
       || [ "$(record_value "$file" origin)" != "$origin" ] \
       || [ "$(record_value "$file" key)" != "$base" ]; then
       printf 'unrecognised\t%s\t\t\t\n' "$file"
@@ -359,6 +383,47 @@ origin_gate_records() {  # <origin-id>
     esac
   done
   [ "$dotglob" = on ] || shopt -u dotglob
+}
+
+# Retiring a link is a statement about the link record, which this home always
+# holds. It is never a statement about the item, which this home does not
+# control, so nothing here requires the item to exist, to still be kind captain,
+# or to be readable at all. It records what was observable and says so.
+# --answered-by keeps every item precondition, because it writes to the item.
+retire_gate_link() {  # <link-file> <item> <origin> <key>
+  local file=$1 item=$2 origin=$3 key=$4
+  local show='' item_state='' item_body='' readable=0 closed_by='' recorded
+  if [ -z "$(tasks_axi_gap)" ] && show=$(task_show "$item") \
+    && [ "$(show_field "$show" kind)" = captain ]; then
+    readable=1
+    item_state=$(show_field "$show" state)
+    item_body=$(show_field "$show" body)
+  fi
+  if [ "$readable" = 0 ]; then
+    closed_by=unknown
+  elif [ "$item_state" = "done" ]; then
+    closed_by=$(gate_marker_identity "$item_body")
+    [ "$closed_by" != "$origin/$key" ] \
+      || fail "captain-gated item $item was closed through gate $origin/$key; reconcile it with --answered-by"
+    [ -n "$closed_by" ] || closed_by=external
+  fi
+  recorded=$(record_value "$file" closed_by)
+  if [ "$closed_by" = unknown ] && [ -n "$recorded" ]; then
+    closed_by=$recorded
+  elif [ -n "$closed_by" ] && [ -n "$recorded" ] && [ "$recorded" != unknown ] \
+    && [ "$recorded" != "$closed_by" ]; then
+    fail "gate $origin/$key records a different authority for closing $item"
+  fi
+  write_gate_link "$file" "$item" "$origin" "$key" not-raised '' '' "$closed_by"
+  if [ "$readable" = 0 ]; then
+    printf 'gate-resolve: %s/%s not raised; %s could not be read in this home\n' \
+      "$origin" "$key" "$item"
+  elif [ "$item_state" = "done" ]; then
+    printf 'gate-resolve: %s/%s not raised; %s was already closed by %s\n' \
+      "$origin" "$key" "$item" "$closed_by"
+  else
+    printf 'gate-resolve: %s/%s not raised (%s left open)\n' "$origin" "$key" "$item"
+  fi
 }
 
 command_gate_link() {
@@ -442,30 +507,16 @@ command_gate_resolve() {
     *) fail "gate link $file has an unrecognised state: $state" ;;
   esac
 
+  if [ "$not_raised" = 1 ]; then
+    retire_gate_link "$file" "$item" "$origin" "$key"
+    return 0
+  fi
+
   require_tasks_axi
   show=$(task_show "$item") || fail "captain-gated item $item is absent from $FM_HOME/data/backlog.md"
   [ "$(show_field "$show" kind)" = captain ] || fail "backlog item $item is not kind captain"
   item_state=$(show_field "$show" state)
   item_body=$(show_field "$show" body)
-
-  if [ "$not_raised" = 1 ]; then
-    if [ "$item_state" = "done" ]; then
-      closed_by=$(gate_marker_identity "$item_body")
-      [ "$closed_by" != "$origin/$key" ] \
-        || fail "captain-gated item $item was closed through gate $origin/$key; reconcile it with --answered-by"
-      [ -n "$closed_by" ] || closed_by=external
-      recorded=$(record_value "$file" closed_by)
-      [ -z "$recorded" ] || [ "$recorded" = "$closed_by" ] \
-        || fail "gate $origin/$key records a different authority for closing $item"
-      write_gate_link "$file" "$item" "$origin" "$key" not-raised '' '' "$closed_by"
-      printf 'gate-resolve: %s/%s not raised; %s was already closed by %s\n' \
-        "$origin" "$key" "$item" "$closed_by"
-      return 0
-    fi
-    write_gate_link "$file" "$item" "$origin" "$key" not-raised
-    printf 'gate-resolve: %s/%s not raised (%s left open)\n' "$origin" "$key" "$item"
-    return 0
-  fi
 
   # Who closed the item is read only from this mechanism's own marker, never
   # from free prose: self when this gate closed it, the gate identity recorded
@@ -547,11 +598,11 @@ command_gate_verify() {
   while IFS=$'\t' read -r verdict file key state item; do
     [ -n "$verdict" ] || continue
     if [ "$verdict" != ok ]; then
-      unrecognised="${unrecognised}${unrecognised:+ }$file"
+      unrecognised="${unrecognised}${unrecognised:+, }$file"
       continue
     fi
     [ "$state" = open ] || continue
-    open="${open}${open:+ }$key"
+    open="${open}${open:+, }$key ($file)"
   done <<EOF
 $(origin_gate_records "$origin")
 EOF

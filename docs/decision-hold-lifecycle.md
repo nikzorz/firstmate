@@ -43,22 +43,31 @@ For a linked gate whose item is still open, `--answered-by` replaces the item's 
 `--answered-by` is also the verb when the item was already closed by another authority, which happens when the captain closes it directly or when a second gate is linked to the same item.
 That path never rewrites or archives the existing body, because that body records whoever actually closed the item; it appends this gate's outcome as a `tasks-axi done --note` line instead.
 The link then carries `closed_by`, read only from this mechanism's own machine-written marker and never from free prose: `self` when this gate closed the item, the other gate's `<origin>/<key>` identity when the marker names one, and `external` otherwise.
-`--not-raised` retires a link whose gate never asked the question, whether or not the item has since been closed.
+The two verbs are deliberately asymmetric about the item, and that asymmetry is the design rather than an accident of two precondition lists.
+`--answered-by` writes to the item, so it requires all of it: a usable tasks-axi, the item present in this home, and the item still kind `captain`.
+`--not-raised` requires only the link record.
+Retiring a link is a statement about the link, which this home always holds; it is never a statement about the item, which this home does not control.
+So `--not-raised` never fails because the item was removed, handed to a secondmate, pruned out of the live backlog, renamed, moved to Done by another path, re-kinded away from `captain`, or made unreadable because the backlog backend is unavailable or manual.
+
+`--not-raised` retires a link whose gate never asked the question, whether or not the item has since been closed, and records only what was observable.
 While the item is open it stays open and captain-owned, which is the honest reading there, and the outcome line says so.
 Once another authority has closed the item, the link records that authority in `closed_by`, the outcome line names it, and no note is appended, because this gate answered nothing.
+When the item cannot be read at all the link records `closed_by=unknown` and the outcome line says the item could not be read in this home, so `unknown` stays distinct from `external`, which continues to mean the item is present and closed with no marker.
 A question this gate did settle uses `--answered-by` instead.
-Retries are idempotent against the recorded decider, answer digest, and closing authority, and reject a changed answer, a changed decider, a changed closing authority, or a late reversal between the two outcomes.
+Retries are idempotent against the recorded decider, answer digest, and closing authority, and reject a changed answer, a changed decider, or a late reversal between the two outcomes.
+A retry rejects a disagreement about a known closing authority, and does not reject a retry merely because the item became unreadable between attempts.
 
 The index reader has no silent skip.
 Any entry in `data/gate-links/<origin-id>/` that is not a fully recognised link record is itself an unreconciled link.
 A record is recognised only when it is a regular file whose basename is a valid gate slug, whose `item=` is non-empty, whose `origin=` equals the enumerated origin, whose `key=` equals its own basename, and whose `state=` is exactly one of `open`, `answered`, or `not-raised`.
+A dangling symlink and a device node are entries the reader cannot understand, so both are unrecognised, and no field is read from an entry before it is known to be a regular file, so a FIFO cannot block the read.
 Enumeration includes dotfiles, and writes stage one directory above the per-origin index, so an interrupted write leaves nothing the reader could quietly pass over.
 Every earlier narrowing here was correct on its own and each one added another way to be skipped, because the reader's default was permissive; a file the reader cannot understand is now a reason to stop.
 
 The read-only `gate-status` and `gate-verify` subcommands parse only that index and never call tasks-axi.
 `gate-status` prints an unrecognised entry as such rather than omitting it, so what `gate-verify` refuses on is visible.
 Teardown calls `gate-verify` for every non-secondmate task before any destructive cleanup, so a landed task cannot quietly leave a linked captain item still claiming the captain owes an answer.
-Cleanup can therefore now refuse where it previously passed, on an unrecognised or hand-edited index entry as well as on an open link, and the refusal names the offending file.
+Cleanup can therefore now refuse where it previously passed, on an unrecognised or hand-edited index entry as well as on an open link, and the refusal names the path in both cases alongside the decision key.
 The `--force` path remains the explicit captain-approved discard escape hatch and still bypasses this check.
 
 ## Structured read surfaces
@@ -89,7 +98,11 @@ It then records the link, answers the same gate, and asserts the item closes wit
 Two later cases cover the item being closed before the gate is reconciled, once by the captain directly and once by a second gate linked to the same item.
 Each asserts that `--answered-by` succeeds, records the real closing authority, and leaves the existing record of who closed the item untouched.
 A further case retires a link whose gate never raised the question after another authority closed the item, and asserts the outcome names that authority, never says the item was left open, and leaves the item's body byte-identical.
-The last case plants each unrecognised record shape in the index directory in turn, including a dotted key, a missing `origin=`, a missing `key=`, an unknown `state=`, and an empty file, and asserts every one blocks verification, is named in the refusal, and is visible in `gate-status`.
+A matrix case then walks every item shape that takes the item out of this home, covering removal, a handoff to another backlog, a kind changed away from `captain`, and an unavailable backlog backend, and asserts the link still retires, the outcome says the item could not be read, the record carries `closed_by=unknown`, and both `gate-verify` and `bin/fm-teardown.sh` pass afterwards.
+The same case pins `external` against a present item closed with no marker, so the two tokens are never conflated.
+The last case plants each unrecognised index entry shape in turn, including a dotted key, a missing `origin=`, a missing `key=`, an unknown `state=`, an empty file, a dangling symlink, and a FIFO, and asserts every one blocks verification, is named in the refusal, and is visible in `gate-status`.
+The FIFO row runs the reader under a bounded timeout and fails on a block rather than stalling, because a reader that hangs takes teardown with it and nothing else would report it.
+It also asserts the open-link refusal names the record's path alongside its decision key.
 An end-to-end case then plants a truncated record and asserts `bin/fm-teardown.sh` refuses, names that file, and preserves the task metadata.
 
 The final verification commands and their exact summarized outputs follow.
@@ -111,6 +124,7 @@ ok - a gate that never raised the question leaves the captain-gated item open an
 ok - a question settled by another authority reconciles without a false record
 ok - a second gate linked to one item records the first gate as the closing authority
 ok - an unraised link retires honestly after another authority closed the item
+ok - an unraised link retires whatever became of the item, and unknown stays distinct from external
 ok - every index record the reader cannot recognise blocks verification and is named
 ok - teardown refuses until every recorded captain-gated link is reconciled
 ok - gate links validate identity, ownership, and item kind before recording a pairing
