@@ -76,7 +76,8 @@ The CLI matrix was checked directly on the earlier 0.7.x line, most recently on 
 | Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
 | Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
 
-On the verified pair the adapter smoke suite re-confirmed the literal-send and Enter-key behavior, the restart-persistence row, and the native agent-state row.
+On the verified pair the adapter smoke suite re-confirmed specific behaviors rather than whole rows: the two-step send-text-then-Enter submit path, workspace, pane, and label persistence across a session stop and fresh server restart, and native agent state read through `herdr agent get`.
+Three clauses in those rows were not re-proven there: the Literal send row's non-auto-submission, because the suite captures only after Enter; the Restart row's tab-id persistence and its claim that the agent process and registration did not survive, neither of which it checks; and the Native state row's rendered-busy corroboration for long foreground tool waits.
 The remaining rows were not re-checked there, including the Capture row's small-N emptiness, which is a 0.7.1-era observation.
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
@@ -173,6 +174,7 @@ ok - real Herdr lab validation completed on Herdr 0.7.5 with the default-session
 ```
 
 On 2026-09-07 the same projection suite was rerun against Herdr 0.8.2 protocol 20, where it exits non-zero.
+The required CI lane is unaffected, because `bin/fm-install-herdr.sh` installs an exact Herdr 0.7.4 pin and `.github/workflows/ci.yml` hard-fails the lane if the installed client version is anything else before the real-herdr-gated family runs.
 The suite has 22 pass checkpoints, and the run reached 7 of them before aborting on `assert_cleanup_focus_steal_was_restored`, the 8th checkpoint's guarding assertion in `tests/fm-backend-herdr-presentation-e2e.test.sh`.
 The 7 observed checkpoints are flag-off spawn ordering, create/tab-create/prune/move focus preservation, active seeded-tab prune refusal, bounded lock-contention flat fallback, the concurrent primary contiguous block, forced `workspace.move` failure, and concurrent post-create abort cleanup.
 The 14 checkpoints after the abort never executed on this pair, so no restart-reclaim, multi-home, teardown-focus, or token-safety guarantee is claimed for it here.
