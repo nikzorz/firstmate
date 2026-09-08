@@ -46,7 +46,7 @@ Expected submit matrix: proven pending plus busy is accepted as queued; proven p
 ## Herdr
 
 The compatibility floor is protocol 14.
-The latest active verification uses Herdr 0.7.5 protocol 16 on macOS aarch64, with earlier 0.7.4, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
+The latest active verification uses Herdr 0.8.2 protocol 20 on Linux x86_64, with earlier 0.7.5, 0.7.4, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
 
 Core read-only probes:
 
@@ -59,8 +59,8 @@ herdr api schema --json | jq -c '.schemas.subscription_event["$defs"].Subscripti
 Observed current shapes:
 
 ```text
-herdr 0.7.5
-{"client":16,"server":16}
+herdr 0.8.2
+{"client":20,"server":20}
 ["pane.output_matched","pane.agent_status_changed","pane.scroll_changed"]
 ```
 
@@ -78,6 +78,26 @@ The CLI matrix was checked directly:
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
+
+### Adapter smoke on the verified pair
+
+The adapter smoke suite ran on 2026-09-07 against Herdr 0.8.2 protocol 20, including the real-agent state check:
+
+```sh
+tests/fm-backend-herdr-smoke.test.sh
+FM_HERDR_SMOKE_REAL_CLAUDE=1 tests/fm-backend-herdr-smoke.test.sh
+```
+
+Observed guarantees included:
+
+```text
+ok - real herdr: version_check accepts the installed binary's protocol
+ok - real herdr: BOTH workspace ids/labels AND both tasks' pane ids survive a session stop + fresh server restart (multi-workspace shape)
+ok - real herdr: send_literal + send_key Enter submit as two separate steps (verified: send-text does NOT auto-submit)
+ok - real herdr: agent_status busy/idle detection tracks a real claude turn, and capture shows its output
+```
+
+`herdr workspace --help` on the verified pair still lists no `move` subcommand, so the presentation path's narrowly whitelisted raw-socket request remains required.
 
 ### Prune and respawn
 
@@ -147,6 +167,11 @@ ok - real Herdr lab: missing, renamed, and duplicate tokens trigger zero destruc
 ok - real Herdr lab validation completed on Herdr 0.7.5 with the default-session tripwire intact
 ```
 
+On 2026-09-07 the same projection suite was rerun against Herdr 0.8.2 protocol 20.
+Every projection, ordering, lock-contention, move-failure, and concurrent-abort guarantee still held with the default-session tripwire intact and captain focus preserved.
+The one exception is the suite's final assertion, which requires the exact task-pane close to first demonstrate Herdr's focus steal and then restore it.
+The recorded focus audit shows that close leaving the active workspace and tab unchanged on this pair, so the steal the assertion demands no longer occurs and the adapter's restoration step is a verified no-op rather than a failure.
+
 The restored-shell session-start cleanup ran on 2026-07-24 against Herdr 0.7.5 protocol 17:
 
 ```sh
@@ -177,7 +202,7 @@ FM_SEND_MARKER_HERDR_E2E=1 \
 
 ### Native blocked event
 
-The protocol-16 event path was measured on 2026-07-11 with Herdr 0.7.3 and Python 3.13:
+The protocol-16 event path was measured on 2026-07-11 with Herdr 0.7.3 and Python 3.13, and remeasured on 2026-09-07 with Herdr 0.8.2 protocol 20:
 
 ```sh
 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
@@ -187,9 +212,9 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
 Observed output:
 
 ```text
-ok - real herdr: events.subscribe capability gate passes
-ok - real herdr: a driven idle->blocked transition returns the blocked record in 0.129s
-ok - real herdr: the watcher fast-path enqueues a stale wake naming the task window
+ok - real herdr (herdr 0.8.2): events.subscribe capability gate passes (protocol >= 16, events surface present in api schema)
+ok - real herdr (herdr 0.8.2): a driven idle->blocked transition returns the blocked record in 0.068s (pane w1:p2)
+ok - real herdr: the watcher fast-path enqueues a stale wake naming the task window from the live blocked transition
 ```
 
 Polling remained active and is covered as the fallback for capability, connect, subscribe, and repeated reader failure.
