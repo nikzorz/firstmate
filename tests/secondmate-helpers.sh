@@ -14,7 +14,11 @@
 # FM_FAKE_TMUX_WINDOW, capture-pane echoes FM_FAKE_TMUX_CAPTURE) plus a fake
 # treehouse (durable lease of FM_FAKE_TREEHOUSE_HOME, recording the lease holder
 # to FM_FAKE_TREEHOUSE_LEASE_FILE; `return` removes the target and lease unless
-# FM_FAKE_TREEHOUSE_RETURN_FAIL is set). Echoes the fakebin dir.
+# FM_FAKE_TREEHOUSE_RETURN_FAIL is set, or FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR
+# models the production slot return that keeps the pooled directory).
+# FM_FAKE_TMUX_KILL_WINDOW_LANDS_META names a child meta the fake writes while it
+# kills a window, which is how a test lands one between a teardown's in-flight
+# refusal and its child record sweep. Echoes the fakebin dir.
 make_fake_tmux() {
   local dir=$1 fakebin capture
   fakebin=$(fm_fakebin "$dir")
@@ -26,6 +30,10 @@ set -u
 case "${1:-}" in
   has-session|new-session|new-window|send-keys|kill-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    if [ "${1:-}" = kill-window ] && [ -n "${FM_FAKE_TMUX_KILL_WINDOW_LANDS_META:-}" ]; then
+      printf 'window=firstmate:fm-late\nkind=ship\nmode=no-mistakes\n' \
+        > "$FM_FAKE_TMUX_KILL_WINDOW_LANDS_META"
+    fi
     exit 0
     ;;
   list-windows)
@@ -87,6 +95,12 @@ case "${1:-}" in
     done
     [ -z "${FM_FAKE_TREEHOUSE_RETURN_FAIL:-}" ] || exit 17
     [ -n "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] && rm -f "$FM_FAKE_TREEHOUSE_LEASE_FILE"
+    if [ -n "${FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR:-}" ]; then
+      # The production slot return: the lease is released and tracked content is
+      # reset, but the pooled directory stays for the next holder, so gitignored
+      # state/ survives the return.
+      exit 0
+    fi
     [ -n "$target" ] && rm -rf -- "$target"
     exit 0
     ;;

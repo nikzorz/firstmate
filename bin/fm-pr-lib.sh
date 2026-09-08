@@ -103,9 +103,21 @@ fm_pr_task_id_valid() {
   fm_task_id_path_safe "$id"
 }
 
+# A home's state/ is one flat <id>.<suffix> namespace, so removal there can only
+# separate one task's records from another's while no id carries the dot that starts
+# a suffix, and no id takes the x- prefix that namespace reserves for the home's own
+# X-mode relay records. Suffixes themselves may hold dots; only the id may not.
+fm_task_id_record_namespace_safe() {
+  local id=${1-}
+  fm_task_id_path_safe "$id" || return 1
+  case "$id" in
+    *.*|x-*) return 1 ;;
+  esac
+}
+
 fm_task_id_creation_valid() {
   local id=${1-}
-  fm_pr_task_id_valid "$id" || return 1
+  fm_task_id_record_namespace_safe "$id" || return 1
   [ "${#id}" -le 64 ]
 }
 
