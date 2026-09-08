@@ -1277,25 +1277,31 @@ remove_firstmate_home() {
   safe_rm_rf "$abs_home_path" "$label"
 }
 
-# The PR-check quarantine keeps its migration diagnostics under a home-level prefix
-# rather than a task's, in both the current and the pre-migration spelling, so those
-# two names are never a task id however path-safe they read.
-FM_HOME_QUARANTINE_MARKER_IDS=('!noncanonical' _noncanonical)
-
 # A record names its owning task with everything ahead of its first dot, and only
 # an id the record namespace can separate is read that way - which is what keeps X
 # mode's home-level relay entries (x-watch.check.sh, x-poll.error) from being read as
 # some task's records. Only a .meta declares a task, so a record naming no usable id
 # is left alone rather than turned into a refusal to retire.
 print_record_owner_id() {  # <record>
-  local name owner marker
+  local name
   name=$(basename "$1")
-  owner=${name%%.*}
+  fm_task_id_record_namespace_safe "${name%%.*}" || return 0
+  printf '%s\n' "${name%%.*}"
+}
+
+# The quarantine alone keeps its PR-check migration diagnostics under a home-level
+# prefix rather than a task's, in both the current and the pre-migration spelling, so
+# there those two names are never a task id however path-safe they read. state/ holds
+# no such marker, and a task may legitimately carry either name there.
+FM_HOME_QUARANTINE_MARKER_IDS=('!noncanonical' _noncanonical)
+
+print_quarantine_record_owner_id() {  # <quarantine-record>
+  local name marker
+  name=$(basename "$1")
   for marker in "${FM_HOME_QUARANTINE_MARKER_IDS[@]}"; do
-    [ "$owner" != "$marker" ] || return 0
+    [ "${name%%.*}" != "$marker" ] || return 0
   done
-  fm_task_id_record_namespace_safe "$owner" || return 0
-  printf '%s\n' "$owner"
+  print_record_owner_id "$1"
 }
 
 # Every task id a retired home's state/ still holds a record for. A .meta names a
@@ -1322,7 +1328,7 @@ firstmate_home_child_ids() {  # <sub_state>
     if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
       for entry in "$quarantine"/*; do
         [ -e "$entry" ] || [ -L "$entry" ] || continue
-        print_record_owner_id "$entry"
+        print_quarantine_record_owner_id "$entry"
       done
     fi
   } | LC_ALL=C sort -u

@@ -1867,6 +1867,46 @@ EOF
   pass "forced secondmate teardown refuses to hide a failed child firstmate home return"
 }
 
+test_secondmate_teardown_clears_a_child_named_like_the_quarantine_marker() {
+  local home subhome fakebin log lease fmroot journal
+  home="$TMP_ROOT/marker-named-child-home"
+  subhome="$TMP_ROOT/marker-named-child-subhome"
+  fmroot="$TMP_ROOT/marker-named-child-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  journal="$subhome/state/_noncanonical.herdr-presentation"
+  printf 'retained journal\n' > "$journal"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/marker-named-child-fake")
+  log="$TMP_ROOT/marker-named-child-fake/tmux.log"
+  lease="$TMP_ROOT/marker-named-child-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/marker-named-child-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "ordinary teardown failed to retire a secondmate holding a task named like the quarantine marker"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$journal" ] \
+    || fail "a task named like the quarantine marker kept its record in the returned home"
+  pass "secondmate retirement sweeps a task whose id matches a quarantine marker name"
+}
+
 test_secondmate_teardown_is_not_blocked_by_a_legacy_quarantine_marker() {
   local mode home subhome fakebin log lease fmroot quarantine marker err
   for mode in ordinary force; do
@@ -2695,6 +2735,7 @@ test_secondmate_teardown_refuses_late_child_meta_before_sweeping_a_sibling
 test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined
 test_secondmate_force_teardown_refuses_failed_child_home_return
 test_secondmate_teardown_is_not_blocked_by_a_legacy_quarantine_marker
+test_secondmate_teardown_clears_a_child_named_like_the_quarantine_marker
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_operational_dir_symlinks_inside_home
