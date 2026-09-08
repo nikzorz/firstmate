@@ -39,7 +39,8 @@
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
 #   5. fleet digest   - a compact data/backlog.md identity/metadata listing,
-#                       every state/*.meta, a bounded state/*.status tail,
+#                       every state/*.meta, a line- and byte-bounded
+#                       state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
 #   6. closing reminder - prints the context-specific watcher next step; this
@@ -106,6 +107,19 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
+# A line count alone bounds nothing: a crewmate resume line is routinely
+# multiple kilobytes on ONE line, so five of them can dominate the whole
+# digest. These byte caps bound the same tail by size. The newest line keeps
+# the most fidelity because it is the one a supervisor acts on; older lines
+# are clipped harder, and the per-task budget stops a pathological log from
+# crowding out the rest of the fleet. Nothing becomes unreachable: every clip
+# is visibly marked and the full log path prints with every tail.
+STATUS_NEWEST_BYTES=${FM_SESSION_START_STATUS_NEWEST_BYTES:-1000}
+case "$STATUS_NEWEST_BYTES" in ''|*[!0-9]*|0) STATUS_NEWEST_BYTES=1000 ;; esac
+STATUS_OLDER_BYTES=${FM_SESSION_START_STATUS_OLDER_BYTES:-200}
+case "$STATUS_OLDER_BYTES" in ''|*[!0-9]*|0) STATUS_OLDER_BYTES=200 ;; esac
+STATUS_TASK_BYTES=${FM_SESSION_START_STATUS_TASK_BYTES:-2300}
+case "$STATUS_TASK_BYTES" in ''|*[!0-9]*|0) STATUS_TASK_BYTES=2300 ;; esac
 BACKLOG_LIMIT=${FM_SESSION_START_BACKLOG_LIMIT:-80}
 case "$BACKLOG_LIMIT" in ''|*[!0-9]*|0) BACKLOG_LIMIT=80 ;; esac
 
@@ -213,10 +227,83 @@ print_backlog_compact() {
   fi
 }
 
+# clip_status_line <text> <keep-bytes> <budget-bytes>: sets CLIP_OUT to the
+# line, byte-clipped to <keep-bytes> with a visible marker when it did not fit,
+# and CLIP_BYTES to what CLIP_OUT costs the per-task budget - the marker is
+# emitted too, so it is charged as well and the per-task ceiling stays a hard
+# one. A line only just past <keep-bytes> is printed whole instead, because the
+# marker would cost more than the bytes it hides. Returns 1 when not even a
+# marked clip fits <budget-bytes>, leaving the line for the caller to omit
+# whole. `local LC_ALL=C` makes bash's ${#var} and substring operators count
+# BYTES rather than characters, and is restored on return.
+CLIP_OUT=
+CLIP_BYTES=0
+clip_status_line() {
+  local text=$1 keep=$2 budget=$3
+  local LC_ALL=C
+  local total=${#text} clipped n k byte need
+  [ "$keep" -gt "$budget" ] && keep=$budget
+  if [ "$total" -le "$keep" ]; then
+    CLIP_OUT=$text
+    CLIP_BYTES=$total
+    return 0
+  fi
+  while [ "$keep" -gt 0 ]; do
+    clipped=${text:0:keep}
+    # A byte-exact cut can land inside a multi-byte character; drop the
+    # incomplete trailing sequence so the digest stays valid UTF-8.
+    n=${#clipped}
+    for (( k = 1; k <= 4 && k <= n; k++ )); do
+      printf -v byte '%d' "'${clipped:n-k:1}"
+      [ "$byte" -lt 0 ] && byte=$(( byte + 256 ))
+      [ "$byte" -lt 128 ] && break
+      if [ "$byte" -ge 192 ]; then
+        if [ "$byte" -ge 240 ]; then need=4
+        elif [ "$byte" -ge 224 ]; then need=3
+        else need=2
+        fi
+        [ "$need" -gt "$k" ] && clipped=${clipped:0:n-k}
+        break
+      fi
+    done
+    CLIP_OUT="$clipped [... CLIPPED, ${#clipped} of $total bytes shown; full line is in the log path above]"
+    CLIP_BYTES=${#CLIP_OUT}
+    if [ "$total" -le "$budget" ] && [ "$CLIP_BYTES" -ge "$total" ]; then
+      CLIP_OUT=$text
+      CLIP_BYTES=$total
+      return 0
+    fi
+    [ "$CLIP_BYTES" -le "$budget" ] && return 0
+    # Retry against what the marker itself leaves: the marker can only get
+    # shorter as the count it reports does, so this settles in one more pass.
+    keep=$(( budget - (CLIP_BYTES - ${#clipped}) ))
+  done
+  return 1
+}
+
 print_status_tail() {
   local status=$1
-  printf 'status tail (last %s line(s), wake-EVENT history, not current state; full log: %s):\n' "$STATUS_TAIL" "$status"
-  tail -n "$STATUS_TAIL" "$status"
+  printf 'status tail (last %s line(s), byte-clipped to %s newest / %s older / %s per task, wake-EVENT history, not current state; FULL UNCLIPPED LOG: %s):\n' \
+    "$STATUS_TAIL" "$STATUS_NEWEST_BYTES" "$STATUS_OLDER_BYTES" "$STATUS_TASK_BYTES" "$status"
+  local lines=() rendered=() used=0 omitted=0 i cap remaining line=
+  while IFS= read -r line || [ -n "$line" ]; do
+    lines[${#lines[@]}]=$line
+  done < <(tail -n "$STATUS_TAIL" "$status")
+  # Walk newest to oldest so the budget is spent on the lines a supervisor
+  # acts on first, then print back in chronological order.
+  for (( i = ${#lines[@]} - 1; i >= 0; i-- )); do
+    remaining=$(( STATUS_TASK_BYTES - used ))
+    if [ "$i" -eq $(( ${#lines[@]} - 1 )) ]; then cap=$STATUS_NEWEST_BYTES; else cap=$STATUS_OLDER_BYTES; fi
+    if [ "$remaining" -le 0 ] || ! clip_status_line "${lines[i]}" "$cap" "$remaining"; then
+      omitted=$(( i + 1 ))
+      break
+    fi
+    rendered=( "$CLIP_OUT" "${rendered[@]+"${rendered[@]}"}" )
+    used=$(( used + CLIP_BYTES ))
+  done
+  [ "$omitted" -gt 0 ] && printf '[... %s older line(s) OMITTED for the per-task byte budget; read the full log path above]\n' "$omitted"
+  [ "${#rendered[@]}" -gt 0 ] && printf '%s\n' "${rendered[@]}"
+  return 0
 }
 
 hash_file() {
@@ -431,8 +518,9 @@ Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
 listing was just printed with a pointer for targeted full-body follow-up.
 Do NOT bulk-read state/*.status now either: their bounded tails were just
 printed with full log paths for targeted follow-up when older wake-event
-history is actually needed. Re-reading everything defeats the entire point
-of this command. Re-read a file only if this digest flagged it ABSENT (then
+history is actually needed. A line marked CLIPPED or OMITTED there is bounded
+for size only - read that one task's full log path when you need the rest.
+Re-reading everything defeats the entire point of this command. Re-read a file only if this digest flagged it ABSENT (then
 rebuild or create it per AGENTS.md), its contents looked unparseable/corrupt,
 or an individual full status log is needed for older wake-event history.
 EOF
