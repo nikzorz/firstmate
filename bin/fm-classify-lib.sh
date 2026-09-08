@@ -602,6 +602,7 @@ _fm_parse_status_line() {  # <status-line>
         n=${n#*\[key=}
         n=${n#"$slug"}
         n=${n#\]}
+        n=${n#:}
         n=${n#"${n%%[![:space:]]*}"}
       else
         FM_LINE_KEY=default

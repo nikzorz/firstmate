@@ -344,6 +344,19 @@ MATRIX
   # pre-colon key never lets the note's own leading token be eaten as if it were one.
   [ "$(status_line_note 'needs-decision [key=a]: [key=b] pick one')" = '[key=b] pick one' ] \
     || fail "a pre-colon keyed line lost genuine note prose to the key strip"
+  # One event renders one note whichever side the key sits on, so a consumer cannot
+  # tell the spellings apart. A writer who punctuates both sides leaves a colon
+  # behind the inferred token, and that colon belongs to the token, not the note.
+  [ "$(status_line_note 'needs-decision [key=x]: summary')" = 'summary' ] \
+    || fail "a declared keyed line stopped rendering its note alone"
+  [ "$(status_line_note 'needs-decision: [key=x]: summary')" = 'summary' ] \
+    || fail "an inferred keyed line kept the colon that closed its own token"
+  [ "$(status_line_note 'needs-decision: [key=x] summary')" = 'summary' ] \
+    || fail "an unpunctuated inferred keyed line stopped rendering its note alone"
+  # The colon consumed is the token's own, so a note that opens with one of its own
+  # after real prose keeps it.
+  [ "$(status_line_note 'needs-decision: [key=x] ratio 3:1 chosen')" = 'ratio 3:1 chosen' ] \
+    || fail "an inferred keyed line lost prose punctuation to the token colon strip"
   # Both positions answer to one charset, so a slug neither accepts cannot start
   # being accepted in only one of them.
   [ "$(_fm_decision_key 'needs-decision [key=api/shape]: choose A or B')" = default ] \
