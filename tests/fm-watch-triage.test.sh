@@ -270,7 +270,34 @@ status_open_activities|working: phase one\ndone: finished\n||a bare terminal sto
 status_open_activities|working: phase one\ndone [key=p 7]: finished\n|default\tworking\tphase one|an unusable terminal silenced an activity it does not name
 status_open_activities|working: phase one\ndone [key=<slug>]: finished\n|default\tworking\tphase one|a copied <slug> placeholder closed an activity it does not name
 status_open_activities|working: phase one\nworking [key=p 7]: phase two\ndone: all finished\n||a bare terminal stopped closing every activity in the shared default bucket
+# --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
+# "default" is a BUCKET, not an identity: its records are not distinguishable, so
+# nothing can act on one of them alone. These rows are the two consequences, and
+# they are accepted limits rather than bugs. They live here as assertions so a
+# later change cannot quietly move them.
+#
+# LIMIT 1 - a parked record is evicted by a later line that NAMES the bucket. The
+# unusable-keyed opener is parked under "default"; the ordinary unkeyed opener
+# that follows names "default", and the bucket cannot tell the two apart, so the
+# parked record goes with it. The property covers the moment a line is written,
+# not the whole life of the record it wrote.
+status_open_decisions|blocked [key=ci flake]: CI is flaky\nneeds-decision: should we drop the v1 API\n|default\tneeds-decision\tshould we drop the v1 API|LIMIT 1 (accepted): a later unkeyed opener stopped evicting the record parked in the shared bucket
+status_trailing_open_decisions|blocked [key=ci flake]: CI is flaky\nneeds-decision: should we drop the v1 API\n|default\tneeds-decision\tshould we drop the v1 API|LIMIT 1 (accepted): the trailing fold stopped evicting the record parked in the shared bucket
+status_open_activities|working [key=p 7]: phase two\nworking: phase one\n|default\tworking\tphase one|LIMIT 1 (accepted): the activities fold stopped evicting the phase parked in the shared bucket
+# LIMIT 2 - the open set CAN carry two records reading the same key, which the
+# forward order of the row above already produces. Any consumer treating a key as
+# the identity of one decision is on notice: this is why the decision-hold
+# inventory question is filed as a follow-up rather than answered by the key.
+status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|LIMIT 2 (accepted): the shared bucket stopped carrying two records under one key
 MATRIX
+  # LIMIT 2, stated as the shape rather than as one expected string: the open set
+  # can hold more records than it holds distinct keys, so a key is not an identity.
+  got=$(printf '%b' 'needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n' \
+    | status_open_decisions -)
+  [ "$(printf '%s\n' "$got" | grep -c .)" -eq 2 ] \
+    || fail "LIMIT 2 (accepted): the shared bucket stopped carrying two records"
+  [ "$(printf '%s\n' "$got" | cut -f1 | sort -u | grep -c .)" -eq 1 ] \
+    || fail "LIMIT 2 (accepted): two records in the shared bucket stopped sharing one key"
   # The verb survives an unusable key in both positions, so a fold still routes
   # the line to the branch its writer meant.
   for opener in needs-decision blocked; do

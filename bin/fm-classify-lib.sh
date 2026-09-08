@@ -467,29 +467,38 @@ status_is_paused_or_captain_held() {  # <status-line>
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
 #
-# A MALFORMED slug is UNUSABLE, and one property covers it everywhere: when a key
-# is unusable, err toward leaving the decision VISIBLE. A refusal nobody can see
-# is not a refusal, so neither dropping the line nor guessing which record it
-# meant is allowed - both end with a captain-relevant event gone from the open
-# set with no error, which is the silent loss this fold exists to prevent.
-# The property binds EVERY path that reads, writes, collapses or supersedes a key,
-# not one side of one fold: an unusable key may never be the reason some record
-# stops being reported, whether that record is the line's own or another's. So no
-# fold may DROP on an unusable key, and nothing outside the folds may treat two
-# records as the same decision on the strength of one:
-#   - an OPENING verb keeps its line and supersedes nothing. It takes the key
-#     "default" and the unusable token rides through into the note as ordinary
-#     prose, which is the only marker that the writer meant a key and did not get
-#     one. It cannot claim an earlier record, because the key it would claim it by
-#     is exactly the key nobody could read.
-#   - a CLOSING verb closes NOTHING, so whatever was open stays open.
-# An accepted consequence, not a defect: two records can then share the "default"
-# bucket, and one bare "resolved:" closes both together. A close the operator can
-# see, naming what it closed, is not the silent loss this fold exists to stop.
+# A MALFORMED slug is UNUSABLE, and one property covers it: when a key is
+# unusable, err toward leaving the decision VISIBLE. A refusal nobody can see is
+# not a refusal, so neither dropping the line nor guessing which record it meant
+# is allowed - both end with a captain-relevant event gone from the open set with
+# no error, which is the silent loss this fold exists to prevent.
+#
+# The property is exactly this, and no wider. Read both halves together, because
+# the second is what the first costs:
+#   - An unusable key never causes a record to be dropped AT THE MOMENT it is
+#     written. An OPENING verb with an unusable key is appended under the shared
+#     "default" bucket instead of superseding, with the unusable token riding
+#     through into the note as ordinary prose, which is the only marker that the
+#     writer meant a key and did not get one. A CLOSING verb with an unusable key
+#     closes nothing, so whatever was open stays open.
+#   - A record parked in the shared bucket then stays visible UNTIL a later line
+#     NAMES that bucket. Any later line that names it, an ordinary unkeyed opener
+#     or a bare close alike, acts on EVERY record in it, including records that
+#     landed there only because their own key was unusable.
+#
+# Both halves follow from one fact: "default" is a BUCKET, not an identity. The
+# records in it are not distinguishable from one another, so nothing can act on
+# one of them alone. That is why an unkeyed opener evicts a parked record, why one
+# bare "resolved:" closes every record in the bucket together, and why the open
+# set can carry two records reading the same key. A close the operator can see,
+# naming what it closed, is not the silent loss this fold exists to stop, and a
+# consumer that treats a key as the identity of one decision is reading more into
+# it than the bucket promises.
+#
 # Whether the writer DECLARED the key before the colon or a reader INFERS it from
 # the note's leading edge decides which key is read, never whether an event
-# survives. A line carrying no token at all is not unusable: it keys "default"
-# and closes "default", which is the historical one-decision-per-task behavior.
+# survives its own line. A line carrying no token at all is not unusable: it keys
+# "default" and closes "default", the historical one-decision-per-task behavior.
 #
 # The three parsers are pure reads of a single line; the verb parser strips any
 # key token before the colon so the leading word is recovered cleanly, and the note
@@ -635,9 +644,9 @@ _fm_status_open_decisions_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line")
     case "$verb" in
       needs-decision|blocked)
+        key=$(_fm_decision_key "$line")
         note=$(status_line_note "$line")
         if _fm_decision_key_is_usable "$line"; then
           open=$(_fm_decision_drop "$open" "$key")
@@ -647,6 +656,7 @@ _fm_status_open_decisions_stream() {
         ;;
       "$resolve"|"$held")
         _fm_decision_key_is_usable "$line" || continue
+        key=$(_fm_decision_key "$line")
         open=$(_fm_decision_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
@@ -755,9 +765,9 @@ _fm_status_open_activities_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line")
     case "$verb" in
       working|"$pause")
+        key=$(_fm_decision_key "$line")
         note=$(status_line_note "$line")
         if _fm_decision_key_is_usable "$line"; then
           open=$(_fm_decision_drop "$open" "$key")
@@ -767,6 +777,7 @@ _fm_status_open_activities_stream() {
         ;;
       done|failed|needs-decision|blocked|"$resolve"|"$held")
         _fm_decision_key_is_usable "$line" || continue
+        key=$(_fm_decision_key "$line")
         open=$(_fm_decision_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
