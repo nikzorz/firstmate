@@ -173,7 +173,8 @@ Every per-harness file carries the same core fact set for its harness: the verif
 So a question of the form "how do I interrupt X, exit X, accept the trust dialog for X, or recognize a busy X pane" is always answered by X's own file, with no need to know in advance which file holds it.
 Two categories have an owner outside the reference files: a harness's env marker is owned by `bin/fm-harness.sh` and its launch and autonomy shape by `bin/fm-spawn.sh`, so read those owners when a reference file does not repeat the fact.
 Coverage of the rest varies by harness: resume behavior, composer and submission quirks, and any stall or incident procedure appear only where they were verified empirically.
-When one of those three is absent from a harness's file it means no verified fact exists for that harness, so treat the silence as unverified rather than improvising a procedure.
+When one of those three is absent from a harness's file it means no fact was verified in that file, not that no verified fact exists anywhere, since a shared owner named elsewhere in this router may still hold one.
+The reference file alone is therefore never the whole answer: check the shared owner this router names for that concern first, and where neither holds the fact, treat it as unverified rather than improvising a procedure.
 
 | Harness | Reference | Harness-specific procedures it owns beyond the common fact set |
 |---|---|---|
@@ -185,4 +186,4 @@ When one of those three is absent from a harness's file it means no verified fac
 | kimi | [`references/kimi.md`](references/kimi.md) | Launch-then-send readiness gating, silent pre-readiness drop, moon-phase spinner matching, guarded global turn-end hook. |
 
 A fact that appears in exactly one harness's file is specific to that harness.
-The per-harness facts this router does carry, in the turn-end guard, session-start nudge, and watcher-supervision sections, are deliberately concise rather than the full procedure, so never act on a per-harness procedure without opening its file.
+The per-harness facts this router does carry, including the ones in the turn-end guard, session-start nudge, and watcher-supervision sections, are deliberately concise rather than the full procedure, so never act on a per-harness procedure without opening its file.
