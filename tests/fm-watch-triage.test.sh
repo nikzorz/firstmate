@@ -123,7 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
-  local fold stream expected label got want captain_re spelling suppressed prose keyed inner
+  local fold stream expected label got want
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -159,65 +159,6 @@ test_classifier_primitives() {
     && fail "FM_CAPTAIN_RE override bypassed paused: suppression"
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "custom-verb: x" \
     || fail "nonterminal suppression weakened custom bare-line behavior"
-  # A home that set FM_CAPTAIN_RE wrote it against the unkeyed spelling, so keying
-  # an event must not drop it out of that home's own override. The regex is tested
-  # against the line as written AND against its de-keyed spelling.
-  captain_re='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
-  for spelling in 'blocked: CI is flaky' 'blocked [key=ci-flake]: CI is flaky' \
-    'blocked: [key=ci-flake] CI is flaky' 'needs-decision: pick A' \
-    'needs-decision [key=api]: pick A' 'needs-decision: [key=api] pick A'; do
-    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$spelling" \
-      || fail "a documented FM_CAPTAIN_RE override stopped surfacing: $spelling"
-  done
-  # De-keying must widen which SPELLINGS of an eligible verb match, never which
-  # verbs are eligible, so the verb gate still runs first and nothing new matches.
-  for suppressed in 'working [key=w]: rebased onto merged #76' \
-    'paused [key=w]: checks green pending approval' \
-    'resolved [key=api]: done: chose A' 'captain-held [key=api]: done: tracked'; do
-    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$suppressed" \
-      && fail "de-keyed matching newly surfaced a nonterminal verb: $suppressed"
-  done
-  # A line with no verb/note colon is tested exactly once, as written, whether or
-  # not it carries a key token. Synthesising a "$verb: $note" spelling for one
-  # injects a colon into free-form prose and turns a legacy bare line into a verb
-  # line that was never captain-relevant before; for a colonless line that carries
-  # a token, status_line_note returns the WHOLE line, so the synthesised spelling
-  # repeats the verb too and matches text no spelling of the line ever had.
-  for prose in 'the retry failed' 'cleanup done' 'all blocked' \
-    'setup failed [key=boot] but retried ok' 'nothing is done [key=x] yet'; do
-    status_is_captain_relevant "$prose" \
-      && fail "de-keyed matching made a colonless line captain-relevant: $prose"
-    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$prose" \
-      && fail "de-keyed matching made a colonless line match a configured override: $prose"
-  done
-  # The other direction: a keyed line that DOES carry a real verb/note boundary
-  # still reaches a home's override through its de-keyed spelling, which is the
-  # only thing de-keying is for.
-  for keyed in 'blocked [key=boot]: setup failed' 'done [key=x]: nothing left' \
-    'blocked [key=deps]: cannot install'; do
-    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$keyed" \
-      || fail "a keyed line with a boundary colon stopped reaching a configured override: $keyed"
-  done
-  # A colon that sits only INSIDE the token is not a verb/note boundary, so such a
-  # line has no de-keyed spelling and must be tested exactly as written. Otherwise
-  # the synthesised text carries a boundary its writer never wrote and matches a
-  # spelling the line never had. These four lead with prose, not a status verb.
-  for inner in 'nothing is done [key=see: notes] yet' \
-    'setup failed [key=ticket: 12] but retried ok' 'we are done [key=a:b] here'; do
-    status_is_captain_relevant "$inner" \
-      && fail "a colon inside the key token was treated as a verb/note boundary: $inner"
-    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$inner" \
-      && fail "a colon inside the key token matched a configured override: $inner"
-  done
-  # Same shape, but this one's leading word IS a status verb, so the unset-override
-  # verb shortcut claims it before any spelling is built. Only the override path
-  # can show the injected boundary, so only that direction is asserted here.
-  FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant 'blocked [key=a:b] stuff' \
-    && fail "a colon inside the key token matched a configured override: blocked [key=a:b] stuff"
-  status_is_captain_relevant 'blocked [key=a:b] stuff' \
-    || fail "the verb shortcut stopped claiming a keyed blocked line with no override set"
-  FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "blocked [key=api]: x" \
-    && fail "de-keyed matching bypassed a home that narrowed its verb set"
   printf 'needs-decision: should docs mention [key=prose]?\nneeds-decision [key=q1]: real choice\nresolved: docs still mention [key=q1]\nneeds-decision [key=bad key]: malformed\n' > "$state/keys.status"
   open=$(status_open_decisions "$state/keys.status")
   printf '%s' "$open" | grep -F $'q1\t' >/dev/null \

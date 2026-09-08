@@ -205,12 +205,8 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
       "$id: brief did not reconcile closing a pause with rule 4's no-FYI-lines bar"
     assert_grep "a \`awaiting:\` line left standing keeps firstmate on the" "$brief" \
       "$id: brief lost why a standing pause is dangerous"
-    # The verb contrast names a verb to reach for; spelling it with a trailing
-    # colon makes it read as an append template a worker copies whole.
-    assert_grep "Use \`blocked\` when you are stuck and need help." "$brief" \
+    assert_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
       "$id: brief lost the paused-versus-blocked distinction"
-    assert_no_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
-      "$id: brief spells the blocked verb contrast as a copyable append template"
     # A scout has no branch, no push, and no PR, so it inherits the lifecycle
     # without the handoff sentence, which would name an impossible wait.
     if [ "$kind" = scout ]; then
@@ -251,29 +247,10 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     # Rule 6 is the only place a worker is taught to CLOSE a decision or blocker
     # it opened; without it a standing needs-decision masks later events exactly
     # as a standing pause would.
-    assert_grep "append \`resolved [key=<slug>]: {how it was decided or unblocked}\`" "$brief" \
+    assert_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
       "$id: brief lost rule 6's closure for a decision or blocker it opens"
-    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
-      "$id: brief lost the keyed form of the escalation it teaches the worker to open"
-    # The key must be SHOWN inside the template, not described beside a template
-    # that already carries the colon: a worker following that prose literally
-    # appends the token after the colon, where it used to be silently dropped.
-    assert_no_grep "(keyed with \`[key=<slug>]\` if you opened it with one)" "$brief" \
-      "$id: brief went back to describing the key in prose beside an unkeyed template"
-    assert_no_grep "(same \`[key=<slug>]\` if you opened it with one)" "$brief" \
-      "$id: brief went back to describing the key in prose beside an unkeyed template"
-    # A blocker is folded by the same keyed grammar as a decision, so an unkeyed
-    # `blocked:` opener paired with a keyed `resolved [key=...]:` closer can
-    # never be closed at all: the closer names a key the opener never opened.
-    assert_grep "append \`blocked [key=<slug>]: {why}\`" "$brief" \
-      "$id: brief teaches an unkeyed blocker its keyed closure can never close"
-    assert_grep "append \`blocked [key=<slug>]: {the daemon error}\`" "$brief" \
-      "$id: brief teaches an unkeyed daemon-error blocker its keyed closure can never close"
-    # A worker copies the template verbatim, so a concrete example slug would hand
-    # every escalation the SAME key and let one supersede another. The placeholder
-    # is a fill-in, and an unfilled one now stays visible under "default".
-    assert_no_grep "[key=api-shape]" "$brief" \
-      "$id: brief hands every decision one shared example slug to collide on"
+    assert_grep "[key=<slug>]" "$brief" \
+      "$id: brief lost the correlation key that ties a closure to what it opened"
     assert_grep "7. Never stop, restart, or update the shared" "$brief" \
       "$id: brief lost the shared-daemon rule"
     assert_grep "# Definition of done" "$brief" \
@@ -323,11 +300,8 @@ test_ship_safety_contracts_survive_a_wording_pass() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "**Verify isolation before anything else.**" "$brief" \
       "$id: ship brief lost the worktree-isolation assertion"
-    # The blocker this opens is closed by rule 6's keyed `resolved [key=...]:`,
-    # so an unkeyed opener here can never be closed at all and wedges the
-    # away-mode return gate until a human clears it.
-    assert_grep "STOP - do not branch or commit here - append \`blocked [key=worktree-isolation]: launched in primary checkout, not an isolated worktree\`" "$brief" \
-      "$id: ship brief lost the keyed stop instruction that follows a failed isolation check"
+    assert_grep "STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\`" "$brief" \
+      "$id: ship brief lost the stop instruction that follows a failed isolation check"
   done <<< "$variants"
 
   brief="$home/data/brief-ship-safety-r1/brief.md"
@@ -593,8 +567,6 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter did not reject a separate receipt/start acknowledgement"
   assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
     "secondmate charter did not forbid a generic working acknowledgement"
-  assert_grep "append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\`" "$brief" \
-    "secondmate charter lost the keyed blocker its keyed closure has to close"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
@@ -605,8 +577,6 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost same-key closure for a reportable material phase"
   assert_grep 'resolved [key=<work-slug>]' "$brief" \
     "secondmate charter lost resolved closure for a keyed material phase"
-  assert_no_grep "[key=charter-scope]" "$brief" \
-    "secondmate charter hands every blocker one shared example slug to collide on"
 
   assert_grep 'include that exact token in your parent status reply' "$brief" \
     "secondmate charter lost correlated parent results"

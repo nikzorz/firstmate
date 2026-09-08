@@ -395,18 +395,6 @@ status_is_terminal_verb() {
 # (working, resolved, captain-held) and paused never match from free-text prose;
 # only lines without those leading verbs may still match free-text tokens for
 # legacy bare lines such as "merged" or "PR ready".
-# A line is tested against its DE-KEYED spelling as well as the line as written,
-# because a home wrote its FM_CAPTAIN_RE against "blocked:" prose and meant the
-# event, not the token: keying an event must not drop it out of a home's own
-# override. Whether a line HAS such a spelling is asked of the parse rather than
-# re-derived from the text, because every glob that tried to answer it locally got
-# a different shape wrong. Both of the parse's answers are required: the line must
-# carry a key token the parser could actually read, since a token nobody can read
-# is prose and de-keying prose invents a rearrangement the writer never wrote, and
-# the parser must have found a real verb/note boundary colon, since a colon that
-# only appears inside the token is not one and synthesising around it would hand
-# free-form prose a boundary it never had. Any other line is tested exactly once,
-# as written, which is what it was tested as before keys existed.
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
@@ -422,12 +410,7 @@ status_is_captain_relevant() {
       done|needs-decision|blocked|failed) return 0 ;;
     esac
   fi
-  set -- "$line"
-  _fm_parse_status_line "$line"
-  if [ "$FM_LINE_HAS_KEY" -eq 1 ] && [ "$FM_LINE_KEY_USABLE" -eq 1 ] && [ "$FM_LINE_HAS_NOTE" -eq 1 ]; then
-    set -- "$@" "$verb: $FM_LINE_NOTE"
-  fi
-  printf '%s\n' "$@" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+  printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure
@@ -572,11 +555,8 @@ _fm_key_slug_valid() {  # <slug>
 # token must open the note and prose quoting one deeper in is never a key.
 _fm_parse_status_line() {  # <status-line>
   local line=$1 n rest slug
-  FM_LINE_HAS_KEY=0
-  FM_LINE_HAS_NOTE=0
   case "${line%%:*}" in
     *\[key=*)
-      FM_LINE_HAS_KEY=1
       rest=${line#*\[key=}
       slug=${rest%%\]*}
       if _fm_key_slug_valid "$slug"; then
@@ -593,7 +573,7 @@ _fm_parse_status_line() {  # <status-line>
       rest=${rest#"$slug"}
       rest=${rest#\]}
       case "$rest" in
-        *:*) n=${rest#*:}; FM_LINE_HAS_NOTE=1 ;;
+        *:*) n=${rest#*:} ;;
         *) n=$rest ;;
       esac
       n=${n#"${n%%[![:space:]]*}"}
@@ -603,7 +583,7 @@ _fm_parse_status_line() {  # <status-line>
       ;;
   esac
   case "$line" in
-    *:*) n=${line#*:}; FM_LINE_HAS_NOTE=1 ;;
+    *:*) n=${line#*:} ;;
     *)
       FM_LINE_KEY=default
       FM_LINE_KEY_USABLE=1
@@ -614,7 +594,6 @@ _fm_parse_status_line() {  # <status-line>
   n=${n#"${n%%[![:space:]]*}"}
   case "$n" in
     \[key=*)
-      FM_LINE_HAS_KEY=1
       slug=${n#*\[key=}
       slug=${slug%%\]*}
       if _fm_key_slug_valid "$slug"; then

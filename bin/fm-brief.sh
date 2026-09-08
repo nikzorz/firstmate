@@ -192,7 +192,7 @@ Handle routine work yourself.
 Report only true captain-relevant outcomes or a declared external wait by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked\` when you are stuck and need firstmate to act.
+Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
 A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
@@ -200,7 +200,7 @@ Never append \`working:\` merely to acknowledge receipt or announce that a marke
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
-When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying the same slug you opened it with, so it is durably closed instead of resurfacing behind later unrelated events.
+When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved: {how it was decided or unblocked}\` (keyed with \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing behind later unrelated events.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done
@@ -208,7 +208,7 @@ You are persistent by default. Do not exit just because your queue is empty.
 On startup and restart, run normal firstmate bootstrap and recovery through \`bin/fm-session-start.sh\` for your own home, but only to RECONCILE work that is already yours: in-flight crewmates, tracked backlog items, and durable watches recorded in this home.
 When you have no assigned or in-flight work after that reconciliation, go idle and wait silently for the main firstmate to route you a task.
 An empty queue is a healthy resting state, not a cue to invent work: never spawn a survey, audit, or any self-directed "find work" task on your own initiative.
-If this charter cannot be carried out, append \`blocked [key=<slug>]: {why}\` or \`failed: {why}\` to the main status file and stop.
+If this charter cannot be carried out, append \`blocked: {why}\` or \`failed: {why}\` to the main status file and stop.
 EOF
 if [ "$SECONDMATE_CHARTER" = "{TASK}" ]; then
   echo "scaffolded: $BRIEF (secondmate charter; replace {TASK})"
@@ -282,18 +282,18 @@ The report is the only thing that survives, so anything worth keeping must be in
    Each append wakes firstmate: report only supervisor-actionable phase changes and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
-   Use \`$PAUSED_VERB: {why}\`, not \`blocked\`, ONLY when deliberately idling on a known external
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
    wait you expect to clear on its own (an upstream release, a rate-limit reset);
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
-   wedge. Use \`blocked\` when you are stuck and need help.
+   wedge. Use \`blocked:\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate replies with the decision.
-   When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   append \`needs-decision: {summary of options}\` and stop; firstmate replies with the decision.
+   When the decision returns or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (same \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
-   append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -411,7 +411,7 @@ You are in a disposable git worktree of $REPO, at a detached HEAD on a clean def
 
 **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from.
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
-If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [key=worktree-isolation]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
+If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
 
@@ -428,18 +428,18 @@ $RULE1
    firstmate reads your pane for that.
    A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the turn after
    it; continue the same stage until a defined \`done:\` gate under Definition of done.
-   Use \`$PAUSED_VERB: {why}\`, not \`blocked\`, ONLY when deliberately idling on a known external
+   Use \`$PAUSED_VERB: {why}\`, not \`blocked:\`, ONLY when deliberately idling on a known external
    wait you expect to clear on its own ($PAUSE_EXAMPLE);
    firstmate then rechecks your idle pane on a long cadence instead of treating it as a possible
-   wedge. Use \`blocked\` when you are stuck and need help.
+   wedge. Use \`blocked:\` when you are stuck and need help.
 $PAUSE_LIFECYCLE
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision [key=<slug>]: {summary of options}\` and stop; firstmate applies the configured authority and replies.
-   When the decision returns or a blocker clears and you resume, append \`resolved [key=<slug>]: {how it was decided or unblocked}\` carrying that same slug, so it is durably closed instead of resurfacing.
+   append \`needs-decision: {summary of options}\` and stop; firstmate applies the configured authority and replies.
+   When the decision returns or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (same \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - one instance serves every
    lane/home, so restarting it kills other lanes' in-flight runs. On ANY no-mistakes daemon error,
-   append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
+   append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 $PROJECT_MEMORY_SECTION
 
