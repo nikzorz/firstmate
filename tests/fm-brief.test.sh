@@ -106,7 +106,7 @@ test_no_mistakes_dod_wording() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
+  assert_grep "the guidance no-mistakes itself provides" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
@@ -131,7 +131,7 @@ test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
     "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "Whenever you hand control back to the pipeline for a long stretch - a fix round, a re-review, a long test step - first append \`awaiting: {what you are waiting on}\`" "$brief" \
+  assert_grep "Before handing a long stretch back to the pipeline, append \`awaiting: {what you are waiting on}\`" "$brief" \
     "no-mistakes DOD lost the declared pause at the pipeline handoff"
   assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
     "no-mistakes DOD lost the reason the pause declaration matters"
@@ -210,7 +210,7 @@ test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
     # A scout has no branch, no push, and no PR, so it inherits the lifecycle
     # without the handoff sentence, which would name an impossible wait.
     if [ "$kind" = scout ]; then
-      assert_no_grep "hand control back to the pipeline" "$brief" \
+      assert_no_grep "handing a long stretch back to the pipeline" "$brief" \
         "$id: scout brief named a pipeline handoff it can never make"
       assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
         "$id: scout brief named a pipeline wait it can never have"
