@@ -29,6 +29,9 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
+# Every non-secondmate task additionally passes the captain-gated link check, so
+# a landed task cannot leave a linked captain item still claiming the captain
+# owes an answer its own gate already settled.
 # Before destructive cleanup, teardown validates task check artifacts and any
 # matching quarantine entries as ordinary single-link files on the state
 # device. It refuses and preserves task state when that proof fails; otherwise
@@ -1513,6 +1516,15 @@ fi
 # endpoint dies, and so the sweep further down is all-or-nothing.
 if [ "$KIND" = secondmate ]; then
   validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
+fi
+
+if [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then
+  if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" gate-verify "$ID" >/dev/null; then
+    echo "REFUSED: task $ID still has a captain-gated backlog item linked to an unreconciled decision." >&2
+    echo "Run bin/fm-decision-hold.sh gate-status $ID, then reconcile each link with gate-resolve before teardown." >&2
+    exit 1
+  fi
 fi
 
 if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then

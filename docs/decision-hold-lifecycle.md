@@ -28,6 +28,25 @@ It records the decision digest and routed task identities as a retry identity in
 An exact retry can finish a partial routing operation, while a changed decision or routed-task set is rejected.
 A failed intermediate step leaves the hold open.
 
+## Captain-gated backlog links
+
+A separate defect shares this script: a captain-gated backlog item filed mid-flight can ask the same question a live worker's own gate later raises under a different decision key.
+Answering only the gate left the item queued and kind `captain`, so the backlog either nagged for a settled question or recorded the captain as the owner of a decision firstmate made.
+The normative trigger and procedure are owned by `.agents/skills/ask-user-authority/SKILL.md`.
+
+The `gate-link` subcommand records the pairing in `data/gate-links/<origin-id>/<decision-key>` as `key=value` lines, one file per gate identity, and that index is the single authority for the pairing.
+Nothing infers the pairing from title or body prose.
+It refuses an item that is not kind `captain`, an item that is already closed, an origin the active home does not own, and an attempt to repoint an existing gate identity at a different item.
+
+The `gate-resolve` subcommand is the reconciliation the answering path owes and is safe to run for every gate answered: an unlinked gate reports that and exits zero.
+For a linked gate, `--answered-by` replaces the item's body with the recorded answer, the gate identity, and the actual decider, archives the superseded body through `tasks-axi update --archive-body`, releases the hold, and closes the item.
+`--not-raised` retires the link and leaves the item open and captain-owned, which is the honest reading when the worker's gate never asked the question.
+Retries are idempotent against the recorded decider and answer digest and reject a changed answer, a changed decider, or a late reversal between the two outcomes.
+
+The read-only `gate-status` and `gate-verify` subcommands parse only that index and never call tasks-axi.
+Teardown calls `gate-verify` for every non-secondmate task before any destructive cleanup, so a landed task cannot quietly leave a linked captain item still claiming the captain owes an answer.
+The `--force` path remains the explicit captain-approved discard escape hatch.
+
 ## Structured read surfaces
 
 `bin/fm-fleet-snapshot.sh` parses canonical tasks-axi `(hold: ...)` and `(hold-kind: captain)` metadata alongside existing backlog fields.
@@ -43,11 +62,16 @@ The projection remains read-only and does not inspect historical prose.
 Verification date: 2026-07-14.
 Additional quoted `blocked_by` regression verification date: 2026-07-17.
 Plural blocker-readiness and mixed-home projection verification date: 2026-07-22.
+Captain-gated backlog link verification date: 2026-09-08.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.
 The initial Bearings snapshot correctly has no open decision, and the new teardown gate refuses to erase the source.
 A later regression covers tasks-axi's quoted multi-entry `blocked_by` output so `resolve` matches the first, middle, and last ids and rejects a genuinely absent id.
+
+The captain-gated link regression reproduces the stale reading before proving the fix.
+It files a synthetic captain-kind held item, answers the equivalent gate on a live worker with no link recorded, and asserts the item is still queued, still held, still kind `captain`, and still claims the captain owes an answer.
+It then records the link, answers the same gate, and asserts the item closes with the gate identity and the actual decider in its body, the superseded body archived, and no surviving pending claim.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -62,6 +86,11 @@ ok - resolved findings and decision-like prose do not create false holds
 ok - terminal single-owner stale status decisions do not block empty inventory
 ok - main-home and secondmate-home captain holds remain correctly routed
 ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuinely absent id
+ok - an unlinked captain-gated item survives its own gate's answer still claiming the captain owes it
+ok - a recorded gate link reconciles the captain-gated item in the same step as the answer
+ok - a gate that never raised the question leaves the captain-gated item open and captain-owned
+ok - teardown refuses until every recorded captain-gated link is reconciled
+ok - gate links validate identity, ownership, and item kind before recording a pairing
 
 $ bash tests/fm-fleet-snapshot-view.test.sh
 ok - backlog normalization preserves strict roles and resolves every blocker compatibly

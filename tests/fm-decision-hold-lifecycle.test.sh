@@ -550,6 +550,206 @@ test_resolve_matches_quoted_blocked_by_edges() {
   pass "resolve matches first/middle/last in quoted blocked_by and rejects a genuinely absent id"
 }
 
+
+# The stale reading this suite must reproduce before it can prove the fix: a
+# captain-kind item filed mid-flight for the same question a live worker's gate
+# raises. Answering the gate under standing autonomy leaves the item untouched,
+# so the backlog keeps asserting the captain owes an answer firstmate already
+# gave. Privacy-safe synthetic names stand in for the observed incident.
+stale_captain_item_fixture() {  # <home>
+  local home=$1
+  tasks_in "$home" add sample-hosted-boot "Fix the hosted boot loop" \
+    --kind ship --repo sample --start >/dev/null \
+    || fail "could not create the live worker fixture"
+  write_origin_meta "$home" sample-hosted-boot ship
+  printf 'working: implementing the hosted boot fix\n' > "$home/state/sample-hosted-boot.status"
+  tasks_in "$home" add sample-scenario-choice "Choose the unresolvable hosted scenario behaviour" \
+    --kind captain --repo sample \
+    --body "Captain decision pending as of 2026-07-14. Boot loops when no scenario validates." >/dev/null \
+    || fail "could not create the captain-gated item fixture"
+  tasks_in "$home" hold sample-scenario-choice --reason "captain scenario choice pending" --kind captain >/dev/null \
+    || fail "could not activate the captain-gated fixture"
+  printf 'Fall back to the seat default scenario and log the rejection.\n' > "$home/gate-answer.txt"
+}
+
+assert_still_claims_captain_owes() {  # <home> <label>
+  local home=$1 label=$2 show
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "state: queued" "$label: item is not queued"
+  assert_contains "$show" "held: yes" "$label: item is not held"
+  assert_contains "$show" "kind: captain" "$label: item is not kind captain"
+  assert_contains "$show" "Captain decision pending" "$label: item no longer claims the captain owes an answer"
+}
+
+test_unlinked_captain_item_goes_stale_when_the_gate_answers_it() {
+  local home out
+  home=$(make_home stale-captain-item)
+  stale_captain_item_fixture "$home"
+
+  assert_still_claims_captain_owes "$home" "before"
+
+  out=$(run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "reconciling an unlinked gate must succeed so the call can be unconditional"
+  assert_contains "$out" "has no linked captain-gated item" \
+    "an unlinked gate must say so rather than guess a pairing"
+
+  assert_still_claims_captain_owes "$home" "after an unlinked gate answer"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "an origin with no recorded link must verify clean"
+  pass "an unlinked captain-gated item survives its own gate's answer still claiming the captain owes it"
+}
+
+test_linked_captain_item_is_reconciled_when_the_gate_answers_it() {
+  local home show out
+  home=$(make_home linked-captain-item)
+  stale_captain_item_fixture "$home"
+
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "recording the same gate link twice must be idempotent"
+  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation \
+    > "$home/relink.out" 2> "$home/relink.err"; then
+    :
+  fi
+  assert_still_claims_captain_owes "$home" "after linking"
+  if run_decisions "$home" gate-verify sample-hosted-boot > "$home/gv.out" 2> "$home/gv.err"; then
+    fail "an unreconciled captain-gated link must not verify clean"
+  fi
+  assert_grep "unreconciled captain-gated links" "$home/gv.err" "verification must name the defect"
+
+  out=$(run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt") \
+    || fail "could not reconcile the linked captain-gated item"
+  assert_contains "$out" "answered by firstmate -> sample-scenario-choice closed" \
+    "reconciliation must name the decider and the closed item"
+
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "state: done" "answered captain-gated item did not close"
+  assert_contains "$show" "held: no" "answered captain-gated item is still held"
+  assert_contains "$show" "Answered through gate sample-hosted-boot/scenario-validation" \
+    "closed item lost the recorded gate identity"
+  assert_contains "$show" "Decided by: firstmate" \
+    "closed item does not record who actually decided"
+  case "$show" in
+    *"Captain decision pending"*) fail "closed item still asserts the captain owes an answer" ;;
+  esac
+  assert_grep "Captain decision pending" "$home/data/note-archive.md" \
+    "the superseded captain-gated body was not archived"
+
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "a reconciled link must verify clean"
+  run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" >/dev/null \
+    || fail "an identical reconciliation retry must be idempotent"
+  printf 'Refuse to boot and surface the rejection instead.\n' > "$home/changed-answer.txt"
+  if run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/changed-answer.txt" \
+    > "$home/drift.out" 2> "$home/drift.err"; then
+    fail "reconciliation retry accepted a different answer"
+  fi
+  if run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by captain --answer-file "$home/gate-answer.txt" \
+    > "$home/decider.out" 2> "$home/decider.err"; then
+    fail "reconciliation retry accepted a different decider"
+  fi
+  if run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation --not-raised \
+    > "$home/retire.out" 2> "$home/retire.err"; then
+    fail "an answered gate was retired as never raised"
+  fi
+  pass "a recorded gate link reconciles the captain-gated item in the same step as the answer"
+}
+
+test_gate_that_never_raised_the_question_leaves_the_item_captain_owned() {
+  local home out
+  home=$(make_home unraised-gate)
+  stale_captain_item_fixture "$home"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  out=$(run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation --not-raised) \
+    || fail "could not retire a gate that never raised the question"
+  assert_contains "$out" "not raised" "retiring a link must say the gate never raised the question"
+  assert_still_claims_captain_owes "$home" "after retiring an unraised gate"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "a retired link must verify clean"
+  if run_decisions "$home" gate-resolve sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/gate-answer.txt" \
+    > "$home/late.out" 2> "$home/late.err"; then
+    fail "a retired link accepted a later gate answer"
+  fi
+  pass "a gate that never raised the question leaves the captain-gated item open and captain-owned"
+}
+
+test_teardown_refuses_an_unreconciled_captain_gated_link() {
+  local home id
+  home=$(make_home gate-link-teardown)
+  id=sample-linked-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the sample scenario" --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample scenario review\n\nNo captain choice remains in this report.\n' > "$home/data/$id/report.md"
+  run_decisions "$home" complete "$id" --none >/dev/null \
+    || fail "could not pass the unresolved-decision completion gate"
+  tasks_in "$home" add sample-linked-choice "Choose the sample scenario behaviour" \
+    --kind captain --repo sample --body "Captain decision pending as of 2026-07-14." >/dev/null
+  tasks_in "$home" hold sample-linked-choice --reason "captain scenario choice pending" --kind captain >/dev/null
+  run_decisions "$home" gate-link sample-linked-choice "$id" scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+
+  if run_teardown "$home" "$id" > "$home/gate-teardown.out" 2> "$home/gate-teardown.err"; then
+    fail "teardown erased a task whose captain-gated link was never reconciled"
+  fi
+  assert_grep "REFUSED" "$home/gate-teardown.err" "gate-link teardown refusal must be explicit"
+  assert_grep "captain-gated" "$home/gate-teardown.err" "refusal must name the captain-gated link"
+  assert_present "$home/state/$id.meta" "refused teardown removed task metadata"
+
+  run_decisions "$home" gate-resolve "$id" scenario-validation --not-raised >/dev/null \
+    || fail "could not reconcile the link before teardown"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/gate-teardown2.err" \
+    || fail "teardown failed after link reconciliation: $(cat "$home/gate-teardown2.err")"
+  pass "teardown refuses until every recorded captain-gated link is reconciled"
+}
+
+test_gate_link_validates_identities_before_touching_state() {
+  local home escaped
+  home=$(make_home gate-link-validation)
+  escaped="$home/escaped-gate"
+  printf 'sentinel=unchanged\n' > "$escaped"
+  if run_decisions "$home" gate-status ../escaped-gate > "$home/gs.out" 2> "$home/gs.err"; then
+    fail "gate status accepted an origin path traversal"
+  fi
+  if run_decisions "$home" gate-verify ../escaped-gate > "$home/gvv.out" 2> "$home/gvv.err"; then
+    fail "gate verification accepted an origin path traversal"
+  fi
+  if run_decisions "$home" gate-resolve ../escaped-gate key --not-raised \
+    > "$home/gr.out" 2> "$home/gr.err"; then
+    fail "gate reconciliation accepted an origin path traversal"
+  fi
+  [ "$(cat "$escaped")" = "sentinel=unchanged" ] \
+    || fail "an invalid origin changed state outside the data directory"
+
+  stale_captain_item_fixture "$home"
+  tasks_in "$home" add sample-plain-item "A plain ship item" --kind ship --repo sample >/dev/null
+  if run_decisions "$home" gate-link sample-plain-item sample-hosted-boot scenario-validation \
+    > "$home/kind.out" 2> "$home/kind.err"; then
+    fail "gate link accepted a backlog item that is not kind captain"
+  fi
+  if run_decisions "$home" gate-link sample-scenario-choice sample-missing-origin scenario-validation \
+    > "$home/origin.out" 2> "$home/origin.err"; then
+    fail "gate link accepted an origin this home does not own"
+  fi
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null
+  tasks_in "$home" add sample-other-choice "Another captain question" --kind captain --repo sample >/dev/null
+  if run_decisions "$home" gate-link sample-other-choice sample-hosted-boot scenario-validation \
+    > "$home/dup.out" 2> "$home/dup.err"; then
+    fail "gate link silently repointed an existing gate identity at another item"
+  fi
+  pass "gate links validate identity, ownership, and item kind before recording a pairing"
+}
+
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -560,3 +760,8 @@ test_none_inventory_and_resolved_prose_do_not_create_holds
 test_terminal_single_owner_status_decision_does_not_block_empty_inventory
 test_secondmate_hold_stays_in_authoritative_home
 test_resolve_matches_quoted_blocked_by_edges
+test_unlinked_captain_item_goes_stale_when_the_gate_answers_it
+test_linked_captain_item_is_reconciled_when_the_gate_answers_it
+test_gate_that_never_raised_the_question_leaves_the_item_captain_owned
+test_teardown_refuses_an_unreconciled_captain_gated_link
+test_gate_link_validates_identities_before_touching_state

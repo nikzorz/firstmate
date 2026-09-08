@@ -24,6 +24,11 @@
 #   fm-decision-hold.sh verify <origin-id>
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
+#   fm-decision-hold.sh gate-link <item-id> <origin-id> <decision-key>
+#   fm-decision-hold.sh gate-resolve <origin-id> <decision-key> \
+#     (--answered-by <captain|firstmate> --answer-file <path> | --not-raised)
+#   fm-decision-hold.sh gate-status <origin-id>
+#   fm-decision-hold.sh gate-verify <origin-id>
 #
 # `complete` is the shared investigation and visual-review completion gate.
 # `--none` is an explicit semantic attestation that the just-reviewed surface has
@@ -37,6 +42,28 @@
 # It writes the captain decision and routed identities into the hold body, clears
 # those dependency edges, and only then marks the hold Done. A failure before the
 # final step leaves the captain hold open.
+#
+# The gate-* commands cover the separate case of a captain-gated backlog item
+# filed mid-flight, whose question a live worker's own gate will also raise. They
+# never guess that pairing: `gate-link` records it, and every other gate-*
+# command reads only that record. The link lives in
+# data/gate-links/<origin-id>/<decision-key> as key=value lines, one file per
+# gate identity, and that index is the single authority for the pairing. The
+# backlog item carries the outcome, not the pairing, so the two never drift.
+#
+# `gate-resolve` is the reconciliation the answering path owes. It is safe to run
+# for every gate answered: an unlinked gate reports that and succeeds, so the
+# call can be unconditional. For a linked gate, --answered-by replaces the item's
+# body with the recorded answer and who decided it, archiving the superseded
+# body, then closes the item; --not-raised retires the link and leaves the item
+# open and captain-owned, which is the honest reading when the worker's gate
+# never asked the question. Retries are idempotent against the recorded decider
+# and answer digest and refuse a changed answer.
+#
+# `gate-verify` reads only the index, never tasks-axi, and fails while any link
+# for the origin is still unreconciled. Teardown calls it so a landed task cannot
+# quietly leave its linked captain item asserting the captain still owes an
+# answer.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -221,6 +248,197 @@ verify_resolution_identity() {
     || fail "captain hold $id records a different captain decision"
   [ "$recorded_routes" = "$routed_csv" ] \
     || fail "captain hold $id records different routed work"
+}
+
+gate_link_file() {  # <origin-id> <decision-key>
+  validate_slug origin-id "$1"
+  validate_slug decision-key "$2"
+  printf '%s/gate-links/%s/%s\n' "$DATA" "$1" "$2"
+}
+
+gate_field() {  # <link-file> <field>
+  grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+write_gate_link() {  # <link-file> <item> <origin> <key> <state> [decided-by] [digest]
+  local file=$1 tmp
+  tmp="$file.tmp.$$"
+  mkdir -p "$(dirname "$file")"
+  {
+    printf 'item=%s\n' "$2"
+    printf 'origin=%s\n' "$3"
+    printf 'key=%s\n' "$4"
+    printf 'state=%s\n' "$5"
+    [ -z "${6:-}" ] || printf 'decided_by=%s\n' "$6"
+    [ -z "${7:-}" ] || printf 'answer_digest=%s\n' "$7"
+  } > "$tmp"
+  mv "$tmp" "$file"
+}
+
+gate_answer_body() {  # <origin> <key> <decided-by> <digest> <answer>
+  printf 'Answered through gate %s/%s.\nDecided by: %s\nAnswer digest: %s\n\n%s\n' \
+    "$1" "$2" "$3" "$4" "$5"
+}
+
+origin_gate_links() {  # <origin-id>
+  local origin=$1 dir file
+  validate_slug origin-id "$origin"
+  dir="$DATA/gate-links/$origin"
+  [ -d "$dir" ] || return 0
+  for file in "$dir"/*; do
+    [ -f "$file" ] || continue
+    printf '%s\n' "$file"
+  done
+}
+
+command_gate_link() {
+  local item=${1:-} origin=${2:-} key=${3:-} file show state kind existing
+  [ "$#" -eq 3 ] || { usage >&2; exit 2; }
+  validate_slug item-id "$item"
+  validate_slug origin-id "$origin"
+  validate_slug decision-key "$key"
+  file=$(gate_link_file "$origin" "$key")
+  require_tasks_axi
+  origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
+  show=$(task_show "$item") || fail "captain-gated item $item is absent from $FM_HOME/data/backlog.md"
+  state=$(show_field "$show" state)
+  kind=$(show_field "$show" kind)
+  [ "$kind" = captain ] || fail "backlog item $item is not kind captain"
+  [ "$state" != "done" ] || fail "backlog item $item is already closed"
+  if [ -f "$file" ]; then
+    existing=$(gate_field "$file" item)
+    [ "$existing" = "$item" ] \
+      || fail "gate $origin/$key is already linked to a different captain item: $existing"
+    [ "$(gate_field "$file" state)" = open ] \
+      || fail "gate link $origin/$key is already reconciled; use a new decision key for a new question"
+    printf '%s\n' "$file"
+    return 0
+  fi
+  write_gate_link "$file" "$item" "$origin" "$key" open
+  printf '%s\n' "$file"
+}
+
+command_gate_resolve() {
+  local origin=${1:-} key=${2:-} decided_by='' answer_file='' not_raised=0
+  local file item show state held answer digest body
+  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --answered-by) shift; decided_by=${1:-} ;;
+      --answer-file) shift; answer_file=${1:-} ;;
+      --not-raised) not_raised=1 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug origin-id "$origin"
+  validate_slug decision-key "$key"
+  if [ "$not_raised" = 1 ]; then
+    [ -z "$decided_by" ] && [ -z "$answer_file" ] \
+      || fail "--not-raised cannot be combined with --answered-by or --answer-file"
+  else
+    case "$decided_by" in
+      captain|firstmate) : ;;
+      *) fail "--answered-by must be captain or firstmate" ;;
+    esac
+    [ -n "$answer_file" ] || fail "--answer-file is required"
+    [ -f "$answer_file" ] || fail "answer file does not exist: $answer_file"
+    answer=$(cat "$answer_file")
+    [ -n "$answer" ] || fail "answer file must not be empty"
+    [ "$(printf '%s' "$answer" | LC_ALL=C wc -c | tr -d ' ')" -le 8192 ] \
+      || fail "answer file exceeds 8192 bytes"
+    digest=$(sha256_text "$answer")
+  fi
+  file=$(gate_link_file "$origin" "$key")
+  if [ ! -f "$file" ]; then
+    printf 'gate-resolve: %s/%s has no linked captain-gated item\n' "$origin" "$key"
+    return 0
+  fi
+  item=$(gate_field "$file" item)
+  [ -n "$item" ] || fail "gate link $file records no captain-gated item"
+  validate_slug item-id "$item"
+  state=$(gate_field "$file" state)
+  case "$state" in
+    open) : ;;
+    not-raised)
+      [ "$not_raised" = 1 ] \
+        || fail "gate $origin/$key was already reconciled as not raised"
+      printf 'gate-resolve: %s/%s not raised (%s left open)\n' "$origin" "$key" "$item"
+      return 0
+      ;;
+    answered)
+      [ "$not_raised" = 0 ] \
+        || fail "gate $origin/$key was already answered; it cannot be retired as not raised"
+      [ "$(gate_field "$file" decided_by)" = "$decided_by" ] \
+        || fail "gate $origin/$key records a different decider"
+      [ "$(gate_field "$file" answer_digest)" = "$digest" ] \
+        || fail "gate $origin/$key records a different answer"
+      printf 'gate-resolve: %s/%s already answered by %s (%s closed)\n' \
+        "$origin" "$key" "$decided_by" "$item"
+      return 0
+      ;;
+    *) fail "gate link $file has an unrecognised state: $state" ;;
+  esac
+  if [ "$not_raised" = 1 ]; then
+    write_gate_link "$file" "$item" "$origin" "$key" not-raised
+    printf 'gate-resolve: %s/%s not raised (%s left open)\n' "$origin" "$key" "$item"
+    return 0
+  fi
+
+  require_tasks_axi
+  show=$(task_show "$item") || fail "captain-gated item $item is absent from $FM_HOME/data/backlog.md"
+  [ "$(show_field "$show" kind)" = captain ] || fail "backlog item $item is not kind captain"
+  body=$(gate_answer_body "$origin" "$key" "$decided_by" "$digest" "$answer")
+  if [ "$(show_field "$show" state)" = "done" ]; then
+    # A retry after the item closed but before the index was finalized: accept it
+    # only when the closed item carries this exact recorded answer.
+    case "$(show_field "$show" body)" in
+      *"Answered through gate $origin/$key."*"Answer digest: $digest"*) : ;;
+      *) fail "captain-gated item $item is already closed without this recorded answer" ;;
+    esac
+  else
+    held=$(show_field "$show" held)
+    if [ "$held" = yes ]; then
+      tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
+    fi
+    printf '%s' "$body" > "$STATE/.gate-answer.$$"
+    tasks_axi update "$item" --body-file "$STATE/.gate-answer.$$" --archive-body >/dev/null \
+      || { rm -f "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
+    rm -f "$STATE/.gate-answer.$$"
+    tasks_axi "done" "$item" >/dev/null || fail "could not close answered captain item $item"
+  fi
+  write_gate_link "$file" "$item" "$origin" "$key" answered "$decided_by" "$digest"
+  printf 'gate-resolve: %s/%s answered by %s -> %s closed\n' "$origin" "$key" "$decided_by" "$item"
+}
+
+command_gate_status() {
+  local origin=${1:-} file
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_slug origin-id "$origin"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    printf '%s\t%s\t%s\n' \
+      "$(gate_field "$file" key)" "$(gate_field "$file" state)" "$(gate_field "$file" item)"
+  done <<EOF
+$(origin_gate_links "$origin")
+EOF
+}
+
+command_gate_verify() {
+  local origin=${1:-} file open=''
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_slug origin-id "$origin"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ "$(gate_field "$file" state)" = open ] || continue
+    open="${open}${open:+ }$(gate_field "$file" key)"
+  done <<EOF
+$(origin_gate_links "$origin")
+EOF
+  [ -z "$open" ] \
+    || fail "origin $origin has unreconciled captain-gated links: $open"
+  printf 'verified: %s captain-gated links\n' "$origin"
 }
 
 command_id() {
@@ -459,6 +677,10 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   resolve) shift; command_resolve "$@" ;;
+  gate-link) shift; command_gate_link "$@" ;;
+  gate-resolve) shift; command_gate_resolve "$@" ;;
+  gate-status) shift; command_gate_status "$@" ;;
+  gate-verify) shift; command_gate_verify "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
