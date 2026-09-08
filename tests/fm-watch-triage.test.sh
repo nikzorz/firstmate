@@ -123,7 +123,7 @@ test_scan_captain_relevant_statuses_classifier() {
 
 test_classifier_primitives() {
   local dir state open activity unreadable_rc unreadable_open opener
-  local fold stream expected label got want captain_re spelling suppressed prose keyed
+  local fold stream expected label got want captain_re spelling suppressed prose keyed inner
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -190,12 +190,32 @@ test_classifier_primitives() {
     FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$prose" \
       && fail "de-keyed matching made a colonless line match a configured override: $prose"
   done
-  # The other direction: a keyed line that DOES carry a colon still reaches a home's
-  # override through its de-keyed spelling, which is the only thing de-keying is for.
-  for keyed in 'blocked [key=boot]: setup failed' 'done [key=x]: nothing left'; do
+  # The other direction: a keyed line that DOES carry a real verb/note boundary
+  # still reaches a home's override through its de-keyed spelling, which is the
+  # only thing de-keying is for.
+  for keyed in 'blocked [key=boot]: setup failed' 'done [key=x]: nothing left' \
+    'blocked [key=deps]: cannot install'; do
     FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$keyed" \
-      || fail "a keyed line with a colon stopped reaching a configured override: $keyed"
+      || fail "a keyed line with a boundary colon stopped reaching a configured override: $keyed"
   done
+  # A colon that sits only INSIDE the token is not a verb/note boundary, so such a
+  # line has no de-keyed spelling and must be tested exactly as written. Otherwise
+  # the synthesised text carries a boundary its writer never wrote and matches a
+  # spelling the line never had. These four lead with prose, not a status verb.
+  for inner in 'nothing is done [key=see: notes] yet' \
+    'setup failed [key=ticket: 12] but retried ok' 'we are done [key=a:b] here'; do
+    status_is_captain_relevant "$inner" \
+      && fail "a colon inside the key token was treated as a verb/note boundary: $inner"
+    FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant "$inner" \
+      && fail "a colon inside the key token matched a configured override: $inner"
+  done
+  # Same shape, but this one's leading word IS a status verb, so the unset-override
+  # verb shortcut claims it before any spelling is built. Only the override path
+  # can show the injected boundary, so only that direction is asserted here.
+  FM_CAPTAIN_RE="$captain_re" status_is_captain_relevant 'blocked [key=a:b] stuff' \
+    && fail "a colon inside the key token matched a configured override: blocked [key=a:b] stuff"
+  status_is_captain_relevant 'blocked [key=a:b] stuff' \
+    || fail "the verb shortcut stopped claiming a keyed blocked line with no override set"
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "blocked [key=api]: x" \
     && fail "de-keyed matching bypassed a home that narrowed its verb set"
   printf 'needs-decision: should docs mention [key=prose]?\nneeds-decision [key=q1]: real choice\nresolved: docs still mention [key=q1]\nneeds-decision [key=bad key]: malformed\n' > "$state/keys.status"
@@ -339,7 +359,8 @@ status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=oo
 # That is deliberate: bin/fm-fleet-snapshot.sh's parent-activity evidence already
 # disclaims authority over current crew state and scores an unkeyed record
 # 'inconclusive', so this is stale evidence rather than a lost decision. Keying the
-# activities side belongs to the re-filed follow-up ticket, which owns this row.
+# activities side would mean pairing every activity opener with its closer across
+# every brief variant, which is a wider change than this one and is not made here.
 status_open_activities|working: setup complete\nblocked [key=deps]: cannot install deps\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
 status_open_activities|working: setup complete\nneeds-decision [key=api]: pick A\n|default\tworking\tsetup complete|ACCEPTED LIMIT: a keyed decision verb stopped leaving the unkeyed working phase open
 # --- THE TWO LIMITS OF THE PROPERTY, pinned as behaviour --------------------
@@ -358,8 +379,8 @@ status_trailing_open_decisions|blocked [key=ci flake]: CI is flaky\nneeds-decisi
 status_open_activities|working [key=p 7]: phase two\nworking: phase one\n|default\tworking\tphase one|LIMIT 1 (accepted): the activities fold stopped evicting the phase parked in the shared bucket
 # LIMIT 2 - the open set CAN carry two records reading the same key, which the
 # forward order of the row above already produces. Any consumer treating a key as
-# the identity of one decision is on notice: this is why the decision-hold
-# inventory question is filed as a follow-up rather than answered by the key.
+# the identity of one decision is on notice, and bin/fm-decision-hold.sh does; that
+# consumer is not touched here, so the key does not answer its inventory question.
 status_open_decisions|needs-decision: should we drop the v1 API\nblocked [key=ci flake]: CI is flaky\n|default\tneeds-decision\tshould we drop the v1 API\ndefault\tblocked\t[key=ci flake] CI is flaky|LIMIT 2 (accepted): the shared bucket stopped carrying two records under one key
 MATRIX
   # LIMIT 2, stated as the shape rather than as one expected string: the open set
