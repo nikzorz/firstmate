@@ -28,6 +28,38 @@ It records the decision digest and routed task identities as a retry identity in
 An exact retry can finish a partial routing operation, while a changed decision or routed-task set is rejected.
 A failed intermediate step leaves the hold open.
 
+## Captain-gated backlog links
+
+A captain-gated backlog item filed mid-flight can ask the same question a live worker's own gate later raises under a different decision key.
+Answering only the gate left that item claiming the captain still owes an answer, or recorded the captain as the owner of a decision firstmate made.
+The normative trigger and procedure are owned by `.agents/skills/ask-user-authority/SKILL.md`.
+
+The backlog item is the single record of whether a decision is owed.
+The link record in `data/gate-links/<origin-id>/<decision-key>` holds only the origin-keyed pairing, as `item`, `origin` and `key`.
+It exists because teardown asks whether an origin has an unreconciled pairing, and the backlog has no origin key to answer that with.
+Nothing about the decision itself is duplicated there.
+
+Two properties carry the design and are stated in `bin/fm-decision-hold.sh` rather than left to be inferred.
+`gate-verify` never reads the linked item and never calls tasks-axi, so a surviving link is an unreconciled link and every way the item can depart or become unreadable is irrelevant by construction rather than classified.
+The link record is frozen at those three fields, created once and deleted once, never rewritten; a proposal to add a field, including a decider, is this design's declared failure signal.
+
+`gate-link` records the pairing after checking that the item asserts an owed captain decision.
+`gate-answered` performs the item write and only then removes the link, so a surviving link always means the write did not land, and a retry is idempotent against the item's own state rather than against anything recorded on the link.
+`gate-not-raised` removes the link and writes nothing anywhere.
+An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
+
+An item asserts an owed captain decision when `hold_kind` is captain, a `hold_reason` is present, and its state is not done.
+`kind` is deliberately not part of that test, because `tasks-axi update --kind` leaves the hold fields intact and reading `kind` let a still-held item read as no longer captain-owned.
+`bin/fm-fleet-snapshot.sh` reads the same fields for Bearings and deliberately does not share this code.
+
+Accepted documented limit: a captain item that is renamed, or handed to another backlog, is indistinguishable from one that was removed, because the link's only handle on the item is its id.
+Both read as no longer in this backlog, and the item keeps asserting an owed decision wherever it now lives.
+
+The index reader has no silent skip: an entry it cannot fully recognise is an unreconciled link, refused by path.
+`[ -e ]` follows symlinks, so a dangling symlink is routed on by `[ -L ]`, and the regular-file test runs before any field is read so a FIFO cannot block a read and hang cleanup.
+Teardown calls `gate-verify` for every non-secondmate task before destructive cleanup, so cleanup can now refuse where it previously passed, and the refusal names the file.
+`--force` remains the captain-approved discard escape hatch.
+
 ## Structured read surfaces
 
 `bin/fm-fleet-snapshot.sh` parses canonical tasks-axi `(hold: ...)` and `(hold-kind: captain)` metadata alongside existing backlog fields.
@@ -43,6 +75,7 @@ The projection remains read-only and does not inspect historical prose.
 Verification date: 2026-07-14.
 Additional quoted `blocked_by` regression verification date: 2026-07-17.
 Plural blocker-readiness and mixed-home projection verification date: 2026-07-22.
+Captain-gated backlog link verification date: 2026-09-08.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.

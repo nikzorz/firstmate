@@ -24,6 +24,12 @@
 #   fm-decision-hold.sh verify <origin-id>
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
+#   fm-decision-hold.sh gate-link <item-id> <origin-id> <decision-key>
+#   fm-decision-hold.sh gate-answered <origin-id> <decision-key> \
+#     --answered-by <captain|firstmate> --answer-file <path>
+#   fm-decision-hold.sh gate-not-raised <origin-id> <decision-key>
+#   fm-decision-hold.sh gate-status <origin-id>
+#   fm-decision-hold.sh gate-verify <origin-id>
 #
 # `complete` is the shared investigation and visual-review completion gate.
 # `--none` is an explicit semantic attestation that the just-reviewed surface has
@@ -37,6 +43,55 @@
 # It writes the captain decision and routed identities into the hold body, clears
 # those dependency edges, and only then marks the hold Done. A failure before the
 # final step leaves the captain hold open.
+#
+# ---------------------------------------------------------------------------
+# The gate-* commands: one record, not two.
+#
+# A captain-gated backlog item filed mid-flight can ask the same question a live
+# worker's own gate later raises under a different decision key. Answering only
+# the gate used to leave that item claiming the captain still owes an answer.
+#
+# THE BACKLOG ITEM IS THE SINGLE RECORD of whether a decision is owed. The link
+# holds only the one thing the item cannot: the origin-keyed pairing. Teardown
+# asks "does this origin have an unreconciled pairing?", and the item store has
+# no origin key, so that query needs an index of its own. Nothing else about the
+# decision is duplicated here.
+#
+# Two properties carry the design. Both are stated, not incidental:
+#
+#   1. `gate-verify` NEVER reads the linked item and NEVER calls tasks-axi. A
+#      surviving link is an unreconciled link, full stop. Every way the item can
+#      depart or become unreadable is therefore irrelevant by construction rather
+#      than classified, and cleanup does not depend on the backlog backend.
+#   2. THE LINK RECORD IS FROZEN AT `item`, `origin`, `key`. It is created once
+#      and deleted once, never rewritten. A proposal to add a field - a decider, a
+#      timestamp, a deferred marker - is this design's declared failure signal,
+#      because a mutable durable classification here is what an earlier two-record
+#      shape carried, and keeping it in agreement with an item this home does not
+#      control is what it could not do.
+#
+# `gate-answered` performs the item write and only then removes the link, so a
+# surviving link always means the write did not land. Idempotency comes from the
+# item's own state rather than from anything recorded here.
+# `gate-not-raised` removes the link and writes nothing anywhere.
+#
+# An item "asserts an owed captain decision" when `hold_kind` is captain, a
+# `hold_reason` is present, and its state is not done. `kind` is deliberately not
+# part of that test: `tasks-axi update --kind` leaves the hold fields intact, so
+# reading `kind` classifies a still-held item as no longer captain-owned and lets
+# cleanup pass over it. `bin/fm-fleet-snapshot.sh` reads the same fields for
+# Bearings and deliberately does not share this code.
+#
+# Accepted documented limit: a captain item that is RENAMED, or handed to another
+# backlog, is indistinguishable from one that was removed, because the link's only
+# handle on the item is its id. Both read as "no longer in this backlog" and the
+# item keeps asserting an owed decision wherever it now lives. That limit is
+# tested as the behaviour it is, not folded into absence.
+#
+# A read that cannot establish the item's state must never produce the same
+# outcome as establishing that the item is fine. Every refusal below is raised
+# from the command's own shell, never from inside a `$( )`, because `fail` there
+# would exit the subshell and let the caller continue on a permissive default.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -221,6 +276,294 @@ verify_resolution_identity() {
     || fail "captain hold $id records a different captain decision"
   [ "$recorded_routes" = "$routed_csv" ] \
     || fail "captain hold $id records different routed work"
+}
+
+# --- gate-linked captain items -------------------------------------------
+#
+# See the "one record, not two" section of this script's header for the design.
+
+# `.` and `..` would escape the index directory, and a leading dot hides an entry
+# from a plain glob. `fm_task_id_path_safe` in bin/fm-pr-lib.sh sets the same
+# precedent for task ids.
+gate_slug_ok() {  # <value>
+  case "$1" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+validate_gate_slug() {  # <label> <value>
+  gate_slug_ok "$2" || fail "$1 must be a privacy-safe slug that does not start with a dot: $2"
+}
+
+gate_link_file() {  # <origin-id> <decision-key>
+  validate_gate_slug origin-id "$1"
+  validate_gate_slug decision-key "$2"
+  printf '%s/gate-links/%s/%s\n' "$DATA" "$1" "$2"
+}
+
+record_value() {  # <file> <field>
+  grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+# The index reader has no silent skip: an entry it cannot fully recognise is an
+# unreconciled link, not a file to pass over. Every earlier narrowing of a reader
+# in this family was correct on its own and each one added another way to be
+# skipped, because the default was permissive.
+#
+# Ordering is load-bearing. `[ -e ]` follows symlinks, so a dangling symlink would
+# vanish before it could be reported; `[ -L ]` routes it onward while `[ -e ]`
+# still guards an empty glob. The regular-file test then runs BEFORE any field is
+# read, so a FIFO planted here cannot block a read and hang cleanup.
+#
+# Emits one tab-separated verdict per directory entry, dotfiles included:
+#   ok<TAB><file><TAB><key><TAB><item>
+#   unrecognised<TAB><file><TAB><TAB>
+origin_gate_records() {  # <origin-id>
+  local origin=$1 dir file base item dotglob=off
+  validate_gate_slug origin-id "$origin"
+  dir="$DATA/gate-links/$origin"
+  [ -d "$dir" ] || return 0
+  shopt -q dotglob && dotglob=on
+  shopt -s dotglob
+  for file in "$dir"/*; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    base=${file##*/}
+    if [ ! -f "$file" ] || ! gate_slug_ok "$base"; then
+      printf 'unrecognised\t%s\t\t\n' "$file"
+      continue
+    fi
+    item=$(record_value "$file" item)
+    if [ -z "$item" ] || [ "$(record_value "$file" origin)" != "$origin" ] \
+      || [ "$(record_value "$file" key)" != "$base" ]; then
+      printf 'unrecognised\t%s\t\t\n' "$file"
+      continue
+    fi
+    printf 'ok\t%s\t%s\t%s\n' "$file" "$base" "$item"
+  done
+  [ "$dotglob" = on ] || shopt -u dotglob
+}
+
+# Reads the item without ever deciding, on its own, that a failure means absence.
+# The result lands in GATE_ITEM_SHOW and the verdict in the return code, so the
+# caller raises any refusal from its own shell instead of inside a `$( )` where
+# `fail` would only exit the subshell.
+#   0 read           1 genuinely absent           2 could not be established
+GATE_ITEM_SHOW=''
+GATE_ITEM_ERROR=''
+gate_item_read() {  # <item-id>
+  local out rc
+  GATE_ITEM_SHOW=''
+  GATE_ITEM_ERROR=''
+  if ! command -v tasks-axi >/dev/null 2>&1; then
+    GATE_ITEM_ERROR='tasks-axi is not available in this home'
+    return 2
+  fi
+  # `out=$(...)` under `set -e` exits the shell on a non-zero substitution before
+  # the status can be read, which would end the command with no message at all.
+  rc=0
+  out=$( (cd "$FM_HOME" && tasks-axi show "$1" --full) 2>&1 ) || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    GATE_ITEM_SHOW=$out
+    return 0
+  fi
+  case "$out" in
+    *'code: NOT_FOUND'*) return 1 ;;
+  esac
+  GATE_ITEM_ERROR=$(printf '%s' "$out" | sed -n 's/^ *code: //p' | head -1)
+  [ -n "$GATE_ITEM_ERROR" ] || GATE_ITEM_ERROR='unknown error'
+  GATE_ITEM_ERROR="the backlog could not be read (tasks-axi $GATE_ITEM_ERROR)"
+  return 2
+}
+
+# The settled definition of "the captain still owes an answer on this item".
+# `kind` is deliberately absent: `tasks-axi update --kind` leaves these fields
+# intact, and reading `kind` let a still-held item read as no longer captain-owned.
+item_asserts_owed_decision() {  # <show-output>
+  [ "$(show_field "$1" hold_kind)" = captain ] || return 1
+  case "$(show_field "$1" hold_reason)" in
+    ''|'"-"'|-) return 1 ;;
+  esac
+  [ "$(show_field "$1" state)" != "done" ] || return 1
+  return 0
+}
+
+gate_answer_body() {  # <origin> <key> <decided-by> <answer>
+  printf 'Answered through gate %s/%s.\nDecided by: %s\n\n%s\n' "$1" "$2" "$3" "$4"
+}
+
+drop_gate_link() {  # <link-file>
+  rm -f "$1" || fail "could not remove the reconciled gate link $1"
+}
+
+command_gate_link() {
+  local item=${1:-} origin=${2:-} key=${3:-} file rc
+  [ "$#" -eq 3 ] || { usage >&2; exit 2; }
+  validate_slug item-id "$item"
+  validate_gate_slug origin-id "$origin"
+  validate_gate_slug decision-key "$key"
+  file=$(gate_link_file "$origin" "$key")
+  origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
+  rc=0
+  gate_item_read "$item" || rc=$?
+  [ "$rc" -ne 2 ] || fail "captain-gated item $item could not be checked: $GATE_ITEM_ERROR"
+  [ "$rc" -ne 1 ] || fail "captain-gated item $item is not in $FM_HOME/data/backlog.md"
+  item_asserts_owed_decision "$GATE_ITEM_SHOW" \
+    || fail "backlog item $item does not assert an owed captain decision"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    [ "$(record_value "$file" item)" = "$item" ] \
+      || fail "gate $origin/$key is already linked to a different captain item"
+    printf '%s\n' "$file"
+    return 0
+  fi
+  mkdir -p "$(dirname "$file")"
+  printf 'item=%s\norigin=%s\nkey=%s\n' "$item" "$origin" "$key" > "$file.staging.$$" \
+    || fail "could not stage the gate link for $origin/$key"
+  mv "$file.staging.$$" "$file" || fail "could not record the gate link for $origin/$key"
+  printf '%s\n' "$file"
+}
+
+linked_item_for() {  # <origin> <key> <link-file>
+  local item
+  [ -f "$3" ] || fail "gate $1/$2 has no recorded link at $3"
+  item=$(record_value "$3" item)
+  [ -n "$item" ] || fail "gate link $3 records no captain-gated item"
+  [ "$(record_value "$3" origin)" = "$1" ] && [ "$(record_value "$3" key)" = "$2" ] \
+    || fail "gate link $3 does not name the pairing it sits at"
+  printf '%s\n' "$item"
+}
+
+command_gate_answered() {
+  local origin=${1:-} key=${2:-} decided_by='' answer_file='' file item answer rc body note
+  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --answered-by) shift; decided_by=${1:-} ;;
+      --answer-file) shift; answer_file=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_gate_slug origin-id "$origin"
+  validate_gate_slug decision-key "$key"
+  case "$decided_by" in
+    captain|firstmate) : ;;
+    *) fail "--answered-by must be captain or firstmate" ;;
+  esac
+  [ -n "$answer_file" ] || fail "--answer-file is required"
+  [ -f "$answer_file" ] || fail "answer file does not exist: $answer_file"
+  answer=$(cat "$answer_file")
+  [ -n "$answer" ] || fail "answer file must not be empty"
+  [ "$(printf '%s' "$answer" | LC_ALL=C wc -c | tr -d ' ')" -le 8192 ] \
+    || fail "answer file exceeds 8192 bytes"
+  file=$(gate_link_file "$origin" "$key")
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    printf 'gate-answered: %s/%s has no linked captain-gated item\n' "$origin" "$key"
+    return 0
+  fi
+  item=$(linked_item_for "$origin" "$key" "$file")
+
+  rc=0
+  gate_item_read "$item" || rc=$?
+  # A read that could not establish the item keeps the link, so cleanup keeps
+  # refusing and a retry after repair still lands the write.
+  [ "$rc" -ne 2 ] || fail "captain-gated item $item was not written: $GATE_ITEM_ERROR"
+  if [ "$rc" -eq 1 ]; then
+    drop_gate_link "$file"
+    printf 'gate-answered: %s/%s answered by %s; %s is no longer in this backlog, nothing to reconcile\n' \
+      "$origin" "$key" "$decided_by" "$item"
+    return 0
+  fi
+
+  if [ "$(show_field "$GATE_ITEM_SHOW" state)" = "done" ]; then
+    case "$(show_field "$GATE_ITEM_SHOW" body)" in
+      *"Answered through gate $origin/$key."*)
+        drop_gate_link "$file"
+        printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
+        return 0
+        ;;
+    esac
+    note=$(printf 'Also answered through gate %s/%s. Decided by: %s.' "$origin" "$key" "$decided_by")
+    tasks_axi "done" "$item" --note "$note" >/dev/null \
+      || fail "could not note this gate's answer on already closed $item"
+    drop_gate_link "$file"
+    printf 'gate-answered: %s/%s answered by %s; %s was already closed, this gate noted on it\n' \
+      "$origin" "$key" "$decided_by" "$item"
+    return 0
+  fi
+
+  if [ "$(show_field "$GATE_ITEM_SHOW" held)" = yes ]; then
+    tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
+  fi
+  body=$(gate_answer_body "$origin" "$key" "$decided_by" "$answer")
+  printf '%s' "$body" > "$STATE/.gate-answer.$$"
+  tasks_axi update "$item" --body-file "$STATE/.gate-answer.$$" --archive-body >/dev/null \
+    || { rm -f "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
+  rm -f "$STATE/.gate-answer.$$"
+  tasks_axi "done" "$item" >/dev/null || fail "could not close answered captain item $item"
+  # The link is removed only after the item write landed, so a surviving link
+  # always means the write did not.
+  drop_gate_link "$file"
+  printf 'gate-answered: %s/%s answered by %s -> %s closed\n' "$origin" "$key" "$decided_by" "$item"
+}
+
+command_gate_not_raised() {
+  local origin=${1:-} key=${2:-} file item
+  [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+  validate_gate_slug origin-id "$origin"
+  validate_gate_slug decision-key "$key"
+  file=$(gate_link_file "$origin" "$key")
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    printf 'gate-not-raised: %s/%s has no linked captain-gated item\n' "$origin" "$key"
+    return 0
+  fi
+  item=$(linked_item_for "$origin" "$key" "$file")
+  # Nothing is written anywhere: this gate never asked the question, so the item
+  # keeps whatever it already says and stays captain-owned.
+  drop_gate_link "$file"
+  printf 'gate-not-raised: %s/%s never raised the question; %s left as it stands\n' \
+    "$origin" "$key" "$item"
+}
+
+command_gate_status() {
+  local origin=${1:-} verdict file key item
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_gate_slug origin-id "$origin"
+  while IFS=$'\t' read -r verdict file key item; do
+    [ -n "$verdict" ] || continue
+    if [ "$verdict" = ok ]; then
+      printf '%s\tlinked\t%s\n' "$key" "$item"
+    else
+      printf '%s\tunrecognised\t%s\n' "${file##*/}" "$file"
+    fi
+  done <<EOF
+$(origin_gate_records "$origin")
+EOF
+}
+
+# Reads only the index. It never looks at the linked item and never calls
+# tasks-axi, which is what makes cleanup independent of the backlog backend and
+# makes every way an item can depart irrelevant here rather than classified.
+command_gate_verify() {
+  local origin=${1:-} verdict file key item linked='' unrecognised='' problems=''
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_gate_slug origin-id "$origin"
+  while IFS=$'\t' read -r verdict file key item; do
+    [ -n "$verdict" ] || continue
+    if [ "$verdict" = ok ]; then
+      linked="${linked}${linked:+ }$key ($file)"
+    else
+      unrecognised="${unrecognised}${unrecognised:+ }$file"
+    fi
+  done <<EOF
+$(origin_gate_records "$origin")
+EOF
+  [ -z "$linked" ] || problems="captain-gated links never reconciled: $linked"
+  [ -z "$unrecognised" ] \
+    || problems="${problems}${problems:+; }unrecognised captain-gated link records: $unrecognised"
+  [ -z "$problems" ] || fail "origin $origin has $problems"
+  printf 'verified: %s captain-gated links\n' "$origin"
 }
 
 command_id() {
@@ -459,6 +802,11 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   resolve) shift; command_resolve "$@" ;;
+  gate-link) shift; command_gate_link "$@" ;;
+  gate-answered) shift; command_gate_answered "$@" ;;
+  gate-not-raised) shift; command_gate_not_raised "$@" ;;
+  gate-status) shift; command_gate_status "$@" ;;
+  gate-verify) shift; command_gate_verify "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

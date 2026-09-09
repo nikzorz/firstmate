@@ -3,6 +3,7 @@ name: ask-user-authority
 description: >-
   Agent-only decision procedure for ask-user findings.
   Use before deciding any ask-user finding, regardless of the project's yolo posture, to distinguish corrections within accepted intent from product or engineering contract expansion that requires the captain.
+  Also use before recording or reconciling a captain-gated backlog item against a live worker's gate.
 user-invocable: false
 metadata:
   internal: true
@@ -30,6 +31,23 @@ The concise standing authority boundary remains always loaded in `AGENTS.md` sec
 
 The implementation worker never decides or answers its own ask-user finding.
 It stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
+
+## Linked captain-gated backlog items
+
+A captain-gated backlog item filed mid-flight can ask the same question a live worker's gate later raises under a different decision key.
+Answering only the gate leaves that item claiming the captain still owes an answer, or records the captain as the owner of a decision firstmate made.
+The pairing is never inferred from prose; it is recorded once and read back.
+
+1. When you file a captain-gated item for a question a live worker's gate will also raise, record the pairing with `bin/fm-decision-hold.sh gate-link <item-id> <origin-id> <decision-key>`, using the decision key the gate itself will carry.
+2. Before answering any ask-user finding, read `bin/fm-decision-hold.sh gate-status <origin-id>` so a recorded pairing is visible while you still hold the decision.
+3. In the same step as answering the gate, run `bin/fm-decision-hold.sh gate-answered <origin-id> <decision-key> --answered-by <captain|firstmate> --answer-file <path>`.
+   Run it for every gate you answer: an unlinked gate reports that and succeeds.
+   `--answered-by` records who actually decided in the item itself, so a decision firstmate made under standing authority is never filed as the captain's.
+4. When the origin's work ends and a recorded pairing's gate never raised the question, use `bin/fm-decision-hold.sh gate-not-raised <origin-id> <decision-key>`, which writes nothing anywhere and leaves the item captain-owned.
+   Teardown refuses while any recorded pairing survives.
+
+`bin/fm-decision-hold.sh --help` owns the command syntax and the design's two stated properties.
+This is a separate trigger from `decision-hold-lifecycle`, which owns unresolved decisions discovered by an investigation or visual review.
 
 ## Captain-facing escalation
 

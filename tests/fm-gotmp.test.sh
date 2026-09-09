@@ -65,6 +65,12 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # fm-decision-hold.sh + fm-classify-lib.sh: teardown runs its read-only
+  # captain-gated link check before any destructive cleanup. Never symlink
+  # fm-tasks-axi-lib.sh here: the stub below is written with `cat >`, which
+  # would follow the symlink and overwrite the real file in this repo.
+  ln -s "$ROOT/bin/fm-decision-hold.sh" "$fake/bin/fm-decision-hold.sh"
+  ln -s "$ROOT/bin/fm-classify-lib.sh" "$fake/bin/fm-classify-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -165,6 +171,10 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # See make_fake_root: the same two siblings, and the same reason not to
+  # symlink fm-tasks-axi-lib.sh over the stub written below.
+  ln -s "$ROOT/bin/fm-decision-hold.sh" "$fake/bin/fm-decision-hold.sh"
+  ln -s "$ROOT/bin/fm-classify-lib.sh" "$fake/bin/fm-classify-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
