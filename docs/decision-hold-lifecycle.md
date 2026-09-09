@@ -45,6 +45,8 @@ The link record is frozen at those three fields, created once and deleted once, 
 
 `gate-link` records the pairing after checking that the item asserts an owed captain decision.
 `gate-answered` performs the item write and only then removes the link, so a surviving link always means the write did not land, and a retry is idempotent against the item's own state rather than against anything recorded on the link.
+It writes that answer only while the item still asserts an owed captain decision, which is the same claim `gate-link` required.
+An item that stopped asserting one was settled by someone else, so this gate is noted on it and it is closed, rather than having a body written over it that would displace the real decider and name this caller instead.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
 tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
@@ -59,9 +61,10 @@ Both read as no longer in this backlog, and the item keeps asserting an owed dec
 
 The index reader has no silent skip: an entry it cannot fully recognise is an unreconciled link, refused by path.
 `[ -e ]` follows symlinks, so a dangling symlink is routed on by `[ -L ]`, and the regular-file test runs before any field is read so a FIFO cannot block a read and hang cleanup.
-An origin's index directory that exists but cannot be listed is refused by path as well, because an unexpanded glob is otherwise indistinguishable from an empty directory.
+The rule covers the directories the reader traverses as much as the records inside them, because a failure to look is not an answer at any level.
+An index that cannot be established, whether the origin's own directory cannot be listed, something that is not a directory sits at its path, a parent above it cannot be searched, or a record cannot be read, is refused by the path it was reached through.
 Teardown calls `gate-verify` for every non-secondmate task before destructive cleanup, so cleanup can now refuse where it previously passed, and the refusal names the file.
-`--force` remains the captain-approved discard escape hatch.
+`--force` remains the captain-approved discard escape hatch, and it removes that origin's own index directory alongside the other per-task records it discards, so a later task reusing the id does not inherit a link belonging to the previous one.
 
 ## Structured read surfaces
 

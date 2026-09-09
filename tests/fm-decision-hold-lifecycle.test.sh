@@ -37,11 +37,12 @@ run_bearings() {  # <home>
     "$BEARINGS" --json
 }
 
-run_teardown() {  # <home> <id>
+run_teardown() {  # <home> <id> [teardown args...]
   local home=$1 id=$2
+  shift 2
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_CONFIG_OVERRIDE="$home/config" "$TEARDOWN" "$id"
+    FM_CONFIG_OVERRIDE="$home/config" "$TEARDOWN" "$id" "$@"
 }
 
 # Reproduces the loss exactly with privacy-safe synthetic names: the investigation
@@ -673,7 +674,7 @@ test_gate_that_never_raised_the_question_writes_nothing() {
 # design is that these are not classified anywhere: the command either lands the
 # write and drops the link, or refuses and keeps it.
 test_gate_answer_handles_every_departure_shape() {
-  local home shape link out
+  local home shape link out show
   for shape in closed-by-captain removed re-kinded unheld-but-open second-gate; do
     home=$(make_home "departure-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
@@ -685,7 +686,13 @@ test_gate_answer_handles_every_departure_shape() {
         ;;
       removed) tasks_in "$home" rm sample-scenario-choice >/dev/null 2>&1 ;;
       re-kinded) tasks_in "$home" update sample-scenario-choice --kind ship >/dev/null ;;
-      unheld-but-open) tasks_in "$home" unhold sample-scenario-choice >/dev/null ;;
+      # The captain answered in the item itself and left it open to route follow-up
+      # work, so this gate is no longer the record of who decided.
+      unheld-but-open)
+        printf 'The captain chose the seat default for this scenario.\n' > "$home/captain-answer.txt"
+        tasks_in "$home" update sample-scenario-choice --body-file "$home/captain-answer.txt" >/dev/null
+        tasks_in "$home" unhold sample-scenario-choice >/dev/null
+        ;;
       second-gate)
         run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot other-key >/dev/null
         run_decisions "$home" gate-answered sample-hosted-boot other-key \
@@ -700,9 +707,22 @@ test_gate_answer_handles_every_departure_shape() {
       || fail "$shape: the origin did not verify clean"
     case "$shape" in
       removed) assert_contains "$out" "no longer in this backlog" "$shape: outcome did not say what was observed" ;;
-      closed-by-captain|second-gate) assert_contains "$out" "already closed" "$shape: outcome did not say what was observed" ;;
+      closed-by-captain|second-gate|unheld-but-open)
+        assert_contains "$out" "no longer asserts an owed captain decision" \
+          "$shape: outcome did not say what was observed"
+        ;;
       *) assert_contains "$out" "closed" "$shape: outcome did not say what was observed" ;;
     esac
+    if [ "$shape" = unheld-but-open ]; then
+      show=$(tasks_in "$home" show sample-scenario-choice --full)
+      assert_contains "$show" "The captain chose the seat default" \
+        "$shape: the answer already in the item was written over"
+      assert_not_contains "$show" "Fall back to the seat default scenario." \
+        "$shape: this gate's own answer displaced the record of who decided"
+      assert_contains "$show" "Also answered through gate sample-hosted-boot/scenario-validation." \
+        "$shape: the item does not record that this gate also settled the question"
+      assert_contains "$show" "state: done" "$shape: the noted item was not closed"
+    fi
   done
   pass "every departure shape either lands the write or reports what it saw, and the link goes"
 }
@@ -812,29 +832,35 @@ SH
 }
 
 # Idempotency comes from the item's own state, so the note this command writes
-# must be recognised by the guard that decides whether to write it again.
-test_the_already_closed_note_is_written_once() {
-  local home link out show notes
-  home=$(make_home already-closed-note)
-  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
-  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
-  tasks_in "$home" unhold sample-scenario-choice >/dev/null
-  tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
-  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt") \
-    || fail "noting this gate on an already closed item failed"
-  assert_contains "$out" "already closed" "the first pass did not report what it saw"
-  # A link removal that did not land, so the retry re-enters the same branch.
-  printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
-  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt") \
-    || fail "the retry against an already noted item failed"
-  assert_contains "$out" "already recorded" "the retry did not recognise the note it had written"
-  [ ! -e "$link" ] || fail "the retry did not clear the link"
-  show=$(tasks_in "$home" show sample-scenario-choice --full)
-  notes=$(printf '%s\n' "$show" | grep -oF "through gate sample-hosted-boot/scenario-validation." | wc -l | tr -d ' ')
-  [ "$notes" = 1 ] || fail "this gate was noted $notes times on the already closed item"
-  pass "the already closed note is idempotent against the item's own state"
+# must be recognised by the guard that decides whether to write it again. Both
+# shapes that stop asserting an owed decision take that path, so both are pinned.
+test_the_note_on_a_settled_item_is_written_once() {
+  local home shape link out show notes
+  for shape in closed-by-captain unheld-but-open; do
+    home=$(make_home "settled-note-$shape")
+    gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+    link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+    tasks_in "$home" unhold sample-scenario-choice >/dev/null
+    if [ "$shape" = closed-by-captain ]; then
+      tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
+    fi
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$shape: noting this gate on a settled item failed"
+    assert_contains "$out" "no longer asserts an owed captain decision" \
+      "$shape: the first pass did not report what it saw"
+    # A link removal that did not land, so the retry re-enters the same branch.
+    printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$shape: the retry against an already noted item failed"
+    assert_contains "$out" "already recorded" "$shape: the retry did not recognise the note it had written"
+    [ ! -e "$link" ] || fail "$shape: the retry did not clear the link"
+    show=$(tasks_in "$home" show sample-scenario-choice --full)
+    notes=$(printf '%s\n' "$show" | grep -oF "through gate sample-hosted-boot/scenario-validation." | wc -l | tr -d ' ')
+    [ "$notes" = 1 ] || fail "$shape: this gate was noted $notes times on the settled item"
+  done
+  pass "the note on an item that stopped asserting an owed decision is written exactly once"
 }
 
 test_a_missing_flag_value_refuses_with_its_own_message() {
@@ -907,18 +933,60 @@ test_renamed_and_handed_off_items_are_a_documented_limit() {
   pass "a renamed or handed-off captain item is an accepted limit and still asserts its decision"
 }
 
+# The same ordering the index reader keeps: gate-link proves the record is a
+# regular readable file before reading a field out of it, so a FIFO planted at the
+# pairing's own path refuses instead of blocking the command forever.
+test_gate_link_never_reads_a_record_it_has_not_proved_regular() {
+  local home dir out rc timeout_bin
+  timeout_bin=$(command -v timeout || true)
+  [ -n "$timeout_bin" ] || { pass "skipped: timeout not found"; return 0; }
+  home=$(make_home gate-link-record-shapes)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  dir="$home/data/gate-links/sample-hosted-boot"
+  mkdir -p "$dir"
+  mkfifo "$dir/scenario-validation"
+  rc=0
+  out=$("$timeout_bin" 10 env PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" \
+    gate-link sample-scenario-choice sample-hosted-boot scenario-validation 2>&1) || rc=$?
+  [ "$rc" -ne 124 ] || fail "gate-link hung reading a FIFO at the link record path"
+  [ "$rc" -ne 0 ] || fail "gate-link accepted a link record it could not recognise"
+  assert_contains "$out" "$dir/scenario-validation" "the refusal did not name the offending record"
+  rm -f "$dir/scenario-validation"
+  printf 'item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=scenario-validation\n' \
+    > "$dir/scenario-validation"
+  chmod 000 "$dir/scenario-validation"
+  if [ -r "$dir/scenario-validation" ]; then
+    chmod 644 "$dir/scenario-validation"
+  else
+    rc=0
+    out=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || fail "gate-link accepted a link record it could not read"
+    assert_contains "$out" "$dir/scenario-validation" "the refusal did not name the unreadable record"
+    chmod 644 "$dir/scenario-validation"
+  fi
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "gate-link did not accept a well-formed record once the path was repaired"
+  pass "gate-link refuses a link record it cannot prove regular and readable"
+}
+
 # Ported unchanged: the index reader has no silent skip, and the ordering keeps a
 # dangling symlink reportable and a FIFO from hanging cleanup.
 test_gate_index_refuses_every_unrecognised_record_shape() {
-  local home dir shape out rc timeout_bin
+  local home dir parent shape out rc timeout_bin bounded
   timeout_bin=$(command -v timeout || true)
   home=$(make_home gate-index-shapes)
   gate_fixture "$home" sample-hosted-boot sample-scenario-choice
-  dir="$home/data/gate-links/sample-hosted-boot"
+  parent="$home/data/gate-links"
+  dir="$parent/sample-hosted-boot"
   for shape in well-formed leading-dot origin-missing key-missing key-mismatch \
-    item-missing empty dangling-symlink directory fifo unlistable-index-dir; do
+    item-missing empty dangling-symlink directory fifo unlistable-index-dir \
+    unreadable-record index-dir-is-a-file index-dir-is-a-fifo unsearchable-parent; do
+    chmod 755 "$parent" 2>/dev/null || true
     rm -rf "$dir"
     mkdir -p "$dir"
+    bounded=no
     case "$shape" in
       well-formed) printf 'item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=sv\n' > "$dir/sv" ;;
       leading-dot) printf 'item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=.sv\n' > "$dir/.sv" ;;
@@ -932,6 +1000,7 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
       fifo)
         [ -n "$timeout_bin" ] || continue
         mkfifo "$dir/sv"
+        bounded=yes
         ;;
       # Left empty on purpose: a listable empty directory verifies clean, so only
       # the unlistable one can make this shape refuse.
@@ -942,26 +1011,56 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
           continue
         fi
         ;;
+      unreadable-record)
+        printf 'item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=sv\n' > "$dir/sv"
+        chmod 000 "$dir/sv"
+        if [ -r "$dir/sv" ]; then
+          chmod 644 "$dir/sv"
+          continue
+        fi
+        ;;
+      # The origin's index is reached through this path, so anything that is not a
+      # listable directory there is as unrecognised as a record inside one.
+      index-dir-is-a-file)
+        rmdir "$dir"
+        : > "$dir"
+        ;;
+      index-dir-is-a-fifo)
+        [ -n "$timeout_bin" ] || continue
+        rmdir "$dir"
+        mkfifo "$dir"
+        bounded=yes
+        ;;
+      unsearchable-parent)
+        printf 'item=sample-scenario-choice\norigin=sample-hosted-boot\nkey=sv\n' > "$dir/sv"
+        chmod 000 "$parent"
+        if [ -x "$parent" ]; then
+          chmod 755 "$parent"
+          continue
+        fi
+        ;;
     esac
     rc=0
-    if [ "$shape" = fifo ]; then
+    if [ "$bounded" = yes ]; then
       # A reader that hangs takes teardown with it and nothing reports a hang, so
       # this must fail the suite rather than wedge it.
       out=$("$timeout_bin" 10 env PATH="$home/fakebin:$PATH" FM_HOME="$home" \
         FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
         FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" \
         gate-verify sample-hosted-boot 2>&1) || rc=$?
-      [ "$rc" -ne 124 ] || fail "the index reader hung on a FIFO entry"
+      [ "$rc" -ne 124 ] || fail "$shape: the index reader hung on a FIFO"
     else
       out=$(run_decisions "$home" gate-verify sample-hosted-boot 2>&1) || rc=$?
     fi
     [ "$shape" != unlistable-index-dir ] || chmod 755 "$dir"
+    [ "$shape" != unsearchable-parent ] || chmod 755 "$parent"
     [ "$rc" -ne 0 ] || fail "$shape: an entry the reader cannot recognise passed verification"
     case "$out" in
       *"$dir"*) : ;;
       *) fail "$shape: the refusal did not name the offending file: $out" ;;
     esac
   done
+  chmod 755 "$parent" 2>/dev/null || true
   rm -rf "$dir"
   pass "every index record the reader cannot recognise blocks verification and is named"
 }
@@ -1067,6 +1166,37 @@ test_teardown_refuses_an_unreconciled_captain_gated_link() {
   pass "teardown refuses until every recorded captain-gated link is reconciled"
 }
 
+# The forced path is the explicit-discard escape hatch and skips the gate check, so
+# it must take the origin's index with the rest of that task's records: a task
+# reusing the id would otherwise inherit a link filed for a decision it never made.
+test_forced_teardown_discards_the_origins_own_link_index() {
+  local home id other
+  home=$(make_home gate-link-forced-teardown)
+  id=sample-forced-review
+  other=sample-other-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the sample scenario" --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  tasks_in "$home" add sample-forced-choice "captain decision pending" --kind captain --repo sample \
+    --body "Captain decision pending as of 2026-07-14." >/dev/null
+  tasks_in "$home" hold sample-forced-choice --reason "captain decision pending" --kind captain >/dev/null
+  run_decisions "$home" gate-link sample-forced-choice "$id" scenario-validation >/dev/null \
+    || fail "could not record the gate link"
+  mkdir -p "$home/data/gate-links/$other"
+  printf 'item=sample-forced-choice\norigin=%s\nkey=scenario-validation\n' "$other" \
+    > "$home/data/gate-links/$other/scenario-validation"
+
+  run_teardown "$home" "$id" --force >/dev/null 2> "$home/forced.err" \
+    || fail "forced teardown failed: $(cat "$home/forced.err")"
+  assert_absent "$home/data/gate-links/$id" \
+    "forced teardown left this origin's link index behind for the next task that reuses the id"
+  assert_present "$home/data/gate-links/$other/scenario-validation" \
+    "forced teardown reached past this origin into another origin's links"
+  assert_still_claims_captain_owes "$home" sample-forced-choice "after a forced discard"
+  pass "a forced teardown discards only the torn-down origin's captain-gated link index"
+}
+
 
 test_uninventoried_report_decision_refuses_completion
 
@@ -1085,11 +1215,13 @@ test_gate_that_never_raised_the_question_writes_nothing
 test_gate_answer_handles_every_departure_shape
 test_an_unestablished_read_refuses_and_keeps_the_link
 test_a_failed_answer_write_never_leaves_the_item_unheld_and_open
-test_the_already_closed_note_is_written_once
+test_the_note_on_a_settled_item_is_written_once
 test_a_missing_flag_value_refuses_with_its_own_message
 test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit
+test_gate_link_never_reads_a_record_it_has_not_proved_regular
 test_gate_index_refuses_every_unrecognised_record_shape
 test_gate_verify_never_calls_the_backlog_backend
 test_gate_link_validates_identity_ownership_and_the_owed_claim
 test_teardown_refuses_an_unreconciled_captain_gated_link
+test_forced_teardown_discards_the_origins_own_link_index

@@ -306,10 +306,27 @@ record_value() {  # <file> <field>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
-# The index reader has no silent skip: an entry it cannot fully recognise is an
-# unreconciled link, not a file to pass over. Every earlier narrowing of a reader
-# in this family was correct on its own and each one added another way to be
-# skipped, because the default was permissive.
+# Answers whether this origin's index directory can be listed, without ever
+# letting a failure to look stand in for an answer. Absence is only trusted once
+# every level above it could actually be searched for it, which is where a
+# permissive default kept reappearing one level at a time.
+#   0 listable        1 established absent        2 could not be established
+gate_index_dir_state() {  # <index-dir>
+  local dir=$1 parent="$DATA/gate-links"
+  [ -d "$DATA" ] && [ -x "$DATA" ] || return 2
+  if [ -e "$parent" ] || [ -L "$parent" ]; then
+    [ -d "$parent" ] && [ -x "$parent" ] || return 2
+  fi
+  [ -e "$dir" ] || [ -L "$dir" ] || return 1
+  [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] || return 2
+  return 0
+}
+
+# The index reader has no silent skip: anything it cannot fully recognise is an
+# unreconciled link, not a file to pass over, and that holds for the directories
+# it has to traverse as much as for the records inside them. Every earlier
+# narrowing of a reader in this family was correct on its own and each one added
+# another way to be skipped, because the default was permissive.
 #
 # Ordering is load-bearing. `[ -e ]` follows symlinks, so a dangling symlink would
 # vanish before it could be reported; `[ -L ]` routes it onward while `[ -e ]`
@@ -320,11 +337,12 @@ record_value() {  # <file> <field>
 #   ok<TAB><file><TAB><key><TAB><item>
 #   unrecognised<TAB><file><TAB><TAB>
 origin_gate_records() {  # <origin-id>
-  local origin=$1 dir file base item dotglob=off
+  local origin=$1 dir file base item dotglob=off rc=0
   validate_gate_slug origin-id "$origin"
   dir="$DATA/gate-links/$origin"
-  [ -d "$dir" ] || return 0
-  if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+  gate_index_dir_state "$dir" || rc=$?
+  [ "$rc" -ne 1 ] || return 0
+  if [ "$rc" -ne 0 ]; then
     printf 'unrecognised\t%s\t\t\n' "$dir"
     return 0
   fi
@@ -333,7 +351,7 @@ origin_gate_records() {  # <origin-id>
   for file in "$dir"/*; do
     [ -e "$file" ] || [ -L "$file" ] || continue
     base=${file##*/}
-    if [ ! -f "$file" ] || ! gate_slug_ok "$base"; then
+    if [ ! -f "$file" ] || [ ! -r "$file" ] || ! gate_slug_ok "$base"; then
       printf 'unrecognised\t%s\t\t\n' "$file"
       continue
     fi
@@ -470,6 +488,10 @@ command_gate_link() {
   item_asserts_owed_decision "$GATE_ITEM_SHOW" \
     || fail "backlog item $item does not assert an owed captain decision"
   if [ -e "$file" ] || [ -L "$file" ]; then
+    # The regular-file and readable tests run before any field is read, so a FIFO
+    # planted at this path cannot block the read and hang the command.
+    [ -f "$file" ] || fail "gate $origin/$key has an unrecognised link record at $file"
+    [ -r "$file" ] || fail "gate $origin/$key has an unreadable link record at $file"
     [ "$(record_value "$file" item)" = "$item" ] \
       || fail "gate $origin/$key is already linked to a different captain item"
     printf '%s\n' "$file"
@@ -485,6 +507,7 @@ command_gate_link() {
 linked_item_for() {  # <origin> <key> <link-file>
   local item
   [ -f "$3" ] || fail "gate $1/$2 has no recorded link at $3"
+  [ -r "$3" ] || fail "gate link $3 could not be read"
   item=$(record_value "$3" item)
   [ -n "$item" ] || fail "gate link $3 records no captain-gated item"
   [ "$(record_value "$3" origin)" = "$1" ] && [ "$(record_value "$3" key)" = "$2" ] \
@@ -538,7 +561,10 @@ command_gate_answered() {
     return 0
   fi
 
-  if [ "$(show_field "$GATE_ITEM_SHOW" state)" = "done" ]; then
+  # An item that no longer asserts an owed decision was settled by someone else,
+  # so this gate is noted on it rather than written over it: overwriting would
+  # displace whoever actually decided and label the record with this caller.
+  if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
     case "$(show_field "$GATE_ITEM_SHOW" body)" in
       *"through gate $origin/$key."*)
         drop_gate_link "$file"
@@ -548,9 +574,9 @@ command_gate_answered() {
     esac
     note=$(printf 'Also answered through gate %s/%s. Decided by: %s.' "$origin" "$key" "$decided_by")
     tasks_axi "done" "$item" --note "$note" >/dev/null \
-      || fail "could not note this gate's answer on already closed $item"
+      || fail "could not note this gate's answer on $item"
     drop_gate_link "$file"
-    printf 'gate-answered: %s/%s answered by %s; %s was already closed, this gate noted on it\n' \
+    printf 'gate-answered: %s/%s answered by %s; %s no longer asserts an owed captain decision, this gate noted on it\n' \
       "$origin" "$key" "$decided_by" "$item"
     return 0
   fi
@@ -592,9 +618,13 @@ command_gate_not_raised() {
 }
 
 command_gate_status() {
-  local origin=${1:-} verdict file key item
+  local origin=${1:-} verdict file key item records
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
+  # The reader's own exit status is read here rather than inside the here-doc
+  # substitution, where a failure would have read as an empty index.
+  records=$(origin_gate_records "$origin") \
+    || fail "the captain-gated link index for origin $origin could not be read"
   while IFS=$'\t' read -r verdict file key item; do
     [ -n "$verdict" ] || continue
     if [ "$verdict" = ok ]; then
@@ -603,7 +633,7 @@ command_gate_status() {
       printf '%s\tunrecognised\t%s\n' "${file##*/}" "$file"
     fi
   done <<EOF
-$(origin_gate_records "$origin")
+$records
 EOF
 }
 
@@ -611,9 +641,11 @@ EOF
 # tasks-axi, which is what makes cleanup independent of the backlog backend and
 # makes every way an item can depart irrelevant here rather than classified.
 command_gate_verify() {
-  local origin=${1:-} verdict file key item linked='' unrecognised='' problems=''
+  local origin=${1:-} verdict file key item linked='' unrecognised='' problems='' records
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
+  records=$(origin_gate_records "$origin") \
+    || fail "the captain-gated link index for origin $origin could not be read"
   while IFS=$'\t' read -r verdict file key item; do
     [ -n "$verdict" ] || continue
     if [ "$verdict" = ok ]; then
@@ -622,7 +654,7 @@ command_gate_verify() {
       unrecognised="${unrecognised}${unrecognised:+ }$file"
     fi
   done <<EOF
-$(origin_gate_records "$origin")
+$records
 EOF
   [ -z "$linked" ] || problems="captain-gated links never reconciled: $linked"
   [ -z "$unrecognised" ] \

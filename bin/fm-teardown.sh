@@ -1690,6 +1690,10 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the record sweep below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
+# The forced path is the explicit-discard escape hatch that skipped the gate check
+# above, so this origin's own link index goes with every other per-task record it
+# discards; the shared parent is left for the origins that still own entries in it.
+[ "$FORCE" != "--force" ] || rm -rf "$DATA/gate-links/$ID"
 remove_task_state_records "$STATE" "$ID" ${HERDR_PRESENTATION_RETAINED[@]+"${HERDR_PRESENTATION_RETAINED[@]}"} || exit 1
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
