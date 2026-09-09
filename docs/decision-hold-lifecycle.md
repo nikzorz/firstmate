@@ -47,6 +47,8 @@ The link record is frozen at those three fields, created once and deleted once, 
 `gate-answered` performs the item write and only then removes the link, so a surviving link always means the write did not land, and a retry is idempotent against the item's own state rather than against anything recorded on the link.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
+tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
+That store is the `[markdown] path` key of the home's `.tasks.toml`, resolved against the home and falling back to `data/backlog.md`, and a store that is missing or unreadable refuses by naming the path it looked for.
 
 An item asserts an owed captain decision when `hold_kind` is captain, a `hold_reason` is present, and its state is not done.
 `kind` is deliberately not part of that test, because `tasks-axi update --kind` leaves the hold fields intact and reading `kind` let a still-held item read as no longer captain-owned.
@@ -57,6 +59,7 @@ Both read as no longer in this backlog, and the item keeps asserting an owed dec
 
 The index reader has no silent skip: an entry it cannot fully recognise is an unreconciled link, refused by path.
 `[ -e ]` follows symlinks, so a dangling symlink is routed on by `[ -L ]`, and the regular-file test runs before any field is read so a FIFO cannot block a read and hang cleanup.
+An origin's index directory that exists but cannot be listed is refused by path as well, because an unexpanded glob is otherwise indistinguishable from an empty directory.
 Teardown calls `gate-verify` for every non-secondmate task before destructive cleanup, so cleanup can now refuse where it previously passed, and the refusal names the file.
 `--force` remains the captain-approved discard escape hatch.
 

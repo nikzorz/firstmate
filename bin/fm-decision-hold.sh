@@ -324,6 +324,10 @@ origin_gate_records() {  # <origin-id>
   validate_gate_slug origin-id "$origin"
   dir="$DATA/gate-links/$origin"
   [ -d "$dir" ] || return 0
+  if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+    printf 'unrecognised\t%s\t\t\n' "$dir"
+    return 0
+  fi
   shopt -q dotglob && dotglob=on
   shopt -s dotglob
   for file in "$dir"/*; do
@@ -351,8 +355,52 @@ origin_gate_records() {  # <origin-id>
 #   0 read           1 genuinely absent           2 could not be established
 GATE_ITEM_SHOW=''
 GATE_ITEM_ERROR=''
+
+# tasks-axi answers NOT_FOUND both for an id absent from a readable store and for
+# a store it could not open at all, so absence is only trusted once the store the
+# active home is configured to read is itself a readable regular file.
+gate_backlog_store() {
+  local config="$FM_HOME/.tasks.toml" path=''
+  if [ -e "$config" ]; then
+    [ -f "$config" ] && [ -r "$config" ] || return 1
+    # A `path` key the parser cannot read a value out of is a store this command
+    # has not established, so it refuses rather than falling back to the default.
+    path=$(awk '
+      /^[[:space:]]*\[/ {
+        section = $0
+        sub(/^[[:space:]]*\[[[:space:]]*/, "", section)
+        sub(/[[:space:]]*\].*$/, "", section)
+        next
+      }
+      section == "markdown" && /^[[:space:]]*path[[:space:]]*=/ {
+        saw_path = 1
+        value = $0
+        sub(/^[^=]*=[[:space:]]*/, "", value)
+        quote = substr(value, 1, 1)
+        if (quote == "\"" || quote == "\047") {
+          rest = substr(value, 2)
+          close_at = index(rest, quote)
+          if (close_at == 0) next
+          value = substr(rest, 1, close_at - 1)
+        } else {
+          sub(/#.*$/, "", value)
+          sub(/[[:space:]]+$/, "", value)
+        }
+        if (value != "") { printed = 1; print value; exit }
+      }
+      END { if (saw_path && !printed) exit 1 }
+    ' "$config") || return 1
+  fi
+  [ -n "$path" ] || path="$DATA/backlog.md"
+  case "$path" in
+    /*) : ;;
+    *) path="$FM_HOME/$path" ;;
+  esac
+  printf '%s\n' "$path"
+}
+
 gate_item_read() {  # <item-id>
-  local out rc
+  local out rc store
   GATE_ITEM_SHOW=''
   GATE_ITEM_ERROR=''
   if ! command -v tasks-axi >/dev/null 2>&1; then
@@ -368,7 +416,18 @@ gate_item_read() {  # <item-id>
     return 0
   fi
   case "$out" in
-    *'code: NOT_FOUND'*) return 1 ;;
+    *'code: NOT_FOUND'*)
+      store=''
+      store=$(gate_backlog_store) || store=''
+      if [ -z "$store" ]; then
+        GATE_ITEM_ERROR="the backlog store configured in $FM_HOME/.tasks.toml could not be established, so a not-found reading cannot be trusted"
+      elif [ -f "$store" ] && [ -r "$store" ]; then
+        return 1
+      else
+        GATE_ITEM_ERROR="the configured backlog store $store is not a readable file, so a not-found reading cannot be trusted"
+      fi
+      return 2
+      ;;
   esac
   GATE_ITEM_ERROR=$(printf '%s' "$out" | sed -n 's/^ *code: //p' | head -1)
   [ -n "$GATE_ITEM_ERROR" ] || GATE_ITEM_ERROR='unknown error'
@@ -443,6 +502,9 @@ command_gate_answered() {
       --answer-file) shift; answer_file=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
+    # A flag given last has already consumed the value shift, and shifting past
+    # the end would end the command under `set -e` before its refusal printed.
+    [ "$#" -gt 0 ] || break
     shift
   done
   validate_gate_slug origin-id "$origin"
@@ -478,7 +540,7 @@ command_gate_answered() {
 
   if [ "$(show_field "$GATE_ITEM_SHOW" state)" = "done" ]; then
     case "$(show_field "$GATE_ITEM_SHOW" body)" in
-      *"Answered through gate $origin/$key."*)
+      *"through gate $origin/$key."*)
         drop_gate_link "$file"
         printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
         return 0
@@ -493,14 +555,17 @@ command_gate_answered() {
     return 0
   fi
 
-  if [ "$(show_field "$GATE_ITEM_SHOW" held)" = yes ]; then
-    tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
-  fi
+  # The answer body lands before the hold is released, so a failure part way
+  # through never leaves the item unheld and open, which by the owed predicate
+  # would stop it claiming a decision is owed while none was recorded.
   body=$(gate_answer_body "$origin" "$key" "$decided_by" "$answer")
   printf '%s' "$body" > "$STATE/.gate-answer.$$"
   tasks_axi update "$item" --body-file "$STATE/.gate-answer.$$" --archive-body >/dev/null \
     || { rm -f "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
   rm -f "$STATE/.gate-answer.$$"
+  if [ "$(show_field "$GATE_ITEM_SHOW" held)" = yes ]; then
+    tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
+  fi
   tasks_axi "done" "$item" >/dev/null || fail "could not close answered captain item $item"
   # The link is removed only after the item write landed, so a surviving link
   # always means the write did not.

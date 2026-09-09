@@ -710,8 +710,8 @@ test_gate_answer_handles_every_departure_shape() {
 # An unestablished read must never produce the same outcome as establishing that
 # the item is fine, so it keeps the link and cleanup keeps refusing.
 test_an_unestablished_read_refuses_and_keeps_the_link() {
-  local home link shape
-  for shape in backend-missing unreadable-backlog; do
+  local home link shape out
+  for shape in backend-missing unreadable-backlog missing-backlog-store; do
     home=$(make_home "unestablished-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
     link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
@@ -727,6 +727,9 @@ SH
         mv "$home/data/backlog.md" "$home/data/backlog.saved"
         mkdir "$home/data/backlog.md"
         ;;
+      # tasks-axi answers NOT_FOUND for an absent store exactly as it does for an
+      # id absent from a readable one, so this shape must not read as departure.
+      missing-backlog-store) mv "$home/data/backlog.md" "$home/data/backlog.saved" ;;
     esac
     if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt" \
@@ -735,12 +738,15 @@ SH
     fi
     assert_grep "was not written" "$home/ur.err" "$shape: refusal did not say the item was not written"
     assert_present "$link" "$shape: the link was dropped after an unestablished read"
+    [ "$shape" != missing-backlog-store ] || assert_grep "$home/data/backlog.md" "$home/ur.err" \
+      "$shape: the refusal did not name the backlog store it looked for"
     if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
       fail "$shape: verification passed while the write had not landed"
     fi
     case "$shape" in
       backend-missing) rm -f "$home/fakebin/tasks-axi" ;;
       unreadable-backlog) rmdir "$home/data/backlog.md"; mv "$home/data/backlog.saved" "$home/data/backlog.md" ;;
+      missing-backlog-store) mv "$home/data/backlog.saved" "$home/data/backlog.md" ;;
     esac
     run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
@@ -748,7 +754,108 @@ SH
     run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
       || fail "$shape: the origin did not verify clean after the retry landed"
   done
+
+  # The same NOT_FOUND reading with the store present and readable is genuine
+  # absence, so a missing store and a departed item are provably not conflated.
+  home=$(make_home unestablished-store-present-item-gone)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+  tasks_in "$home" rm sample-scenario-choice >/dev/null 2>&1
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "a genuinely absent id in a readable store must still reconcile"
+  assert_contains "$out" "no longer in this backlog" \
+    "a readable store with a genuinely absent id did not read as departure"
+  [ ! -e "$link" ] || fail "a genuine departure left the link behind"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "the origin did not verify clean after a genuine departure"
   pass "an item read that could not be established refuses, keeps the link, and lands on retry"
+}
+
+# The answer body lands before the hold is released, so a failed write can never
+# leave the item unheld and open: by the owed predicate that item would have
+# stopped claiming a decision is owed while none was recorded anywhere.
+test_a_failed_answer_write_never_leaves_the_item_unheld_and_open() {
+  local home link
+  home=$(make_home failed-answer-write)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = update ]; then
+  echo 'error: "the body write failed"' >&2
+  echo 'code: UNKNOWN' >&2
+  exit 1
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" \
+    > "$home/fw.out" 2> "$home/fw.err"; then
+    fail "a failed answer write reported success"
+  fi
+  assert_grep "could not record the gate answer" "$home/fw.err" \
+    "the refusal did not name the write that failed"
+  assert_still_claims_captain_owes "$home" sample-scenario-choice "after a failed answer write"
+  assert_present "$link" "the link was dropped after a failed answer write"
+  if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
+    fail "verification passed while the answer write had not landed"
+  fi
+  rm -f "$home/fakebin/tasks-axi"
+  run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
+    || fail "the retry after repair did not land the write"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "the origin did not verify clean after the retry landed"
+  pass "a failed answer write leaves the item still asserting an owed captain decision"
+}
+
+# Idempotency comes from the item's own state, so the note this command writes
+# must be recognised by the guard that decides whether to write it again.
+test_the_already_closed_note_is_written_once() {
+  local home link out show notes
+  home=$(make_home already-closed-note)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+  tasks_in "$home" unhold sample-scenario-choice >/dev/null
+  tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "noting this gate on an already closed item failed"
+  assert_contains "$out" "already closed" "the first pass did not report what it saw"
+  # A link removal that did not land, so the retry re-enters the same branch.
+  printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "the retry against an already noted item failed"
+  assert_contains "$out" "already recorded" "the retry did not recognise the note it had written"
+  [ ! -e "$link" ] || fail "the retry did not clear the link"
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  notes=$(printf '%s\n' "$show" | grep -oF "through gate sample-hosted-boot/scenario-validation." | wc -l | tr -d ' ')
+  [ "$notes" = 1 ] || fail "this gate was noted $notes times on the already closed item"
+  pass "the already closed note is idempotent against the item's own state"
+}
+
+test_a_missing_flag_value_refuses_with_its_own_message() {
+  local home
+  home=$(make_home gate-answered-flag-values)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null
+  if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation --answered-by \
+    > "$home/by.out" 2> "$home/by.err"; then
+    fail "a trailing --answered-by must not succeed"
+  fi
+  assert_grep "must be captain or firstmate" "$home/by.err" \
+    "a trailing --answered-by ended the command with no refusal"
+  if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file > "$home/file.out" 2> "$home/file.err"; then
+    fail "a trailing --answer-file must not succeed"
+  fi
+  assert_grep "answer-file is required" "$home/file.err" \
+    "a trailing --answer-file ended the command with no refusal"
+  assert_still_claims_captain_owes "$home" sample-scenario-choice "after a refused invocation"
+  pass "a gate-answered flag given without its value refuses with its own message"
 }
 
 # The write happens before the link is dropped, so a crash between them leaves a
@@ -809,7 +916,7 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
   gate_fixture "$home" sample-hosted-boot sample-scenario-choice
   dir="$home/data/gate-links/sample-hosted-boot"
   for shape in well-formed leading-dot origin-missing key-missing key-mismatch \
-    item-missing empty dangling-symlink directory fifo; do
+    item-missing empty dangling-symlink directory fifo unlistable-index-dir; do
     rm -rf "$dir"
     mkdir -p "$dir"
     case "$shape" in
@@ -826,6 +933,15 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
         [ -n "$timeout_bin" ] || continue
         mkfifo "$dir/sv"
         ;;
+      # Left empty on purpose: a listable empty directory verifies clean, so only
+      # the unlistable one can make this shape refuse.
+      unlistable-index-dir)
+        chmod 000 "$dir"
+        if [ -r "$dir" ] && [ -x "$dir" ]; then
+          chmod 755 "$dir"
+          continue
+        fi
+        ;;
     esac
     rc=0
     if [ "$shape" = fifo ]; then
@@ -839,6 +955,7 @@ test_gate_index_refuses_every_unrecognised_record_shape() {
     else
       out=$(run_decisions "$home" gate-verify sample-hosted-boot 2>&1) || rc=$?
     fi
+    [ "$shape" != unlistable-index-dir ] || chmod 755 "$dir"
     [ "$rc" -ne 0 ] || fail "$shape: an entry the reader cannot recognise passed verification"
     case "$out" in
       *"$dir"*) : ;;
@@ -967,6 +1084,9 @@ test_owed_decision_is_keyed_on_the_hold_not_the_kind
 test_gate_that_never_raised_the_question_writes_nothing
 test_gate_answer_handles_every_departure_shape
 test_an_unestablished_read_refuses_and_keeps_the_link
+test_a_failed_answer_write_never_leaves_the_item_unheld_and_open
+test_the_already_closed_note_is_written_once
+test_a_missing_flag_value_refuses_with_its_own_message
 test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit
 test_gate_index_refuses_every_unrecognised_record_shape
