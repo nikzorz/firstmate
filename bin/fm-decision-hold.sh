@@ -461,7 +461,7 @@ gate_backlog_store() {
 }
 
 gate_item_read() {  # <item-id>
-  local out rc store
+  local out rc store shown_id
   GATE_ITEM_SHOW=''
   GATE_ITEM_ERROR=''
   if ! command -v tasks-axi >/dev/null 2>&1; then
@@ -475,8 +475,14 @@ gate_item_read() {  # <item-id>
   if [ "$rc" -eq 0 ]; then
     # An exit status of zero is not by itself a record for this id: tasks-axi
     # reads a flag-shaped argument as a flag and prints its usage successfully,
-    # so the output has to name the id that was asked for.
-    if [ "$(show_field "$out" id)" != "$1" ]; then
+    # so the output has to name the id that was asked for. Exactly one pair of
+    # surrounding quotes comes off, which is what the renderer puts around an id
+    # that would otherwise read as a number or a boolean, so an id whose own
+    # characters include a quote is compared as it is rather than normalised.
+    shown_id=$(show_field "$out" id)
+    shown_id=${shown_id#\"}
+    shown_id=${shown_id%\"}
+    if [ "$shown_id" != "$1" ]; then
       GATE_ITEM_ERROR="the backlog answered without naming $1, so no record for it was established"
       return 2
     fi
@@ -513,36 +519,6 @@ item_asserts_owed_decision() {  # <show-output>
   esac
   [ "$(show_field "$1" state)" != "done" ] || return 1
   return 0
-}
-
-# tasks-axi appends a note only by closing an item, so recording this gate on an
-# item someone else settled and left open means closing it and putting it back.
-# `reopen` returns a closed item to queued whatever it was before, so any other
-# state needs its own verb; a state with no verb here is refused before anything
-# is written rather than discovered once the item is already closed.
-gate_state_verb() {  # <state>
-  case "$1" in
-    queued) printf 'reopen\n' ;;
-    in_flight) printf 'start\n' ;;
-    *) return 1 ;;
-  esac
-}
-
-gate_restore_item_state() {  # <item> <state>
-  local item=$1 state=$2 verb
-  verb=$(gate_state_verb "$state") \
-    || fail "$item records a prior state of $state, which this command cannot restore"
-  tasks_axi reopen "$item" >/dev/null \
-    || fail "could not reopen $item to restore its $state state"
-  [ "$verb" = reopen ] || tasks_axi "$verb" "$item" >/dev/null \
-    || fail "could not return $item to $state"
-}
-
-# Carries the state the item was in so a retry restores it from any point in the
-# sequence rather than guessing. The gate identity sits immediately before the
-# recorded state, so the clause cannot be read off a marker another gate wrote.
-gate_open_case_note() {  # <origin> <key> <prior-state> <decided-by>
-  printf 'Answered through gate %s/%s. Prior state was %s; restored. Decided by: %s.' "$1" "$2" "$3" "$4"
 }
 
 gate_answer_body() {  # <origin> <key> <decided-by> <answer>
@@ -614,7 +590,7 @@ linked_item_for() {  # <origin> <key> <link-file>
 
 command_gate_answered() {
   local origin=${1:-} key=${2:-} decided_by='' answer_file='' file item answer rc body note \
-    item_body state prior
+    item_body state
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -673,16 +649,12 @@ command_gate_answered() {
       # This gate's own open-case sequence, which records the state it has to put
       # the item back into. Any point it was interrupted at reads the same here:
       # the item is not in that state yet, so the retry finishes the restore.
-      *"through gate $origin/$key. Prior state was "*)
-        prior=${item_body#*"through gate $origin/$key. Prior state was "}
-        prior=${prior%%;*}
-        if [ "$state" != "$prior" ]; then
-          gate_restore_item_state "$item" "$prior"
-          drop_gate_link "$file"
-          printf 'gate-answered: %s/%s already recorded on %s -> %s restored to %s; link cleared\n' \
-            "$origin" "$key" "$item" "$item" "$prior"
-          return 0
-        fi
+      # This gate's own note on an item it found closed, which never owed a close
+      # and must not be given one if the item has since been reopened. It is
+      # matched ahead of the generic body because that pattern matches this note
+      # too: any matcher added above a close from here on has to be checked
+      # against this note as well, or the close reaches it again.
+      *"Also answered through gate $origin/$key."*)
         drop_gate_link "$file"
         printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
         return 0
@@ -717,19 +689,14 @@ command_gate_answered() {
         "$origin" "$key" "$decided_by" "$item"
       return 0
     fi
-    # Whoever settled this left the item open, so the note goes on beside their
-    # answer and the item comes back to the state they left it in. The state is
-    # proved restorable before the close, because a close this command could not
-    # undo would be the live-work loss the note exists to avoid.
-    gate_state_verb "$state" >/dev/null \
-      || fail "$item is in state $state, which this command could not restore after a close, so nothing was written to it"
-    note=$(gate_open_case_note "$origin" "$key" "$state" "$decided_by")
-    tasks_axi "done" "$item" --note "$note" >/dev/null \
-      || fail "could not note this gate's answer on $item"
-    gate_restore_item_state "$item" "$state"
+    # Whoever settled this left the item open, and this mechanism does not own
+    # the lifecycle of the record it did not write. tasks-axi appends a note only
+    # by closing an item, and closing one to reopen it rewrites the row's since
+    # date, so the cross-reference would cost a false backlog row. The item
+    # already carries the answer its own settler wrote, so a gap is not a lie.
     drop_gate_link "$file"
-    printf 'gate-answered: %s/%s answered by %s; %s was settled without this gate, noted on it and left %s\n' \
-      "$origin" "$key" "$decided_by" "$item" "$state"
+    printf 'gate-answered: %s/%s answered by %s; %s was settled without this gate and left open, nothing written to it\n' \
+      "$origin" "$key" "$decided_by" "$item"
     return 0
   fi
 

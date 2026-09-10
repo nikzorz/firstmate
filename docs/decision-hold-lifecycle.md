@@ -49,10 +49,13 @@ It refuses a secondmate origin, because it writes through tasks-axi in the activ
 It writes that answer only while the item still asserts an owed captain decision, which is the same claim `gate-link` required.
 An item that stopped asserting one was settled by someone else, so this gate never writes its answer over it, which would displace the real decider and name this caller instead.
 An item that is already closed is noted on and left closed, because a note backfilled onto a closed item does not move it.
-An item that was settled and deliberately left open is noted on and put back into the state it was found in, because tasks-axi appends a note only by closing an item and this mechanism does not own the lifecycle of a record it did not write.
-That note records the state the item was in, so a retry interrupted anywhere in the close, reopen and restore sequence reads its target out of the item rather than guessing it, and nothing about the sequence is kept on the link record.
-`reopen` returns a closed item to queued whatever it was before, so a state that needs another verb is put back with it, and a state this command has no verb for refuses before the close rather than leaving the item somewhere it did not ask to be.
+An item that was settled and deliberately left open has nothing written to it and the link is simply dropped, because tasks-axi appends a note only by closing an item, and this mechanism does not own the lifecycle of a record it did not write.
+Accepted limit, chosen rather than inherited: that item carries no cross-reference naming the gate that also settled the question.
+Recording one would mean closing the item to append the note and reopening it, and closing a row drops or rewrites its `since` date, which `bin/fm-fleet-snapshot.sh` reads and surfaces.
+This shape is defined by whoever settled it having already written their own answer into the item, so the item is not silent about the decision and the note would only have added the cross-reference.
+Paying for that with a falsified `since` date would write a false backlog row to avoid a missing one, which is what this contract exists to remove, and a gap is not a lie.
 An item that already carries this gate's answer but was never closed is closed as it stands, without a rewritten body and without a second note, because the only step the interrupted sequence still owes it is the close.
+The note this gate leaves on an item it found closed never owed a close, so it is recognised ahead of that body and only clears the link, which keeps a reopened item from being closed again by a retry.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
 tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
