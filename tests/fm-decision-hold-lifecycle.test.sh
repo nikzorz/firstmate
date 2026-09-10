@@ -691,7 +691,7 @@ test_gate_that_never_raised_the_question_writes_nothing() {
 # design is that these are not classified anywhere: the command either lands the
 # write and drops the link, or refuses and keeps it.
 test_gate_answer_handles_every_departure_shape() {
-  local home shape link out show
+  local home shape link out show before
   for shape in closed-by-captain removed re-kinded unheld-but-open second-gate; do
     home=$(make_home "departure-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
@@ -716,39 +716,56 @@ test_gate_answer_handles_every_departure_shape() {
           --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null
         ;;
     esac
+    before=$(tasks_in "$home" show sample-scenario-choice --full 2>/dev/null || true)
     out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt") \
       || fail "$shape: gate-answered failed on a departure shape"
     [ ! -e "$link" ] || fail "$shape: the link survived a completed reconciliation"
     run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
       || fail "$shape: the origin did not verify clean"
+    show=$(tasks_in "$home" show sample-scenario-choice --full 2>/dev/null || true)
     case "$shape" in
       removed) assert_contains "$out" "no longer in this backlog" "$shape: outcome did not say what was observed" ;;
-      closed-by-captain|second-gate|unheld-but-open)
-        assert_contains "$out" "no longer asserts an owed captain decision" \
+      closed-by-captain|second-gate)
+        assert_contains "$out" "was already closed" "$shape: outcome did not say what was observed"
+        ;;
+      unheld-but-open)
+        assert_contains "$out" "left open, nothing written to it" \
           "$shape: outcome did not say what was observed"
         ;;
       *) assert_contains "$out" "closed" "$shape: outcome did not say what was observed" ;;
     esac
+    # The claim and the effect must agree for every shape: an outcome that says
+    # it closed the item has to have closed it, and one that says it wrote
+    # nothing has to have left the item exactly as it found it. A branch whose
+    # message and durable write diverge fails here whatever its wording.
+    case "$out" in
+      *"nothing written to it"*)
+        [ "$show" = "$before" ] \
+          || fail "$shape: the outcome claimed nothing was written but the item changed"
+        ;;
+      *closed*)
+        assert_contains "$show" "state: done" \
+          "$shape: the outcome claimed the item was closed but it is not"
+        ;;
+    esac
     if [ "$shape" = unheld-but-open ]; then
-      show=$(tasks_in "$home" show sample-scenario-choice --full)
       assert_contains "$show" "The captain chose the seat default" \
         "$shape: the answer already in the item was written over"
       assert_not_contains "$show" "Fall back to the seat default scenario." \
         "$shape: this gate's own answer displaced the record of who decided"
-      assert_contains "$show" "Also answered through gate sample-hosted-boot/scenario-validation." \
-        "$shape: the item does not record that this gate also settled the question"
-      assert_contains "$show" "state: done" "$shape: the noted item was not closed"
+      assert_contains "$show" "state: queued" \
+        "$shape: an item settled elsewhere and left open was closed by this gate"
     fi
   done
-  pass "every departure shape either lands the write or reports what it saw, and the link goes"
+  pass "every departure shape reports what it did and did what it reported, and the link goes"
 }
 
 # An unestablished read must never produce the same outcome as establishing that
 # the item is fine, so it keeps the link and cleanup keeps refusing.
 test_an_unestablished_read_refuses_and_keeps_the_link() {
   local home link shape out
-  for shape in backend-missing unreadable-backlog missing-backlog-store; do
+  for shape in backend-missing unreadable-backlog missing-backlog-store store-key-absent; do
     home=$(make_home "unestablished-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
     link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
@@ -767,6 +784,13 @@ SH
       # tasks-axi answers NOT_FOUND for an absent store exactly as it does for an
       # id absent from a readable one, so this shape must not read as departure.
       missing-backlog-store) mv "$home/data/backlog.md" "$home/data/backlog.saved" ;;
+      # No `path` key and neither store tasks-axi would discover, so a not-found
+      # is a store it could not open rather than an item that departed one.
+      store-key-absent)
+        mv "$home/.tasks.toml" "$home/.tasks.saved"
+        printf 'backend = "markdown"\n' > "$home/.tasks.toml"
+        mv "$home/data/backlog.md" "$home/data/backlog.saved"
+        ;;
     esac
     if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt" \
@@ -777,6 +801,8 @@ SH
     assert_present "$link" "$shape: the link was dropped after an unestablished read"
     [ "$shape" != missing-backlog-store ] || assert_grep "$home/data/backlog.md" "$home/ur.err" \
       "$shape: the refusal did not name the backlog store it looked for"
+    [ "$shape" != store-key-absent ] || assert_grep "$home/data/backlog.md" "$home/ur.err" \
+      "$shape: the refusal named a store other than the one tasks-axi would discover"
     if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
       fail "$shape: verification passed while the write had not landed"
     fi
@@ -784,6 +810,10 @@ SH
       backend-missing) rm -f "$home/fakebin/tasks-axi" ;;
       unreadable-backlog) rmdir "$home/data/backlog.md"; mv "$home/data/backlog.saved" "$home/data/backlog.md" ;;
       missing-backlog-store) mv "$home/data/backlog.saved" "$home/data/backlog.md" ;;
+      store-key-absent)
+        mv "$home/.tasks.saved" "$home/.tasks.toml"
+        mv "$home/data/backlog.saved" "$home/data/backlog.md"
+        ;;
     esac
     run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
@@ -848,11 +878,12 @@ SH
   pass "a failed answer write leaves the item still asserting an owed captain decision"
 }
 
-# Idempotency comes from the item's own state, so the note this command writes
-# must be recognised by the guard that decides whether to write it again. Both
-# shapes that stop asserting an owed decision take that path, so both are pinned.
-test_the_note_on_a_settled_item_is_written_once() {
-  local home shape link out show notes
+# One predicate brings both settled shapes here and each has its own body, so
+# each is pinned on its own: a closed item is noted exactly once however often
+# the command runs, and an item left open keeps the state and body it arrived
+# with however often the command runs.
+test_a_settled_item_takes_the_branch_written_for_its_own_state() {
+  local home shape link out show before notes
   for shape in closed-by-captain unheld-but-open; do
     home=$(make_home "settled-note-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
@@ -861,23 +892,45 @@ test_the_note_on_a_settled_item_is_written_once() {
     if [ "$shape" = closed-by-captain ]; then
       tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
     fi
+    before=$(tasks_in "$home" show sample-scenario-choice --full)
     out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt") \
-      || fail "$shape: noting this gate on a settled item failed"
-    assert_contains "$out" "no longer asserts an owed captain decision" \
-      "$shape: the first pass did not report what it saw"
-    # A link removal that did not land, so the retry re-enters the same branch.
+      || fail "$shape: reconciling a settled item failed"
+    # A link removal that did not land, so the retry re-enters the same path.
     printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
-    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-      --answered-by firstmate --answer-file "$home/answer.txt") \
-      || fail "$shape: the retry against an already noted item failed"
-    assert_contains "$out" "already recorded" "$shape: the retry did not recognise the note it had written"
+    case "$shape" in
+      closed-by-captain)
+        assert_contains "$out" "was already closed" "$shape: the first pass did not report what it did"
+        out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+          --answered-by firstmate --answer-file "$home/answer.txt") \
+          || fail "$shape: the retry against an already noted item failed"
+        assert_contains "$out" "already recorded" \
+          "$shape: the retry did not recognise the note it had written"
+        show=$(tasks_in "$home" show sample-scenario-choice --full)
+        assert_contains "$show" "state: done" "$shape: the noted item did not stay closed"
+        ;;
+      unheld-but-open)
+        assert_contains "$out" "left open, nothing written to it" \
+          "$shape: the first pass did not report what it did"
+        show=$(tasks_in "$home" show sample-scenario-choice --full)
+        [ "$show" = "$before" ] || fail "$shape: an item left open was changed by this gate"
+        out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+          --answered-by firstmate --answer-file "$home/answer.txt") \
+          || fail "$shape: the retry against an item left open failed"
+        assert_contains "$out" "left open, nothing written to it" \
+          "$shape: the retry did not report what it did"
+        show=$(tasks_in "$home" show sample-scenario-choice --full)
+        [ "$show" = "$before" ] || fail "$shape: a repeated run changed an item left open"
+        ;;
+    esac
     [ ! -e "$link" ] || fail "$shape: the retry did not clear the link"
-    show=$(tasks_in "$home" show sample-scenario-choice --full)
-    notes=$(printf '%s\n' "$show" | grep -oF "through gate sample-hosted-boot/scenario-validation." | wc -l | tr -d ' ')
-    [ "$notes" = 1 ] || fail "$shape: this gate was noted $notes times on the settled item"
+    notes=$(printf '%s\n' "$show" | grep -coF "through gate sample-hosted-boot/scenario-validation." || true)
+    case "$shape" in
+      closed-by-captain) [ "$notes" = 1 ] || fail "$shape: this gate was noted $notes times on the closed item" ;;
+      unheld-but-open) [ "$notes" = 0 ] || fail "$shape: this gate wrote itself onto an item it left alone" ;;
+    esac
   done
-  pass "the note on an item that stopped asserting an owed decision is written exactly once"
+  pass "each settled shape takes the branch written for it and repeats without changing the item further"
 }
 
 test_a_missing_flag_value_refuses_with_its_own_message() {
@@ -899,6 +952,32 @@ test_a_missing_flag_value_refuses_with_its_own_message() {
     "a trailing --answer-file ended the command with no refusal"
   assert_still_claims_captain_owes "$home" sample-scenario-choice "after a refused invocation"
   pass "a gate-answered flag given without its value refuses with its own message"
+}
+
+# With no `path` key tasks-axi discovers its store rather than defaulting to a
+# fixed one, so the guard has to follow that same order. Both stores are driven
+# here because naming either one alone is wrong in one direction: it refuses a
+# genuine departure from the store the tool reads, or trusts a not-found from a
+# store nothing reads.
+test_the_store_guard_follows_the_store_tasks_axi_discovers() {
+  local home shape link out
+  for shape in root-store data-store; do
+    home=$(make_home "store-discovery-$shape")
+    gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+    link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+    printf 'backend = "markdown"\n' > "$home/.tasks.toml"
+    [ "$shape" != root-store ] || mv "$home/data/backlog.md" "$home/backlog.md"
+    tasks_in "$home" rm sample-scenario-choice >/dev/null 2>&1
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$shape: a genuine departure from the store tasks-axi reads was refused"
+    assert_contains "$out" "no longer in this backlog" \
+      "$shape: the departure was not reported as one"
+    [ ! -e "$link" ] || fail "$shape: the link survived a genuine departure"
+    run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+      || fail "$shape: the origin did not verify clean"
+  done
+  pass "the store guard follows tasks-axi's own discovery order in both directions"
 }
 
 # The write happens before the link is dropped, so an interruption anywhere in the
@@ -1438,8 +1517,9 @@ test_owed_decision_is_keyed_on_the_hold_not_the_kind
 test_gate_that_never_raised_the_question_writes_nothing
 test_gate_answer_handles_every_departure_shape
 test_an_unestablished_read_refuses_and_keeps_the_link
+test_the_store_guard_follows_the_store_tasks_axi_discovers
 test_a_failed_answer_write_never_leaves_the_item_unheld_and_open
-test_the_note_on_a_settled_item_is_written_once
+test_a_settled_item_takes_the_branch_written_for_its_own_state
 test_a_missing_flag_value_refuses_with_its_own_message
 test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit

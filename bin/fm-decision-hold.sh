@@ -430,7 +430,19 @@ gate_backlog_store() {
       END { if (saw_path && !printed) exit 1 }
     ' "$config") || return 1
   fi
-  [ -n "$path" ] || path="$DATA/backlog.md"
+  # With no `path` key tasks-axi discovers its store against the working
+  # directory this script runs it in rather than defaulting to a fixed one: it
+  # reads backlog.md in that directory when one is there and data/backlog.md
+  # otherwise. A guard naming a single path would answer about a file the tool
+  # never opens, which reads as protection either way it is wrong: it would
+  # refuse a genuine departure, or trust a not-found from a store nothing reads.
+  if [ -z "$path" ]; then
+    if [ -e "$FM_HOME/backlog.md" ] || [ -L "$FM_HOME/backlog.md" ]; then
+      path="$FM_HOME/backlog.md"
+    else
+      path="$FM_HOME/data/backlog.md"
+    fi
+  fi
   case "$path" in
     /*) : ;;
     *) path="$FM_HOME/$path" ;;
@@ -597,8 +609,8 @@ command_gate_answered() {
   fi
 
   # An item that no longer asserts an owed decision was settled by someone else,
-  # so this gate is noted on it rather than written over it: overwriting would
-  # displace whoever actually decided and label the record with this caller.
+  # so this gate never writes its answer over it: overwriting would displace
+  # whoever actually decided and label the record with this caller.
   if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
     case "$(show_field "$GATE_ITEM_SHOW" body)" in
       *"through gate $origin/$key."*)
@@ -613,11 +625,26 @@ command_gate_answered() {
         return 0
         ;;
     esac
-    note=$(printf 'Also answered through gate %s/%s. Decided by: %s.' "$origin" "$key" "$decided_by")
-    tasks_axi "done" "$item" --note "$note" >/dev/null \
-      || fail "could not note this gate's answer on $item"
+    # A closed item and a still-open one do not share a body here. `done --note`
+    # backfills a note without moving an item that is already done, and closes
+    # one that is not. Every defect on this path so far came from a guard widened
+    # to admit a new state while the body behind it stayed as written for the old
+    # one, so these two stay apart even though one predicate brings both here.
+    if [ "$(show_field "$GATE_ITEM_SHOW" state)" = "done" ]; then
+      note=$(printf 'Also answered through gate %s/%s. Decided by: %s.' "$origin" "$key" "$decided_by")
+      tasks_axi "done" "$item" --note "$note" >/dev/null \
+        || fail "could not note this gate's answer on closed $item"
+      drop_gate_link "$file"
+      printf 'gate-answered: %s/%s answered by %s; %s was already closed, this gate noted on it\n' \
+        "$origin" "$key" "$decided_by" "$item"
+      return 0
+    fi
+    # Whoever settled this left the item open, and this mechanism does not own
+    # the lifecycle of the record it did not write. tasks-axi appends a note only
+    # through `done`, so there is no way to record this gate on an open item
+    # without closing live work or rewriting the answer already in its body.
     drop_gate_link "$file"
-    printf 'gate-answered: %s/%s answered by %s; %s no longer asserts an owed captain decision, this gate noted on it\n' \
+    printf 'gate-answered: %s/%s answered by %s; %s was settled without this gate and left open, nothing written to it\n' \
       "$origin" "$key" "$decided_by" "$item"
     return 0
   fi

@@ -47,12 +47,17 @@ The link record is frozen at those three fields, created once and deleted once, 
 It refuses a secondmate origin, because it writes through tasks-axi in the active home and a decision a secondmate raised belongs in that secondmate's own home rather than the one retiring it.
 `gate-answered` performs the item write and only then removes the link, so a surviving link always means the write did not land, and a retry is idempotent against the item's own state rather than against anything recorded on the link.
 It writes that answer only while the item still asserts an owed captain decision, which is the same claim `gate-link` required.
-An item that stopped asserting one was settled by someone else, so this gate is noted on it and it is closed, rather than having a body written over it that would displace the real decider and name this caller instead.
+An item that stopped asserting one was settled by someone else, so this gate never writes its answer over it, which would displace the real decider and name this caller instead.
+An item that is already closed is noted on and left closed, because a note backfilled onto a closed item does not move it.
+An item that was settled and deliberately left open has nothing written to it and the link is simply dropped, because tasks-axi appends a note only by closing an item, and this mechanism does not own the lifecycle of a record it did not write.
 An item that already carries this gate's answer but was never closed is closed as it stands, without a rewritten body and without a second note, because the only step the interrupted sequence still owes it is the close.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
 tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
-That store is the `[markdown] path` key of the home's `.tasks.toml`, resolved against the home and falling back to `data/backlog.md`, and a store that is missing or unreadable refuses by naming the path it looked for.
+That store is the `[markdown] path` key of the home's `.tasks.toml`, resolved against the home.
+With no key, tasks-axi discovers its store rather than defaulting to a fixed one, reading `backlog.md` in the home root when one is there and `data/backlog.md` otherwise, and the guard follows that same order so it names the file the tool actually opens.
+A store that is missing or unreadable refuses by naming the path it looked for.
+Every firstmate home is cloned from this repo and inherits the tracked root config, so the keyless path is defence in depth rather than a live one, and a guard that named a different file would read as protection while refusing a genuine departure or trusting a not-found from a store nothing reads.
 
 An item asserts an owed captain decision when `hold_kind` is captain, a `hold_reason` is present, and its state is not done.
 `kind` is deliberately not part of that test, because `tasks-axi update --kind` leaves the hold fields intact and reading `kind` let a still-held item read as no longer captain-owned.
