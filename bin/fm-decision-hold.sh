@@ -646,20 +646,28 @@ command_gate_answered() {
     item_body=$(show_field "$GATE_ITEM_SHOW" body)
     state=$(show_field "$GATE_ITEM_SHOW" state)
     case "$item_body" in
-      # This gate's own open-case sequence, which records the state it has to put
-      # the item back into. Any point it was interrupted at reads the same here:
-      # the item is not in that state yet, so the retry finishes the restore.
+      # Every discriminator here has to be right about what else can match it,
+      # not only about what it is meant to match. Three separate defects on this
+      # path were each a correct description that was an incomplete
+      # specification: a note this command writes that no arm named, a generic
+      # body pattern that also matched that note, and a key whose terminating
+      # period another key could continue. So each arm below states its own
+      # boundary, and adding one means checking it against every marker this
+      # command writes and against every key that shares a prefix with this one.
+      #
+      # `.` is a slug character, so a marker for `<key>` is accepted only where
+      # its period ends the body or is followed by something that cannot continue
+      # a slug. Without that, `scope` matches text written for `scope.v2`.
+      #
       # This gate's own note on an item it found closed, which never owed a close
-      # and must not be given one if the item has since been reopened. It is
-      # matched ahead of the generic body because that pattern matches this note
-      # too: any matcher added above a close from here on has to be checked
-      # against this note as well, or the close reaches it again.
-      *"Also answered through gate $origin/$key."*)
+      # and must not be given one if the item has since been reopened. It sits
+      # ahead of the generic body because that pattern matches this note too.
+      *"Also answered through gate $origin/$key."|*"Also answered through gate $origin/$key."[!A-Za-z0-9._-]*)
         drop_gate_link "$file"
         printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
         return 0
         ;;
-      *"through gate $origin/$key."*)
+      *"through gate $origin/$key."|*"through gate $origin/$key."[!A-Za-z0-9._-]*)
         # The answer landed but the close did not, so the retry finishes the
         # sequence rather than clearing the link that is still holding it open.
         if [ "$state" != "done" ]; then

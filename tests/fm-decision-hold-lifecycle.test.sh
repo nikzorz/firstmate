@@ -878,11 +878,6 @@ SH
   pass "a failed answer write leaves the item still asserting an owed captain decision"
 }
 
-
-
-# The item a record names is handed to tasks-axi as an argument, and the tool
-# reads a flag-shaped one as a flag and succeeds, so an exit status of zero is
-# not by itself a record for the id that was asked for.
 # The note this gate leaves on an item it found closed never owed a close, so a
 # retry must not give it one after the captain has reopened that item. The same
 # body matches the interrupted-answer pattern, which is why it is recognised
@@ -917,6 +912,60 @@ test_a_note_on_an_item_found_closed_is_never_read_as_an_owed_close() {
   pass "this gate's note on an item found closed never becomes an owed close on retry"
 }
 
+# `.` is a slug character, so a marker written for one key sits inside the text a
+# key that is a prefix of it would look for. Two links on one item is a shape the
+# design already supports, so each arm has to read only its own marker: the
+# shorter key must not find the longer key's text, and each must still find its
+# own. Both markers this command writes are driven, on a closed item and on one
+# the captain has since reopened.
+test_a_marker_is_read_only_by_the_key_that_wrote_it() {
+  local home short_link sibling_link out show
+  home=$(make_home sibling-keys)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  # Every pairing is recorded while the item still owes an answer, because that
+  # is what gate-link requires; the keys are reconciled one at a time after.
+  short_link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scope)
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scope.v2 >/dev/null
+  sibling_link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scope.other)
+
+  # The longer key answers first and closes the item, writing its own marker.
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scope.v2 \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "the longer key could not answer"
+  assert_contains "$out" "sample-scenario-choice closed" "the longer key did not land its answer"
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "Answered through gate sample-hosted-boot/scope.v2." \
+    "the longer key's marker is not on the item"
+
+  # Still closed: the shorter key must not read the longer key's marker as its
+  # own note and clear its link claiming a record that was never written.
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scope \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "the shorter key could not reconcile against a closed item"
+  assert_contains "$out" "was already closed" \
+    "the shorter key read the longer key's marker instead of noting its own"
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "Also answered through gate sample-hosted-boot/scope. Decided by:" \
+    "the shorter key's own note was never written"
+  [ ! -e "$short_link" ] || fail "the shorter key's link survived its own note"
+
+  # Reopened: a sibling key must not read another key's answer as its own
+  # interrupted write and close work the captain deliberately reopened.
+  tasks_in "$home" reopen sample-scenario-choice >/dev/null
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scope.other \
+    --answered-by firstmate --answer-file "$home/answer.txt") \
+    || fail "the sibling key could not reconcile against a reopened item"
+  assert_contains "$out" "left open, nothing written to it" \
+    "a sibling key read another key's marker as its own"
+  show=$(tasks_in "$home" show sample-scenario-choice --full)
+  assert_contains "$show" "state: queued" \
+    "a sibling key closed work the captain had reopened"
+  [ ! -e "$sibling_link" ] || fail "the sibling key's link survived"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "the origin did not verify clean"
+  pass "a marker is read only by the key that wrote it, not by a key it extends"
+}
+
 # The renderer quotes an id that would otherwise read as a number or a boolean,
 # so a guard comparing the rendered id has to allow for that or refuse real work.
 test_an_item_whose_id_renders_quoted_is_still_established() {
@@ -941,6 +990,9 @@ test_an_item_whose_id_renders_quoted_is_still_established() {
   pass "an item whose id renders quoted is established rather than refused"
 }
 
+# The item a record names is handed to tasks-axi as an argument, and the tool
+# reads a flag-shaped one as a flag and succeeds, so an exit status of zero is
+# not by itself a record for the id that was asked for.
 test_a_flag_shaped_item_never_reads_as_an_established_item() {
   local home dir cmd out rc
   home=$(make_home flag-shaped-record)
@@ -1660,6 +1712,7 @@ test_the_store_guard_follows_the_store_tasks_axi_discovers
 test_a_failed_answer_write_never_leaves_the_item_unheld_and_open
 test_a_settled_item_takes_the_branch_written_for_its_own_state
 test_a_note_on_an_item_found_closed_is_never_read_as_an_owed_close
+test_a_marker_is_read_only_by_the_key_that_wrote_it
 test_an_item_whose_id_renders_quoted_is_still_established
 test_a_flag_shaped_item_never_reads_as_an_established_item
 test_a_staging_write_that_cannot_land_refuses_by_name
