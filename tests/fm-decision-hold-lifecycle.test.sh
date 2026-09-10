@@ -879,36 +879,46 @@ SH
 }
 
 # The note this gate leaves on an item it found closed never owed a close, so a
-# retry must not give it one after the captain has reopened that item. The same
-# body matches the interrupted-answer pattern, which is why it is recognised
-# ahead of it rather than left to the ordering to sort out by accident.
+# retry must not give it one after the captain has reopened that item. Both ways
+# of settling an item are driven, because `done` alone leaves the hold fields
+# alone and `reopen` restores the hold from them, so the reopened item asserts an
+# owed decision again and reaches the code the note is meant to stop.
 test_a_note_on_an_item_found_closed_is_never_read_as_an_owed_close() {
-  local home link out show
-  home=$(make_home closed-note-retry)
-  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
-  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
-  tasks_in "$home" unhold sample-scenario-choice >/dev/null
-  tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
-  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt") \
-    || fail "noting this gate on a closed item failed"
-  assert_contains "$out" "was already closed" "the first pass did not report what it did"
-  # The link removal did not land, and the captain has since reopened the item to
-  # route follow-up work.
-  printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
-  tasks_in "$home" reopen sample-scenario-choice >/dev/null
-  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt") \
-    || fail "the retry against a reopened noted item failed"
-  assert_contains "$out" "already recorded" "the retry did not recognise the note it had written"
-  assert_not_contains "$out" "closed; link cleared" \
-    "the retry claimed a close on an item that never owed one"
-  show=$(tasks_in "$home" show sample-scenario-choice --full)
-  assert_contains "$show" "state: queued" \
-    "the retry closed work the captain had deliberately reopened"
-  [ ! -e "$link" ] || fail "the retry did not clear the link"
-  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
-    || fail "the origin did not verify clean after the retry"
+  local home settled link out show body_before
+  for settled in unheld-then-closed closed-while-held; do
+    home=$(make_home "closed-note-retry-$settled")
+    gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+    link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+    [ "$settled" != unheld-then-closed ] || tasks_in "$home" unhold sample-scenario-choice >/dev/null
+    tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$settled: noting this gate on a closed item failed"
+    assert_contains "$out" "was already closed" "$settled: the first pass did not report what it did"
+    # The link removal did not land, and the captain has since reopened the item
+    # to route follow-up work.
+    printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
+    tasks_in "$home" reopen sample-scenario-choice >/dev/null
+    body_before=$(tasks_in "$home" show sample-scenario-choice --full | sed -n 's/^  body: //p')
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$settled: the retry against a reopened noted item failed"
+    assert_contains "$out" "already recorded" "$settled: the retry did not recognise its own note"
+    assert_not_contains "$out" "closed; link cleared" \
+      "$settled: the retry claimed a close on an item that never owed one"
+    show=$(tasks_in "$home" show sample-scenario-choice --full)
+    assert_contains "$show" "state: queued" \
+      "$settled: the retry closed work the captain had deliberately reopened"
+    assert_contains "$show" "captain answered in standup" \
+      "$settled: the answer whoever settled the item wrote was displaced"
+    assert_not_contains "$show" "Fall back to the seat default scenario." \
+      "$settled: this gate's own answer displaced the record of who decided"
+    [ "$(printf '%s\n' "$show" | sed -n 's/^  body: //p')" = "$body_before" ] \
+      || fail "$settled: the retry rewrote the body of a reopened item"
+    [ ! -e "$link" ] || fail "$settled: the retry did not clear the link"
+    run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+      || fail "$settled: the origin did not verify clean after the retry"
+  done
   pass "this gate's note on an item found closed never becomes an owed close on retry"
 }
 

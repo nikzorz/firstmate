@@ -56,6 +56,8 @@ This shape is defined by whoever settled it having already written their own ans
 Paying for that with a falsified `since` date would write a false backlog row to avoid a missing one, which is what this contract exists to remove, and a gap is not a lie.
 An item that already carries this gate's answer but was never closed is closed as it stands, without a rewritten body and without a second note, because the only step the interrupted sequence still owes it is the close.
 The note this gate leaves on an item it found closed never owed a close, so it is recognised ahead of that body and only clears the link, which keeps a reopened item from being closed again by a retry.
+That note is read before the owed predicate rather than inside it, because `tasks-axi done` leaves the hold fields alone and `reopen` restores the hold from them, so an item this gate had already noted could assert an owed decision again and take the write path over the answer whoever settled it wrote.
+Accepted residual of that ordering: a deliberate re-link of the same origin and key on that same reopened item is reported as already recorded and nothing is written, which is a missing record rather than a false one.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
 tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.

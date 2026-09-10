@@ -639,34 +639,40 @@ command_gate_answered() {
     return 0
   fi
 
+  item_body=$(show_field "$GATE_ITEM_SHOW" body)
+  # Every discriminator here has to be right about what else can match it, not
+  # only about what it is meant to match. Four separate defects on this path were
+  # each a correct description that was an incomplete specification: a note this
+  # command writes that no arm named, a generic body pattern that also matched
+  # that note, a key whose terminating period another key could continue, and an
+  # arm placed where a predicate could stop it being consulted at all. So each
+  # arm states its own boundary, and adding one means checking it against every
+  # marker this command writes, against every key that shares a prefix with this
+  # one, and against every state that can reach the code above it.
+  #
+  # `.` is a slug character, so a marker for `<key>` is accepted only where its
+  # period ends the body or is followed by something that cannot continue a slug.
+  # Without that, `scope` matches text written for `scope.v2`.
+  #
+  # This gate's own note on an item it found closed, which never owed a close.
+  # It is read before the owed predicate rather than inside it, because `done`
+  # leaves the hold fields alone and `reopen` restores the hold from them, so an
+  # item this gate already noted can assert an owed decision again and take the
+  # write path over the answer whoever settled it wrote.
+  case "$item_body" in
+    *"Also answered through gate $origin/$key."|*"Also answered through gate $origin/$key."[!A-Za-z0-9._-]*)
+      drop_gate_link "$file"
+      printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
+      return 0
+      ;;
+  esac
+
   # An item that no longer asserts an owed decision was settled by someone else,
   # so this gate never writes its answer over it: overwriting would displace
   # whoever actually decided and label the record with this caller.
   if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
-    item_body=$(show_field "$GATE_ITEM_SHOW" body)
     state=$(show_field "$GATE_ITEM_SHOW" state)
     case "$item_body" in
-      # Every discriminator here has to be right about what else can match it,
-      # not only about what it is meant to match. Three separate defects on this
-      # path were each a correct description that was an incomplete
-      # specification: a note this command writes that no arm named, a generic
-      # body pattern that also matched that note, and a key whose terminating
-      # period another key could continue. So each arm below states its own
-      # boundary, and adding one means checking it against every marker this
-      # command writes and against every key that shares a prefix with this one.
-      #
-      # `.` is a slug character, so a marker for `<key>` is accepted only where
-      # its period ends the body or is followed by something that cannot continue
-      # a slug. Without that, `scope` matches text written for `scope.v2`.
-      #
-      # This gate's own note on an item it found closed, which never owed a close
-      # and must not be given one if the item has since been reopened. It sits
-      # ahead of the generic body because that pattern matches this note too.
-      *"Also answered through gate $origin/$key."|*"Also answered through gate $origin/$key."[!A-Za-z0-9._-]*)
-        drop_gate_link "$file"
-        printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
-        return 0
-        ;;
       *"through gate $origin/$key."|*"through gate $origin/$key."[!A-Za-z0-9._-]*)
         # The answer landed but the close did not, so the retry finishes the
         # sequence rather than clearing the link that is still holding it open.
