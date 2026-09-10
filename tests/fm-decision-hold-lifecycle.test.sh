@@ -691,7 +691,7 @@ test_gate_that_never_raised_the_question_writes_nothing() {
 # design is that these are not classified anywhere: the command either lands the
 # write and drops the link, or refuses and keeps it.
 test_gate_answer_handles_every_departure_shape() {
-  local home shape link out show before
+  local home shape link out show
   for shape in closed-by-captain removed re-kinded unheld-but-open second-gate; do
     home=$(make_home "departure-$shape")
     gate_fixture "$home" sample-hosted-boot sample-scenario-choice
@@ -716,7 +716,6 @@ test_gate_answer_handles_every_departure_shape() {
           --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null
         ;;
     esac
-    before=$(tasks_in "$home" show sample-scenario-choice --full 2>/dev/null || true)
     out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt") \
       || fail "$shape: gate-answered failed on a departure shape"
@@ -730,19 +729,19 @@ test_gate_answer_handles_every_departure_shape() {
         assert_contains "$out" "was already closed" "$shape: outcome did not say what was observed"
         ;;
       unheld-but-open)
-        assert_contains "$out" "left open, nothing written to it" \
+        assert_contains "$out" "noted on it and left queued" \
           "$shape: outcome did not say what was observed"
         ;;
       *) assert_contains "$out" "closed" "$shape: outcome did not say what was observed" ;;
     esac
     # The claim and the effect must agree for every shape: an outcome that says
-    # it closed the item has to have closed it, and one that says it wrote
-    # nothing has to have left the item exactly as it found it. A branch whose
-    # message and durable write diverge fails here whatever its wording.
+    # it closed the item has to have closed it, and one that says it left the
+    # item in a state has to have left it there. A branch whose message and
+    # durable write diverge fails here whatever its wording.
     case "$out" in
-      *"nothing written to it"*)
-        [ "$show" = "$before" ] \
-          || fail "$shape: the outcome claimed nothing was written but the item changed"
+      *"and left "*)
+        assert_contains "$show" "state: ${out##*and left }" \
+          "$shape: the outcome named a state the item is not in"
         ;;
       *closed*)
         assert_contains "$show" "state: done" \
@@ -754,8 +753,10 @@ test_gate_answer_handles_every_departure_shape() {
         "$shape: the answer already in the item was written over"
       assert_not_contains "$show" "Fall back to the seat default scenario." \
         "$shape: this gate's own answer displaced the record of who decided"
+      assert_contains "$show" "Answered through gate sample-hosted-boot/scenario-validation. Prior state was queued" \
+        "$shape: the item does not record that this gate also settled the question"
       assert_contains "$show" "state: queued" \
-        "$shape: an item settled elsewhere and left open was closed by this gate"
+        "$shape: an item settled elsewhere and left open was not put back where it was"
     fi
   done
   pass "every departure shape reports what it did and did what it reported, and the link goes"
@@ -802,7 +803,7 @@ SH
     [ "$shape" != missing-backlog-store ] || assert_grep "$home/data/backlog.md" "$home/ur.err" \
       "$shape: the refusal did not name the backlog store it looked for"
     [ "$shape" != store-key-absent ] || assert_grep "$home/data/backlog.md" "$home/ur.err" \
-      "$shape: the refusal named a store other than the one tasks-axi would discover"
+      "$shape: the refusal did not name the last store candidate it looked for"
     if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
       fail "$shape: verification passed while the write had not landed"
     fi
@@ -878,6 +879,132 @@ SH
   pass "a failed answer write leaves the item still asserting an owed captain decision"
 }
 
+# tasks-axi appends a note only by closing an item, so recording this gate on an
+# item someone else settled and left open means closing it and putting it back.
+# Both open states are driven, because `reopen` returns a closed item to queued
+# whatever it was before and would quietly demote an in-flight one.
+test_a_settled_open_item_is_noted_on_and_put_back_where_it_was() {
+  local home start_state link out show body_before
+  for start_state in queued in_flight; do
+    home=$(make_home "settled-open-$start_state")
+    gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+    link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+    printf 'The captain chose the seat default, with "quotes", **markdown** and a back\\slash.\n' \
+      > "$home/captain-answer.txt"
+    tasks_in "$home" update sample-scenario-choice --body-file "$home/captain-answer.txt" >/dev/null
+    tasks_in "$home" unhold sample-scenario-choice >/dev/null
+    # A hold this gate does not own must come back exactly as it was found.
+    tasks_in "$home" hold sample-scenario-choice --reason "waiting on the vendor" --kind external >/dev/null
+    [ "$start_state" != in_flight ] || tasks_in "$home" start sample-scenario-choice >/dev/null
+    # The rendered body is a quoted literal, so the closing quote is dropped:
+    # what has to survive is the captain's text, which the note is appended after.
+    body_before=$(tasks_in "$home" show sample-scenario-choice --full | sed -n 's/^  body: //p')
+    body_before=${body_before#\"}
+    body_before=${body_before%\"}
+
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$start_state: noting this gate on a settled open item failed"
+    assert_contains "$out" "noted on it and left $start_state" \
+      "$start_state: the outcome did not say where it left the item"
+    show=$(tasks_in "$home" show sample-scenario-choice --full)
+    assert_contains "$show" "state: $start_state" \
+      "$start_state: the item did not come back to the state it was found in"
+    assert_contains "$show" "held: yes" "$start_state: a hold this gate does not own was dropped"
+    assert_contains "$show" "hold_kind: external" "$start_state: the restored hold changed kind"
+    assert_contains "$show" "closed: \"-\"" "$start_state: the item is still recorded as closed"
+    assert_contains "$show" "$body_before" \
+      "$start_state: the answer already in the item did not survive byte for byte"
+    assert_contains "$show" "Prior state was $start_state; restored." \
+      "$start_state: the note does not record the state it had to put back"
+    [ ! -e "$link" ] || fail "$start_state: the link survived a completed reconciliation"
+    run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+      || fail "$start_state: the origin did not verify clean"
+  done
+  pass "a settled open item is noted on and put back into the state it was found in"
+}
+
+# The note carries the state, so a retry completes the sequence from wherever it
+# stopped rather than leaving the item closed or demoted. Both windows are driven
+# by failing the verb that would have run next.
+test_an_interrupted_restore_is_completed_by_the_retry() {
+  local home point start_state link show
+  for point in after-done after-reopen; do
+    for start_state in queued in_flight; do
+      [ "$point" != after-reopen ] || [ "$start_state" = in_flight ] || continue
+      home=$(make_home "restore-$point-$start_state")
+      gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+      link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+      tasks_in "$home" unhold sample-scenario-choice >/dev/null
+      [ "$start_state" != in_flight ] || tasks_in "$home" start sample-scenario-choice >/dev/null
+      case "$point" in
+        after-done) fm_fake_failing_tasks_axi "$home" reopen ;;
+        after-reopen) fm_fake_failing_tasks_axi "$home" start ;;
+      esac
+      if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+        --answered-by firstmate --answer-file "$home/answer.txt" \
+        > "$home/int.out" 2> "$home/int.err"; then
+        fail "$point/$start_state: an interrupted restore reported success"
+      fi
+      rm -f "$home/fakebin/tasks-axi"
+      assert_present "$link" "$point/$start_state: the link was dropped before the restore landed"
+      if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
+        fail "$point/$start_state: verification passed while the restore had not landed"
+      fi
+      out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+        --answered-by firstmate --answer-file "$home/answer.txt") \
+        || fail "$point/$start_state: the retry did not complete the interrupted sequence"
+      assert_contains "$out" "restored to $start_state" \
+        "$point/$start_state: the retry did not say which state it put the item back into"
+      show=$(tasks_in "$home" show sample-scenario-choice --full)
+      assert_contains "$show" "state: $start_state" \
+        "$point/$start_state: the retry left the item somewhere it was not found"
+      [ ! -e "$link" ] || fail "$point/$start_state: the completed retry did not clear the link"
+      run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+        || fail "$point/$start_state: the origin did not verify clean after the retry"
+    done
+  done
+  pass "a restore interrupted at any point is completed by the retry from the state the note records"
+}
+
+# The item a record names is handed to tasks-axi as an argument, and the tool
+# reads a flag-shaped one as a flag and succeeds, so an exit status of zero is
+# not by itself a record for the id that was asked for.
+test_a_flag_shaped_item_never_reads_as_an_established_item() {
+  local home dir cmd out rc
+  home=$(make_home flag-shaped-record)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  dir="$home/data/gate-links/sample-hosted-boot"
+  mkdir -p "$dir"
+  printf 'item=--help\norigin=sample-hosted-boot\nkey=scenario-validation\n' > "$dir/scenario-validation"
+  rc=0
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a flag-shaped item read as an established item: $out"
+  assert_present "$dir/scenario-validation" "the link was dropped on a read that established nothing"
+  assert_contains "$out" "$dir/scenario-validation" "the refusal did not name the record it refused"
+  rc=0
+  out=$(run_decisions "$home" gate-verify sample-hosted-boot 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a flag-shaped record passed verification"
+  assert_contains "$out" "$dir/scenario-validation" "verification did not name the record by path"
+  # gate-status reports rather than gates, so it names the record as one it
+  # cannot recognise instead of refusing the whole origin.
+  out=$(run_decisions "$home" gate-status sample-hosted-boot 2>&1)
+  assert_contains "$out" "unrecognised" "gate-status did not report the record as unrecognised"
+  assert_contains "$out" "$dir/scenario-validation" "gate-status did not name the record by path"
+  rm -f "$dir/scenario-validation"
+
+  # The same argument reaching the backlog read directly, which is the boundary
+  # the record checks sit in front of rather than instead of.
+  rc=0
+  out=$(run_decisions "$home" gate-link --help sample-hosted-boot scenario-validation 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "gate-link accepted an item the backlog never named: $out"
+  assert_contains "$out" "without naming" "gate-link did not say the read established nothing"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "a refused flag-shaped link left something for cleanup to refuse"
+  pass "an item the backlog answered about without naming is refused, not acted on"
+}
+
 # One predicate brings both settled shapes here and each has its own body, so
 # each is pinned on its own: a closed item is noted exactly once however often
 # the command runs, and an item left open keeps the state and body it arrived
@@ -892,7 +1019,6 @@ test_a_settled_item_takes_the_branch_written_for_its_own_state() {
     if [ "$shape" = closed-by-captain ]; then
       tasks_in "$home" "done" sample-scenario-choice --note "captain answered in standup" >/dev/null
     fi
-    before=$(tasks_in "$home" show sample-scenario-choice --full)
     out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
       --answered-by firstmate --answer-file "$home/answer.txt") \
       || fail "$shape: reconciling a settled item failed"
@@ -910,27 +1036,54 @@ test_a_settled_item_takes_the_branch_written_for_its_own_state() {
         assert_contains "$show" "state: done" "$shape: the noted item did not stay closed"
         ;;
       unheld-but-open)
-        assert_contains "$out" "left open, nothing written to it" \
+        assert_contains "$out" "noted on it and left queued" \
           "$shape: the first pass did not report what it did"
         show=$(tasks_in "$home" show sample-scenario-choice --full)
-        [ "$show" = "$before" ] || fail "$shape: an item left open was changed by this gate"
+        assert_contains "$show" "state: queued" "$shape: an item left open did not come back"
+        before=$show
         out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
           --answered-by firstmate --answer-file "$home/answer.txt") \
           || fail "$shape: the retry against an item left open failed"
-        assert_contains "$out" "left open, nothing written to it" \
-          "$shape: the retry did not report what it did"
+        assert_contains "$out" "already recorded" \
+          "$shape: the retry did not recognise the note it had written"
         show=$(tasks_in "$home" show sample-scenario-choice --full)
-        [ "$show" = "$before" ] || fail "$shape: a repeated run changed an item left open"
+        [ "$show" = "$before" ] || fail "$shape: a repeated run changed the item further"
         ;;
     esac
     [ ! -e "$link" ] || fail "$shape: the retry did not clear the link"
     notes=$(printf '%s\n' "$show" | grep -coF "through gate sample-hosted-boot/scenario-validation." || true)
-    case "$shape" in
-      closed-by-captain) [ "$notes" = 1 ] || fail "$shape: this gate was noted $notes times on the closed item" ;;
-      unheld-but-open) [ "$notes" = 0 ] || fail "$shape: this gate wrote itself onto an item it left alone" ;;
-    esac
+    [ "$notes" = 1 ] || fail "$shape: this gate was noted $notes times on the settled item"
   done
   pass "each settled shape takes the branch written for it and repeats without changing the item further"
+}
+
+# A staging write that cannot land has to refuse by name rather than let the
+# shell exit on the bare redirection error, which says nothing about what this
+# command was doing or what it did not write.
+test_a_staging_write_that_cannot_land_refuses_by_name() {
+  local home link out rc
+  home=$(make_home gate-answer-staging)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+  chmod 000 "$home/state"
+  if [ -w "$home/state" ]; then
+    chmod 755 "$home/state"
+    pass "skipped: this user can write an unwritable directory"
+    return 0
+  fi
+  rc=0
+  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" 2>&1) || rc=$?
+  chmod 755 "$home/state"
+  [ "$rc" -ne 0 ] || fail "a staging write that could not land reported success"
+  assert_contains "$out" "fm-decision-hold: could not stage the gate answer" \
+    "the refusal did not name what was not written"
+  assert_present "$link" "the link was dropped after a staging write that did not land"
+  assert_still_claims_captain_owes "$home" sample-scenario-choice "after a refused staging write"
+  run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
+    || fail "the retry after repair did not land the write"
+  pass "a staging write that cannot land refuses by name and keeps the link"
 }
 
 test_a_missing_flag_value_refuses_with_its_own_message() {
@@ -1520,6 +1673,10 @@ test_an_unestablished_read_refuses_and_keeps_the_link
 test_the_store_guard_follows_the_store_tasks_axi_discovers
 test_a_failed_answer_write_never_leaves_the_item_unheld_and_open
 test_a_settled_item_takes_the_branch_written_for_its_own_state
+test_a_settled_open_item_is_noted_on_and_put_back_where_it_was
+test_an_interrupted_restore_is_completed_by_the_retry
+test_a_flag_shaped_item_never_reads_as_an_established_item
+test_a_staging_write_that_cannot_land_refuses_by_name
 test_a_missing_flag_value_refuses_with_its_own_message
 test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit

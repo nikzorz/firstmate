@@ -49,13 +49,16 @@ It refuses a secondmate origin, because it writes through tasks-axi in the activ
 It writes that answer only while the item still asserts an owed captain decision, which is the same claim `gate-link` required.
 An item that stopped asserting one was settled by someone else, so this gate never writes its answer over it, which would displace the real decider and name this caller instead.
 An item that is already closed is noted on and left closed, because a note backfilled onto a closed item does not move it.
-An item that was settled and deliberately left open has nothing written to it and the link is simply dropped, because tasks-axi appends a note only by closing an item, and this mechanism does not own the lifecycle of a record it did not write.
+An item that was settled and deliberately left open is noted on and put back into the state it was found in, because tasks-axi appends a note only by closing an item and this mechanism does not own the lifecycle of a record it did not write.
+That note records the state the item was in, so a retry interrupted anywhere in the close, reopen and restore sequence reads its target out of the item rather than guessing it, and nothing about the sequence is kept on the link record.
+`reopen` returns a closed item to queued whatever it was before, so a state that needs another verb is put back with it, and a state this command has no verb for refuses before the close rather than leaving the item somewhere it did not ask to be.
 An item that already carries this gate's answer but was never closed is closed as it stands, without a rewritten body and without a second note, because the only step the interrupted sequence still owes it is the close.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
 tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
 That store is the `[markdown] path` key of the home's `.tasks.toml`, resolved against the home.
-With no key, tasks-axi discovers its store rather than defaulting to a fixed one, reading `backlog.md` in the home root when one is there and `data/backlog.md` otherwise, and the guard follows that same order so it names the file the tool actually opens.
+With no key, tasks-axi discovers its store rather than defaulting to a fixed one, reading `backlog.md` in the home root when one is there and `data/backlog.md` otherwise, and the guard follows that same order.
+Where a store exists the guard therefore names the file the tool opens; where neither candidate exists it names the last one it looked for, which is the one case the two can differ, and both refuse.
 A store that is missing or unreadable refuses by naming the path it looked for.
 Every firstmate home is cloned from this repo and inherits the tracked root config, so the keyless path is defence in depth rather than a live one, and a guard that named a different file would read as protection while refusing a genuine departure or trusting a not-found from a store nothing reads.
 

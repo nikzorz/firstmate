@@ -296,6 +296,16 @@ validate_gate_slug() {  # <label> <value>
   gate_slug_ok "$2" || fail "$1 must be a privacy-safe slug that does not start with a dot: $2"
 }
 
+# The item a record names is handed to tasks-axi as an argument, and a leading
+# dash there is read as a flag rather than an id, so the shape is checked where
+# the record is read rather than where the tool is called.
+gate_item_id_ok() {  # <value>
+  case "$1" in
+    ''|-*|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
 gate_link_file() {  # <origin-id> <decision-key>
   validate_gate_slug origin-id "$1"
   validate_gate_slug decision-key "$2"
@@ -377,7 +387,7 @@ origin_gate_records() {  # <origin-id>
       continue
     fi
     item=$(record_value "$file" item)
-    if [ -z "$item" ] || [ "$(record_value "$file" origin)" != "$origin" ] \
+    if ! gate_item_id_ok "$item" || [ "$(record_value "$file" origin)" != "$origin" ] \
       || [ "$(record_value "$file" key)" != "$base" ]; then
       printf 'unrecognised\t%s\t\t\n' "$file"
       continue
@@ -463,6 +473,13 @@ gate_item_read() {  # <item-id>
   rc=0
   out=$( (cd "$FM_HOME" && tasks-axi show "$1" --full) 2>&1 ) || rc=$?
   if [ "$rc" -eq 0 ]; then
+    # An exit status of zero is not by itself a record for this id: tasks-axi
+    # reads a flag-shaped argument as a flag and prints its usage successfully,
+    # so the output has to name the id that was asked for.
+    if [ "$(show_field "$out" id)" != "$1" ]; then
+      GATE_ITEM_ERROR="the backlog answered without naming $1, so no record for it was established"
+      return 2
+    fi
     GATE_ITEM_SHOW=$out
     return 0
   fi
@@ -498,8 +515,45 @@ item_asserts_owed_decision() {  # <show-output>
   return 0
 }
 
+# tasks-axi appends a note only by closing an item, so recording this gate on an
+# item someone else settled and left open means closing it and putting it back.
+# `reopen` returns a closed item to queued whatever it was before, so any other
+# state needs its own verb; a state with no verb here is refused before anything
+# is written rather than discovered once the item is already closed.
+gate_state_verb() {  # <state>
+  case "$1" in
+    queued) printf 'reopen\n' ;;
+    in_flight) printf 'start\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+gate_restore_item_state() {  # <item> <state>
+  local item=$1 state=$2 verb
+  verb=$(gate_state_verb "$state") \
+    || fail "$item records a prior state of $state, which this command cannot restore"
+  tasks_axi reopen "$item" >/dev/null \
+    || fail "could not reopen $item to restore its $state state"
+  [ "$verb" = reopen ] || tasks_axi "$verb" "$item" >/dev/null \
+    || fail "could not return $item to $state"
+}
+
+# Carries the state the item was in so a retry restores it from any point in the
+# sequence rather than guessing. The gate identity sits immediately before the
+# recorded state, so the clause cannot be read off a marker another gate wrote.
+gate_open_case_note() {  # <origin> <key> <prior-state> <decided-by>
+  printf 'Answered through gate %s/%s. Prior state was %s; restored. Decided by: %s.' "$1" "$2" "$3" "$4"
+}
+
 gate_answer_body() {  # <origin> <key> <decided-by> <answer>
   printf 'Answered through gate %s/%s.\nDecided by: %s\n\n%s\n' "$1" "$2" "$3" "$4"
+}
+
+# Clearing a staging file on the way to a refusal is best effort: the same
+# condition that failed the write often fails the removal too, and under `set -e`
+# that would end the command before the refusal it was meant to accompany.
+discard_staging() {  # <staging-file>
+  rm -f "$1" 2>/dev/null || true
 }
 
 drop_gate_link() {  # <link-file>
@@ -541,9 +595,9 @@ command_gate_link() {
   fi
   mkdir -p "${file%/*}" || fail "could not create the gate link index for $origin"
   printf 'item=%s\norigin=%s\nkey=%s\n' "$item" "$origin" "$key" > "$STATE/.gate-link.$$" \
-    || { rm -f "$STATE/.gate-link.$$"; fail "could not stage the gate link for $origin/$key"; }
+    || { discard_staging "$STATE/.gate-link.$$"; fail "could not stage the gate link for $origin/$key"; }
   mv "$STATE/.gate-link.$$" "$file" \
-    || { rm -f "$STATE/.gate-link.$$"; fail "could not record the gate link for $origin/$key"; }
+    || { discard_staging "$STATE/.gate-link.$$"; fail "could not record the gate link for $origin/$key"; }
   printf '%s\n' "$file"
 }
 
@@ -552,14 +606,15 @@ linked_item_for() {  # <origin> <key> <link-file>
   [ -f "$3" ] || fail "gate $1/$2 has no recorded link at $3"
   [ -r "$3" ] || fail "gate link $3 could not be read"
   item=$(record_value "$3" item)
-  [ -n "$item" ] || fail "gate link $3 records no captain-gated item"
+  gate_item_id_ok "$item" || fail "gate link $3 does not record a task-id shaped captain-gated item"
   [ "$(record_value "$3" origin)" = "$1" ] && [ "$(record_value "$3" key)" = "$2" ] \
     || fail "gate link $3 does not name the pairing it sits at"
   printf '%s\n' "$item"
 }
 
 command_gate_answered() {
-  local origin=${1:-} key=${2:-} decided_by='' answer_file='' file item answer rc body note
+  local origin=${1:-} key=${2:-} decided_by='' answer_file='' file item answer rc body note \
+    item_body state prior
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -612,13 +667,36 @@ command_gate_answered() {
   # so this gate never writes its answer over it: overwriting would displace
   # whoever actually decided and label the record with this caller.
   if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
-    case "$(show_field "$GATE_ITEM_SHOW" body)" in
+    item_body=$(show_field "$GATE_ITEM_SHOW" body)
+    state=$(show_field "$GATE_ITEM_SHOW" state)
+    case "$item_body" in
+      # This gate's own open-case sequence, which records the state it has to put
+      # the item back into. Any point it was interrupted at reads the same here:
+      # the item is not in that state yet, so the retry finishes the restore.
+      *"through gate $origin/$key. Prior state was "*)
+        prior=${item_body#*"through gate $origin/$key. Prior state was "}
+        prior=${prior%%;*}
+        if [ "$state" != "$prior" ]; then
+          gate_restore_item_state "$item" "$prior"
+          drop_gate_link "$file"
+          printf 'gate-answered: %s/%s already recorded on %s -> %s restored to %s; link cleared\n' \
+            "$origin" "$key" "$item" "$item" "$prior"
+          return 0
+        fi
+        drop_gate_link "$file"
+        printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
+        return 0
+        ;;
       *"through gate $origin/$key."*)
         # The answer landed but the close did not, so the retry finishes the
         # sequence rather than clearing the link that is still holding it open.
-        if [ "$(show_field "$GATE_ITEM_SHOW" state)" != "done" ]; then
+        if [ "$state" != "done" ]; then
           tasks_axi "done" "$item" >/dev/null \
             || fail "could not close $item on the gate answer it already records"
+          drop_gate_link "$file"
+          printf 'gate-answered: %s/%s already recorded on %s -> %s closed; link cleared\n' \
+            "$origin" "$key" "$item" "$item"
+          return 0
         fi
         drop_gate_link "$file"
         printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
@@ -630,7 +708,7 @@ command_gate_answered() {
     # one that is not. Every defect on this path so far came from a guard widened
     # to admit a new state while the body behind it stayed as written for the old
     # one, so these two stay apart even though one predicate brings both here.
-    if [ "$(show_field "$GATE_ITEM_SHOW" state)" = "done" ]; then
+    if [ "$state" = "done" ]; then
       note=$(printf 'Also answered through gate %s/%s. Decided by: %s.' "$origin" "$key" "$decided_by")
       tasks_axi "done" "$item" --note "$note" >/dev/null \
         || fail "could not note this gate's answer on closed $item"
@@ -639,13 +717,19 @@ command_gate_answered() {
         "$origin" "$key" "$decided_by" "$item"
       return 0
     fi
-    # Whoever settled this left the item open, and this mechanism does not own
-    # the lifecycle of the record it did not write. tasks-axi appends a note only
-    # through `done`, so there is no way to record this gate on an open item
-    # without closing live work or rewriting the answer already in its body.
+    # Whoever settled this left the item open, so the note goes on beside their
+    # answer and the item comes back to the state they left it in. The state is
+    # proved restorable before the close, because a close this command could not
+    # undo would be the live-work loss the note exists to avoid.
+    gate_state_verb "$state" >/dev/null \
+      || fail "$item is in state $state, which this command could not restore after a close, so nothing was written to it"
+    note=$(gate_open_case_note "$origin" "$key" "$state" "$decided_by")
+    tasks_axi "done" "$item" --note "$note" >/dev/null \
+      || fail "could not note this gate's answer on $item"
+    gate_restore_item_state "$item" "$state"
     drop_gate_link "$file"
-    printf 'gate-answered: %s/%s answered by %s; %s was settled without this gate and left open, nothing written to it\n' \
-      "$origin" "$key" "$decided_by" "$item"
+    printf 'gate-answered: %s/%s answered by %s; %s was settled without this gate, noted on it and left %s\n' \
+      "$origin" "$key" "$decided_by" "$item" "$state"
     return 0
   fi
 
@@ -653,9 +737,10 @@ command_gate_answered() {
   # through never leaves the item unheld and open, which by the owed predicate
   # would stop it claiming a decision is owed while none was recorded.
   body=$(gate_answer_body "$origin" "$key" "$decided_by" "$answer")
-  printf '%s' "$body" > "$STATE/.gate-answer.$$"
+  printf '%s' "$body" > "$STATE/.gate-answer.$$" \
+    || { discard_staging "$STATE/.gate-answer.$$"; fail "could not stage the gate answer for $origin/$key"; }
   tasks_axi update "$item" --body-file "$STATE/.gate-answer.$$" --archive-body >/dev/null \
-    || { rm -f "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
+    || { discard_staging "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
   rm -f "$STATE/.gate-answer.$$"
   if [ "$(show_field "$GATE_ITEM_SHOW" held)" = yes ]; then
     tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
