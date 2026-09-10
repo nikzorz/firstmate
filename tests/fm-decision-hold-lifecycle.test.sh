@@ -990,14 +990,90 @@ test_renamed_and_handed_off_items_are_a_documented_limit() {
   pass "a renamed or handed-off captain item is an accepted limit and still asserts its decision"
 }
 
+# The counterpart to the family property above: an index whose absence could
+# actually be established is clean, at every level of it, and a home that has
+# never recorded a link must not read as one this reader could not establish.
+test_an_index_that_is_established_absent_reads_as_clean() {
+  local home shape out
+  for shape in no-data-dir no-gate-links-dir no-origin-dir; do
+    home=$(make_home "absent-$shape")
+    case "$shape" in
+      no-data-dir) rm -rf "$home/data" ;;
+      no-gate-links-dir) : ;;
+      no-origin-dir) mkdir -p "$home/data/gate-links" ;;
+    esac
+    out=$(run_decisions "$home" gate-verify sample-hosted-boot 2>&1) \
+      || fail "$shape: an index that is established absent did not verify clean: $out"
+    assert_contains "$out" "verified" "$shape: verification did not report what it checked"
+    run_decisions "$home" gate-status sample-hosted-boot >/dev/null 2>&1 \
+      || fail "$shape: gate-status refused an index that is established absent"
+    out=$(run_decisions "$home" gate-not-raised sample-hosted-boot scenario-validation 2>&1) \
+      || fail "$shape: gate-not-raised refused an index that is established absent: $out"
+    assert_contains "$out" "has no linked captain-gated item" \
+      "$shape: an absent pairing was not reported as absent"
+  done
+  pass "an index whose absence can be established reads as clean at every level"
+}
+
+# Because the index reader has no silent skip, a record staged inside the scanned
+# directory and left behind by a crash blocks teardown until someone deletes it.
+# The staging file must therefore never appear there, which is observed at the
+# one moment it could exist: the rename that would put it in place.
+test_gate_link_never_stages_inside_the_scanned_index() {
+  local home dir out
+  home=$(make_home gate-link-staging)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  dir="$home/data/gate-links/sample-hosted-boot"
+  mkdir -p "$dir"
+  cat > "$home/fakebin/mv" <<SH
+#!/usr/bin/env bash
+ls -A "$dir" > "$home/during-write.txt" 2>&1
+echo "the test refused this rename" >&2
+exit 1
+SH
+  chmod +x "$home/fakebin/mv"
+  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation \
+    > "$home/stage.out" 2> "$home/stage.err"; then
+    fail "gate-link reported success when the rename into place failed"
+  fi
+  rm -f "$home/fakebin/mv"
+  out=$(cat "$home/during-write.txt")
+  [ -z "$out" ] \
+    || fail "gate-link staged inside the scanned index directory: $out"
+  out=$(ls -A "$dir")
+  [ -z "$out" ] || fail "a failed gate-link left something in the index directory: $out"
+  for out in "$home/state"/.gate-link.*; do
+    [ ! -e "$out" ] || fail "a failed gate-link left its staging file behind: $out"
+  done
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "a failed gate-link left the origin unable to verify clean"
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "the retry after a failed rename did not record the pairing"
+  if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
+    fail "the recorded pairing did not make verification refuse"
+  fi
+  pass "gate-link stages outside the scanned index directory and leaves nothing behind"
+}
+
+# The command set comes from the script's own --help, the generated text
+# interface it owns through usage(), so a command added later is exercised here
+# instead of leaving a hand-written list quietly one command short.
+gate_commands_from_help() {
+  "$ROOT/bin/fm-decision-hold.sh" --help \
+    | sed -n 's|^ *fm-decision-hold\.sh \(gate-[a-z][a-z-]*\).*|\1|p' \
+    | sort -u
+}
+
 # The family property, asserted once for every command that reads the link index
 # rather than once per site: an index that cannot be established refuses by the
 # path it was reached through, and never reports absence or success. A command
 # added later that reaches its own conclusion of absence fails here.
 test_every_index_reader_refuses_an_index_it_cannot_establish() {
-  local home dir parent barrier cmd out rc timeout_bin argv
+  local home dir parent barrier cmd out rc timeout_bin argv commands
   timeout_bin=$(command -v timeout || true)
   [ -n "$timeout_bin" ] || { pass "skipped: timeout not found"; return 0; }
+  commands=$(gate_commands_from_help)
+  [ -n "$commands" ] || fail "no gate command could be derived from fm-decision-hold.sh --help"
   home=$(make_home index-reader-family)
   gate_fixture "$home" sample-hosted-boot sample-scenario-choice
   run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null
@@ -1012,7 +1088,7 @@ test_every_index_reader_refuses_an_index_it_cannot_establish() {
       chmod 755 "$dir" "$parent" 2>/dev/null || true
       continue
     fi
-    for cmd in gate-link gate-answered gate-not-raised gate-status gate-verify; do
+    for cmd in $commands; do
       case "$cmd" in
         gate-link) argv=(gate-link sample-scenario-choice sample-hosted-boot scenario-validation) ;;
         gate-answered) argv=(gate-answered sample-hosted-boot scenario-validation \
@@ -1020,6 +1096,7 @@ test_every_index_reader_refuses_an_index_it_cannot_establish() {
         gate-not-raised) argv=(gate-not-raised sample-hosted-boot scenario-validation) ;;
         gate-status) argv=(gate-status sample-hosted-boot) ;;
         gate-verify) argv=(gate-verify sample-hosted-boot) ;;
+        *) fail "$cmd reads the link index and this test has no invocation for it; add one" ;;
       esac
       rc=0
       out=$("$timeout_bin" 10 env PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
@@ -1264,6 +1341,21 @@ test_gate_link_validates_identity_ownership_and_the_owed_claim() {
     > "$home/dup.out" 2> "$home/dup.err"; then
     fail "gate link silently repointed an existing gate identity at another item"
   fi
+
+  # A record every other consumer of it would refuse must not be reported as a
+  # recorded pairing, or the caller believes a link exists that nothing accepts.
+  printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice other-origin scenario-validation \
+    > "$home/data/gate-links/sample-hosted-boot/scenario-validation"
+  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation \
+    > "$home/pair.out" 2> "$home/pair.err"; then
+    fail "gate link reported a recorded pairing that names a different origin"
+  fi
+  assert_grep "does not name the pairing it sits at" "$home/pair.err" \
+    "the refusal did not say what was wrong with the record"
+  if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null 2>&1; then
+    fail "the record gate-link would have accepted is one gate-answered refuses"
+  fi
   pass "gate links validate identity, ownership, and the owed claim before recording a pairing"
 }
 
@@ -1353,6 +1445,8 @@ test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit
 test_gate_link_never_reads_a_record_it_has_not_proved_regular
 test_gate_link_refuses_a_secondmate_origin
+test_gate_link_never_stages_inside_the_scanned_index
+test_an_index_that_is_established_absent_reads_as_clean
 test_every_index_reader_refuses_an_index_it_cannot_establish
 test_gate_index_refuses_every_unrecognised_record_shape
 test_gate_verify_never_calls_the_backlog_backend

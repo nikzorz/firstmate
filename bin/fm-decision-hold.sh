@@ -312,11 +312,16 @@ record_value() {  # <file> <field>
 # permissive default kept reappearing one level at a time.
 #   0 listable        1 established absent        2 could not be established
 gate_index_dir_state() {  # <index-dir>
-  local dir=$1 parent="$DATA/gate-links"
-  [ -d "$DATA" ] && [ -x "$DATA" ] || return 2
-  if [ -e "$parent" ] || [ -L "$parent" ]; then
-    [ -d "$parent" ] && [ -x "$parent" ] || return 2
-  fi
+  local dir=$1 level enclosing=${DATA%/*}
+  [ -n "$enclosing" ] || enclosing=/
+  # Every level answers the same question, rather than each restating the rule
+  # and one of them getting it wrong: a level that is there has to be a directory
+  # this process can search, and a level that is not there is only absent if the
+  # level above it could be searched to find that out.
+  for level in "$enclosing" "$DATA" "$DATA/gate-links"; do
+    [ -e "$level" ] || [ -L "$level" ] || return 1
+    [ -d "$level" ] && [ -x "$level" ] || return 2
+  done
   [ -e "$dir" ] || [ -L "$dir" ] || return 1
   [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] || return 2
   return 0
@@ -343,6 +348,11 @@ gate_link_state() {  # <link-file>
 # vanish before it could be reported; `[ -L ]` routes it onward while `[ -e ]`
 # still guards an empty glob. The regular-file test then runs BEFORE any field is
 # read, so a FIFO planted here cannot block a read and hang cleanup.
+#
+# Because there is no silent skip, a writer must never stage a partial record
+# inside this directory: no name is exempt, so a staging file a crash leaves
+# behind reports as an unreconciled link and blocks teardown until someone
+# deletes it by hand. Writers stage under `$STATE` and rename into place.
 #
 # Emits one tab-separated verdict per directory entry, dotfiles included:
 #   ok<TAB><file><TAB><key><TAB><item>
@@ -485,7 +495,7 @@ drop_gate_link() {  # <link-file>
 }
 
 command_gate_link() {
-  local item=${1:-} origin=${2:-} key=${3:-} file rc
+  local item=${1:-} origin=${2:-} key=${3:-} file rc linked
   [ "$#" -eq 3 ] || { usage >&2; exit 2; }
   validate_slug item-id "$item"
   validate_gate_slug origin-id "$origin"
@@ -509,19 +519,19 @@ command_gate_link() {
   [ "$rc" -ne 2 ] \
     || fail "gate $origin/$key could not be checked: the link index at ${file%/*} could not be established"
   if [ "$rc" -eq 0 ]; then
-    # The regular-file and readable tests run before any field is read, so a FIFO
-    # planted at this path cannot block the read and hang the command.
-    [ -f "$file" ] || fail "gate $origin/$key has an unrecognised link record at $file"
-    [ -r "$file" ] || fail "gate $origin/$key has an unreadable link record at $file"
-    [ "$(record_value "$file" item)" = "$item" ] \
+    # Read through the one consumer that validates the whole pairing, so this
+    # command never reports recorded what every other command would refuse.
+    linked=$(linked_item_for "$origin" "$key" "$file")
+    [ "$linked" = "$item" ] \
       || fail "gate $origin/$key is already linked to a different captain item"
     printf '%s\n' "$file"
     return 0
   fi
-  mkdir -p "$(dirname "$file")"
-  printf 'item=%s\norigin=%s\nkey=%s\n' "$item" "$origin" "$key" > "$file.staging.$$" \
-    || fail "could not stage the gate link for $origin/$key"
-  mv "$file.staging.$$" "$file" || fail "could not record the gate link for $origin/$key"
+  mkdir -p "${file%/*}" || fail "could not create the gate link index for $origin"
+  printf 'item=%s\norigin=%s\nkey=%s\n' "$item" "$origin" "$key" > "$STATE/.gate-link.$$" \
+    || { rm -f "$STATE/.gate-link.$$"; fail "could not stage the gate link for $origin/$key"; }
+  mv "$STATE/.gate-link.$$" "$file" \
+    || { rm -f "$STATE/.gate-link.$$"; fail "could not record the gate link for $origin/$key"; }
   printf '%s\n' "$file"
 }
 
