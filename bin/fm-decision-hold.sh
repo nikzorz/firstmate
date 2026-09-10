@@ -322,6 +322,17 @@ gate_index_dir_state() {  # <index-dir>
   return 0
 }
 
+# Every command that asks "is a pairing recorded here?" asks it through this, so
+# no command can reach its own conclusion of absence from a probe that never ran.
+#   0 recorded        1 established absent        2 could not be established
+gate_link_state() {  # <link-file>
+  local file=$1 rc=0
+  gate_index_dir_state "${file%/*}" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  [ -e "$file" ] || [ -L "$file" ] || return 1
+  return 0
+}
+
 # The index reader has no silent skip: anything it cannot fully recognise is an
 # unreconciled link, not a file to pass over, and that holds for the directories
 # it has to traverse as much as for the records inside them. Every earlier
@@ -481,13 +492,23 @@ command_gate_link() {
   validate_gate_slug decision-key "$key"
   file=$(gate_link_file "$origin" "$key")
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
+  # This command writes through tasks-axi in the active home, so a secondmate's
+  # decision recorded here would sit in a home that does not own it.
+  if [ -f "$STATE/$origin.meta" ] \
+    && [ "$(meta_value "$STATE/$origin.meta" kind)" = secondmate ]; then
+    fail "origin $origin is a secondmate; a captain decision it raises belongs in that secondmate's own home, not $FM_HOME"
+  fi
   rc=0
   gate_item_read "$item" || rc=$?
   [ "$rc" -ne 2 ] || fail "captain-gated item $item could not be checked: $GATE_ITEM_ERROR"
   [ "$rc" -ne 1 ] || fail "captain-gated item $item is not in $FM_HOME/data/backlog.md"
   item_asserts_owed_decision "$GATE_ITEM_SHOW" \
     || fail "backlog item $item does not assert an owed captain decision"
-  if [ -e "$file" ] || [ -L "$file" ]; then
+  rc=0
+  gate_link_state "$file" || rc=$?
+  [ "$rc" -ne 2 ] \
+    || fail "gate $origin/$key could not be checked: the link index at ${file%/*} could not be established"
+  if [ "$rc" -eq 0 ]; then
     # The regular-file and readable tests run before any field is read, so a FIFO
     # planted at this path cannot block the read and hang the command.
     [ -f "$file" ] || fail "gate $origin/$key has an unrecognised link record at $file"
@@ -543,7 +564,11 @@ command_gate_answered() {
   [ "$(printf '%s' "$answer" | LC_ALL=C wc -c | tr -d ' ')" -le 8192 ] \
     || fail "answer file exceeds 8192 bytes"
   file=$(gate_link_file "$origin" "$key")
-  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+  rc=0
+  gate_link_state "$file" || rc=$?
+  [ "$rc" -ne 2 ] \
+    || fail "gate $origin/$key could not be checked: the link index at ${file%/*} could not be established"
+  if [ "$rc" -eq 1 ]; then
     printf 'gate-answered: %s/%s has no linked captain-gated item\n' "$origin" "$key"
     return 0
   fi
@@ -567,6 +592,12 @@ command_gate_answered() {
   if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
     case "$(show_field "$GATE_ITEM_SHOW" body)" in
       *"through gate $origin/$key."*)
+        # The answer landed but the close did not, so the retry finishes the
+        # sequence rather than clearing the link that is still holding it open.
+        if [ "$(show_field "$GATE_ITEM_SHOW" state)" != "done" ]; then
+          tasks_axi "done" "$item" >/dev/null \
+            || fail "could not close $item on the gate answer it already records"
+        fi
         drop_gate_link "$file"
         printf 'gate-answered: %s/%s already recorded on %s; link cleared\n' "$origin" "$key" "$item"
         return 0
@@ -600,12 +631,16 @@ command_gate_answered() {
 }
 
 command_gate_not_raised() {
-  local origin=${1:-} key=${2:-} file item
+  local origin=${1:-} key=${2:-} file item rc
   [ "$#" -eq 2 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
   validate_gate_slug decision-key "$key"
   file=$(gate_link_file "$origin" "$key")
-  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+  rc=0
+  gate_link_state "$file" || rc=$?
+  [ "$rc" -ne 2 ] \
+    || fail "gate $origin/$key could not be checked: the link index at ${file%/*} could not be established"
+  if [ "$rc" -eq 1 ]; then
     printf 'gate-not-raised: %s/%s has no linked captain-gated item\n' "$origin" "$key"
     return 0
   fi
@@ -618,9 +653,13 @@ command_gate_not_raised() {
 }
 
 command_gate_status() {
-  local origin=${1:-} verdict file key item records
+  local origin=${1:-} verdict file key item records rc
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_gate_slug origin-id "$origin"
+  rc=0
+  gate_index_dir_state "$DATA/gate-links/$origin" || rc=$?
+  [ "$rc" -ne 2 ] \
+    || fail "the link index at $DATA/gate-links/$origin could not be established"
   # The reader's own exit status is read here rather than inside the here-doc
   # substitution, where a failure would have read as an empty index.
   records=$(origin_gate_records "$origin") \

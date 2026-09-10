@@ -572,6 +572,23 @@ gate_fixture() {  # <home> <origin> <item>
   printf 'Fall back to the seat default scenario.\n' > "$home/answer.txt"
 }
 
+# Shadows tasks-axi so one subcommand fails and every other call reaches the real
+# binary, which is how an interruption at a chosen point in a sequence is driven
+# through the real command rather than by editing the item afterwards.
+fm_fake_failing_tasks_axi() {  # <home> <subcommand>
+  local home=$1 subcommand=$2
+  cat > "$home/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "$subcommand" ]; then
+  echo 'error: "simulated interruption"' >&2
+  echo 'code: UNKNOWN' >&2
+  exit 1
+fi
+exec "\$REAL_TASKS_AXI" "\$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+}
+
 assert_still_claims_captain_owes() {  # <home> <item> <label>
   local show
   show=$(tasks_in "$1" show "$2" --full)
@@ -884,27 +901,67 @@ test_a_missing_flag_value_refuses_with_its_own_message() {
   pass "a gate-answered flag given without its value refuses with its own message"
 }
 
-# The write happens before the link is dropped, so a crash between them leaves a
-# surviving link and the retry is idempotent against the item's own state.
+# The write happens before the link is dropped, so an interruption anywhere in the
+# sequence leaves either an item that is closed or a surviving link that keeps
+# cleanup refusing, and the retry is idempotent against the item's own state. Every
+# point is driven here: pinning one of them is what let a guard change at another
+# reach review green.
 test_a_surviving_link_always_means_the_write_did_not_land() {
-  local home link out
-  home=$(make_home write-then-drop)
-  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
-  link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
-  run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null
-  printf 'item=%s\norigin=%s\nkey=%s\n' sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
-  if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
-    fail "a surviving link after a landed write must still refuse"
-  fi
-  out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
-    --answered-by firstmate --answer-file "$home/answer.txt") \
-    || fail "the idempotent retry failed"
-  assert_contains "$out" "already recorded" "the retry did not recognise its own landed write"
-  [ ! -e "$link" ] || fail "the idempotent retry did not clear the link"
-  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
-    || fail "the origin did not verify clean after the idempotent retry"
-  pass "the item write lands before the link is dropped, and the retry is idempotent"
+  local home point link out show state notes
+  for point in before-body-write after-body-write after-unhold after-done; do
+    home=$(make_home "interrupted-$point")
+    gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+    link=$(run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation)
+    case "$point" in
+      after-done)
+        run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+          --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
+          || fail "$point: the answer sequence failed"
+        # The only step left is the link removal, and it is not a tasks-axi call.
+        printf 'item=%s\norigin=%s\nkey=%s\n' \
+          sample-scenario-choice sample-hosted-boot scenario-validation > "$link"
+        ;;
+      *)
+        case "$point" in
+          before-body-write) fm_fake_failing_tasks_axi "$home" update ;;
+          after-body-write) fm_fake_failing_tasks_axi "$home" unhold ;;
+          after-unhold) fm_fake_failing_tasks_axi "$home" "done" ;;
+        esac
+        if run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+          --answered-by firstmate --answer-file "$home/answer.txt" \
+          > "$home/int.out" 2> "$home/int.err"; then
+          fail "$point: an interrupted answer sequence reported success"
+        fi
+        rm -f "$home/fakebin/tasks-axi"
+        ;;
+    esac
+
+    # Either the item is closed or the write did not land and the link survives,
+    # so nothing is ever both unreconciled and invisible to cleanup.
+    show=$(tasks_in "$home" show sample-scenario-choice --full)
+    state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p')
+    if [ "$state" != "done" ]; then
+      assert_present "$link" "$point: the item is not closed and the link is gone too"
+      if run_decisions "$home" gate-verify sample-hosted-boot >/dev/null 2>&1; then
+        fail "$point: verification passed while the item was neither closed nor linked"
+      fi
+    fi
+
+    out=$(run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+      --answered-by firstmate --answer-file "$home/answer.txt") \
+      || fail "$point: the retry after repair failed"
+    show=$(tasks_in "$home" show sample-scenario-choice --full)
+    assert_contains "$show" "state: done" "$point: the retry left the item open"
+    assert_contains "$show" "Answered through gate sample-hosted-boot/scenario-validation." \
+      "$point: the closed item does not record the gate answer"
+    notes=$(printf '%s\n' "$show" | grep -oF "through gate sample-hosted-boot/scenario-validation." | wc -l | tr -d ' ')
+    [ "$notes" = 1 ] || fail "$point: the retry recorded this gate $notes times"
+    [ ! -e "$link" ] || fail "$point: the retry did not clear the link"
+    run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+      || fail "$point: the origin did not verify clean after the retry"
+    [ -n "$out" ] || fail "$point: the retry said nothing about what it did"
+  done
+  pass "an interruption at any point in the answer sequence keeps the link until the item is closed"
 }
 
 # Documented limit, not desired behaviour: the link's only handle on the item is
@@ -931,6 +988,81 @@ test_renamed_and_handed_off_items_are_a_documented_limit() {
       "$shape: the surviving item"
   done
   pass "a renamed or handed-off captain item is an accepted limit and still asserts its decision"
+}
+
+# The family property, asserted once for every command that reads the link index
+# rather than once per site: an index that cannot be established refuses by the
+# path it was reached through, and never reports absence or success. A command
+# added later that reaches its own conclusion of absence fails here.
+test_every_index_reader_refuses_an_index_it_cannot_establish() {
+  local home dir parent barrier cmd out rc timeout_bin argv
+  timeout_bin=$(command -v timeout || true)
+  [ -n "$timeout_bin" ] || { pass "skipped: timeout not found"; return 0; }
+  home=$(make_home index-reader-family)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null
+  parent="$home/data/gate-links"
+  dir="$parent/sample-hosted-boot"
+  for barrier in unlistable-origin-dir unsearchable-parent; do
+    case "$barrier" in
+      unlistable-origin-dir) chmod 000 "$dir" ;;
+      unsearchable-parent) chmod 000 "$parent" ;;
+    esac
+    if [ -x "$dir" ] && [ -r "$dir" ]; then
+      chmod 755 "$dir" "$parent" 2>/dev/null || true
+      continue
+    fi
+    for cmd in gate-link gate-answered gate-not-raised gate-status gate-verify; do
+      case "$cmd" in
+        gate-link) argv=(gate-link sample-scenario-choice sample-hosted-boot scenario-validation) ;;
+        gate-answered) argv=(gate-answered sample-hosted-boot scenario-validation \
+          --answered-by firstmate --answer-file "$home/answer.txt") ;;
+        gate-not-raised) argv=(gate-not-raised sample-hosted-boot scenario-validation) ;;
+        gate-status) argv=(gate-status sample-hosted-boot) ;;
+        gate-verify) argv=(gate-verify sample-hosted-boot) ;;
+      esac
+      rc=0
+      out=$("$timeout_bin" 10 env PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
+        FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+        FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" "${argv[@]}" 2>&1) || rc=$?
+      [ "$rc" -ne 124 ] || fail "$barrier/$cmd: the command hung on an index it could not establish"
+      [ "$rc" -ne 0 ] || fail "$barrier/$cmd: an index that could not be established passed"
+      assert_contains "$out" "$dir" "$barrier/$cmd: the refusal did not name the index path"
+      assert_not_contains "$out" "has no linked" "$barrier/$cmd: a failed probe was reported as absence"
+      assert_not_contains "$out" "verified:" "$barrier/$cmd: a failed probe was reported as clean"
+      assert_not_contains "$out" "nothing to reconcile" "$barrier/$cmd: a failed probe was reported as clean"
+    done
+    chmod 755 "$dir" "$parent" 2>/dev/null || true
+  done
+  assert_still_claims_captain_owes "$home" sample-scenario-choice "after every refused read"
+  run_decisions "$home" gate-answered sample-hosted-boot scenario-validation \
+    --answered-by firstmate --answer-file "$home/answer.txt" >/dev/null \
+    || fail "the answer did not land once the index was readable again"
+  pass "every command that reads the link index refuses an index it cannot establish, by path"
+}
+
+# The command writes through tasks-axi in the active home, so a secondmate origin
+# would file its decision in a home that does not own it.
+test_gate_link_refuses_a_secondmate_origin() {
+  local home
+  home=$(make_home gate-link-secondmate)
+  gate_fixture "$home" sample-hosted-boot sample-scenario-choice
+  write_origin_meta "$home" sample-hosted-boot secondmate
+  if run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation \
+    > "$home/sm.out" 2> "$home/sm.err"; then
+    fail "gate-link recorded a pairing against a secondmate origin"
+  fi
+  assert_grep "secondmate" "$home/sm.err" "the refusal did not name why it refused"
+  assert_grep "own home" "$home/sm.err" "the refusal did not say where that decision belongs"
+  assert_absent "$home/data/gate-links/sample-hosted-boot/scenario-validation" \
+    "the refused secondmate pairing was recorded anyway"
+  assert_still_claims_captain_owes "$home" sample-scenario-choice "after a refused secondmate link"
+  run_decisions "$home" gate-verify sample-hosted-boot >/dev/null \
+    || fail "a refused secondmate link left something for cleanup to refuse"
+  write_origin_meta "$home" sample-hosted-boot scout
+  run_decisions "$home" gate-link sample-scenario-choice sample-hosted-boot scenario-validation >/dev/null \
+    || fail "gate-link refused an origin whose recorded kind is not secondmate"
+  pass "gate-link refuses a secondmate origin and says where that decision belongs"
 }
 
 # The same ordering the index reader keeps: gate-link proves the record is a
@@ -1220,6 +1352,8 @@ test_a_missing_flag_value_refuses_with_its_own_message
 test_a_surviving_link_always_means_the_write_did_not_land
 test_renamed_and_handed_off_items_are_a_documented_limit
 test_gate_link_never_reads_a_record_it_has_not_proved_regular
+test_gate_link_refuses_a_secondmate_origin
+test_every_index_reader_refuses_an_index_it_cannot_establish
 test_gate_index_refuses_every_unrecognised_record_shape
 test_gate_verify_never_calls_the_backlog_backend
 test_gate_link_validates_identity_ownership_and_the_owed_claim
