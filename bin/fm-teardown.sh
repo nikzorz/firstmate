@@ -29,6 +29,9 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
+# Every non-secondmate task additionally passes the captain-gated link check.
+# That check reads only this home's link index, never the backlog, so cleanup
+# can refuse where it previously passed and the refusal names the file.
 # Before destructive cleanup, teardown validates task check artifacts and any
 # matching quarantine entries as ordinary single-link files on the state
 # device. It refuses and preserves task state when that proof fails; otherwise
@@ -1515,6 +1518,16 @@ if [ "$KIND" = secondmate ]; then
   validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
 fi
 
+if [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then
+  if ! GATE_LINKS=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" gate-verify "$ID" 2>&1); then
+    echo "REFUSED: task $ID still has a captain-gated decision link that was never reconciled." >&2
+    echo "$GATE_LINKS" >&2
+    echo "Reconcile each link with bin/fm-decision-hold.sh gate-answered or gate-not-raised, or remove a record named above, before teardown." >&2
+    exit 1
+  fi
+fi
+
 if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
   REPORT="$DATA/$ID/report.md"
   if [ ! -f "$REPORT" ]; then
@@ -1677,6 +1690,10 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the record sweep below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
+# The forced path is the explicit-discard escape hatch that skipped the gate check
+# above, so this origin's own link index goes with every other per-task record it
+# discards; the shared parent is left for the origins that still own entries in it.
+[ "$FORCE" != "--force" ] || rm -rf "$DATA/gate-links/$ID"
 remove_task_state_records "$STATE" "$ID" ${HERDR_PRESENTATION_RETAINED[@]+"${HERDR_PRESENTATION_RETAINED[@]}"} || exit 1
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true

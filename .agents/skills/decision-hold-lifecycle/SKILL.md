@@ -36,5 +36,7 @@ Bearings reads the resulting structured state and must never compensate by scrap
 7. Put the captain's exact durable decision in a file and use the script's `resolve` command with every routed task.
 8. Confirm Bearings no longer shows the closed hold and that routed work remains in structured backlog state.
 
+This policy's trigger stays investigations and visual reviews; a captain-gated backlog item paired with a live worker's mid-flight gate is a separate trigger owned by `ask-user-authority`, which uses the same script's `gate-*` commands.
+
 `bin/fm-decision-hold.sh --help` owns command syntax, identity construction, completion attestation, retry behavior, and close ordering.
 `docs/decision-hold-lifecycle.md` records the mechanism and regression evidence without restating this policy.
