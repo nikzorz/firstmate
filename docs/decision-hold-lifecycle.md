@@ -97,12 +97,13 @@ The projection remains read-only and does not inspect historical prose.
 Verification date: 2026-07-14.
 Additional quoted `blocked_by` regression verification date: 2026-07-17.
 Plural blocker-readiness and mixed-home projection verification date: 2026-07-22.
-Captain-gated backlog link verification date: 2026-09-08.
+Captain-gated backlog link verification date: 2026-09-10.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.
 The initial Bearings snapshot correctly has no open decision, and the new teardown gate refuses to erase the source.
 A later regression covers tasks-axi's quoted multi-entry `blocked_by` output so `resolve` matches the first, middle, and last ids and rejects a genuinely absent id.
+The captain-gated link regression reproduces an unlinked item going stale under its own gate's answer, then covers the settled and departure shapes, the index reader's refusals under a bounded timeout, and the teardown gate with and without `--force`.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -117,6 +118,33 @@ ok - resolved findings and decision-like prose do not create false holds
 ok - terminal single-owner stale status decisions do not block empty inventory
 ok - main-home and secondmate-home captain holds remain correctly routed
 ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuinely absent id
+ok - an unlinked captain-gated item survives its own gate's answer still claiming the captain owes it
+ok - answering a linked gate closes the item and removes the link
+ok - the owed predicate reads the captain hold, so a re-kinded item is still closed
+ok - a gate that never raised the question writes nothing and leaves the item captain-owned
+ok - every departure shape reports what it did and did what it reported, and the link goes
+ok - an item read that could not be established refuses, keeps the link, and lands on retry
+ok - the store guard follows tasks-axi's own discovery order in both directions
+ok - a failed answer write leaves the item still asserting an owed captain decision
+ok - each settled shape takes the branch written for it and repeats without changing the item further
+ok - this gate's note on an item found closed never becomes an owed close on retry
+ok - a marker is read only by the key that wrote it, not by a key it extends
+ok - an item whose id renders quoted is established rather than refused
+ok - an item the backlog answered about without naming is refused, not acted on
+ok - a staging write that cannot land refuses by name and keeps the link
+ok - a gate-answered flag given without its value refuses with its own message
+ok - an interruption at any point in the answer sequence keeps the link until the item is closed
+ok - a renamed or handed-off captain item is an accepted limit and still asserts its decision
+ok - gate-link refuses a link record it cannot prove regular and readable
+ok - gate-link refuses a secondmate origin and says where that decision belongs
+ok - gate-link stages outside the scanned index directory and leaves nothing behind
+ok - an index whose absence can be established reads as clean at every level
+ok - every command that reads the link index refuses an index it cannot establish, by path
+ok - every index record the reader cannot recognise blocks verification and is named
+ok - gate-verify and gate-not-raised never call the backlog backend
+ok - gate links validate identity, ownership, and the owed claim before recording a pairing
+ok - teardown refuses until every recorded captain-gated link is reconciled
+ok - a forced teardown discards only the torn-down origin's captain-gated link index
 
 $ bash tests/fm-fleet-snapshot-view.test.sh
 ok - backlog normalization preserves strict roles and resolves every blocker compatibly
