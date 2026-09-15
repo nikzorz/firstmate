@@ -241,6 +241,7 @@ The parent guards every marked request against a missing correlated report witho
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a secondmate pane remains conversational.
 After seeding a secondmate, `fm-backlog-handoff.sh` validates the fleet-specific handoff, then atomically delegates already-judged in-scope queued item moves to `tasks-axi mv` so the domain queue starts in the right place.
 Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless the captain has approved discard with `--force`.
+A forced retirement stops short, rather than completing, when a directory it is about to give up holds a process that detached from whatever started it; the stop names the children already processed, so it reads as a retirement to resume rather than one that finished.
 
 Secondmate homes converge conservatively to the primary's version and declared inherited local material at launch and during locked session start.
 The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md) owns the full guarded sync, propagation, nudge, and mid-session local-material push contract.
@@ -273,7 +274,11 @@ A default message the forge will not return stops the merge, because falling bac
 A pull request that is already merged skips that read entirely, so re-running a merge that already landed no longer depends on a readable default message, while a merged state that cannot be read falls through to the ordinary read and its refusal rather than being taken for either answer.
 `--auto` is refused wherever the helper would supply the message, because the forge stores the message when auto-merge is armed and lands it whenever the merge later fires, which would drop every commit pushed while auto-merge waited.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
-[`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, stale-lock recovery procedure, and the proof that gates a retry after a return fails with no lock in evidence.
+The process sweep that accompanies a return belongs to the external `treehouse` binary, not to firstmate: it terminates every process whose working directory sits inside the worktree, whoever started it, and offers no exclusion, so the only place firstmate can act is in front of the call.
+Teardown therefore refuses to hand that tool such a directory, and refuses the removal that takes a directory away just as finally: a resident process that detached from whatever started it, or one that cannot be attributed at all, stops the cleanup.
+The refusal stands under `--force`, which authorizes discarding this task's work and never another lane's, and Orca lanes are deliberately not covered by it.
+[`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, stale-lock recovery procedure, the proof that gates a retry after a return fails with no lock in evidence, and which paths that refusal stops on.
+[`bin/fm-adopted-process-lib.sh`](../bin/fm-adopted-process-lib.sh)'s header owns the ownership test and its stated limits, while [`verification/worktree-return-process-sweep.md`](verification/worktree-return-process-sweep.md) owns the measured evidence for the guarantee.
 
 ## Optional X mode
 
