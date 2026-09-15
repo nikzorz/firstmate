@@ -16,6 +16,7 @@
 #   (f) a sibling directory's detached process                       -> not reported
 #   (g) the scanning shell itself                                    -> never reported
 #   (h) a directory reached through a symlink                        -> ADOPTED
+#   (i) a resident process whose session leader has died             -> UNKNOWN
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -97,6 +98,40 @@ start_detached_service_with_worker_in() {
   kill -0 "$leader" 2>/dev/null || fail "$marker: the service leader did not stay alive"
   kill -0 "$worker" 2>/dev/null || fail "$marker: the service worker did not stay alive"
   printf '%s %s\n' "$leader" "$worker"
+}
+
+# Start a process in <dir> whose session leader then exits, the state a daemon
+# that double-forks leaves behind: the survivor's session id names a pid that is
+# no longer there. The leader is started from a subshell that exits immediately so
+# init reaps it, because a leader still waiting to be reaped is not yet gone.
+start_orphaned_in() {
+  local dir=$1 marker=$2 child_file leader_file child leader waited=0
+  child_file=$(mktemp "$TMP_ROOT/orphan-child.XXXXXX")
+  leader_file=$(mktemp "$TMP_ROOT/orphan-leader.XXXXXX")
+  ( setsid bash -c "cd '$dir' || exit 1
+    sleep 300 &
+    printf '%s\n' \$! > '$child_file'
+    printf '%s\n' \$\$ > '$leader_file'" </dev/null >/dev/null 2>&1 & )
+  child=$(read_reported_pid "$child_file" "$marker child")
+  leader=$(read_reported_pid "$leader_file" "$marker leader")
+  printf '%s\n' "$child" >> "$SPAWNED_FILE"
+  while ! pid_has_gone "$leader"; do
+    [ "$waited" -lt 200 ] || fail "$marker: the session leader never exited"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  kill -0 "$child" 2>/dev/null || fail "$marker: the orphan did not outlive its session leader"
+  printf '%s\n' "$child"
+}
+
+# Decided without the library under test, so the fixture's precondition does not
+# rest on the same reading of "gone" the assertion is checking.
+pid_has_gone() {
+  local pid=$1 state
+  kill -0 "$pid" 2>/dev/null || return 0
+  state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')
+  case "$state" in Z*) return 0 ;; esac
+  return 1
 }
 
 # Start a process in <dir> that stays in the caller's own session, the shape a
@@ -202,14 +237,40 @@ test_symlinked_directory_still_finds_the_process() {
   pass "a directory named through a symlink is scanned as the directory it resolves to"
 }
 
+# The exemption only makes a difference when the scanning shell is itself a
+# resident session leader, so the scan is run from exactly that shape rather than
+# from wherever the runner happened to start. Without the exemption this shell
+# matches the adopted test on every count and convicts itself.
 test_scanning_shell_never_accuses_itself() {
-  local dir found
-  # The scan itself runs from somewhere; a scan of that somewhere must not
-  # report the shell doing the scanning, whatever session shape it has.
-  dir=$(pwd -P)
-  found=$(adopted_pids "$dir")
-  assert_not_contains "$found" "$$" "self: the scanning shell must never be reported"
-  pass "the scanning shell and the shells that launched it are never reported as adopted"
+  local dir="$TMP_ROOT/self-scan" out scanner found
+  mkdir -p "$dir"
+  out=$(setsid bash -c "cd '$dir' && printf 'SCANNER %s\n' \$\$ \
+    && . '$ROOT/bin/fm-adopted-process-lib.sh' \
+    && fm_adopted_processes '$dir'" </dev/null 2>/dev/null) || true
+  scanner=$(printf '%s\n' "$out" | awk '$1 == "SCANNER" { print $2 }')
+  [ -n "$scanner" ] || fail "self: the scanning shell never reported its own pid"
+  found=" $(printf '%s\n' "$out" | awk '$1 != "SCANNER" && NF { print $1 }' | tr '\n' ' ') "
+  assert_not_contains "$found" " $scanner " "self: the scanning shell must never be reported"
+  pass "a scanning shell that is its own resident session leader never reports itself"
+}
+
+# The double-fork daemon (fork, setsid, fork, middle process exits) leaves a
+# survivor whose session id names a pid that is gone. Nothing can tell that apart
+# from an orphaned crew process, so the scan must say so rather than call the
+# directory clear and let the return tool kill whatever is there.
+test_dead_session_leader_reads_as_unknown() {
+  local dir="$TMP_ROOT/orphan" pid rc
+  mkdir -p "$dir"
+  pid=$(start_orphaned_in "$dir" orphan)
+
+  set +e
+  fm_adopted_processes "$dir" >/dev/null
+  rc=$?
+  set -e
+
+  expect_code 2 "$rc" "orphan: a process whose session leader is gone should read as unknown"
+  kill -0 "$pid" 2>/dev/null || fail "orphan: the orphaned process did not survive the scan"
+  pass "a resident process whose session leader has died reads as unknown, not as clear"
 }
 
 test_detached_process_is_adopted
@@ -220,3 +281,4 @@ test_process_in_a_subdirectory_is_seen
 test_sibling_directory_is_not_reported
 test_symlinked_directory_still_finds_the_process
 test_scanning_shell_never_accuses_itself
+test_dead_session_leader_reads_as_unknown

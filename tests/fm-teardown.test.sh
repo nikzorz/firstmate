@@ -64,6 +64,7 @@
 #   (ad2) the same, under --force                      -> REFUSE (force is not a bypass)
 #   (ad3) the same refusal on the main path            -> branch and hook files untouched
 #   (ad4) the same in a forced retirement's child worktree -> STOP, child left on disk
+#   (ad5) the same in the secondmate's own home        -> STOP, registry and records kept
 #   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
@@ -2506,8 +2507,14 @@ test_forced_retirement_stops_at_a_child_hosting_a_detached_process() {
   fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
   printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
     > "$home/data/secondmates.md"
-  fm_write_meta "$subhome/state/child.meta" \
-    "window=firstmate:fm-child" \
+  # A child the loop finishes with before it reaches the refused one: its records
+  # are gone by the time the stop prints, which is what the stop has to admit
+  # rather than claiming the retirement removed nothing.
+  printf 'running\n' > "$subhome/state/child-a1.status"
+  # A child id that shares no word with the rest of the stop's wording, so the
+  # assertion below can only pass if the stop really names the child it skipped.
+  fm_write_meta "$subhome/state/child-x9.meta" \
+    "window=firstmate:fm-child-x9" \
     "worktree=$childwt" \
     "project=$childproj" \
     "harness=echo" \
@@ -2538,17 +2545,83 @@ SH
   [ "$rc" -ne 0 ] || fail "adopted-retire: a forced retirement completed over a child worktree hosting a detached process"
   [ -d "$childwt" ] || fail "adopted-retire: the child worktree hosting a detached process was removed"
   assert_present "$hook" "adopted-retire: the stop must not have stripped the child's turn-end hook files"
-  assert_present "$subhome/state/child.meta" "adopted-retire: the stopped child's state records must survive"
+  assert_present "$subhome/state/child-x9.meta" "adopted-retire: the stopped child's state records must survive"
   assert_present "$subhome" "adopted-retire: the secondmate home must survive the stop"
   kill -0 "$pid" 2>/dev/null || fail "adopted-retire: the detached process was killed"
   assert_absent "$TMP_ROOT/adopted-retire.treehouse.calls" \
     "adopted-retire: the return tool must never be reached"
   assert_grep "STOPPED" "$err" "adopted-retire: the stop must not read as a completed retirement"
   assert_grep "did not complete" "$err" "adopted-retire: the stop must say the retirement did not complete"
-  assert_grep "no directory was removed" "$err" "adopted-retire: the stop must say nothing was deleted"
-  assert_grep "child" "$err" "adopted-retire: the stop must name the child it did not process"
+  assert_grep "was not removed" "$err" "adopted-retire: the stop must say the refused child was not deleted"
+  assert_grep "child-x9" "$err" "adopted-retire: the stop must name the child it did not process"
+  assert_absent "$subhome/state/child-a1.status" \
+    "adopted-retire: the child the loop finished with should have had its records deleted"
+  assert_grep "child-a1" "$err" \
+    "adopted-retire: the stop must name the child whose records it had already deleted"
+  assert_no_grep "no directory was removed" "$err" \
+    "adopted-retire: the stop must not claim a retirement that already deleted a child's records removed nothing"
   kill_registered_adopted_pids
   pass "a forced retirement stops at a child worktree hosting a detached process and leaves it on disk"
+}
+
+# The secondmate's own home is the third path a refusal reaches, and the one where
+# going on would cost the most: the home survives holding its treehouse lease while
+# the registry entry and state records that are the only way to name it again are
+# deleted. The retirement stops with both intact instead.
+test_secondmate_home_hosting_a_detached_process_stops_the_retirement() {
+  local home fmroot subhome fakebin err out rc pid
+  home="$TMP_ROOT/adopted-home-parent"
+  fmroot="$TMP_ROOT/adopted-home-root"
+  subhome="$TMP_ROOT/adopted-home-subhome"
+  fakebin="$TMP_ROOT/adopted-home-fakebin"
+  err="$TMP_ROOT/adopted-home.err"
+  out="$TMP_ROOT/adopted-home.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
+  # A home reaches the treehouse-return arm only while it is a registered worktree of
+  # the firstmate repo, which is what makes it a leased pool slot rather than a
+  # directory to delete.
+  fm_git_worktree "$fmroot" "$subhome" fm/adopted-home
+  mkdir -p "$subhome/state" "$fmroot/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fmroot/bin/fm-guard.sh"
+  chmod +x "$fmroot/bin/fm-guard.sh"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  cat > "$fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP_ROOT/adopted-home.treehouse.calls"
+exit 0
+SH
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  pid=$(start_shared_service_in "$subhome" adopted-home)
+
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "adopted-home: a retirement completed over a home hosting a detached process"
+  assert_present "$subhome" "adopted-home: the home hosting a detached process was removed"
+  assert_present "$home/state/domain.meta" "adopted-home: the stopped secondmate's state records must survive"
+  assert_grep "- domain" "$home/data/secondmates.md" \
+    "adopted-home: a home that survived must stay in the registry that names it"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-home: the detached process was killed"
+  assert_absent "$TMP_ROOT/adopted-home.treehouse.calls" \
+    "adopted-home: the return tool must never be reached"
+  assert_no_grep "teardown domain complete" "$out" \
+    "adopted-home: a stopped retirement must not report itself complete"
+  assert_no_grep "treehouse return failed" "$err" \
+    "adopted-home: a refusal that never called the return tool must not report it as failed"
+  assert_grep "STOPPED" "$err" "adopted-home: the stop must not read as a completed retirement"
+  assert_grep "did not complete" "$err" "adopted-home: the stop must say the retirement did not complete"
+  kill_registered_adopted_pids
+  pass "a secondmate home hosting a detached process stops the retirement with its registry entry and records intact"
 }
 
 test_force_is_not_a_bypass_for_an_adopted_process() {
@@ -2680,6 +2753,7 @@ test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_detached_process_refuses_before_any_return
 test_adopted_refusal_leaves_the_lane_untouched
 test_forced_retirement_stops_at_a_child_hosting_a_detached_process
+test_secondmate_home_hosting_a_detached_process_stops_the_retirement
 test_force_is_not_a_bypass_for_an_adopted_process
 test_crew_process_in_the_lane_session_does_not_refuse
 test_other_lanes_survive_a_third_lanes_cleanup

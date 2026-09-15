@@ -82,9 +82,9 @@ And the trailing `error: treehouse return failed` line no longer prints, because
 
 ## Regression coverage
 
-`tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes.
+`tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear.
 `tests/fm-teardown.test.sh` covers the refusal, its behaviour under `--force`, the absence of a false refusal for a crewmate's own process, and the two-other-lanes case above.
-It also covers the two ways a refusal has to stay cheap: a refused task worktree keeps its task branch and its turn-end hook files, and a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it.
+It also covers the three ways a refusal has to stay cheap: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, and a secondmate home hosting one stops with its registry entry and state records intact rather than deleting the only records that can name a still-leased home.
 Both start real detached and attached processes rather than mocking the scan, because the whole guarantee rests on what a real process's session says about who owns it.
 
 ## What is not covered

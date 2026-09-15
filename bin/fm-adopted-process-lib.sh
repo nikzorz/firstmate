@@ -19,7 +19,11 @@
 #   its session leader's working directory is inside the directory as well.
 #
 # That covers the whole family at once: any detached service is caught, whatever
-# it is called, and a task's own agent tree never is.
+# it is called, and a task's own agent tree never is. A service that detached by
+# double-forking - fork, setsid, fork again, middle process exits - leaves its
+# survivor naming a session leader that no longer exists, which is no one's cwd
+# and so proves nothing either way; that reads as unknown, not as clear, so the
+# caller refuses there too.
 #
 # Only the scanning process itself and the processes that launched it are left
 # out of the answer, so a scan run from inside the directory does not accuse the
@@ -39,8 +43,9 @@
 # Enumeration reads /proc where it exists and falls back to lsof plus ps
 # elsewhere. Every way the scan can come up short - no enumeration path, an lsof
 # that produced nothing, a live process whose session this platform will not
-# report - reports that distinctly (exit 2) rather than as a clear directory, so
-# a caller refuses instead of proceeding blind.
+# report, a session leader that has already gone - reports that distinctly
+# (exit 2) rather than as a clear directory, so a caller refuses instead of
+# proceeding blind.
 
 # fm_adopted_proc_available: 0 when this kernel exposes the /proc fields used here.
 fm_adopted_proc_available() {
@@ -80,6 +85,23 @@ fm_adopted_session_of() {
   fi
   ps -o pid= -p "$pid" >/dev/null 2>&1 || return 1
   return 2
+}
+
+# fm_adopted_pid_alive <pid>: 0 when the process still exists as a running one.
+# A zombie has already exited and holds no working directory, so it counts as
+# gone: a pid that is only waiting to be reaped can convict nobody of residency.
+fm_adopted_pid_alive() {
+  local pid=$1 state
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  if fm_adopted_proc_available; then
+    state=$(fm_adopted_stat_field "$pid" 1) || return 1
+    [ -n "$state" ] && [ "$state" != Z ]
+    return
+  fi
+  state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')
+  [ -n "$state" ] || return 1
+  case "$state" in Z*) return 1 ;; esac
+  return 0
 }
 
 # fm_adopted_parent_of <pid>: print the process's parent pid, or nothing.
@@ -183,7 +205,18 @@ fm_adopted_processes() {
     if [ "$sid_rc" -ne 0 ] || [ -z "$sid" ]; then
       return 2
     fi
-    case "$resident" in *" $sid "*) ;; *) continue ;; esac
+    case "$resident" in
+      *" $sid "*) ;;
+      *)
+        # A session led from outside the directory is the task's own shape, but
+        # only while that leader is still there to be looked at. A session id
+        # naming a process that has gone is the double-forked daemon's shape as
+        # much as an orphaned crew process's, and nothing here can tell them
+        # apart, so the whole answer is unknown rather than clear.
+        fm_adopted_pid_alive "$sid" || return 2
+        continue
+        ;;
+    esac
     printf '%s\t%s\n' "$pid" "$(fm_adopted_command_of "$pid")"
     found=1
   done
