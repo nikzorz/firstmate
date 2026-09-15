@@ -44,7 +44,7 @@ cleanup_spawned() {
   # would exit and take the whole fixture down with it.
   if [ "$BASHPID" = "$$" ]; then
     while read -r pid; do
-      [ -n "$pid" ] && kill "$pid" 2>/dev/null
+      [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
     done < "$SPAWNED_FILE"
     fm_test_cleanup
   fi
@@ -152,6 +152,17 @@ adopted_pids() {
   printf '%s\n' "$out" | awk 'NF {print $1}'
 }
 
+# A spawn helper runs inside a command substitution, so its own `fail` ends only
+# that subshell and the caller is handed an empty pid. assert_contains matches an
+# empty needle against anything, so a fixture that never started would otherwise
+# report ok. Every spawn result goes through here in the calling shell.
+require_pid() {
+  local pid=$1 marker=$2
+  case "$pid" in
+    ''|*[!0-9]*) fail "$marker: the fixture did not start a process (got '$pid')" ;;
+  esac
+}
+
 # The status is the answer; the pid list is only its detail. A negative case that
 # checks the list alone passes just as well on "unknown", which refuses every
 # teardown, so every clear case asserts the code that means clear.
@@ -168,6 +179,7 @@ test_detached_process_is_adopted() {
   local dir="$TMP_ROOT/detached" pid found
   mkdir -p "$dir"
   pid=$(start_detached_in "$dir" detached)
+  require_pid "$pid" detached
 
   found=$(adopted_pids "$dir")
   assert_contains "$found" "$pid" "detached: the detached process should be reported as adopted"
@@ -182,6 +194,8 @@ test_a_services_worker_is_adopted_with_its_leader() {
   pair=$(start_detached_service_with_worker_in "$dir" service)
   leader=${pair% *}
   worker=${pair#* }
+  require_pid "$leader" "service leader"
+  require_pid "$worker" "service worker"
   [ "$worker" != "$leader" ] || fail "service: the worker should be a separate process"
 
   found=$(adopted_pids "$dir")
@@ -194,6 +208,7 @@ test_attached_process_is_not_adopted() {
   local dir="$TMP_ROOT/attached" pid found
   mkdir -p "$dir"
   pid=$(start_attached_in "$dir" attached)
+  require_pid "$pid" attached
 
   found=$(adopted_pids "$dir")
   assert_not_contains "$found" "$pid" "attached: a process in the caller's session must not be adopted"
@@ -214,6 +229,7 @@ test_process_in_a_subdirectory_is_seen() {
   sub="$dir/a/b"
   mkdir -p "$sub"
   pid=$(start_detached_in "$sub" deep)
+  require_pid "$pid" deep
 
   found=$(adopted_pids "$dir")
   assert_contains "$found" "$pid" "deep: a process below the directory should be seen"
@@ -224,6 +240,7 @@ test_sibling_directory_is_not_reported() {
   local mine="$TMP_ROOT/lane-a" theirs="$TMP_ROOT/lane-a-extra" pid found
   mkdir -p "$mine" "$theirs"
   pid=$(start_detached_in "$theirs" sibling)
+  require_pid "$pid" sibling
 
   found=$(adopted_pids "$mine")
   assert_not_contains "$found" "$pid" "sibling: a name-prefix neighbour must not be swept in"
@@ -240,6 +257,7 @@ test_symlinked_directory_still_finds_the_process() {
   mkdir -p "$real"
   ln -sfn "$real" "$link"
   pid=$(start_detached_in "$real" symlink)
+  require_pid "$pid" symlink
 
   found=$(adopted_pids "$link")
   assert_contains "$found" "$pid" "symlink: a directory reached through a symlink must still be scanned"
@@ -271,6 +289,7 @@ test_dead_session_leader_reads_as_unknown() {
   local dir="$TMP_ROOT/orphan" pid found
   mkdir -p "$dir"
   pid=$(start_orphaned_in "$dir" orphan)
+  require_pid "$pid" orphan
 
   expect_code 2 "$(scan_status "$dir")" "orphan: a process whose session leader is gone should read as unknown"
   # The caller has to be able to name what it refused over, so an unknown answer

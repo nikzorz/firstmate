@@ -84,8 +84,9 @@ And the trailing `error: treehouse return failed` line no longer prints, because
 
 `tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear.
 `tests/fm-teardown.test.sh` covers the refusal, its behaviour under `--force`, the absence of a false refusal for a crewmate's own process, and the two-other-lanes case above.
-It also covers the four paths a refusal stops on: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, a secondmate home held on a treehouse slot stops before the return tool, and a secondmate home that is a plain directory stops before `rm -rf`.
-The last two keep the registry entry and the state records that are the only way to name a home that survived.
+It also covers the four paths a refusal stops on: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, it stops at a child's own secondmate home the same way, and the retiring secondmate's own home stops before anything is touched.
+Every one of those scans runs above the `fm_backend_kill` that closes that lane's window, and the retirement cases prove the ordering with a backend mock that really kills a real session leader, so a genuine post-kill orphan is exercised rather than assumed.
+The home cases keep the registry entry and the state records that are the only way to name a home that survived.
 Both start real detached and attached processes rather than mocking the scan, because the whole guarantee rests on what a real process's session says about who owns it.
 
 ## What is not covered
@@ -101,6 +102,10 @@ The operator resolves that by ending that process and running the same cleanup a
 (c) A process living in the directory whose session leader has already exited cannot be attributed either way, so it refuses.
 The double-forked daemon has that shape, but the ordinary one is a lane's own leftover orphaned when its window died, which refuses every teardown of that lane until someone ends it.
 The operator resolves that the same way as (b), by ending the named process and running the same cleanup again.
+
+Orca lanes are not covered at all.
+Both Orca arms remove a worktree through `orca worktree rm --force` without scanning, the task's own and an Orca child's inside the retirement sweep, so an Orca worktree hosting a detached service loses its directory with no refusal and no message.
+Whether that removal also terminates the processes living there is unestablished; the directory removal is the verifiable part, and nothing here asserts more than that.
 
 The guard itself runs only where `/proc` is readable, which is where every fact the ownership test reads comes from.
 BSD `ps` reports a session as a kernel address rather than a numeric id, and there is no macOS machine to verify a Darwin implementation against, so none was written: an unverifiable guess in the one place that decides whether a live shared service survives would be worse than this stated limit.

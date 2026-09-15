@@ -73,7 +73,7 @@
 # Adopted-process refusal: `treehouse return` terminates every process whose working
 # directory is inside the worktree, with no regard for who started it, so a detached
 # service sitting there dies with the task's own agent. Before any return, and before
-# the one rm -rf that takes a directory away just as finally, teardown refuses when the
+# the rm -rf that takes a directory away just as finally, teardown refuses when the
 # directory holds a process that detached from whatever started it, and equally when a
 # process living there cannot be attributed at all.
 # bin/fm-adopted-process-lib.sh owns that ownership test and states its limits. The
@@ -88,24 +88,35 @@
 # guard existed. That is the only case that proceeds: a scan that ran and could not
 # attribute a resident process still refuses.
 #
-# FOUR PATHS STOP, and what each leaves behind differs, so it is stated per path rather
-# than as one claim.
-#   1. The task worktree: the scan runs above every destructive step, so a refused lane
-#      keeps its task branch, its turn-end hook files and its lease as they were found.
-#   2. A child worktree of a forced secondmate retirement.
-#   3. A secondmate home held on a treehouse slot, refused before the return tool.
-#   4. A secondmate home that is a plain directory, refused before safe_rm_rf.
-# Paths 2 to 4 carry the refusal out on its own exit code, TEARDOWN_ADOPTED_PROCESS_REFUSED,
+# FOUR PATHS STOP, each scanned exactly once and always ABOVE the fm_backend_kill that
+# closes the endpoint for that lane. The ordering is the point, not an accident: closing
+# a window orphans whatever it started, and an orphan reads as unattributable, so a scan
+# below the kill would refuse over a process tree this run had just made rather than the
+# one it found.
+#   1. The task worktree, above the branch drop, the turn-end hook files and the kill,
+#      so a refused lane keeps all three as they were found.
+#   2. A child worktree of a forced secondmate retirement, above that child's kill.
+#   3. A child's own secondmate home, above that child's kill.
+#   4. The retiring secondmate's own home, above the kill that closes its window and
+#      above the child sweep, so a refusal there means the retirement never started.
+# Paths 2 and 3 carry the refusal out on its own exit code, TEARDOWN_ADOPTED_PROCESS_REFUSED,
 # distinct from a lock refusal, so it propagates instead of falling through to the rm -rf
 # that a plain return failure gets. The accepted consequence is explicit: that retirement
 # STOPS, and does not complete. On a child the retirement is part-done by then - earlier
-# children at any depth are already returned or removed and the refused child's own window
-# is already closed - so the stop names those as exactly as it names what it preserved, and
-# claims preservation only for the child it stopped at. On the secondmate's own home it
-# stops with the registry entry and the home's state records deliberately left in place,
-# because those are the only things that can name a surviving home again. Every one of
-# those stops says so in as many words, because a refusal that reads like a completed
-# retirement is the defect this exit code exists to end.
+# children at any depth are already returned or removed - so the stop names those as
+# exactly as it names what it preserved, and claims preservation only for the child it
+# stopped at, whose window is still open. On the secondmate's own home the stop is a plain
+# no-op with the registry entry and the state records untouched, because those are the only
+# things that can name a surviving home again. Every one of those stops says so in as many
+# words, because a refusal that reads like a completed retirement is the defect this exit
+# code exists to end.
+#
+# NOT COVERED, stated rather than discovered: Orca lanes. Both Orca arms remove a worktree
+# through `orca worktree rm --force` without scanning - the task's own at the end of this
+# file, and an Orca child's inside the retirement sweep - so an Orca worktree hosting a
+# detached service loses its directory with no refusal and no message. Whether that removal
+# also terminates the processes living there is UNESTABLISHED; the directory removal is the
+# verifiable part. An operator must not read the four paths above as covering Orca.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -732,6 +743,11 @@ TEARDOWN_ADOPTED_PROCESS_REFUSED=4
 # One teardown run scans up to four directories, and a platform that cannot run
 # the scan says so for every one of them; the operator needs telling once.
 ADOPTED_PROCESS_GUARD_WARNED=0
+# Every child this retirement has already returned or removed, at any depth. A
+# stop has to name all of them, and a recursion frame cannot hand its own list
+# back to its caller, so there is one list for the whole run rather than one per
+# frame.
+FM_TEARDOWN_PROCESSED_CHILDREN=
 
 # True when treehouse/git stderr shows the transient index.lock "File exists" race.
 # Other return failures must not enter the retry path.
@@ -980,7 +996,18 @@ name_scanned_processes() {
 }
 
 assert_no_adopted_processes() {
-  local dir=$1 label=$2 found status attempt=0
+  local dir=$1 label=$2 operation=${3:-return} found status attempt=0 losing risk
+  case "$operation" in
+    removal)
+      losing="removing the directory would take their working directory away while they run"
+      risk="removing it could pull the working directory out from under a service shared with other work"
+      ;;
+    *)
+      operation="return"
+      losing="returning the worktree would terminate them along with this task's own"
+      risk="returning it could terminate a service shared with other work"
+      ;;
+  esac
 
   while :; do
     found=$(fm_adopted_processes "$dir")
@@ -1005,14 +1032,14 @@ assert_no_adopted_processes() {
       return 0
       ;;
     2)
-      echo "teardown: $label return refused: a process living in $dir cannot be attributed to whatever started it, because the session that owns it names a process that is no longer there, so returning it could terminate a service shared with other work:" >&2
+      echo "teardown: $label $operation refused: a process living in $dir cannot be attributed to whatever started it, because the session that owns it names a process that is no longer there, so $risk:" >&2
       name_scanned_processes "$found"
       echo "teardown: nothing here will kill a process it cannot account for. Establish what the process above is; end it deliberately if it is this task's leftover, and run the same cleanup again." >&2
       return 1
       ;;
   esac
 
-  echo "teardown: $label return refused: $dir still holds processes that detached from whatever started them, and returning the worktree would terminate them along with this task's own:" >&2
+  echo "teardown: $label $operation refused: $dir still holds processes that detached from whatever started them, and $losing:" >&2
   name_scanned_processes "$found"
   echo "teardown: a detached process may be serving other work, so nothing here will kill one. Establish what it is; end it deliberately if it is this task's leftover, and run the same cleanup again." >&2
   return 1
@@ -1021,9 +1048,8 @@ assert_no_adopted_processes() {
 # The stop a forced secondmate retirement makes when a child turns out to host a
 # detached service. Every other child-return failure falls back to removing the
 # directory; this one must not. The retirement is part-done by then - earlier children
-# are already gone and this child's own window is already closed - so the stop names
-# what it did as exactly as what it did not, and claims preservation only for the
-# child it stopped at.
+# at any depth are already gone - so the stop names what it did as exactly as what it
+# did not, and claims preservation only for the child it stopped at.
 report_stopped_child_retirement() {
   local child_id=$1 child_dir=$2 child_label=$3 processed=$4 home=$5
   echo "teardown: STOPPED: retirement of $ID did not complete: it stopped at $child_id in $home, and nothing after $child_id was processed." >&2
@@ -1032,7 +1058,7 @@ report_stopped_child_retirement() {
   else
     echo "teardown: no child had been processed before the stop." >&2
   fi
-  echo "teardown: $child_id itself was not removed: its $child_label $child_dir is still on disk, along with any treehouse lease it holds, and its state records are still in place. Its terminal window was already closed before the scan ran." >&2
+  echo "teardown: $child_id itself was not touched: its $child_label $child_dir is still on disk, along with any treehouse lease it holds, its state records are still in place, and its window is still open." >&2
   echo "teardown: establish what the process above is; end it deliberately if it is that child's leftover, then run the same retirement again." >&2
 }
 
@@ -1054,8 +1080,6 @@ teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} retry_safety_check=${5:-}
   local out lock lock_before attempt=0 max_retries lock_desc
   local ref_name ref_before_oid
-
-  assert_no_adopted_processes "$dir" "$label" || return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
 
   # A lock the dying process releases during the failing attempt is invisible to
   # both the post-failure probe and a swallowed error message; only this
@@ -1243,6 +1267,16 @@ firstmate_home_has_treehouse_slot() {
   worktree_registered_for_project "$FM_ROOT" "$home"
 }
 
+# A pooled slot is returned to the pool; a home seeded at an explicit path is
+# deleted. A refusal has to name whichever one it stopped.
+home_giveup_operation() {
+  if firstmate_home_has_treehouse_slot "$1"; then
+    printf 'return\n'
+  else
+    printf 'removal\n'
+  fi
+}
+
 validate_removal_target() {
   local target=$1 label=$2 abs_target abs_home abs_root
   [ -n "$target" ] || return 0
@@ -1422,10 +1456,6 @@ remove_firstmate_home() {
     echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
     return 1
   fi
-  # A home seeded at an explicit path is first-class, not a degraded pool slot, and
-  # rm -rf takes a directory out from under a detached service just as surely as the
-  # return tool kills one. Same scan, same refusal, same sentinel.
-  assert_no_adopted_processes "$abs_home_path" "$label" || return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
   safe_rm_rf "$abs_home_path" "$label"
 }
 
@@ -1545,13 +1575,8 @@ validate_firstmate_home_children_removal() {
 # so a home the captain never authorized to discard keeps all of its children's
 # records, not just the ones sorting after the first meta.
 cleanup_firstmate_home_children() {
-  local home=$1 inherited=${2:-} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_home_rc
+  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_home_rc child_op
   local -a child_ids=()
-  # A stop partway through has to be able to say which children it had already
-  # returned or removed, because those are exactly the ones running again cannot
-  # put back - and a home reached by recursion has to count its parent's too, or
-  # the stop names only the innermost frame's losses.
-  local processed=$inherited
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   read_firstmate_home_child_ids "$sub_state" || return 1
@@ -1567,7 +1592,7 @@ cleanup_firstmate_home_children() {
     child_meta="$sub_state/$child_id.meta"
     if [ ! -e "$child_meta" ]; then
       remove_task_state_records "$sub_state" "$child_id" || return 1
-      processed="${processed:+$processed, }$child_id"
+      FM_TEARDOWN_PROCESSED_CHILDREN="${FM_TEARDOWN_PROCESSED_CHILDREN:+$FM_TEARDOWN_PROCESSED_CHILDREN, }$child_id"
       continue
     fi
     if [ "$FORCE" != "--force" ]; then
@@ -1579,6 +1604,15 @@ cleanup_firstmate_home_children() {
     child_kind=$(meta_value "$child_meta" kind)
     [ -n "$child_kind" ] || child_kind=ship
     child_backend=$(fm_backend_of_meta "$child_meta")
+    child_home=
+    child_op="removal"
+    if [ "$child_kind" = secondmate ]; then
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      [ -z "$child_home" ] || [ ! -d "$child_home" ] || child_op=$(home_giveup_operation "$child_home")
+    elif [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
+      child_op="return"
+    fi
     if [ "$child_backend" = orca ]; then
       child_t=$(meta_value "$child_meta" terminal)
     else
@@ -1588,6 +1622,23 @@ cleanup_firstmate_home_children() {
       child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
       if [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+      fi
+    fi
+    # Above this child's own endpoint kill. Once that window closes, whatever it
+    # started and left behind names a session leader that has exited, and the scan
+    # would be reading a process tree this run had just made rather than the one it
+    # found. A refusal here leaves the child's window open too.
+    if [ "$child_kind" = secondmate ]; then
+      if [ -n "$child_home" ] && [ -d "$child_home" ] \
+        && ! assert_no_adopted_processes "$child_home" "child firstmate home" "$child_op"; then
+        report_stopped_child_retirement "$child_id" "$child_home" home "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
+        return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
+      fi
+    elif [ "$child_backend" != orca ]; then
+      if [ -n "$child_wt" ] && [ -d "$child_wt" ] \
+        && ! assert_no_adopted_processes "$child_wt" "child worktree" "$child_op"; then
+        report_stopped_child_retirement "$child_id" "$child_wt" worktree "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
+        return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
       fi
     fi
     if [ -n "$child_t" ]; then
@@ -1600,16 +1651,14 @@ cleanup_firstmate_home_children() {
       fi
     fi
     if [ "$child_kind" = secondmate ]; then
-      child_home=$(meta_value "$child_meta" home)
-      [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
-        cleanup_firstmate_home_children "$child_home" "$processed" || return $?
+        cleanup_firstmate_home_children "$child_home" || return $?
         if remove_firstmate_home "$child_home" "child firstmate home" "$child_id"; then
           :
         else
           child_home_rc=$?
           if [ "$child_home_rc" -eq "$TEARDOWN_ADOPTED_PROCESS_REFUSED" ]; then
-            report_stopped_child_retirement "$child_id" "$child_home" home "$processed" "$home"
+            report_stopped_child_retirement "$child_id" "$child_home" home "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
           fi
           return "$child_home_rc"
         fi
@@ -1623,17 +1672,9 @@ cleanup_firstmate_home_children() {
       fm_backend_remove_worktree "$child_backend" "$child_orca_worktree_id" || return 1
     elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
-      # Ahead of the hook-file removal, so the stop below leaves the child's branch,
-      # hook files and records where it found them. Its window is already gone by
-      # then, which is why the stop says so rather than claiming the whole child is
-      # untouched.
-      if ! assert_no_adopted_processes "$child_wt" "child worktree"; then
-        report_stopped_child_retirement "$child_id" "$child_wt" worktree "$processed" "$home"
-        return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
-      fi
       rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" \
         "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend" || return 1
-      if [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
+      if [ "$child_op" = return ]; then
         if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree"; then
           :
         else
@@ -1642,7 +1683,7 @@ cleanup_firstmate_home_children() {
             return "$child_return_rc"
           fi
           if [ "$child_return_rc" -eq "$TEARDOWN_ADOPTED_PROCESS_REFUSED" ]; then
-            report_stopped_child_retirement "$child_id" "$child_wt" worktree "$processed" "$home"
+            report_stopped_child_retirement "$child_id" "$child_wt" worktree "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
             return "$child_return_rc"
           fi
           safe_rm_rf_child_worktree "$child_wt" "$child_proj" || return 1
@@ -1652,7 +1693,7 @@ cleanup_firstmate_home_children() {
       fi
     fi
     remove_task_state_records "$sub_state" "$child_id" || return 1
-    processed="${processed:+$processed, }$child_id"
+    FM_TEARDOWN_PROCESSED_CHILDREN="${FM_TEARDOWN_PROCESSED_CHILDREN:+$FM_TEARDOWN_PROCESSED_CHILDREN, }$child_id"
   done
 }
 
@@ -1757,10 +1798,17 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 # Above every destructive step below, so a refusal leaves the lane untouched rather
-# than branch-dropped and hook-stripped. teardown_treehouse_return scans again for the
-# secondmate homes and child worktrees that reach it without passing here.
+# than branch-dropped, hook-stripped or window-closed. Every other directory this run
+# gives up is scanned the same way, at its own call site above its own kill.
 if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && [ -d "$WT" ]; then
   assert_no_adopted_processes "$WT" "worktree" || exit 1
+fi
+if [ "$KIND" = secondmate ] && [ -n "$HOME_PATH" ] && [ -d "$HOME_PATH" ]; then
+  if ! assert_no_adopted_processes "$HOME_PATH" "secondmate home" "$(home_giveup_operation "$HOME_PATH")"; then
+    echo "teardown: STOPPED: retirement of $ID did not start: no child was touched, nothing was removed, its entry in $SECONDMATE_REG and its state records are as they were, and its window is still open." >&2
+    echo "teardown: establish what the process above is; end it deliberately if it is that home's leftover, then run the same retirement again." >&2
+    exit 1
+  fi
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.

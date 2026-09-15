@@ -68,6 +68,7 @@
 #   (ad6) the same in a leased secondmate home         -> STOP, registry and records kept
 #   (ad7) the same in a plain-directory home           -> STOP before rm -rf
 #   (ad8) a leftover whose session leader has exited   -> REFUSE, named, not a clear
+#   (ad9) an orphan this run's own window close made   -> ALLOW (scan sits above the kill)
 #   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
@@ -2368,7 +2369,10 @@ kill_registered_adopted_pids() {
   local pid
   [ -f "$ADOPTED_PIDS_FILE" ] || return 0
   while read -r pid; do
-    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+    # A fixture that deliberately closes a window leaves a registered pid already
+    # gone, and errexit is on by the time cleanup runs: a kill that finds nothing
+    # to do must not end the run.
+    [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
   done < "$ADOPTED_PIDS_FILE"
   : > "$ADOPTED_PIDS_FILE"
   return 0
@@ -2451,12 +2455,78 @@ start_orphaned_service_in() {
   printf '%s\n' "$child"
 }
 
+# kill(2) is asynchronous, so a window the run closed may still be on its way out
+# when the assertion runs.
+pane_leader_closed() {
+  local pid=$1 waited=0
+  while ! orphan_leader_has_gone "$pid"; do
+    [ "$waited" -lt 100 ] || return 1
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  return 0
+}
+
 orphan_leader_has_gone() {
   local pid=$1 state
   kill -0 "$pid" 2>/dev/null || return 0
   state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')
   case "$state" in Z*) return 0 ;; esac
   return 1
+}
+
+# Stand in for a crewmate's pane: a session leader OUTSIDE <resident_dir> - where a
+# real pane sits, in the project rather than the worktree - with one process of its
+# own inside it. While the leader lives that process reads as the lane's own work;
+# the moment the window closes it is an orphan naming a session leader that has
+# exited, which is exactly the state a scan below the kill would be reading.
+# Echoes "<leader> <resident>".
+start_crew_pane_in() {
+  local resident_dir=$1 leader_dir=$2 tag=$3 leader_file child_file leader child waited=0
+  mkdir -p "$resident_dir" "$leader_dir"
+  leader_file=$(mktemp "$TMP_ROOT/pane-leader.XXXXXX")
+  child_file=$(mktemp "$TMP_ROOT/pane-child.XXXXXX")
+  setsid bash -c "cd '$leader_dir' || exit 1
+    ( cd '$resident_dir' && exec sleep 300 ) &
+    printf '%s\n' \$! > '$child_file'
+    printf '%s\n' \$\$ > '$leader_file'
+    wait" </dev/null >/dev/null 2>&1 &
+  while [ ! -s "$leader_file" ] || [ ! -s "$child_file" ]; do
+    [ "$waited" -lt 200 ] || fail "$tag: the stand-in pane never reported its pids"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  leader=$(cat "$leader_file")
+  child=$(cat "$child_file")
+  register_adopted_pid "$leader"
+  register_adopted_pid "$child"
+  kill -0 "$leader" 2>/dev/null || fail "$tag: the stand-in pane leader did not stay alive"
+  kill -0 "$child" 2>/dev/null || fail "$tag: the pane's own process did not stay alive"
+  printf '%s %s\n' "$leader" "$child"
+}
+
+# A backend mock that really closes a window: fm_backend_tmux_kill runs
+# `tmux kill-window -t <target>`, and this kills the stand-in pane leader registered
+# for exactly that target, so a test exercises a genuine post-kill orphan instead of
+# assuming one - and one lane's close never reaches another lane's pane.
+add_window_closing_tmux() {
+  local fakebin=$1 panefile=$2
+  : > "$panefile"
+  cat > "$fakebin/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = kill-window ] && [ "\${2:-}" = -t ]; then
+  while read -r window pane; do
+    [ "\$window" = "\${3:-}" ] || continue
+    [ -n "\$pane" ] && kill "\$pane" 2>/dev/null
+  done < "$panefile"
+fi
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+}
+
+register_pane_window() {
+  printf '%s %s\n' "$2" "$3" >> "$1"
 }
 
 # A treehouse mock that records every invocation, so a test can prove the return
@@ -2535,7 +2605,7 @@ test_adopted_refusal_leaves_the_lane_untouched() {
 # ordinary return failure. It must not for this one: the directory is what the
 # detached service is using. The retirement stops instead, and says so.
 test_forced_retirement_stops_at_a_child_hosting_a_detached_process() {
-  local home subhome childproj childwt fakebin err rc pid hook
+  local home subhome childproj childwt fakebin err rc pid hook pane
   home="$TMP_ROOT/adopted-retire-home"
   subhome="$TMP_ROOT/adopted-retire-subhome"
   childproj="$subhome/projects/alpha"
@@ -2568,15 +2638,16 @@ test_forced_retirement_stops_at_a_child_hosting_a_detached_process() {
 echo "\$*" >> "$TMP_ROOT/adopted-retire.treehouse.calls"
 exit 0
 SH
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  chmod +x "$fakebin/treehouse"
+  add_window_closing_tmux "$fakebin" "$TMP_ROOT/adopted-retire.panes"
   hook="$childwt/.claude/settings.local.json"
   mkdir -p "$childwt/.claude"
   printf '{}\n' > "$hook"
   pid=$(start_shared_service_in "$childwt" adopted-retire)
+  # A real window the run could close. The scan sits above the kill, so a stop here
+  # must leave it open; if the kill ran first this leader would be dead.
+  pane=$(start_crew_pane_in "$childwt" "$TMP_ROOT" adopted-retire)
+  register_pane_window "$TMP_ROOT/adopted-retire.panes" firstmate:fm-child-x9 "${pane% *}"
 
   set +e
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
@@ -2594,7 +2665,7 @@ SH
     "adopted-retire: the return tool must never be reached"
   assert_grep "STOPPED" "$err" "adopted-retire: the stop must not read as a completed retirement"
   assert_grep "did not complete" "$err" "adopted-retire: the stop must say the retirement did not complete"
-  assert_grep "was not removed" "$err" "adopted-retire: the stop must say the refused child was not deleted"
+  assert_grep "was not touched" "$err" "adopted-retire: the stop must say the refused child was left alone"
   assert_grep "child-x9" "$err" "adopted-retire: the stop must name the child it did not process"
   assert_absent "$subhome/state/child-a1.status" \
     "adopted-retire: the child the loop finished with should have had its records deleted"
@@ -2602,6 +2673,10 @@ SH
     "adopted-retire: the stop must name the child whose records it had already deleted"
   assert_no_grep "no directory was removed" "$err" \
     "adopted-retire: the stop must not claim a retirement that already deleted a child's records removed nothing"
+  kill -0 "${pane% *}" 2>/dev/null \
+    || fail "adopted-retire: the child's window was closed before the scan, so the scan read a tree this run had just made"
+  assert_grep "window is still open" "$err" \
+    "adopted-retire: the stop must say the refused child's window was left open"
   kill_registered_adopted_pids
   pass "a forced retirement stops at a child worktree hosting a detached process and leaves it on disk"
 }
@@ -2665,12 +2740,69 @@ SH
   pass "a stop below the first frame names every child the retirement already destroyed"
 }
 
+# The other direction of the same exactness: a frame that finishes cleanly hands
+# nothing back to its caller, so a later stop in the OUTER frame has to be able to
+# name what the inner one destroyed. A grandchild cleared on the way through is
+# exactly what running the retirement again cannot put back.
+test_stop_names_what_a_finished_inner_frame_destroyed() {
+  local home subhome subsubhome childproj childwt fakebin err rc pid
+  home="$TMP_ROOT/outward-parent"
+  subhome="$TMP_ROOT/outward-subhome"
+  subsubhome="$TMP_ROOT/outward-subsubhome"
+  childproj="$subhome/projects/alpha"
+  childwt="$TMP_ROOT/outward-childwt"
+  fakebin="$TMP_ROOT/outward-fakebin"
+  err="$TMP_ROOT/outward.err"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$subsubhome/state" "$fakebin"
+  fm_git_worktree "$childproj" "$childwt" fm/outward-child
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'aa-sub\n' > "$subsubhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  # Sorts first, so its whole home is cleared and gone before the loop reaches the
+  # child that refuses. Its own grandchild's records die inside that inner frame.
+  fm_write_secondmate_meta "$subhome/state/aa-sub.meta" "$subsubhome" firstmate:fm-aa-sub
+  printf 'running\n' > "$subsubhome/state/bb-kid.status"
+  fm_write_meta "$subhome/state/zz-kid.meta" \
+    "window=firstmate:fm-zz-kid" \
+    "worktree=$childwt" \
+    "project=$childproj" \
+    "harness=echo" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  pid=$(start_shared_service_in "$childwt" outward)
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$TMP_ROOT/outward.out" 2> "$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "outward: a forced retirement completed over a child hosting a detached process"
+  assert_absent "$subsubhome" "outward: the inner home should have been removed on the way through"
+  assert_grep "bb-kid" "$err" \
+    "outward: the stop must name the grandchild an inner frame destroyed"
+  assert_grep "aa-sub" "$err" "outward: the stop must name the child home it already removed"
+  assert_grep "zz-kid" "$err" "outward: the stop must name the child it stopped at"
+  [ -d "$childwt" ] || fail "outward: the worktree hosting a detached process was removed"
+  kill -0 "$pid" 2>/dev/null || fail "outward: the detached process was killed"
+  kill_registered_adopted_pids
+  pass "a stop names what an inner frame destroyed before it returned"
+}
+
 # The secondmate's own home is the third path a refusal reaches, and the one where
 # going on would cost the most: the home survives holding its treehouse lease while
 # the registry entry and state records that are the only way to name it again are
 # deleted. The retirement stops with both intact instead.
 test_secondmate_home_hosting_a_detached_process_stops_the_retirement() {
-  local home fmroot subhome fakebin err out rc pid
+  local home fmroot subhome fakebin err out rc pid pane
   home="$TMP_ROOT/adopted-home-parent"
   fmroot="$TMP_ROOT/adopted-home-root"
   subhome="$TMP_ROOT/adopted-home-subhome"
@@ -2694,12 +2826,11 @@ test_secondmate_home_hosting_a_detached_process_stops_the_retirement() {
 echo "\$*" >> "$TMP_ROOT/adopted-home.treehouse.calls"
 exit 0
 SH
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  chmod +x "$fakebin/treehouse"
+  add_window_closing_tmux "$fakebin" "$TMP_ROOT/adopted-home.panes"
   pid=$(start_shared_service_in "$subhome" adopted-home)
+  pane=$(start_crew_pane_in "$subhome" "$TMP_ROOT" adopted-home)
+  register_pane_window "$TMP_ROOT/adopted-home.panes" firstmate:fm-domain "${pane% *}"
 
   set +e
   PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_BACKEND=tmux \
@@ -2720,7 +2851,9 @@ SH
   assert_no_grep "treehouse return failed" "$err" \
     "adopted-home: a refusal that never called the return tool must not report it as failed"
   assert_grep "STOPPED" "$err" "adopted-home: the stop must not read as a completed retirement"
-  assert_grep "did not complete" "$err" "adopted-home: the stop must say the retirement did not complete"
+  assert_grep "did not start" "$err" "adopted-home: a stop above every step must say the retirement never started"
+  kill -0 "${pane% *}" 2>/dev/null \
+    || fail "adopted-home: the secondmate's window was closed before the scan, so the scan read a tree this run had just made"
   kill_registered_adopted_pids
   pass "a secondmate home hosting a detached process stops the retirement with its registry entry and records intact"
 }
@@ -2730,7 +2863,7 @@ SH
 # That takes the directory away from a detached service exactly as finally as the
 # sweep kills one, so the same scan runs ahead of it.
 test_plain_directory_home_hosting_a_detached_process_stops_the_retirement() {
-  local home subhome fakebin err out rc pid
+  local home subhome fakebin err out rc pid pane
   home="$TMP_ROOT/adopted-plain-parent"
   subhome="$TMP_ROOT/adopted-plain-subhome"
   fakebin="$TMP_ROOT/adopted-plain-fakebin"
@@ -2746,12 +2879,11 @@ test_plain_directory_home_hosting_a_detached_process_stops_the_retirement() {
 echo "\$*" >> "$TMP_ROOT/adopted-plain.treehouse.calls"
 exit 0
 SH
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  chmod +x "$fakebin/treehouse"
+  add_window_closing_tmux "$fakebin" "$TMP_ROOT/adopted-plain.panes"
   pid=$(start_shared_service_in "$subhome" adopted-plain)
+  pane=$(start_crew_pane_in "$subhome" "$TMP_ROOT" adopted-plain)
+  register_pane_window "$TMP_ROOT/adopted-plain.panes" firstmate:fm-domain "${pane% *}"
 
   set +e
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
@@ -2772,8 +2904,114 @@ SH
   assert_grep "STOPPED" "$err" "adopted-plain: the stop must not read as a completed retirement"
   assert_grep "detached from whatever started them" "$err" \
     "adopted-plain: the stop must say what it found"
+  # No return happens on this path, so the refusal must not describe one.
+  assert_grep "removal refused" "$err" \
+    "adopted-plain: the refusal must name the removal it stopped, not a return"
+  assert_no_grep "returning the worktree" "$err" \
+    "adopted-plain: the refusal must not claim a worktree return that never happens here"
+  kill -0 "${pane% *}" 2>/dev/null \
+    || fail "adopted-plain: the secondmate's window was closed before the scan, so the scan read a tree this run had just made"
   kill_registered_adopted_pids
   pass "a plain-directory secondmate home hosting a detached process stops the retirement before rm -rf"
+}
+
+# Teardown closes the lane's own window, and whatever that window started and left
+# behind is an orphan from that instant - unattributable, and so refusable. A scan
+# below the kill would therefore refuse over a process tree this run had just made.
+# Both retirement paths scan above their kill, so an ordinary retirement completes.
+test_retirement_completes_over_a_child_orphaned_by_its_own_window_close() {
+  local home subhome childproj childwt fakebin err out rc pane leader resident
+  home="$TMP_ROOT/selfkill-child-home"
+  subhome="$TMP_ROOT/selfkill-child-subhome"
+  childproj="$subhome/projects/alpha"
+  childwt="$TMP_ROOT/selfkill-childwt"
+  fakebin="$TMP_ROOT/selfkill-child-fakebin"
+  err="$TMP_ROOT/selfkill-child.err"
+  out="$TMP_ROOT/selfkill-child.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$fakebin"
+  fm_git_worktree "$childproj" "$childwt" fm/selfkill-child
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$subhome/state/kid-q7.meta" \
+    "window=firstmate:fm-kid-q7" \
+    "worktree=$childwt" \
+    "project=$childproj" \
+    "harness=echo" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+  cat > "$fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP_ROOT/selfkill-child.treehouse.calls"
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+  add_window_closing_tmux "$fakebin" "$TMP_ROOT/selfkill-child.panes"
+  # The child's own pane, led from outside the worktree the way a real one is, with
+  # one process of its own resident inside it. Closing the window really orphans it.
+  pane=$(start_crew_pane_in "$childwt" "$TMP_ROOT" selfkill-child)
+  leader=${pane% *}
+  resident=${pane#* }
+  register_pane_window "$TMP_ROOT/selfkill-child.panes" firstmate:fm-kid-q7 "$leader"
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "selfkill-child: a retirement must not refuse over an orphan its own window close created"
+  assert_grep "teardown domain complete" "$out" "selfkill-child: the retirement should have completed"
+  assert_no_grep "STOPPED" "$err" "selfkill-child: nothing here should have stopped the retirement"
+  assert_present "$TMP_ROOT/selfkill-child.treehouse.calls" \
+    "selfkill-child: the child worktree should have been returned"
+  pane_leader_closed "$leader" || fail "selfkill-child: the fixture never actually closed the window"
+  kill -0 "$resident" 2>/dev/null || fail "selfkill-child: the orphaned process should still be running"
+  kill_registered_adopted_pids
+  pass "a retirement completes over a child process orphaned by the window close teardown itself did"
+}
+
+test_retirement_completes_over_a_home_orphaned_by_its_own_window_close() {
+  local home subhome fakebin err out rc pane leader resident
+  home="$TMP_ROOT/selfkill-home-parent"
+  subhome="$TMP_ROOT/selfkill-home-subhome"
+  fakebin="$TMP_ROOT/selfkill-home-fakebin"
+  err="$TMP_ROOT/selfkill-home.err"
+  out="$TMP_ROOT/selfkill-home.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$fakebin"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+  add_window_closing_tmux "$fakebin" "$TMP_ROOT/selfkill-home.panes"
+  pane=$(start_crew_pane_in "$subhome" "$TMP_ROOT" selfkill-home)
+  leader=${pane% *}
+  resident=${pane#* }
+  register_pane_window "$TMP_ROOT/selfkill-home.panes" firstmate:fm-domain "$leader"
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "selfkill-home: a retirement must not refuse over an orphan its own window close created"
+  assert_grep "teardown domain complete" "$out" "selfkill-home: the retirement should have completed"
+  assert_no_grep "STOPPED" "$err" "selfkill-home: nothing here should have stopped the retirement"
+  assert_absent "$subhome" "selfkill-home: the home should have been removed"
+  assert_no_grep "- domain" "$home/data/secondmates.md" \
+    "selfkill-home: a retired home should be out of the registry"
+  pane_leader_closed "$leader" || fail "selfkill-home: the fixture never actually closed the window"
+  kill -0 "$resident" 2>/dev/null || fail "selfkill-home: the orphaned process should still be running"
+  kill_registered_adopted_pids
+  pass "a retirement completes over a home process orphaned by the window close teardown itself did"
 }
 
 test_force_is_not_a_bypass_for_an_adopted_process() {
@@ -2938,8 +3176,11 @@ test_detached_process_refuses_before_any_return
 test_adopted_refusal_leaves_the_lane_untouched
 test_forced_retirement_stops_at_a_child_hosting_a_detached_process
 test_nested_stop_names_what_an_outer_frame_already_destroyed
+test_stop_names_what_a_finished_inner_frame_destroyed
 test_secondmate_home_hosting_a_detached_process_stops_the_retirement
 test_plain_directory_home_hosting_a_detached_process_stops_the_retirement
+test_retirement_completes_over_a_child_orphaned_by_its_own_window_close
+test_retirement_completes_over_a_home_orphaned_by_its_own_window_close
 test_force_is_not_a_bypass_for_an_adopted_process
 test_orphaned_process_refuses_after_the_patience_window
 test_crew_process_in_the_lane_session_does_not_refuse
