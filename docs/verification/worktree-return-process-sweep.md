@@ -76,13 +76,23 @@ lane-b run: ALIVE
 
 The same two processes died in the unguarded run above and survive here.
 
+This transcript predates two changes to the refusal and is left as it was measured.
+The scan now runs above the steps that drop the task branch and remove the turn-end hook files, so a refused lane is left exactly as it was found.
+And the trailing `error: treehouse return failed` line no longer prints, because the return tool was never reached.
+
 ## Regression coverage
 
 `tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes.
 `tests/fm-teardown.test.sh` covers the refusal, its behaviour under `--force`, the absence of a false refusal for a crewmate's own process, and the two-other-lanes case above.
+It also covers the two ways a refusal has to stay cheap: a refused task worktree keeps its task branch and its turn-end hook files, and a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it.
 Both start real detached and attached processes rather than mocking the scan, because the whole guarantee rests on what a real process's session says about who owns it.
 
 ## What is not covered
 
-A shared service started as an ordinary child of a crewmate's own terminal session, never detaching, is indistinguishable from that crewmate's work by any process fact and is not caught.
+Two limits, the same two the `bin/fm-adopted-process-lib.sh` header states.
+
+(a) A shared service started as an ordinary child of a crewmate's own terminal session, never detaching, is indistinguishable from that crewmate's work by any process fact and is not caught.
 No such service has been measured; the shared validation daemon detaches, as the session table above shows.
+
+(b) A task's own deliberately detached leftover, such as a background server a crewmate started with `setsid`, is refused even though killing it would have been fine.
+The operator resolves that by ending that process and running the same cleanup again.

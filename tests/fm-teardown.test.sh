@@ -62,6 +62,8 @@
 # validation daemon plus two other lanes' in-flight runs.
 #   (ad) a detached process in the worktree            -> REFUSE before any return
 #   (ad2) the same, under --force                      -> REFUSE (force is not a bypass)
+#   (ad3) the same refusal on the main path            -> branch and hook files untouched
+#   (ad4) the same in a forced retirement's child worktree -> STOP, child left on disk
 #   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
@@ -88,6 +90,9 @@ fm_git_identity fmtest fmtest@example.invalid
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-tests)
+# fm_test_tmproot registers its cleanup inside the command substitution's own
+# subshell, so this shell has to claim the directory itself to have it removed.
+FM_TEST_CLEANUP_DIRS+=("$TMP_ROOT")
 REAL_GIT_FOR_TEST=$(command -v git)
 export REAL_GIT_FOR_TEST
 
@@ -2366,22 +2371,34 @@ kill_registered_adopted_pids() {
 }
 
 # A failing assertion exits the run immediately, so the per-test cleanup call is
-# not enough on its own to keep stand-in processes off the machine.
+# not enough on its own to keep stand-in processes off the machine. This replaces
+# the trap fm_test_tmproot installed, so it owes that cleanup too.
 cleanup_adopted_fixtures() {
-  [ "$BASHPID" = "$$" ] && kill_registered_adopted_pids
+  if [ "$BASHPID" = "$$" ]; then
+    kill_registered_adopted_pids
+    fm_test_cleanup
+  fi
   :
 }
 trap cleanup_adopted_fixtures EXIT
 
 # Stand in for a shared service: detach into its own session with cwd in <dir>,
-# exactly as a daemon does. <tag> makes the process findable and distinct.
+# exactly as a daemon does. The process reports its own pid, because a pid picked
+# out of the machine's process list by command line could belong to any other
+# run; `exec` keeps the pid it reported.
 start_shared_service_in() {
-  local dir=$1 tag=$2 pid
+  local dir=$1 tag=$2 pidfile pid waited=0
   mkdir -p "$dir"
-  setsid bash -c "cd '$dir' && exec sleep 300" </dev/null >/dev/null 2>&1 &
-  sleep 0.3
-  pid=$(pgrep -f "^sleep 300$" | tail -1)
-  [ -n "$pid" ] || fail "$tag: could not start a stand-in shared service in $dir"
+  pidfile=$(mktemp "$TMP_ROOT/service.XXXXXX")
+  setsid bash -c "cd '$dir' && printf '%s\n' \$\$ > '$pidfile' && exec sleep 300" \
+    </dev/null >/dev/null 2>&1 &
+  while [ ! -s "$pidfile" ]; do
+    [ "$waited" -lt 200 ] || fail "$tag: the stand-in shared service never reported its pid"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  pid=$(cat "$pidfile")
+  kill -0 "$pid" 2>/dev/null || fail "$tag: could not start a stand-in shared service in $dir"
   register_adopted_pid "$pid"
   printf '%s\n' "$pid"
 }
@@ -2434,6 +2451,104 @@ test_detached_process_refuses_before_any_return() {
   kill -0 "$pid" 2>/dev/null || fail "adopted-refuse: the detached process was killed"
   kill_registered_adopted_pids
   pass "a detached process in the worktree refuses cleanup before the return tool can kill it"
+}
+
+# A refusal is only the cheap error if it costs nothing. The scan therefore runs
+# above the steps that drop the task branch and strip the turn-end hook files, so
+# an operator whose only honest answer is "that service is shared, leave it" is
+# not left holding a half-torn-down lane.
+test_adopted_refusal_leaves_the_lane_untouched() {
+  local case_dir rc pid hook branch
+  case_dir=$(make_case adopted-no-op)
+  write_meta "$case_dir" local-only ship
+  add_recording_treehouse "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  hook="$case_dir/wt/.claude/settings.local.json"
+  mkdir -p "$case_dir/wt/.claude"
+  printf '{}\n' > "$hook"
+  pid=$(start_shared_service_in "$case_dir/wt" adopted-no-op)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "adopted-no-op: teardown should refuse while a detached process lives in the worktree"
+  assert_present "$hook" "adopted-no-op: a refused teardown must not remove the turn-end hook files"
+  branch=$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)
+  [ "$branch" = "fm/task-x1" ] || fail "adopted-no-op: a refused teardown detached the worktree from its task branch (now $branch)"
+  git -C "$case_dir/project" show-ref --verify --quiet refs/heads/fm/task-x1 \
+    || fail "adopted-no-op: a refused teardown deleted the task branch"
+  assert_absent "$case_dir/treehouse.calls" \
+    "adopted-no-op: the return tool must never be reached"
+  assert_no_grep "treehouse return failed" "$case_dir/stderr" \
+    "adopted-no-op: a refusal that never called the return tool must not report it as failed"
+  kill_registered_adopted_pids
+  pass "a refused teardown leaves the task branch and the turn-end hook files exactly as it found them"
+}
+
+# The child-worktree arm of a forced retirement falls back to rm -rf for any
+# ordinary return failure. It must not for this one: the directory is what the
+# detached service is using. The retirement stops instead, and says so.
+test_forced_retirement_stops_at_a_child_hosting_a_detached_process() {
+  local home subhome childproj childwt fakebin err rc pid hook
+  home="$TMP_ROOT/adopted-retire-home"
+  subhome="$TMP_ROOT/adopted-retire-subhome"
+  childproj="$subhome/projects/alpha"
+  childwt="$TMP_ROOT/adopted-retire-childwt"
+  err="$TMP_ROOT/adopted-retire.err"
+  fakebin="$TMP_ROOT/adopted-retire-fakebin"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$fakebin"
+  touch "$home/state/.last-watcher-beat"
+  fm_git_worktree "$childproj" "$childwt" fm/adopted-child
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$subhome/state/child.meta" \
+    "window=firstmate:fm-child" \
+    "worktree=$childwt" \
+    "project=$childproj" \
+    "harness=echo" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+  cat > "$fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP_ROOT/adopted-retire.treehouse.calls"
+exit 0
+SH
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  hook="$childwt/.claude/settings.local.json"
+  mkdir -p "$childwt/.claude"
+  printf '{}\n' > "$hook"
+  pid=$(start_shared_service_in "$childwt" adopted-retire)
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$TMP_ROOT/adopted-retire.out" 2> "$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "adopted-retire: a forced retirement completed over a child worktree hosting a detached process"
+  [ -d "$childwt" ] || fail "adopted-retire: the child worktree hosting a detached process was removed"
+  assert_present "$hook" "adopted-retire: the stop must not have stripped the child's turn-end hook files"
+  assert_present "$subhome/state/child.meta" "adopted-retire: the stopped child's state records must survive"
+  assert_present "$subhome" "adopted-retire: the secondmate home must survive the stop"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-retire: the detached process was killed"
+  assert_absent "$TMP_ROOT/adopted-retire.treehouse.calls" \
+    "adopted-retire: the return tool must never be reached"
+  assert_grep "STOPPED" "$err" "adopted-retire: the stop must not read as a completed retirement"
+  assert_grep "did not complete" "$err" "adopted-retire: the stop must say the retirement did not complete"
+  assert_grep "no directory was removed" "$err" "adopted-retire: the stop must say nothing was deleted"
+  assert_grep "child" "$err" "adopted-retire: the stop must name the child it did not process"
+  kill_registered_adopted_pids
+  pass "a forced retirement stops at a child worktree hosting a detached process and leaves it on disk"
 }
 
 test_force_is_not_a_bypass_for_an_adopted_process() {
@@ -2563,6 +2678,8 @@ test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_detached_process_refuses_before_any_return
+test_adopted_refusal_leaves_the_lane_untouched
+test_forced_retirement_stops_at_a_child_hosting_a_detached_process
 test_force_is_not_a_bypass_for_an_adopted_process
 test_crew_process_in_the_lane_session_does_not_refuse
 test_other_lanes_survive_a_third_lanes_cleanup

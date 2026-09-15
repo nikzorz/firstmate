@@ -9,12 +9,13 @@
 #
 # Matrix:
 #   (a) a detached process (its own session leader) in the directory -> ADOPTED
-#   (b) that process's own child, sharing its session               -> ADOPTED
+#   (b) that process's own worker, sharing its session               -> ADOPTED
 #   (c) a process that inherited an outside session                  -> not adopted
 #   (d) a directory holding no processes at all                      -> clear
 #   (e) a process one level deeper than the directory                -> ADOPTED
 #   (f) a sibling directory's detached process                       -> not reported
-#   (g) the scanning shell's own session                             -> never reported
+#   (g) the scanning shell itself                                    -> never reported
+#   (h) a directory reached through a symlink                        -> ADOPTED
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -52,16 +53,50 @@ cleanup_spawned() {
 }
 trap cleanup_spawned EXIT
 
+# Wait for a spawned process to report its own pid. A pid the fixture reads back
+# from the process it started is the only one it can be sure of; the machine may
+# be running any number of identical commands for other reasons.
+read_reported_pid() {
+  local pidfile=$1 marker=$2 waited=0
+  while [ ! -s "$pidfile" ]; do
+    [ "$waited" -lt 200 ] || fail "$marker: the spawned process never reported its pid"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  cat "$pidfile"
+}
+
 # Start a process that detaches into its own session with cwd in <dir>, the
-# defining act of a daemon. Echoes its pid once /proc (or ps) can see it.
+# defining act of a daemon. `exec` keeps the pid it reported.
 start_detached_in() {
-  local dir=$1 marker=$2 pid
-  setsid bash -c "cd '$dir' && exec sleep 300" </dev/null >/dev/null 2>&1 &
-  sleep 0.3
-  pid=$(pgrep -f "^sleep 300$" | tail -1)
-  [ -n "$pid" ] || fail "$marker: could not start a detached process in $dir"
+  local dir=$1 marker=$2 pidfile pid
+  pidfile=$(mktemp "$TMP_ROOT/detached.XXXXXX")
+  setsid bash -c "cd '$dir' && printf '%s\n' \$\$ > '$pidfile' && exec sleep 300" \
+    </dev/null >/dev/null 2>&1 &
+  pid=$(read_reported_pid "$pidfile" "$marker")
+  kill -0 "$pid" 2>/dev/null || fail "$marker: could not start a detached process in $dir"
   printf '%s\n' "$pid" >> "$SPAWNED_FILE"
   printf '%s\n' "$pid"
+}
+
+# Start a detached service that keeps a worker child, the shape the shared
+# validation daemon has: the leader detaches, and the worker inherits that
+# session without leading one. Echoes "<leader> <worker>".
+start_detached_service_with_worker_in() {
+  local dir=$1 marker=$2 leader_file worker_file leader worker
+  leader_file=$(mktemp "$TMP_ROOT/leader.XXXXXX")
+  worker_file=$(mktemp "$TMP_ROOT/worker.XXXXXX")
+  setsid bash -c "cd '$dir' || exit 1
+    sleep 300 &
+    printf '%s\n' \$! > '$worker_file'
+    printf '%s\n' \$\$ > '$leader_file'
+    wait" </dev/null >/dev/null 2>&1 &
+  leader=$(read_reported_pid "$leader_file" "$marker leader")
+  worker=$(read_reported_pid "$worker_file" "$marker worker")
+  printf '%s\n' "$leader" "$worker" >> "$SPAWNED_FILE"
+  kill -0 "$leader" 2>/dev/null || fail "$marker: the service leader did not stay alive"
+  kill -0 "$worker" 2>/dev/null || fail "$marker: the service worker did not stay alive"
+  printf '%s %s\n' "$leader" "$worker"
 }
 
 # Start a process in <dir> that stays in the caller's own session, the shape a
@@ -82,7 +117,7 @@ adopted_pids() {
   printf '%s\n' "$out" | awk 'NF {print $1}'
 }
 
-test_detached_process_and_its_child_are_adopted() {
+test_detached_process_is_adopted() {
   local dir="$TMP_ROOT/detached" pid found
   mkdir -p "$dir"
   pid=$(start_detached_in "$dir" detached)
@@ -90,14 +125,22 @@ test_detached_process_and_its_child_are_adopted() {
   found=$(adopted_pids "$dir")
   assert_contains "$found" "$pid" "detached: the detached process should be reported as adopted"
   pass "a process that detached into its own session inside the directory is adopted"
+}
 
-  # A daemon's own worker inherits the daemon's session, whose leader is itself
-  # resident, so the whole service is caught, not only its leader.
-  local child_sid leader
-  child_sid=$(fm_adopted_session_of "$pid")
-  leader=$child_sid
-  [ "$leader" = "$pid" ] || fail "detached-child: expected the process to lead its own session"
-  pass "a detached service's session leader is itself, so its workers are caught with it"
+# The worker is the case the measured incident turned on: the daemon's log sink
+# leads no session of its own, so only its leader's residency can convict it.
+test_a_services_worker_is_adopted_with_its_leader() {
+  local dir="$TMP_ROOT/service" pair leader worker found
+  mkdir -p "$dir"
+  pair=$(start_detached_service_with_worker_in "$dir" service)
+  leader=${pair% *}
+  worker=${pair#* }
+  [ "$worker" != "$leader" ] || fail "service: the worker should be a separate process"
+
+  found=$(adopted_pids "$dir")
+  assert_contains "$found" "$leader" "service: the detached leader should be reported"
+  assert_contains "$found" "$worker" "service: the leader's worker should be reported too"
+  pass "a detached service's worker is adopted along with the leader whose session it inherited"
 }
 
 test_attached_process_is_not_adopted() {
@@ -144,6 +187,21 @@ test_sibling_directory_is_not_reported() {
   pass "a detached process in a directory that merely shares a name prefix is not reported"
 }
 
+# A recorded worktree path routinely reaches its directory through a symlink (a
+# pooled slot, a symlinked home, macOS's /var TMPDIR). The kernel reports every
+# process's cwd resolved, so an unresolved path on this side matches nothing and
+# the scan would report a clear directory it never actually looked at.
+test_symlinked_directory_still_finds_the_process() {
+  local real="$TMP_ROOT/pool-real" link="$TMP_ROOT/pool-link" pid found
+  mkdir -p "$real"
+  ln -sfn "$real" "$link"
+  pid=$(start_detached_in "$real" symlink)
+
+  found=$(adopted_pids "$link")
+  assert_contains "$found" "$pid" "symlink: a directory reached through a symlink must still be scanned"
+  pass "a directory named through a symlink is scanned as the directory it resolves to"
+}
+
 test_scanning_shell_never_accuses_itself() {
   local dir found
   # The scan itself runs from somewhere; a scan of that somewhere must not
@@ -151,13 +209,14 @@ test_scanning_shell_never_accuses_itself() {
   dir=$(pwd -P)
   found=$(adopted_pids "$dir")
   assert_not_contains "$found" "$$" "self: the scanning shell must never be reported"
-  pass "the scanning shell's own session is never reported as adopted"
+  pass "the scanning shell and the shells that launched it are never reported as adopted"
 }
 
-test_detached_process_and_its_child_are_adopted
+test_detached_process_is_adopted
+test_a_services_worker_is_adopted_with_its_leader
 test_attached_process_is_not_adopted
 test_empty_directory_is_clear
 test_process_in_a_subdirectory_is_seen
 test_sibling_directory_is_not_reported
+test_symlinked_directory_still_finds_the_process
 test_scanning_shell_never_accuses_itself
-
