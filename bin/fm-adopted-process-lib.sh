@@ -19,43 +19,44 @@
 #   its session leader's working directory is inside the directory as well.
 #
 # That covers the whole family at once: any detached service is caught, whatever
-# it is called, and a task's own agent tree never is. A service that detached by
-# double-forking - fork, setsid, fork again, middle process exits - leaves its
-# survivor naming a session leader that no longer exists, which is no one's cwd
-# and so proves nothing either way; that reads as unknown, not as clear, so the
-# caller refuses there too.
+# it is called, and a task's own agent tree never is.
 #
 # Only the scanning process itself and the processes that launched it are left
 # out of the answer, so a scan run from inside the directory does not accuse the
 # shell doing the scanning. The exemption is that lineage and nothing wider: a
 # service that happens to share a session with the scanner is still reported.
 #
-# Two limits, stated rather than hidden. A shared service started as an ordinary
-# child of a crew's own terminal session, never detaching, is invisible to this
-# test - it is indistinguishable from the crew's own work by any process fact.
-# And a task's own deliberately detached leftover (a background server the crew
-# setsid'd) is caught and refused even though killing it would have been fine;
-# the caller resolves that by ending the process and returning again. Refusing
-# where the answer is unknown is the cheap error: no work is lost, and the
-# expensive error - killing another lane's run - is the one this scan exists to
-# make impossible.
+# ONE PLATFORM. Every fact above is read from /proc, and nothing else is guessed
+# at. BSD ps reports a session as a kernel address rather than a numeric id, so
+# there is no honest way to run this test off /proc, and an unverifiable guess in
+# the one place that decides whether a live shared service survives is worse than
+# a stated limit. Off /proc the scan says it could not run (exit 3) and the caller
+# proceeds exactly as cleanup did before this guard existed, behind a warning.
+# That is deliberately NOT the same as an ownership question the scan could not
+# answer: a scan that ran and could not attribute a process still refuses.
 #
-# Enumeration reads /proc where it exists and falls back to lsof plus ps
-# elsewhere. Every way the scan can come up short - no enumeration path, an lsof
-# that produced nothing, a live process whose session this platform will not
-# report, a session leader that has already gone - reports that distinctly
-# (exit 2) rather than as a clear directory, so a caller refuses instead of
-# proceeding blind.
+# THREE LIMITS, stated rather than hidden, all of them cheap errors next to the
+# expensive one this scan exists to make impossible - killing another lane's run.
+# (a) A shared service started as an ordinary child of a crew's own terminal
+# session, never detaching, is invisible to this test; no process fact separates
+# it from that crew's own work. (b) A task's own deliberately detached leftover (a
+# background server the crew setsid'd) is caught and refused even though killing
+# it would have been fine. (c) A resident process whose session leader has already
+# exited is unattributable, so it refuses: the double-forked daemon has that shape
+# (fork, setsid, fork again, middle process exits), and so, far more ordinarily,
+# does a lane's own leftover orphaned when its window died. (b) and (c) are both
+# resolved the same way, by ending the named process and running cleanup again.
+#
+# Exit codes: 0 when at least one process was found that this test convicts or
+# cannot attribute (those processes are the printed lines), 1 when the directory
+# is clear, 2 when a resident process's ownership could not be established, 3 when
+# this platform cannot run the scan at all.
 
-# fm_adopted_proc_available: 0 when this kernel exposes the /proc fields used here.
-fm_adopted_proc_available() {
-  [ -r /proc/self/cwd ] && [ -r /proc/self/stat ]
-}
-
-# fm_adopted_scan_supported: 0 when some enumeration path is available.
+# fm_adopted_scan_supported: 0 when this platform exposes the process facts the
+# ownership test reads - a working directory per pid and a stat line carrying the
+# session id.
 fm_adopted_scan_supported() {
-  fm_adopted_proc_available && return 0
-  command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1
+  [ -r /proc/self/cwd ] && [ -r /proc/self/stat ]
 }
 
 # fm_adopted_stat_field <pid> <n>: print field <n> of /proc/<pid>/stat counted
@@ -69,22 +70,12 @@ fm_adopted_stat_field() {
 }
 
 # fm_adopted_session_of <pid>: print the process's session id. Exit 1 when the
-# process is gone, 2 when it is alive and this platform will not say.
+# process is gone, 2 when it is there and the field could not be read.
 fm_adopted_session_of() {
   local pid=$1 sid
-  if fm_adopted_proc_available; then
-    sid=$(fm_adopted_stat_field "$pid" 4) || return 1
-    [ -n "$sid" ] || return 2
-    printf '%s\n' "$sid"
-    return 0
-  fi
-  sid=$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ')
-  if [ -n "$sid" ]; then
-    printf '%s\n' "$sid"
-    return 0
-  fi
-  ps -o pid= -p "$pid" >/dev/null 2>&1 || return 1
-  return 2
+  sid=$(fm_adopted_stat_field "$pid" 4) || return 1
+  [ -n "$sid" ] || return 2
+  printf '%s\n' "$sid"
 }
 
 # fm_adopted_pid_alive <pid>: 0 when the process still exists as a running one.
@@ -93,25 +84,13 @@ fm_adopted_session_of() {
 fm_adopted_pid_alive() {
   local pid=$1 state
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  if fm_adopted_proc_available; then
-    state=$(fm_adopted_stat_field "$pid" 1) || return 1
-    [ -n "$state" ] && [ "$state" != Z ]
-    return
-  fi
-  state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')
-  [ -n "$state" ] || return 1
-  case "$state" in Z*) return 1 ;; esac
-  return 0
+  state=$(fm_adopted_stat_field "$pid" 1) || return 1
+  [ -n "$state" ] && [ "$state" != Z ]
 }
 
 # fm_adopted_parent_of <pid>: print the process's parent pid, or nothing.
 fm_adopted_parent_of() {
-  local pid=$1
-  if fm_adopted_proc_available; then
-    fm_adopted_stat_field "$pid" 2 || return 1
-    return 0
-  fi
-  ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '
+  fm_adopted_stat_field "$1" 2
 }
 
 # fm_adopted_own_lineage: print " <pid> <pid> ... " for the scanning process and
@@ -133,11 +112,9 @@ fm_adopted_own_lineage() {
 # fm_adopted_command_of <pid>: print a short command name, or nothing.
 fm_adopted_command_of() {
   local pid=$1
-  if [ -r "/proc/$pid/comm" ]; then
-    tr -d '\n' < "/proc/$pid/comm" 2>/dev/null
-    return 0
-  fi
-  ps -o comm= -p "$pid" 2>/dev/null | tr -d '\n'
+  [ -r "/proc/$pid/comm" ] || return 0
+  tr -d '\n' < "/proc/$pid/comm" 2>/dev/null
+  return 0
 }
 
 # fm_adopted_path_within <path> <dir>: 0 when path is dir or sits under it.
@@ -151,45 +128,31 @@ fm_adopted_path_within() {
 
 # fm_adopted_resident_pids <dir>: print each live pid whose cwd is inside dir.
 # <dir> must already be resolved, because every cwd it is compared against is.
-# Exit 2 when no enumeration path could run.
 fm_adopted_resident_pids() {
-  local dir=$1 pid cwd entry listing status
-  if fm_adopted_proc_available; then
-    for entry in /proc/[0-9]*; do
-      pid=${entry#/proc/}
-      cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
-      fm_adopted_path_within "$cwd" "$dir" && printf '%s\n' "$pid"
-    done
-    return 0
-  fi
-  command -v lsof >/dev/null 2>&1 || return 2
-  listing=$(lsof -w -n -P -d cwd -F pn 2>/dev/null)
-  status=$?
-  # An empty listing is never a real answer: every machine has processes with a
-  # working directory. lsof's exit 1 over a non-empty listing means only that
-  # some process could not be inspected, which the /proc path tolerates too.
-  [ -n "$listing" ] || return 2
-  [ "$status" -eq 0 ] || [ "$status" -eq 1 ] || return 2
-  printf '%s\n' "$listing" | awk -v dir="$dir" '
-    /^p/ { pid = substr($0, 2); next }
-    /^n/ {
-      path = substr($0, 2)
-      if (path == dir || index(path, dir "/") == 1) print pid
-    }
-  '
+  local dir=$1 pid cwd entry
+  for entry in /proc/[0-9]*; do
+    pid=${entry#/proc/}
+    cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
+    fm_adopted_path_within "$cwd" "$dir" && printf '%s\n' "$pid"
+  done
+  return 0
+}
+
+# fm_adopted_name_pid <pid>: the one output line shape callers parse.
+fm_adopted_name_pid() {
+  printf '%s\t%s\n' "$1" "$(fm_adopted_command_of "$1")"
 }
 
 # fm_adopted_processes <dir>: print "<pid>\t<command>" for each process living in
-# dir that nothing inside dir's own task lineage started. Exit 0 when at least
-# one was found, 1 when the directory is clear, 2 when the scan could not run.
+# dir that this test convicts or cannot attribute. See the exit codes above.
 fm_adopted_processes() {
   local dir=$1 resolved pids resident pid sid sid_rc lineage found=0
-  fm_adopted_scan_supported || return 2
+  fm_adopted_scan_supported || return 3
   # Every cwd this is compared against comes back fully resolved, so a recorded
   # path reached through a symlinked pool, home or TMPDIR has to be resolved too
   # or it matches nothing at all and the scan reports a false clear.
   resolved=$(cd "$dir" 2>/dev/null && pwd -P) && dir=$resolved
-  pids=$(fm_adopted_resident_pids "$dir") || return 2
+  pids=$(fm_adopted_resident_pids "$dir")
   [ -n "$pids" ] || return 1
   resident=" $(printf '%s\n' "$pids" | tr '\n' ' ') "
   lineage=$(fm_adopted_own_lineage)
@@ -203,6 +166,7 @@ fm_adopted_processes() {
       continue
     fi
     if [ "$sid_rc" -ne 0 ] || [ -z "$sid" ]; then
+      fm_adopted_name_pid "$pid"
       return 2
     fi
     case "$resident" in
@@ -213,11 +177,14 @@ fm_adopted_processes() {
         # naming a process that has gone is the double-forked daemon's shape as
         # much as an orphaned crew process's, and nothing here can tell them
         # apart, so the whole answer is unknown rather than clear.
-        fm_adopted_pid_alive "$sid" || return 2
-        continue
+        if fm_adopted_pid_alive "$sid"; then
+          continue
+        fi
+        fm_adopted_name_pid "$pid"
+        return 2
         ;;
     esac
-    printf '%s\t%s\n' "$pid" "$(fm_adopted_command_of "$pid")"
+    fm_adopted_name_pid "$pid"
     found=1
   done
 

@@ -84,15 +84,25 @@ And the trailing `error: treehouse return failed` line no longer prints, because
 
 `tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear.
 `tests/fm-teardown.test.sh` covers the refusal, its behaviour under `--force`, the absence of a false refusal for a crewmate's own process, and the two-other-lanes case above.
-It also covers the three ways a refusal has to stay cheap: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, and a secondmate home hosting one stops with its registry entry and state records intact rather than deleting the only records that can name a still-leased home.
+It also covers the four paths a refusal stops on: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, a secondmate home held on a treehouse slot stops before the return tool, and a secondmate home that is a plain directory stops before `rm -rf`.
+The last two keep the registry entry and the state records that are the only way to name a home that survived.
 Both start real detached and attached processes rather than mocking the scan, because the whole guarantee rests on what a real process's session says about who owns it.
 
 ## What is not covered
 
-Two limits, the same two the `bin/fm-adopted-process-lib.sh` header states.
+Three limits, the same three the `bin/fm-adopted-process-lib.sh` header states, plus the platform the guard does not run on at all.
 
 (a) A shared service started as an ordinary child of a crewmate's own terminal session, never detaching, is indistinguishable from that crewmate's work by any process fact and is not caught.
 No such service has been measured; the shared validation daemon detaches, as the session table above shows.
 
 (b) A task's own deliberately detached leftover, such as a background server a crewmate started with `setsid`, is refused even though killing it would have been fine.
 The operator resolves that by ending that process and running the same cleanup again.
+
+(c) A process living in the directory whose session leader has already exited cannot be attributed either way, so it refuses.
+The double-forked daemon has that shape, but the ordinary one is a lane's own leftover orphaned when its window died, which refuses every teardown of that lane until someone ends it.
+The operator resolves that the same way as (b), by ending the named process and running the same cleanup again.
+
+The guard itself runs only where `/proc` is readable, which is where every fact the ownership test reads comes from.
+BSD `ps` reports a session as a kernel address rather than a numeric id, and there is no macOS machine to verify a Darwin implementation against, so none was written: an unverifiable guess in the one place that decides whether a live shared service survives would be worse than this stated limit.
+On a machine without `/proc` the scan reports that it could not run, teardown prints one warning line saying so, and cleanup proceeds unguarded exactly as it did before this guard existed.
+That is the only case that proceeds; a scan that ran and could not attribute a resident process still refuses, which is limit (c).

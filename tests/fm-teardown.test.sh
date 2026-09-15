@@ -64,7 +64,10 @@
 #   (ad2) the same, under --force                      -> REFUSE (force is not a bypass)
 #   (ad3) the same refusal on the main path            -> branch and hook files untouched
 #   (ad4) the same in a forced retirement's child worktree -> STOP, child left on disk
-#   (ad5) the same in the secondmate's own home        -> STOP, registry and records kept
+#   (ad5) the same in a grandchild worktree              -> STOP names the outer frame's losses
+#   (ad6) the same in a leased secondmate home         -> STOP, registry and records kept
+#   (ad7) the same in a plain-directory home           -> STOP before rm -rf
+#   (ad8) a leftover whose session leader has exited   -> REFUSE, named, not a clear
 #   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
@@ -2417,6 +2420,45 @@ start_crew_process_in() {
   printf '%s\n' "$pid"
 }
 
+# Stand in for a leftover this lane orphaned: a process in <dir> whose session
+# leader has already exited, which is what the ordinary shape of an unattributable
+# process looks like. The leader is started from a subshell that exits at once so
+# init reaps it, because a leader still waiting to be reaped is not yet gone.
+start_orphaned_service_in() {
+  local dir=$1 tag=$2 child_file leader_file child leader waited=0
+  mkdir -p "$dir"
+  child_file=$(mktemp "$TMP_ROOT/orphan-child.XXXXXX")
+  leader_file=$(mktemp "$TMP_ROOT/orphan-leader.XXXXXX")
+  ( setsid bash -c "cd '$dir' || exit 1
+    sleep 300 &
+    printf '%s\n' \$! > '$child_file'
+    printf '%s\n' \$\$ > '$leader_file'" </dev/null >/dev/null 2>&1 & )
+  while [ ! -s "$child_file" ] || [ ! -s "$leader_file" ]; do
+    [ "$waited" -lt 200 ] || fail "$tag: the orphan fixture never reported its pids"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  child=$(cat "$child_file")
+  leader=$(cat "$leader_file")
+  register_adopted_pid "$child"
+  waited=0
+  while ! orphan_leader_has_gone "$leader"; do
+    [ "$waited" -lt 200 ] || fail "$tag: the orphan's session leader never exited"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  kill -0 "$child" 2>/dev/null || fail "$tag: the orphan did not outlive its session leader"
+  printf '%s\n' "$child"
+}
+
+orphan_leader_has_gone() {
+  local pid=$1 state
+  kill -0 "$pid" 2>/dev/null || return 0
+  state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d ' ')
+  case "$state" in Z*) return 0 ;; esac
+  return 1
+}
+
 # A treehouse mock that records every invocation, so a test can prove the return
 # was never reached rather than only that teardown exited non-zero.
 add_recording_treehouse() {
@@ -2564,6 +2606,65 @@ SH
   pass "a forced retirement stops at a child worktree hosting a detached process and leaves it on disk"
 }
 
+# A stop deeper than one frame still has to name everything the retirement already
+# destroyed. The outer home's own child is returned and its records deleted before
+# the recursion ever starts, so a stop that reports only the inner frame's losses
+# understates exactly what running again cannot put back.
+test_nested_stop_names_what_an_outer_frame_already_destroyed() {
+  local home subhome subsubhome childproj childwt fakebin err out rc pid
+  home="$TMP_ROOT/adopted-nested-parent"
+  subhome="$TMP_ROOT/adopted-nested-subhome"
+  subsubhome="$TMP_ROOT/adopted-nested-subsubhome"
+  childproj="$subsubhome/projects/alpha"
+  childwt="$TMP_ROOT/adopted-nested-childwt"
+  fakebin="$TMP_ROOT/adopted-nested-fakebin"
+  err="$TMP_ROOT/adopted-nested.err"
+  out="$TMP_ROOT/adopted-nested.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$subsubhome/state" "$fakebin"
+  fm_git_worktree "$childproj" "$childwt" fm/adopted-nested
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'zz-sub\n' > "$subsubhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  # Sorts ahead of the nested home, so the loop finishes with it before recursing:
+  # its records are gone by the time the inner frame stops.
+  printf 'running\n' > "$subhome/state/aa-done1.status"
+  fm_write_secondmate_meta "$subhome/state/zz-sub.meta" "$subsubhome" firstmate:fm-zz-sub
+  fm_write_meta "$subsubhome/state/zz-child9.meta" \
+    "window=firstmate:fm-zz-child9" \
+    "worktree=$childwt" \
+    "project=$childproj" \
+    "harness=echo" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  pid=$(start_shared_service_in "$childwt" adopted-nested)
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "adopted-nested: a forced retirement completed over a grandchild hosting a detached process"
+  assert_absent "$subhome/state/aa-done1.status" \
+    "adopted-nested: the outer home's own child should have had its records deleted"
+  assert_grep "aa-done1" "$err" \
+    "adopted-nested: the stop must name what an outer frame already destroyed"
+  assert_grep "zz-child9" "$err" "adopted-nested: the stop must name the child it stopped at"
+  assert_grep "$subsubhome" "$err" "adopted-nested: the stop must name the home the refused child belongs to"
+  [ -d "$childwt" ] || fail "adopted-nested: the worktree hosting a detached process was removed"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-nested: the detached process was killed"
+  kill_registered_adopted_pids
+  pass "a stop below the first frame names every child the retirement already destroyed"
+}
+
 # The secondmate's own home is the third path a refusal reaches, and the one where
 # going on would cost the most: the home survives holding its treehouse lease while
 # the registry entry and state records that are the only way to name it again are
@@ -2624,6 +2725,57 @@ SH
   pass "a secondmate home hosting a detached process stops the retirement with its registry entry and records intact"
 }
 
+# The fourth stop path, and the one with no return tool in it at all: a home seeded
+# at an explicit path is a plain directory, so retirement removes it with rm -rf.
+# That takes the directory away from a detached service exactly as finally as the
+# sweep kills one, so the same scan runs ahead of it.
+test_plain_directory_home_hosting_a_detached_process_stops_the_retirement() {
+  local home subhome fakebin err out rc pid
+  home="$TMP_ROOT/adopted-plain-parent"
+  subhome="$TMP_ROOT/adopted-plain-subhome"
+  fakebin="$TMP_ROOT/adopted-plain-fakebin"
+  err="$TMP_ROOT/adopted-plain.err"
+  out="$TMP_ROOT/adopted-plain.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$fakebin"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  cat > "$fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP_ROOT/adopted-plain.treehouse.calls"
+exit 0
+SH
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux"
+  pid=$(start_shared_service_in "$subhome" adopted-plain)
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "adopted-plain: a retirement completed over a plain home hosting a detached process"
+  assert_present "$subhome" "adopted-plain: the plain home hosting a detached process was removed"
+  assert_present "$home/state/domain.meta" "adopted-plain: the stopped secondmate's state records must survive"
+  assert_grep "- domain" "$home/data/secondmates.md" \
+    "adopted-plain: a home that survived must stay in the registry that names it"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-plain: the detached process was killed by rm -rf's path"
+  assert_absent "$TMP_ROOT/adopted-plain.treehouse.calls" \
+    "adopted-plain: a plain home never goes through the return tool"
+  assert_no_grep "teardown domain complete" "$out" \
+    "adopted-plain: a stopped retirement must not report itself complete"
+  assert_grep "STOPPED" "$err" "adopted-plain: the stop must not read as a completed retirement"
+  assert_grep "detached from whatever started them" "$err" \
+    "adopted-plain: the stop must say what it found"
+  kill_registered_adopted_pids
+  pass "a plain-directory secondmate home hosting a detached process stops the retirement before rm -rf"
+}
+
 test_force_is_not_a_bypass_for_an_adopted_process() {
   local case_dir rc pid
   case_dir=$(make_case adopted-force)
@@ -2646,6 +2798,38 @@ test_force_is_not_a_bypass_for_an_adopted_process() {
   kill -0 "$pid" 2>/dev/null || fail "adopted-force: the detached process was killed under --force"
   kill_registered_adopted_pids
   pass "--force discards this task's work and still refuses to kill a detached process"
+}
+
+# The half of the platform decision that still refuses: a scan that ran and could
+# not attribute a resident process is not the same as a scan that could not run.
+# The patience window gives a dying process time to be reaped, and a leftover that
+# is still there afterwards refuses rather than being read as a clear directory.
+test_orphaned_process_refuses_after_the_patience_window() {
+  local case_dir rc pid
+  case_dir=$(make_case adopted-orphan)
+  write_meta "$case_dir" local-only ship
+  add_recording_treehouse "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  pid=$(start_orphaned_service_in "$case_dir/wt" adopted-orphan)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "adopted-orphan: cleanup should refuse a process it cannot attribute"
+  assert_grep "cannot be attributed" "$case_dir/stderr" \
+    "adopted-orphan: the refusal should say why it could not decide"
+  assert_grep "$pid" "$case_dir/stderr" \
+    "adopted-orphan: the refusal must name the process it could not attribute"
+  assert_no_grep "did not run" "$case_dir/stderr" \
+    "adopted-orphan: an unanswerable process is not the same as a scan that never ran"
+  assert_absent "$case_dir/treehouse.calls" \
+    "adopted-orphan: the return tool must never be reached"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-orphan: the orphaned process was killed"
+  kill_registered_adopted_pids
+  pass "a resident process whose session leader has gone refuses cleanup and is named"
 }
 
 test_crew_process_in_the_lane_session_does_not_refuse() {
@@ -2753,7 +2937,10 @@ test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_detached_process_refuses_before_any_return
 test_adopted_refusal_leaves_the_lane_untouched
 test_forced_retirement_stops_at_a_child_hosting_a_detached_process
+test_nested_stop_names_what_an_outer_frame_already_destroyed
 test_secondmate_home_hosting_a_detached_process_stops_the_retirement
+test_plain_directory_home_hosting_a_detached_process_stops_the_retirement
 test_force_is_not_a_bypass_for_an_adopted_process
+test_orphaned_process_refuses_after_the_patience_window
 test_crew_process_in_the_lane_session_does_not_refuse
 test_other_lanes_survive_a_third_lanes_cleanup

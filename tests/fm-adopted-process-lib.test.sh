@@ -152,6 +152,18 @@ adopted_pids() {
   printf '%s\n' "$out" | awk 'NF {print $1}'
 }
 
+# The status is the answer; the pid list is only its detail. A negative case that
+# checks the list alone passes just as well on "unknown", which refuses every
+# teardown, so every clear case asserts the code that means clear.
+scan_status() {
+  local dir=$1 rc
+  set +e
+  fm_adopted_processes "$dir" >/dev/null
+  rc=$?
+  set -e
+  printf '%s\n' "$rc"
+}
+
 test_detached_process_is_adopted() {
   local dir="$TMP_ROOT/detached" pid found
   mkdir -p "$dir"
@@ -185,19 +197,15 @@ test_attached_process_is_not_adopted() {
 
   found=$(adopted_pids "$dir")
   assert_not_contains "$found" "$pid" "attached: a process in the caller's session must not be adopted"
+  expect_code 1 "$(scan_status "$dir")" "attached: a crew process must read as clear, not as unknown"
   pass "a process that inherited a session led from outside the directory is not adopted"
 }
 
 test_empty_directory_is_clear() {
-  local dir="$TMP_ROOT/empty" rc
+  local dir="$TMP_ROOT/empty"
   mkdir -p "$dir"
 
-  set +e
-  fm_adopted_processes "$dir" >/dev/null
-  rc=$?
-  set -e
-
-  expect_code 1 "$rc" "empty: a directory with no resident processes should report clear"
+  expect_code 1 "$(scan_status "$dir")" "empty: a directory with no resident processes should report clear"
   pass "a directory holding no processes reports clear"
 }
 
@@ -219,6 +227,7 @@ test_sibling_directory_is_not_reported() {
 
   found=$(adopted_pids "$mine")
   assert_not_contains "$found" "$pid" "sibling: a name-prefix neighbour must not be swept in"
+  expect_code 1 "$(scan_status "$mine")" "sibling: a directory of its own must read as clear, not as unknown"
   pass "a detached process in a directory that merely shares a name prefix is not reported"
 }
 
@@ -259,18 +268,17 @@ test_scanning_shell_never_accuses_itself() {
 # from an orphaned crew process, so the scan must say so rather than call the
 # directory clear and let the return tool kill whatever is there.
 test_dead_session_leader_reads_as_unknown() {
-  local dir="$TMP_ROOT/orphan" pid rc
+  local dir="$TMP_ROOT/orphan" pid found
   mkdir -p "$dir"
   pid=$(start_orphaned_in "$dir" orphan)
 
-  set +e
-  fm_adopted_processes "$dir" >/dev/null
-  rc=$?
-  set -e
-
-  expect_code 2 "$rc" "orphan: a process whose session leader is gone should read as unknown"
+  expect_code 2 "$(scan_status "$dir")" "orphan: a process whose session leader is gone should read as unknown"
+  # The caller has to be able to name what it refused over, so an unknown answer
+  # reports the process it could not attribute rather than only the verdict.
+  found=$(adopted_pids "$dir")
+  assert_contains "$found" "$pid" "orphan: an unknown answer must name the process it could not attribute"
   kill -0 "$pid" 2>/dev/null || fail "orphan: the orphaned process did not survive the scan"
-  pass "a resident process whose session leader has died reads as unknown, not as clear"
+  pass "a resident process whose session leader has died reads as unknown and is named"
 }
 
 test_detached_process_is_adopted
