@@ -69,6 +69,16 @@
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
 #
+# Adopted-process refusal: `treehouse return` terminates every process whose working
+# directory is inside the worktree, with no regard for who started it, so a detached
+# service sitting there dies with the task's own agent. Before any return, teardown
+# refuses when the directory holds a process that detached from whatever started it.
+# bin/fm-adopted-process-lib.sh owns that ownership test and states its limits. The
+# refusal stands on --force too: --force authorizes discarding THIS task's work, never
+# another lane's. There is deliberately no bypass flag - ending the named process is a
+# deliberate, attributable act, and a flag would invite exactly the silent kill this
+# guard exists to end.
+#
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
 # non-linked worktree, .git/index.lock) that makes `treehouse return --force` fail.
@@ -161,6 +171,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
+# shellcheck source=bin/fm-adopted-process-lib.sh
+. "$SCRIPT_DIR/fm-adopted-process-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -676,6 +688,16 @@ if ! retry_wait_secs_is_valid "$TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS"; the
 fi
 # Compatibility alias used by the safety-check wait path and older call sites.
 STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
+# Patience window for the adopted-process guard below. A short-lived shell that
+# is its own session leader (the shape a tool subshell takes) looks identical to
+# a daemon for the instant it exists, so look again before refusing.
+ADOPTED_PROCESS_RECHECKS=${FM_ADOPTED_PROCESS_RECHECKS:-2}
+case "$ADOPTED_PROCESS_RECHECKS" in ''|*[!0-9]*) ADOPTED_PROCESS_RECHECKS=2 ;; esac
+ADOPTED_PROCESS_RECHECK_WAIT_SECS=${FM_ADOPTED_PROCESS_RECHECK_WAIT_SECS:-1}
+if ! retry_wait_secs_is_valid "$ADOPTED_PROCESS_RECHECK_WAIT_SECS"; then
+  echo "teardown: invalid adopted process recheck wait '$ADOPTED_PROCESS_RECHECK_WAIT_SECS'; using 1s" >&2
+  ADOPTED_PROCESS_RECHECK_WAIT_SECS=1
+fi
 TEARDOWN_TREEHOUSE_LOCK_REFUSED=2
 TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED=3
 
@@ -912,12 +934,48 @@ teardown_transient_return_retry() {
   return 1
 }
 
+# Refuse to hand `treehouse return` a process it is not entitled to kill. The
+# return tool terminates by working directory alone, so a detached service that
+# happens to sit in the worktree dies with the task's own agent - measured once
+# as the shared validation daemon and two other lanes' in-flight runs. The
+# ownership test and its stated limits belong to bin/fm-adopted-process-lib.sh.
+assert_no_adopted_processes() {
+  local dir=$1 label=$2 found status attempt=0
+
+  while :; do
+    found=$(fm_adopted_processes "$dir")
+    status=$?
+    [ "$status" -eq 0 ] || break
+    [ "$attempt" -lt "$ADOPTED_PROCESS_RECHECKS" ] || break
+    attempt=$(( attempt + 1 ))
+    sleep "$ADOPTED_PROCESS_RECHECK_WAIT_SECS"
+  done
+
+  case "$status" in
+    1) return 0 ;;
+    2)
+      echo "teardown: $label return refused: this machine offers no way to see which processes live in $dir, so returning it could terminate a service shared with other work" >&2
+      return 1
+      ;;
+  esac
+
+  echo "teardown: $label return refused: $dir still holds processes that detached from whatever started them, and returning the worktree would terminate them along with this task's own:" >&2
+  while IFS=$'\t' read -r pid comm; do
+    [ -n "$pid" ] || continue
+    echo "teardown:   $comm ($pid)" >&2
+  done <<< "$found"
+  echo "teardown: a detached process may be serving other work, so nothing here will kill one. Establish what it is; end it deliberately if it is this task's leftover, and run the same cleanup again." >&2
+  return 1
+}
+
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
 teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} retry_safety_check=${5:-}
   local out lock lock_before attempt=0 max_retries lock_desc
   local ref_name ref_before_oid
+
+  assert_no_adopted_processes "$dir" "$label" || return 1
 
   # A lock the dying process releases during the failing attempt is invisible to
   # both the post-failure probe and a swallowed error message; only this

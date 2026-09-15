@@ -56,6 +56,15 @@
 #   (ab) unlanded work while a lock is present                -> REFUSE before return
 #   (ac) git lock signature in the error text, no lock file   -> retry ALLOW
 #
+# And teardown-kills-shared-validation-daemon: `treehouse return` terminates every
+# process whose working directory is inside the worktree, so a shared service that
+# happens to sit there dies with the task's own agent. Measured once as the shared
+# validation daemon plus two other lanes' in-flight runs.
+#   (ad) a detached process in the worktree            -> REFUSE before any return
+#   (ad2) the same, under --force                      -> REFUSE (force is not a bypass)
+#   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
+#   (af) two other lanes' services during a third lane's cleanup -> both survive
+#
 # And teardown-empty-return-error: a return failure with no lock in evidence anywhere,
 # classified from a proof re-derived at retry time rather than from the return tool's
 # swallowed error text.
@@ -2327,6 +2336,179 @@ test_teardown_sweeps_an_undeclared_per_task_record() {
   pass "teardown sweeps a per-task record that no removal list names"
 }
 
+# --- adopted-process refusal (teardown-kills-shared-validation-daemon) -------
+#
+# A shared service detaches from whatever started it, which is what makes it
+# shared and what makes it indistinguishable from the task's own tree by working
+# directory alone. These fixtures reproduce both shapes for real rather than
+# mocking the scan, because the whole defect lives in what a real process's
+# session says about who owns it.
+
+# The pid registry is a file, and its path is fixed here rather than on first
+# use: the spawn helpers below run inside command substitutions, so anything they
+# assign to a shell variable is assigned in a subshell and never reaches this one.
+mkdir -p "$TMP_ROOT"
+ADOPTED_PIDS_FILE="$TMP_ROOT/adopted.pids"
+: > "$ADOPTED_PIDS_FILE"
+
+register_adopted_pid() {
+  printf '%s\n' "$1" >> "$ADOPTED_PIDS_FILE"
+}
+
+kill_registered_adopted_pids() {
+  local pid
+  [ -f "$ADOPTED_PIDS_FILE" ] || return 0
+  while read -r pid; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  done < "$ADOPTED_PIDS_FILE"
+  : > "$ADOPTED_PIDS_FILE"
+  return 0
+}
+
+# A failing assertion exits the run immediately, so the per-test cleanup call is
+# not enough on its own to keep stand-in processes off the machine.
+cleanup_adopted_fixtures() {
+  [ "$BASHPID" = "$$" ] && kill_registered_adopted_pids
+  :
+}
+trap cleanup_adopted_fixtures EXIT
+
+# Stand in for a shared service: detach into its own session with cwd in <dir>,
+# exactly as a daemon does. <tag> makes the process findable and distinct.
+start_shared_service_in() {
+  local dir=$1 tag=$2 pid
+  mkdir -p "$dir"
+  setsid bash -c "cd '$dir' && exec sleep 300" </dev/null >/dev/null 2>&1 &
+  sleep 0.3
+  pid=$(pgrep -f "^sleep 300$" | tail -1)
+  [ -n "$pid" ] || fail "$tag: could not start a stand-in shared service in $dir"
+  register_adopted_pid "$pid"
+  printf '%s\n' "$pid"
+}
+
+# Stand in for the crew's own work: a process in this shell's session, the shape
+# an agent tree takes under its terminal.
+start_crew_process_in() {
+  local dir=$1 tag=$2 pid
+  mkdir -p "$dir"
+  ( cd "$dir" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
+  pid=$!
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "$tag: could not start a stand-in crew process in $dir"
+  register_adopted_pid "$pid"
+  printf '%s\n' "$pid"
+}
+
+# A treehouse mock that records every invocation, so a test can prove the return
+# was never reached rather than only that teardown exited non-zero.
+add_recording_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$case_dir/treehouse.calls"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+test_detached_process_refuses_before_any_return() {
+  local case_dir rc pid
+  case_dir=$(make_case adopted-refuse)
+  write_meta "$case_dir" local-only ship
+  add_recording_treehouse "$case_dir"
+  # Landed work, so nothing but the adopted process can explain a refusal.
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  pid=$(start_shared_service_in "$case_dir/wt" adopted-refuse)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "adopted-refuse: teardown should refuse while a detached process lives in the worktree"
+  assert_grep "detached from whatever started them" "$case_dir/stderr" \
+    "adopted-refuse: the refusal should name what it found"
+  assert_absent "$case_dir/treehouse.calls" \
+    "adopted-refuse: the return tool must never be reached"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-refuse: the detached process was killed"
+  kill_registered_adopted_pids
+  pass "a detached process in the worktree refuses cleanup before the return tool can kill it"
+}
+
+test_force_is_not_a_bypass_for_an_adopted_process() {
+  local case_dir rc pid
+  case_dir=$(make_case adopted-force)
+  write_meta "$case_dir" local-only ship
+  add_recording_treehouse "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  pid=$(start_shared_service_in "$case_dir/wt" adopted-force)
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  # --force authorizes discarding THIS task's work. It has never authorized
+  # killing another lane's, so it must not reach past this guard.
+  expect_code 1 "$rc" "adopted-force: --force should not bypass the adopted-process refusal"
+  assert_absent "$case_dir/treehouse.calls" \
+    "adopted-force: the return tool must never be reached under --force"
+  kill -0 "$pid" 2>/dev/null || fail "adopted-force: the detached process was killed under --force"
+  kill_registered_adopted_pids
+  pass "--force discards this task's work and still refuses to kill a detached process"
+}
+
+test_crew_process_in_the_lane_session_does_not_refuse() {
+  local case_dir rc pid
+  case_dir=$(make_case adopted-crew)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  pid=$(start_crew_process_in "$case_dir/wt" adopted-crew)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "adopted-crew: a crew process in the lane's own session must not refuse cleanup"
+  assert_no_grep "detached from whatever started them" "$case_dir/stderr" \
+    "adopted-crew: no adopted-process refusal should have been printed"
+  kill_registered_adopted_pids
+  pass "a crew process that inherited the lane's session never blocks cleanup"
+}
+
+# The measured incident, reproduced end to end: services serving two other lanes
+# are sitting in a third lane's worktree when that third lane is cleaned up.
+# Before the guard, returning the worktree terminated them and took both other
+# lanes' in-flight runs with it.
+test_other_lanes_survive_a_third_lanes_cleanup() {
+  local case_dir rc lane_a lane_b
+  case_dir=$(make_case adopted-three-lanes)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+
+  # Both live runs are served from inside the lane being cleaned up - the exact
+  # condition that separated the teardown that killed them from the two that did
+  # not: whether the shared service's working directory happened to sit there.
+  lane_a=$(start_shared_service_in "$case_dir/wt" lane-a)
+  lane_b=$(start_shared_service_in "$case_dir/wt" lane-b)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "three-lanes: cleanup should refuse rather than kill the other lanes' runs"
+  kill -0 "$lane_a" 2>/dev/null || fail "three-lanes: the first lane's run was killed"
+  kill -0 "$lane_b" 2>/dev/null || fail "three-lanes: the second lane's run was killed"
+  kill_registered_adopted_pids
+  pass "two other lanes' live runs survive a third lane's cleanup"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
@@ -2380,3 +2562,7 @@ test_no_remote_and_no_default_branch_refuses_retry
 test_unlanded_work_refuses_before_any_return_attempt
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
+test_detached_process_refuses_before_any_return
+test_force_is_not_a_bypass_for_an_adopted_process
+test_crew_process_in_the_lane_session_does_not_refuse
+test_other_lanes_survive_a_third_lanes_cleanup
