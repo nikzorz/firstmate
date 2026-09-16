@@ -447,8 +447,10 @@ make_case() {  # <name> -> echoes case dir
   cat > "$d/bin/fm-send.sh" <<'SH'
 #!/usr/bin/env bash
 set -u
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-send-result-lib.sh"
 if [ "${FM_FAKE_SEND_FAILS:-0}" = 1 ]; then exit 1; fi
 printf '%s\n' "$*" >> "${FM_FAKE_SENDLOG:?}"
+if [ "${FM_FAKE_SEND_UNCONFIRMED:-0}" = 1 ]; then exit "$FM_SEND_EXIT_UNCONFIRMED"; fi
 exit 0
 SH
   chmod +x "$d/bin/fm-send.sh"
@@ -680,15 +682,35 @@ test_malformed_settle_falls_back_to_the_default() {
 }
 
 test_failed_steer_is_reported_not_swallowed() {
-  local d; d=$(make_case steer-fails)
+  local d out; d=$(make_case steer-fails)
   setup_task "$d" stalled claude
   limit_prompt_pane > "$d/pane.txt"
   dismissed_pane > "$d/after.txt"
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
-    run_resume "$d" stalled >/dev/null 2>&1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
     && fail "a resume instruction that did not land was reported as success"
+  assert_contains "$out" "did not land" "a refused steer must still report non-delivery loudly"
   pass "a resume instruction that does not land is reported, not swallowed"
+}
+
+# An unconfirmed steer WAS submitted, so reporting it as non-delivery invites a
+# second steer that repeats the same instruction to the crewmate.
+test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery() {
+  local d out; d=$(make_case steer-unconfirmed)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
+    && fail "an unconfirmed resume instruction was reported as success"
+  assert_contains "$out" "unconfirmed" "an unconfirmed steer should be named as unconfirmed"
+  assert_contains "$out" "inspect stalled" "an unconfirmed steer should name the endpoint to inspect"
+  assert_not_contains "$out" "did not land" \
+    "an unconfirmed steer must not assert a non-delivery nobody proved"
+  [ -s "$d/sent.log" ] || fail "an unconfirmed steer should still record the submitted instruction"
+  pass "an unconfirmed resume instruction is reported as unknown, never as non-delivery"
 }
 
 # The end the whole feature turns on: the recorded wait carries the reset time,
@@ -804,6 +826,7 @@ test_recovery_closes_only_a_wait_it_owns
 test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
+test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery
 test_exhausted_wait_schedules_its_own_recheck
 test_check_only_never_sends
 

@@ -741,8 +741,20 @@ fi
 case "$*" in
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
-  *capture-pane*) printf '\n'; exit 0 ;;
+  *display-message*'#{cursor_y}'*)
+    [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ] && { printf '%s\n' 1; exit 0; }
+    printf '%s\n' 0
+    exit 0
+    ;;
+  *capture-pane*)
+    # A composer that keeps the typed text: submitted, never confirmed.
+    if [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ]; then
+      printf '╭──────────╮\n│ > steer  │\n╰──────────╯\n'
+    else
+      printf '\n'
+    fi
+    exit 0
+    ;;
   *'send-keys'*' -l '*)
     [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
     exit 0
@@ -1759,6 +1771,44 @@ SH
   pass "B23 mixed config reread delivery failures still bound sent history"
 }
 
+# The CONFIG_REREAD pointer is a third reader of fm-send's result, and it was
+# the caller the first round missed entirely.
+test_config_reread_separates_an_unconfirmed_pointer_from_a_refused_one() {
+  local w head fakebin state_real path report out status
+  w=$(new_world config-reread-unconfirmed)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+  mkdir -p "$w/sm/state"
+  state_real=$(cd "$w/sm/state" && pwd -P)
+  path="$state_real/.fm-inherited-config-reread.0001"
+  printf 'unconfirmed-generation\n' > "$path"
+  chmod 0600 "$path"
+  fm_config_reread_mark_pending "$path" "$path.pending" \
+    || fail "could not mark the unconfirmed generation pending"
+  fakebin=$(make_fake_toolchain "$w")
+  report="$w/empty-reread.report"
+  : > "$report"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_SEND_RETRIES=1 FM_SEND_SLEEP=0 FM_FAKE_TMUX_PENDING_COMPOSER=1 \
+    fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 1 "$status" "an unconfirmed pointer should remain diagnostic"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: send unconfirmed" \
+    "an unconfirmed pointer should be reported as unconfirmed"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "an unconfirmed pointer must not be reported as a proven failure"
+  assert_present "$path.pending" "an unconfirmed pointer should keep its retry marker"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_FAKE_TMUX_FAIL_LITERAL=1 \
+    fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 1 "$status" "a refused pointer should remain diagnostic"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "a refused pointer should still be reported as a failure"
+  assert_present "$path.pending" "a refused pointer should keep its retry marker"
+  pass "B27 config reread separates an unconfirmed pointer from a refused one"
+}
+
 test_config_reread_stops_after_failed_generation() {
   local w fakebin state_real old new report log out status
   w=$(new_world config-reread-order)
@@ -2083,6 +2133,7 @@ test_config_reread_serializes_concurrent_pushes
 test_config_reread_full_retry_queue_drains_before_new_push
 test_config_reread_cleanup_runs_after_mixed_delivery_failure
 test_config_reread_stops_after_failed_generation
+test_config_reread_separates_an_unconfirmed_pointer_from_a_refused_one
 test_config_reread_skips_when_unchanged_and_reads_after_push
 test_config_reread_bootstrap_path_and_spawn_flexibility
 test_bootstrap_respawns_before_config_reread

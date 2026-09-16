@@ -304,7 +304,17 @@ case "$*" in
     ;;
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
+  *display-message*'#{cursor_y}'*)
+    [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ] && { printf '%s\n' 1; exit 0; }
+    printf '%s\n' 0
+    exit 0
+    ;;
+  *capture-pane*)
+    # A composer that keeps the typed text: submitted, never confirmed.
+    [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ] \
+      && printf '╭──────────╮\n│ > steer  │\n╰──────────╯\n'
+    exit 0
+    ;;
   *'send-keys'*' -l '*)
     [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
     exit 0
@@ -551,6 +561,49 @@ test_bootstrap_nudge_retry_refuses_changed_home() {
     "retry must not infer a nudge target outside the recorded failed home"
   assert_present "$marker" "ambiguous retry should keep marker for operator inspection"
   pass "T8e bootstrap nudge retry refuses a changed home instead of guessing"
+}
+
+# The retry path is a second reader of fm-send's result, and it drifted once
+# already, so it gets the same three-way coverage as the first attempt.
+test_bootstrap_nudge_retry_separates_unconfirmed_from_failure() {
+  local w c1 fakebin out marker
+  w=$(new_world nudge-retry-unconfirmed)
+  c1=$(head_of "$w/main")
+  add_sm_worktree "$w" sm-instr "$c1"
+  bump_primary "$w" instr
+  fakebin=$(make_fake_toolchain "$w")
+  marker="$w/home/state/.secondmate-nudge-pending/sm-instr.pending"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_FAKE_TMUX_FAIL_LITERAL=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  assert_present "$marker" "precondition: a refused first nudge should leave a retry marker"
+
+  # The retry types the nudge but the composer never clears, so the backend
+  # cannot prove it landed.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_SEND_RETRIES=1 FM_SEND_SLEEP=0 FM_FAKE_TMUX_PENDING_COMPOSER=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  assert_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send unconfirmed:" \
+    "an unconfirmed retry nudge should be reported as unconfirmed"
+  assert_not_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send failed:" \
+    "an unconfirmed retry nudge must not be reported as a proven failure"
+  assert_present "$marker" "an unconfirmed retry nudge should keep its retry marker"
+
+  # A backend that refuses the keystrokes is still reported as non-delivery.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_FAKE_TMUX_FAIL_LITERAL=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  assert_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send failed:" \
+    "a refused retry nudge should still be reported as a failure"
+  assert_present "$marker" "a refused retry nudge should keep its retry marker"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  assert_contains "$out" "BOOTSTRAP_INFO: nudged fm-sm-instr with" \
+    "the kept marker should still deliver once the endpoint confirms"
+  assert_absent "$marker" "a confirmed retry should clear the marker"
+  pass "T8g bootstrap nudge retry separates an unconfirmed send from a refusal"
 }
 
 # --- T8b: stale herdr nudge failures retry through current fm-<id> metadata ---
@@ -863,6 +916,7 @@ test_bootstrap_nudge_retry_rejects_malformed_marker_id
 test_bootstrap_nudge_failure_records_retry_marker
 test_bootstrap_nudge_retry_is_idempotent
 test_bootstrap_nudge_retry_refuses_changed_home
+test_bootstrap_nudge_retry_separates_unconfirmed_from_failure
 test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn
 test_bootstrap_sweep_surfaces_skipped_home
 test_spawn_fast_forwards_before_launch
