@@ -347,8 +347,11 @@ fm_classify_park_announced() {  # <id> <park-identity>
 
 # The bin/fm-crew-state.sh current-state words that mean a crew is still holding
 # its in-flight task OPEN. `working` is a task advancing; `stalled` is the same
-# task with its run no longer advancing, which is work that needs attention
-# rather than work that ended or work that was never there. Every reader asking
+# task no longer advancing, which is work that needs attention rather than work
+# that ended or work that was never there. A run past its inactivity budget is
+# one way to earn it and a crew that claimed `done:` without meeting its delivery
+# mode's done gate (status_done_meets_delivery_gate) is the other: both are a task
+# that stopped short of finishing and cannot resume without a steer. Every reader asking
 # "is this task live right now" must ask about the whole set, or a crew drops out
 # of the fleet's active view at exactly the moment its run stops moving - the
 # opposite of what reporting the distinct state is for. One definition here, for
@@ -435,6 +438,76 @@ status_is_paused_or_captain_held() {  # <status-line>
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
   [ "$verb" = "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}" ]
+}
+
+# --- the done gate a delivery mode actually asks for -------------------------
+#
+# `done:` is the crew's own claim that it finished, and for a ship task that claim
+# is checkable: every PR-based delivery mode's definition of done names a PR, so a
+# `done:` payload carrying no PR URL contradicts the gate the crew was briefed on.
+# Three crews in a row appended one after a clean local gate without ever starting
+# the pipeline, because a green local run FEELS like the finish, and nothing
+# between the crew and firstmate disagreed. This predicate is that disagreement.
+#
+# It never rewrites or suppresses the crew's line - the status stream keeps what
+# the crew wrote - and it is not a way to make the mistake impossible. A crew that
+# genuinely cannot reach a PR still says so with `blocked:`, which stays a verb of
+# its own. This only stops a mismatched claim from reading as a finished task.
+#
+# The check is deliberately narrow: it asks whether a PR URL is PRESENT, not
+# whether that PR is the crew's own, is open, or has green checks. Presence is the
+# whole of what separates the observed failure (no PR at all, nothing pushed) from
+# a real completion, and a stronger test would need the forge.
+FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT='no-mistakes direct-PR'
+
+# 0 when <token>, after shedding the trailing punctuation prose puts on a URL, is
+# a PR/MR URL. bin/fm-pr-lib.sh's fm_pr_url_parse is the ONE owner of that shape
+# for both supported forges, so this reuses it rather than carrying a second
+# regex that could accept a URL the recorder would then refuse. It runs in a
+# SUBSHELL for the same reason fm_classify_landing_route_armed does: a read-only
+# probe must never clobber FM_PR_* globals a caller is holding.
+_fm_classify_token_is_pr_url() {  # <token>
+  local token=$1
+  # Prose sets a URL inside a sentence, so one closing mark can cling to it.
+  case "$token" in
+    *[.,\;:\)\]\>\"\']) token=${token%?} ;;
+  esac
+  [ -n "$token" ] || return 1
+  [ -f "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" ] || return 1
+  (
+    # shellcheck source=bin/fm-pr-lib.sh
+    . "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" && fm_pr_url_parse "$token"
+  ) >/dev/null 2>&1
+}
+
+# 0 when a status line satisfies the done gate its task's delivery mode defines,
+# 1 only when it demonstrably does not. Total over every line, so a caller can ask
+# about any status line without pre-screening the verb: anything but a `done:` on
+# a PR-based ship task has no claim to contradict and passes.
+#
+# An absent <kind> reads as `ship` and an absent <mode> as `no-mistakes`, the
+# defaults bin/fm-spawn.sh writes into the task record and bin/fm-project-mode.sh
+# falls back to; those two owners decide what an unstated mode means and this
+# predicate only asks them. A mode string neither of them recognises has no such
+# owner, so it passes rather than having a gate invented for it here.
+status_done_meets_delivery_gate() {  # <status-line> <kind> <mode>
+  local line=$1 kind=${2:-ship} mode=${3:-no-mistakes} token
+  local tokens=()
+  [ "$(status_line_verb "$line")" = "done" ] || return 0
+  [ "$kind" = ship ] || return 0
+  case " ${FM_CLASSIFY_PR_DELIVERY_MODES:-$FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT} " in
+    *" $mode "*) ;;
+    *) return 0 ;;
+  esac
+  # A note is free prose that can carry a glob character, so it is split with
+  # `read -ra` rather than an unquoted expansion: word splitting is wanted here,
+  # pathname expansion against whatever happens to sit in the caller's directory
+  # is not.
+  read -ra tokens <<<"$(status_line_note "$line")"
+  for token in ${tokens+"${tokens[@]}"}; do
+    _fm_classify_token_is_pr_url "$token" && return 0
+  done
+  return 1
 }
 
 # --- durable keyed decisions ------------------------------------------------
@@ -1058,7 +1131,7 @@ _fm_classify_line_carries() {  # <line> <token>
 #                path - may treat it as "no contrary evidence" instead of proof the
 #                crew stopped; every other consumer treats it exactly like none;
 #   none       - none of those, so the wake must surface (a stopped/parked/
-#                torn-down/unknown crew, a run that has stopped advancing
+#                torn-down/unknown crew, a task that has stopped advancing
 #                (stalled), a `done` with no landing route recorded, a `parked`
 #                run that fails any of the deciding gates above, or an
 #                unreadable verdict). A crew parked on

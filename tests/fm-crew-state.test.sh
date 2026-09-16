@@ -30,6 +30,10 @@
 #       safety direction, that ordinary worker output discussing limits (and the
 #       prompt's own text quoted in tool output) never triggers it. The
 #       regression pair for the 2026-07-29 incident.
+#   (n) a `done:` checked against its delivery mode's done gate: a PR-based ship
+#       mode whose payload names no PR is not a finished task, while local-only
+#       and scout are untouched. The regression set for the three crews that
+#       reported themselves done after a clean local gate on 2026-09-15.
 #   (m) gate ownership and park episode on a parked run: which run shapes publish
 #       the two tokens the watcher's `deciding` absorb reads, plus that absorb
 #       decided over the REAL helper for the majority `fix_review` park - both
@@ -1867,7 +1871,9 @@ test_other_branch_run_ignored() {
   make_repo_on_branch "$d/wt" fm/feat-g
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-g.meta" "window=fm:fm-feat-g" "worktree=$d/wt" "kind=ship"
-  printf 'done: implemented, ready to validate\n' > "$d/state/feat-g.status"
+  # A done line that meets its delivery mode's own done gate, so this case pins
+  # attribution alone and not the gate that test_no_run_idle_pane_done_* owns.
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$d/state/feat-g.status"
   FM_FAKE_AXI_STATUS="$(run_running fm/some-other)"
   FM_FAKE_RUNS_LIST="$(cat <<'EOF'
   running    fm/some-other aaaaaaa  2026-07-02 22:10
@@ -2587,6 +2593,141 @@ test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
 test_a_park_publishes_an_identity_that_moves_with_the_round
+# (n) a `done:` is checked against the done gate its delivery mode defines. Three
+# crews in a row appended `done:` after a clean local gate without ever starting
+# the pipeline, and this reader called each of them finished off that line alone.
+# The unit half pins the predicate over both real measured lines; the end-to-end
+# half pins what the reader now says, in both ship modes, and that a scout and a
+# local-only ship are untouched.
+test_done_gate_predicate_over_delivery_modes() {
+  local nm="done: every show-* read reports earlier-release bytes with its disagreeing pins; local gate clean (check, build, 238 tests)"
+  status_done_meets_delivery_gate "$nm" ship no-mistakes \
+    && fail "a measured no-mistakes done line with no PR was accepted as finished"
+  status_done_meets_delivery_gate \
+    "done: #231 fixed on fm/x; both artifacts opened before answering, local gate (install/check/build/test 247 passed) clean" \
+    ship no-mistakes \
+    && fail "the second measured no-mistakes done line with no PR was accepted as finished"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12 checks green" ship no-mistakes \
+    || fail "a no-mistakes done line naming a pull request must satisfy its gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12" ship direct-PR \
+    || fail "a direct-PR done line naming a pull request must satisfy its gate"
+  status_done_meets_delivery_gate "done: raised https://gitlab.com/g/s/p/-/merge_requests/9." ship direct-PR \
+    || fail "a merge request URL closing a sentence must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR #12 checks green" ship no-mistakes \
+    && fail "a bare PR number is not the full URL the gate asks for"
+  status_done_meets_delivery_gate "done: ready in branch fm/x" ship local-only \
+    || fail "local-only delivery finishes without a PR and must stay untouched"
+  status_done_meets_delivery_gate "done: findings in data/x/report.md" scout no-mistakes \
+    || fail "a scout keeps its own report gate and must stay untouched"
+  status_done_meets_delivery_gate "done: charter accepted" secondmate "" \
+    || fail "a secondmate is not a ship task and must stay untouched"
+  status_done_meets_delivery_gate "done: implemented" ship "" \
+    && fail "an unrecorded mode reads as the no-mistakes default, not as no gate"
+  status_done_meets_delivery_gate "done: implemented" ship future-mode \
+    || fail "a mode with no owner must pass rather than have a gate invented for it"
+  status_done_meets_delivery_gate "working: implementing the fix" ship no-mistakes \
+    || fail "a nonterminal verb has no completion claim to contradict"
+  status_done_meets_delivery_gate "blocked: cannot reach the forge to open a PR" ship no-mistakes \
+    || fail "blocked: is how a crew that cannot reach a PR says so and must stay usable"
+  pass "the done gate accepts only what its delivery mode actually finishes on"
+}
+
+# A note is free prose and may carry a glob character (the first measured line
+# carries `show-*`). Splitting it must not expand against the caller's directory.
+test_done_gate_does_not_glob_the_note() {
+  local d; d=$(new_case done-gate-glob)
+  mkdir -p "$d/globbait"
+  : > "$d/globbait/show-readers"
+  : > "$d/globbait/show-pins"
+  (
+    cd "$d/globbait" || exit 1
+    status_done_meets_delivery_gate "done: every show-* read is clean" ship no-mistakes
+  ) && fail "a note carrying a glob was expanded against the working directory"
+  pass "the done gate splits a note without expanding its globs"
+}
+
+test_no_run_idle_pane_done_without_pr_is_not_done() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr)
+  make_repo_on_branch "$d/wt" fm/feat-nopr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-nopr.meta" \
+    "window=fm:fm-feat-nopr" "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  printf 'done: local gate clean (check, build, 238 tests)\n' > "$d/state/feat-nopr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-nopr)
+  assert_not_contains "$out" "state: done" "a no-mistakes done with no PR must not read as a finished task"
+  assert_contains "$out" "state: stalled" "it reads as work still open and needing attention"
+  assert_contains "$out" "local gate clean" "the crew's own words are kept in the detail"
+  assert_contains "$out" "no PR" "the detail says what the claim failed to carry"
+  local logged; logged=$(cat "$d/state/feat-nopr.status")
+  assert_contains "$logged" "done: local gate clean (check, build, 238 tests)" \
+    "the status stream keeps exactly what the crew wrote"
+  pass "no-mistakes ship: a done with no PR reads stalled, not done"
+}
+
+test_no_run_idle_pane_direct_pr_done_without_pr_is_not_done() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr-direct)
+  make_repo_on_branch "$d/wt" fm/feat-nopr-d
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-nopr-d.meta" \
+    "window=fm:fm-feat-nopr-d" "worktree=$d/wt" "kind=ship" "mode=direct-PR"
+  printf 'done: implemented and committed on the branch\n' > "$d/state/feat-nopr-d.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-nopr-d)
+  assert_not_contains "$out" "state: done" "a direct-PR done with no PR must not read as a finished task"
+  assert_contains "$out" "state: stalled" "it reads as work still open and needing attention"
+  assert_contains "$out" "direct-PR" "the detail names the delivery the claim did not meet"
+  pass "direct-PR ship: a done with no PR reads stalled, not done"
+}
+
+test_no_run_idle_pane_done_with_pr_still_done() {
+  reset_fakes
+  local d; d=$(new_case done-with-pr)
+  make_repo_on_branch "$d/wt" fm/feat-pr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pr.meta" \
+    "window=fm:fm-feat-pr" "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  printf 'done: PR https://github.com/o/r/pull/12 checks green\n' > "$d/state/feat-pr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-pr)
+  assert_contains "$out" "state: done" "a done naming its PR still reads as finished"
+  assert_contains "$out" "source: status-log" "and still from the status log"
+  pass "no-mistakes ship: a done naming its PR is untouched"
+}
+
+test_no_run_idle_pane_local_only_and_scout_done_untouched() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr-modes)
+  make_repo_on_branch "$d/wt" fm/feat-lo
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-lo.meta" \
+    "window=fm:fm-feat-lo" "worktree=$d/wt" "kind=ship" "mode=local-only"
+  printf 'done: ready in branch fm/feat-lo\n' > "$d/state/feat-lo.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-lo)
+  assert_contains "$out" "state: done" "local-only delivery finishes with no PR and must stay done"
+
+  fm_write_meta "$d/state/scout-x.meta" \
+    "window=fm:fm-scout-x" "worktree=$d/wt" "kind=scout" "mode=no-mistakes"
+  printf 'done: findings written to data/scout-x/report.md\n' > "$d/state/scout-x.status"
+  out=$(run_crew_state "$d" scout-x)
+  assert_contains "$out" "state: done" "a scout keeps its own report gate and must stay done"
+  pass "local-only ship and scout done lines are untouched"
+}
+
 test_deciding_class_over_the_real_helper
+
+test_done_gate_predicate_over_delivery_modes
+test_done_gate_does_not_glob_the_note
+test_no_run_idle_pane_done_without_pr_is_not_done
+test_no_run_idle_pane_direct_pr_done_without_pr_is_not_done
+test_no_run_idle_pane_done_with_pr_still_done
+test_no_run_idle_pane_local_only_and_scout_done_untouched
 
 echo "all fm-crew-state tests passed"

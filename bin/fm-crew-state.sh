@@ -95,7 +95,13 @@
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
-#      `resolved` never become current state or detail.
+#      `resolved` never become current state or detail. A `done:` here is checked
+#      against the done gate its recorded delivery mode defines
+#      (status_done_meets_delivery_gate, bin/fm-classify-lib.sh): a ship task on a
+#      PR-based mode whose payload names no PR reports `stalled`, because a crew
+#      that stopped with nowhere for its work to land needs a steer, not a
+#      completion. The crew's own note is kept verbatim and the status stream is
+#      never rewritten - only this reading of it disagrees.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
@@ -179,6 +185,7 @@ meta_value() {  # <key>
 WT=$(meta_value worktree)
 KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
+MODE=$(meta_value mode)
 [ -n "$KIND" ] || KIND=ship
 
 # A torn-down (or never-created) worktree has no current state to read.
@@ -1279,10 +1286,26 @@ fi
 # `unknown` with the resolution note as `doing`. map_log_state is the single owner of
 # the verb->state mapping (including the configurable paused verb), so reusing its
 # `unknown` verdict as the "not a state" test needs no second verb list here.
+#
+# One thing the log CAN be checked against is the gate the crew was briefed on. A
+# `done:` whose payload does not meet its delivery mode's done gate
+# (status_done_meets_delivery_gate, bin/fm-classify-lib.sh) is a claim to have
+# finished work that has nowhere to land, so it reads `stalled` - the word for a
+# task still open and needing attention rather than one that ended - with the
+# crew's own note kept verbatim ahead of the disagreement. Nothing rewrites the
+# status stream: what the crew wrote stays exactly as written, and only this
+# reading of it differs. Reached only in this run-less fallback, because the
+# run-step path above is authoritative wherever a run exists and already demands
+# a PR plus green checks of its own (log_reports_ci_ready).
 if [ -n "$LOG_VERB" ]; then
   LOG_STATE=$(map_log_state "$LOG_LINE")
+  LOG_NOTE=$(status_line_note "$LOG_LINE")
+  if ! status_done_meets_delivery_gate "$LOG_LINE" "$KIND" "$MODE"; then
+    emit stalled status-log \
+      "$LOG_NOTE${SEP}reported done with no PR, which ${MODE:-no-mistakes} delivery does not finish on"
+  fi
   if [ "$LOG_STATE" != unknown ]; then
-    emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")"
+    emit "$LOG_STATE" status-log "$LOG_NOTE"
   fi
 fi
 
