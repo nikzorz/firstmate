@@ -68,7 +68,8 @@ The exact selection contract and safety rationale live in [architecture](archite
 It types a message once and retries Enter only until the composer clears.
 Only a proven empty composer is a positive delivery acknowledgement.
 Text left in established structure remains `pending`, text in ambiguous structure remains unproven, and unreadable or unsafe state remains unknown.
-`fm-send.sh` reports every unconfirmed verdict as a failure instead of retyping or assuming delivery.
+`fm-send.sh` never retypes and never assumes delivery.
+It reports a verdict it could not confirm as unknown on its own exit status, and reserves non-delivery for `send-failed` and the target-resolution failures; `bin/fm-send.sh`'s header owns that exit-status contract.
 
 OpenCode 1.18.4 has one busy-queue exception.
 While OpenCode is mid-turn, Enter queues the message but leaves its text visible until the turn completes.

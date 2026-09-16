@@ -585,7 +585,7 @@ fm_backend_cmux_composer_state() {  # <target> [expected-label] -> empty|pending
 # subset of the proof-carrying submit vocabulary.
 fm_backend_cmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label]
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 expected_label=${6:-} i=0 state
-  fm_backend_cmux_parse_target "$target" || { printf 'unknown'; return 0; }
+  fm_backend_cmux_parse_target "$target" || { printf 'send-failed'; return 0; }
   fm_backend_cmux_send_literal "$target" "$text" "$expected_label" || { printf 'send-failed'; return 0; }
   sleep "$settle"
   while :; do

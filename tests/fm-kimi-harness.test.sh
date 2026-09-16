@@ -628,6 +628,52 @@ test_kimi_busy_signature_is_scoped_to_spinner_lines() {
   pass "busy detection: real Kimi moon-plus-middot captures require its harness while idle labels stay idle"
 }
 
+# fm-spawn submits the kimi brief pointer through the same dispatcher fm-send
+# uses, and passes the harness it already knows is kimi. Only kimi's own
+# signature sees its moon spinner, so a queued Enter reads as a swallow without
+# that argument.
+test_kimi_submit_confirms_a_queued_enter_only_under_its_own_harness() {
+  local dir fakebin composer vfile
+  dir="$TMP_ROOT/kimi-submit-harness"
+  fakebin="$dir/fakebin"
+  composer="$dir/composer"
+  vfile="$dir/verdict"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+COMPOSER="${FM_FAKE_COMPOSER:?}"
+case "${1:-}" in
+  display-message)
+    for a in "$@"; do
+      case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac
+    done
+    exit 0 ;;
+  capture-pane) cat "$COMPOSER" 2>/dev/null; exit 0 ;;
+  send-keys) exit 0 ;;
+  list-windows) exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+  # A mid-turn kimi keeps the pointer visible while it queues the Enter.
+  printf '╭────────────────────╮\n│ > Read the brief   │\n╰────────────────────╯\n 🌑 · Tip: ask Kimi to schedule tasks\n' > "$composer"
+
+  run_submit() {  # <harness> -> verdict
+    PATH="$fakebin:$BASE_PATH" FM_FAKE_COMPOSER="$composer" \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit tmux win "Read the brief" 2 0.01 0 "" "$1"' \
+      "$ROOT" "$1" 2>/dev/null
+  }
+
+  run_submit kimi > "$vfile"
+  [ "$(cat "$vfile")" = empty ] \
+    || fail "a busy kimi pane must confirm the queued pointer submit, got '$(cat "$vfile")'"
+  run_submit '' > "$vfile"
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "without the harness the generic signature cannot see kimi's spinner, got '$(cat "$vfile")'"
+  pass "fm_backend_send_text_submit: kimi's queued-Enter confirmation needs the harness fm-spawn passes"
+}
+
 test_watcher_scopes_moon_spinner_to_recorded_kimi_task() (
   local state="$TMP_ROOT/watch-state" busy_capture='  🌑 · Tip: ask Kimi to schedule tasks, e.g. "remind me at 5pm"'
   mkdir -p "$state"
@@ -690,5 +736,6 @@ test_kimi_readiness_gate_precedes_pointer
 test_kimi_detection_uses_ancestry_after_markers
 test_kimi_session_lock_identity
 test_kimi_busy_signature_is_scoped_to_spinner_lines
+test_kimi_submit_confirms_a_queued_enter_only_under_its_own_harness
 test_watcher_scopes_moon_spinner_to_recorded_kimi_task
 test_kimi_bordered_prompt_needs_no_override

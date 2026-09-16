@@ -553,6 +553,8 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
 # proof-carrying verdict; callers require exact empty for confirmed delivery.
+# A verdict produced BEFORE the text is typed is send-failed, never unknown:
+# unknown means only that the text was typed and its result could not be read.
 # The optional trailing harness is advisory: an adapter whose confirmation reads
 # harness-specific output uses it to scope that read, and one whose confirmation
 # comes from a backend status API ignores it.

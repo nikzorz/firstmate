@@ -2393,6 +2393,18 @@ test_send_text_submit_send_failed() {
   pass "fm_backend_herdr_send_text_submit: reports 'send-failed' when the literal send-text call itself errors"
 }
 
+test_send_text_submit_unaddressable_target_is_send_failed_before_typing() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/submit-unaddressable"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit w1p2 "hello captain" 2 0.01 0.01' "$ROOT" )
+  [ "$out" = send-failed ] \
+    || fail "a target this adapter cannot address must refuse before typing, got '$out'"
+  [ ! -s "$log" ] || fail "a refused send still reached the endpoint: $(cat "$log")"
+  pass "fm_backend_herdr_send_text_submit: an unaddressable target is send-failed, never unknown"
+}
+
 test_send_text_submit_unknown_on_capture_failure() {
   local dir log resp fb out enter_count
   dir="$TMP_ROOT/submit-read-fail"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3132,6 +3144,7 @@ test_composer_state_codex_dynamic_idle_tip_reads_empty_when_faint
 test_composer_state_guard_still_refuses_real_pending_text_after_submit_confirmation_change
 test_send_text_submit_slow_transition_within_one_enter_needs_no_extra_enter
 test_send_text_submit_send_failed
+test_send_text_submit_unaddressable_target_is_send_failed_before_typing
 test_send_text_submit_unknown_on_capture_failure
 test_dispatch_routes_herdr_backend
 test_dispatch_busy_state_unknown_for_tmux
