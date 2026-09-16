@@ -84,13 +84,16 @@ The second is repetition, which no figure the run publishes can show: a ci step 
 [`verification/supervision.md`](verification/supervision.md#forge-probe-for-a-monitoring-ci-step) records the live evidence behind that second showing: the step logs that carry no timestamp to measure repetition with, and the forge fields the query reads.
 A run status word the reader does not recognize, and an empty one, report `unknown` rather than `working`, because an unrecognized future state is not evidence of a healthy run.
 A crew still waiting out the captain on a green pull request is never called stalled: every route by which its work is already reported done is decided before either showing is, so an overnight merge wait stays absorbable no matter how long it runs and is never probed.
-The fleet views count `stalled` as live work alongside `working`, because a task that stopped advancing is work needing attention rather than work that ended, and the captain's in-flight list is where they have to meet it.
+The fleet views count `stalled` as live work alongside `working`, because a run that stopped advancing is work needing attention rather than work that ended, and the captain's in-flight list is where they have to meet it.
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
-A `done:` event there is read against the done gate its recorded delivery mode defines, which is the third and only non-run way to earn `stalled`.
-Every pull-request-based ship mode finishes on a pull request, so a `done:` payload naming none contradicts the gate the crew was briefed on and reports `stalled` rather than a finished task; local-only delivery and a scout, which finish without one, are unaffected.
-The status stream is never rewritten: it keeps exactly what the crew wrote, and only this reading of it disagrees, so a crew that genuinely cannot reach a pull request still says so with `blocked:`.
+A `done:` event there is read against the done gate its recorded delivery mode defines.
+Every pull-request-based ship mode finishes on a pull request, and the brief for one asks the crew to append `done:` the moment implementation is committed, so that first `done:` is a handoff and not yet a delivery.
+Reading it as `blocked` says exactly that: the crew did what its brief asked, its work is intact, and what the task waits on now is firstmate's steer to the validation its mode delivers through.
+The pull request recorded in `state/<id>.meta` answers before the event's own prose, so a task whose pull request firstmate already recorded still reads done however the crew worded the line it wrote afterwards.
+Local-only delivery and a scout, which finish without a pull request, are unaffected.
+The status stream is never rewritten and nothing about the crew's record needs repairing: it keeps exactly what the crew wrote, only this reading of it disagrees, and it agrees again once the pull request exists.
 `bin/fm-classify-lib.sh` owns that gate as the vocabulary it already owns for these lines, and reuses `bin/fm-pr-lib.sh`'s own URL parser rather than carrying a second idea of what a pull request URL is.
 For herdr, that pane fallback trusts a native `busy` verdict outright, but corroborates native `idle` or unknown verdicts against the recorded harness's rendered busy signature before deciding the crew is not working.
 

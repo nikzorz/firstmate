@@ -40,15 +40,17 @@ Before peeking, read `bin/fm-crew-state.sh <id>`.
 A `usage-limited` state means the crew is parked on Claude Code's usage-limit prompt, which never self-resumes; that is a known condition with its own owner, so load `harness-adapters` and follow its claude usage-limit stall entry instead of the generic escalation below.
 Do not interrupt, exit, or relaunch such a crew: its work, worktree, and any in-flight validation run are intact and only need the prompt cleared once the account window has reset.
 
-A `stalled` state means the task has stopped advancing, and the detail says which of two things stopped.
-When it names a pipeline step, an attributed validation run stopped advancing - a stopped pipeline step rather than a wedged crewmate - and the detail says either how long that step has been silent or what the forge says it is waiting on that cannot arrive.
+A `stalled` state means an attributed validation run has stopped advancing, which is a stopped pipeline step rather than a wedged crewmate.
+The detail names the step and why it is not advancing - either how long it has been silent, or what the forge says the step is waiting on that cannot arrive.
 Read the run's own logs for that step before touching the pane, and do not interrupt, exit, or relaunch the crew on this state alone.
 Report it to the captain as a validation that stopped making progress, with that detail as the evidence.
 
-When the detail says the crew reported done with no PR, the crew stopped short of its own done gate, which is not a wedge and not a pipeline fault.
-It has finished implementing and mistaken a clean local gate for the finish; the work is intact and unpushed.
-Steer it in one line to carry on to the pull request its delivery mode finishes on, and do not interrupt, exit, or relaunch it.
-Nothing about its status record needs repairing: the crew's own line stands, and the next reading agrees once the pull request exists.
+A `blocked` state whose detail asks for a delivery steer is a handoff waiting on you, not a wedge and not a pipeline fault.
+The crew did exactly what its brief asks: it appended `done:` once the implementation was committed and stopped, and the next instruction is firstmate's to give.
+Nothing about its status record needs repairing, its work is intact, and the next reading agrees on its own once the pull request exists.
+Send the steer its delivery mode calls for in one line, and do not interrupt, exit, or relaunch it.
+For `no-mistakes`, that steer is to run `/no-mistakes`, which validates and ships the pull request for it; the crew must not push or open one itself.
+For `direct-PR`, that steer is to push its branch and open the pull request itself.
 
 Escalate in order:
 

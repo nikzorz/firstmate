@@ -1392,6 +1392,40 @@ test_answered_post_run_decision_keeps_its_unanswered_sibling() {
   pass "resolving one post-run request leaves its unanswered sibling pending"
 }
 
+# The same narrowing has to reach a `done:` the reader answers `blocked` off,
+# because the task's delivery mode has no pull request yet. The crew finished the
+# implementation that bound the request and handed it back, so a request it
+# already reported on past must not resurface beside the row asking for the
+# delivery steer. Only the state word differs from a plain finish.
+test_handoff_without_a_pr_clears_the_request_it_reported_past() {
+  local home fakebin out wt
+  home=$(make_home handoff-no-pr)
+  wt="$home/projects/handoff-wt"
+  mkdir -p "$wt"
+  fm_write_meta "$home/state/handoff.meta" \
+    "window=firstmate:fm-handoff" \
+    "worktree=$wt" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  {
+    printf 'needs-decision [key=rollout]: stage the rollout or ship it whole\n'
+    printf 'working: applying the agreed rollout\n'
+    printf 'done: local gate clean (check, build, 238 tests)\n'
+  } > "$home/state/handoff.status"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "handoff")
+    | .current_state.state == "blocked"
+      and (.current_state.detail | test("delivery steer"))
+      and .hints.pending_decision == false
+      and (.hints.open_decisions | length) == 0
+  ' >/dev/null || fail "a handoff must clear the request the crew reported on past: $out"
+  pass "a done handed off with no PR narrows its open decisions like any other finish"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_oversized_backlog_still_reports_every_record
@@ -1416,6 +1450,7 @@ test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
 test_post_run_decision_survives_terminal_run
 test_mid_run_decision_cleared_by_terminal_run
+test_handoff_without_a_pr_clears_the_request_it_reported_past
 test_answered_post_run_decision_keeps_its_unanswered_sibling
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
