@@ -468,45 +468,37 @@ FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT='no-mistakes direct-PR'
 # before it, so earlier URL lines are the ones a bound can afford to drop.
 FM_CLASSIFY_PR_SCAN_LINES_DEFAULT=64
 
-# 0 when any word of <prose> names a PR/MR URL. bin/fm-pr-lib.sh's fm_pr_url_parse
-# is the ONE owner of that shape for both supported forges, so this reuses it
-# rather than carrying a second regex that could accept a URL the recorder would
-# then refuse. Prose sets a URL inside a sentence, so a candidate is cut at its
-# own scheme and trimmed of whatever closing marks cling to it: parentheses,
-# angle brackets, a markdown link, and the backticks and asterisks agents wrap a
-# URL in all read as the bare URL inside them.
+# Where a pull request URL ENDS inside prose, one span per forge shape
+# bin/fm-pr-lib.sh accepts. This is a BOUND, never a second opinion on validity:
+# it says how far the URL reaches, and fm_pr_url_parse alone decides whether what
+# it reached is a real pull request, so this can never accept a URL the recorder
+# would then refuse. bin/fm-fleet-snapshot.sh answers the same question about the
+# same file the same way.
+#
+# Taking the matched span is what makes the surrounding prose irrelevant by
+# construction: whatever wraps the URL (parentheses, angle brackets, a markdown
+# link, backticks, asterisks) or follows its number (`/files`, a trailing slash, a
+# `#fragment`, a `?query`) falls outside the span with no list of marks to keep
+# up to date.
+FM_CLASSIFY_PR_URL_SPAN_RE='https://[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+)*/(pull|-/merge_requests)/[1-9][0-9]*'
+
+# 0 when <prose> names a PR/MR URL. Candidates are extracted by the span above,
+# never by splitting prose into words, so a note carrying a glob character is
+# never subject to pathname expansion against the caller's directory.
 #
 # The whole scan runs in ONE subshell, for the same reason
 # fm_classify_landing_route_armed uses one: a read-only probe must never clobber
 # FM_PR_* globals a caller is holding. Sourcing the library there once, rather
-# than per word, keeps that isolation off the per-word path.
+# than per candidate, keeps that isolation off the per-candidate path.
 _fm_classify_prose_names_pr_url() {  # <prose>
   (
     # shellcheck source=bin/fm-pr-lib.sh
     . "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" || exit 1
-    local line word candidate
-    local words=()
-    while IFS= read -r line || [ -n "$line" ]; do
-      # Prose is free text that can carry a glob character, so it is split with
-      # `read -ra` rather than an unquoted expansion: word splitting is wanted
-      # here, pathname expansion against whatever happens to sit in the caller's
-      # directory is not.
-      read -ra words <<<"$line"
-      for word in ${words+"${words[@]}"}; do
-        case "$word" in
-          *https://*) candidate=https://${word#*https://} ;;
-          *http://*)  candidate=http://${word#*http://} ;;
-          *)          continue ;;
-        esac
-        while :; do
-          case "$candidate" in
-            *[.,\;:\)\]\>\"\'\`\*]) candidate=${candidate%?} ;;
-            *) break ;;
-          esac
-        done
-        fm_pr_url_parse "$candidate" && exit 0
-      done
-    done <<<"$1"
+    local candidate spans
+    spans=$(printf '%s\n' "$1" | grep -Eo "$FM_CLASSIFY_PR_URL_SPAN_RE") || exit 1
+    while IFS= read -r candidate; do
+      fm_pr_url_parse "$candidate" && exit 0
+    done <<<"$spans"
     exit 1
   ) >/dev/null 2>&1
 }
@@ -528,9 +520,13 @@ _fm_classify_prose_names_pr_url() {  # <prose>
 # firstmate has recorded one, and it is consulted before this scan.
 _fm_classify_stream_names_pr_url() {  # <status-log>
   local log=$1 lines
+  local bound=${FM_CLASSIFY_PR_SCAN_LINES:-$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT}
+  # An unreadable bound must not decide the task's answer: it caps work, so a
+  # value `tail` would refuse falls back to the default rather than emptying the
+  # scan and letting the gate accuse a crew that did deliver.
+  case "$bound" in ''|*[!0-9]*|0) bound=$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT ;; esac
   [ -f "$log" ] || return 1
-  lines=$(grep -F '://' "$log" 2>/dev/null \
-    | tail -n "${FM_CLASSIFY_PR_SCAN_LINES:-$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT}") || return 1
+  lines=$(grep -F '://' "$log" 2>/dev/null | tail -n "$bound") || return 1
   [ -n "$lines" ] || return 1
   _fm_classify_prose_names_pr_url "$lines"
 }

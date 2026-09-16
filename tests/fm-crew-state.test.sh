@@ -2627,6 +2627,18 @@ test_done_gate_predicate_over_delivery_modes() {
     || fail "a backticked pull request URL must satisfy the gate"
   status_done_meets_delivery_gate "done: shipped **https://github.com/o/r/pull/12**" ship direct-PR \
     || fail "a bolded pull request URL must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12/files" ship direct-PR \
+    || fail "a pull request URL pasted from its files tab must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12/" ship direct-PR \
+    || fail "a trailing slash after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12#issuecomment-99" ship direct-PR \
+    || fail "a fragment after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: see https://github.com/o/r/pull/12?w=1" ship direct-PR \
+    || fail "a query after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: raised https://gitlab.com/g/s/p/-/merge_requests/9/diffs" ship direct-PR \
+    || fail "a merge request URL pasted from its diffs tab must satisfy the gate"
+  status_done_meets_delivery_gate "done: read https://example.invalid/docs/pull-requests first" ship no-mistakes \
+    && fail "a URL the recorder would refuse must not satisfy the gate"
   status_done_meets_delivery_gate "done: PR #12 checks green" ship no-mistakes \
     && fail "a bare PR number is not the full URL the gate asks for"
   status_done_meets_delivery_gate "done: ready in branch fm/x" ship local-only \
@@ -2692,8 +2704,6 @@ test_done_gate_honours_a_pull_request_announced_earlier() {
   pass "the gate reads the whole status stream when the record and the line are silent"
 }
 
-# With no URL parser there is nothing to read a payload against, so the predicate
-# declines rather than reporting every finished crew as undelivered.
 # One owner for the phrase firstmate reads, because what each brief asked of the
 # crew before its `done:` is opposite between the two modes.
 test_done_gate_steer_speaks_for_each_brief() {
@@ -2724,6 +2734,26 @@ test_done_gate_steer_speaks_for_each_brief() {
   pass "each delivery mode gets the steer its own brief calls for"
 }
 
+# An unreadable bound caps work, so it must never decide the answer: the scan
+# still reads the stream and still finds the announcement at its end.
+test_done_gate_stream_scan_survives_an_unreadable_bound() {
+  local d; d=$(new_case done-gate-bad-bound)
+  local log="$d/announced.status"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$log"
+  local saved=${FM_CLASSIFY_PR_SCAN_LINES:-}
+  local bad
+  for bad in "not-a-number" "" "0" "-5"; do
+    FM_CLASSIFY_PR_SCAN_LINES=$bad \
+      status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR "" "$log" \
+      || fail "a bound of '$bad' must fall back to the default, not accuse a crew that delivered"
+  done
+  if [ -n "$saved" ]; then FM_CLASSIFY_PR_SCAN_LINES=$saved; else unset FM_CLASSIFY_PR_SCAN_LINES; fi
+  pass "an unusable scan bound falls back to the default instead of emptying the scan"
+}
+
 # The bound keeps the END of the stream, because both briefs put the pull request
 # on the done line or the event just before it.
 test_done_gate_stream_scan_keeps_the_end_of_the_stream() {
@@ -2741,6 +2771,8 @@ test_done_gate_stream_scan_keeps_the_end_of_the_stream() {
   pass "the stream scan reads the end of the stream, where the announcement is"
 }
 
+# With no URL parser there is nothing to read a payload against, so the predicate
+# declines rather than reporting every finished crew as undelivered.
 test_done_gate_passes_when_the_pr_parser_is_unavailable() {
   local saved=$_FM_CLASSIFY_LIB_DIR
   _FM_CLASSIFY_LIB_DIR="$saved/definitely-not-a-lib-dir"
@@ -2887,6 +2919,7 @@ test_done_gate_honours_the_recorded_pull_request
 test_done_gate_honours_a_pull_request_announced_earlier
 test_done_gate_steer_speaks_for_each_brief
 test_done_gate_stream_scan_keeps_the_end_of_the_stream
+test_done_gate_stream_scan_survives_an_unreadable_bound
 test_done_gate_passes_when_the_pr_parser_is_unavailable
 test_no_run_idle_pane_done_without_pr_needs_the_delivery_steer
 test_no_run_idle_pane_direct_pr_done_without_pr_needs_the_delivery_steer
