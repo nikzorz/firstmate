@@ -9,14 +9,21 @@
 # the returned task's children. Callers use this scan to refuse handing the return
 # tool anything it is not entitled to kill.
 #
-# The test is provenance by construction, not by name. A task's processes inherit
-# the terminal session they were launched in, whose leader lives outside the
-# worktree. A service that detaches - the defining act of a daemon - calls setsid
-# and becomes its own session leader from wherever it started, so its session
-# leader's own working directory is inside the worktree too. So:
+# The test is provenance by construction, not by name. A service that detaches -
+# the defining act of a daemon - calls setsid, gives up the terminal it was
+# started from and becomes its own session leader from wherever it started, so
+# its session leader's own working directory is inside the worktree too. A task's
+# processes keep the terminal their window owns. Usually that session is led from
+# outside the worktree by the shell the window opened in, but not always: a
+# multiplexer gives every pane a session and a pty of its own, so a window opened
+# in the directory being given up leads its session from inside it too. That is
+# the ordinary shape of a secondmate home, whose window opens in the home itself.
+# The terminal is what separates the two, because detaching is what gives it up.
+# So:
 #
 #   a process is ADOPTED when its working directory is inside the directory AND
-#   its session leader's working directory is inside the directory as well.
+#   its session leader's working directory is inside the directory as well AND
+#   that session holds no controlling terminal.
 #
 # That covers the whole family at once: any detached service is caught, whatever
 # it is called, and a task's own agent tree never is.
@@ -37,15 +44,17 @@
 #
 # THREE LIMITS, stated rather than hidden, all of them cheap errors next to the
 # expensive one this scan exists to make impossible - killing another lane's run.
-# (a) A shared service started as an ordinary child of a crew's own terminal
-# session, never detaching, is invisible to this test; no process fact separates
-# it from that crew's own work. (b) A task's own deliberately detached leftover (a
-# background server the crew setsid'd) is caught and refused even though killing
-# it would have been fine. (c) A resident process whose session leader has already
-# exited is unattributable, so it refuses: the double-forked daemon has that shape
-# (fork, setsid, fork again, middle process exits), and so, far more ordinarily,
-# does a lane's own leftover orphaned when its window died. (b) and (c) are both
-# resolved the same way, by ending the named process and running cleanup again.
+# (a) A shared service that never gave up a terminal - an ordinary child of a
+# crew's own terminal session, or one left running in a window of its own inside
+# the directory - is invisible to this test; no process fact separates it from
+# the crew work that terminal belongs to. (b) A task's own deliberately detached
+# leftover (a background server the crew setsid'd) is caught and refused even
+# though killing it would have been fine. (c) A resident process whose session
+# leader has already exited is unattributable, so it refuses: the double-forked
+# daemon has that shape (fork, setsid, fork again, middle process exits), and so,
+# far more ordinarily, does a lane's own leftover orphaned when its window died.
+# (b) and (c) are both resolved the same way, by ending the named process and
+# running cleanup again.
 #
 # Exit codes: 0 when at least one process was found that this test convicts or
 # cannot attribute (those processes are the printed lines), 1 when the directory
@@ -76,6 +85,17 @@ fm_adopted_session_of() {
   sid=$(fm_adopted_stat_field "$pid" 4) || return 1
   [ -n "$sid" ] || return 2
   printf '%s\n' "$sid"
+}
+
+# fm_adopted_session_has_terminal <sid>: 0 when the session still holds a
+# controlling terminal, which is what a process gives up by detaching. A field
+# that cannot be read counts as no terminal, so an unreadable answer convicts
+# rather than clears.
+fm_adopted_session_has_terminal() {
+  local sid=$1 tty
+  tty=$(fm_adopted_stat_field "$sid" 5) || return 1
+  case "$tty" in ''|0|*[!0-9]*) return 1 ;; esac
+  return 0
 }
 
 # fm_adopted_pid_alive <pid>: 0 when the process still exists as a running one.
@@ -170,7 +190,15 @@ fm_adopted_processes() {
       return 2
     fi
     case "$resident" in
-      *" $sid "*) ;;
+      *" $sid "*)
+        # A session led from inside the directory is a detached service only when
+        # it also gave up its terminal. A window opened in the directory itself
+        # leads its session from inside it and still holds that window's terminal,
+        # so what is living there is the work somebody has open.
+        if fm_adopted_session_has_terminal "$sid"; then
+          continue
+        fi
+        ;;
       *)
         # A session led from outside the directory is the task's own shape, but
         # only while that leader is still there to be looked at. A session id

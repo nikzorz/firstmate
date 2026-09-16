@@ -69,6 +69,7 @@
 #   (ad7) the same in a plain-directory home           -> STOP before rm -rf
 #   (ad8) a leftover whose session leader has exited   -> REFUSE, named, not a clear
 #   (ad9) an orphan this run's own window close made   -> ALLOW (scan sits above the kill)
+#   (ad10) a home whose own window was opened in it    -> ALLOW (a pane keeps its terminal)
 #   (ae) a crew process in the lane's own session      -> ALLOW (no false refusal)
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
@@ -2505,6 +2506,34 @@ start_crew_pane_in() {
   printf '%s %s\n' "$leader" "$child"
 }
 
+# Stand in for a secondmate's own window, which fm-spawn.sh opens in the home
+# itself rather than in a project beside it: a session leader living in <dir>,
+# holding the terminal its pane gave it. `script` performs the two acts a pane is
+# made of - allocate a pty, put the command behind it in a session of its own.
+start_window_shell_in() {
+  local dir=$1 tag=$2 pidfile pid waited=0
+  mkdir -p "$dir"
+  pidfile=$(mktemp "$TMP_ROOT/window.XXXXXX")
+  script -qec "cd '$dir' && printf '%s\n' \$\$ > '$pidfile' && exec sleep 300" /dev/null \
+    </dev/null >/dev/null 2>&1 &
+  while [ ! -s "$pidfile" ]; do
+    [ "$waited" -lt 200 ] || fail "$tag: the stand-in window never reported its pid"
+    sleep 0.05
+    waited=$(( waited + 1 ))
+  done
+  pid=$(cat "$pidfile")
+  kill -0 "$pid" 2>/dev/null || fail "$tag: could not start a stand-in window in $dir"
+  register_adopted_pid "$pid"
+  printf '%s\n' "$pid"
+}
+
+# Read straight from /proc rather than through the scan under test, so a fixture
+# that stopped producing the shape this case turns on cannot be confirmed by the
+# same code the case is checking.
+window_shell_stat_field() {  # <pid> <field-after-comm>
+  awk -v n="$2" '{ sub(/^.*\) /, ""); print $n }' "/proc/$1/stat" 2>/dev/null
+}
+
 # A backend mock that really closes a window: fm_backend_tmux_kill runs
 # `tmux kill-window -t <target>`, and this kills the stand-in pane leader registered
 # for exactly that target, so a test exercises a genuine post-kill orphan instead of
@@ -3014,6 +3043,56 @@ SH
   pass "a retirement completes over a home process orphaned by the window close teardown itself did"
 }
 
+# A secondmate's window is opened in the home itself, so its pane shell leads a
+# session from inside the very directory the retirement gives up - on residency
+# alone, the shape of a detached service. Measured against real Herdr, where a
+# scan reading residency alone convicted the home's own pane shell and stopped the
+# retirement. The terminal the pane still holds is what tells the two apart.
+test_retirement_completes_over_a_home_holding_its_own_window() {
+  local home subhome fakebin err out rc pid
+  home="$TMP_ROOT/ownwindow-parent"
+  subhome="$TMP_ROOT/ownwindow-subhome"
+  fakebin="$TMP_ROOT/ownwindow-fakebin"
+  err="$TMP_ROOT/ownwindow.err"
+  out="$TMP_ROOT/ownwindow.out"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$subhome/state" "$fakebin"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' "- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)" \
+    > "$home/data/secondmates.md"
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  pid=$(start_window_shell_in "$subhome" ownwindow)
+  [ "$(window_shell_stat_field "$pid" 4)" = "$pid" ] \
+    || fail "ownwindow: the stand-in window did not lead a session of its own"
+  case "$(window_shell_stat_field "$pid" 5)" in
+    ''|0) fail "ownwindow: the stand-in window did not keep a controlling terminal" ;;
+  esac
+
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND=tmux \
+    "$TEARDOWN" domain --force > "$out" 2> "$err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "ownwindow: a retirement must not refuse over the home's own open window"
+  assert_grep "teardown domain complete" "$out" "ownwindow: the retirement should have completed"
+  assert_no_grep "STOPPED" "$err" "ownwindow: nothing here should have stopped the retirement"
+  assert_absent "$subhome" "ownwindow: the home should have been removed"
+  assert_no_grep "- domain" "$home/data/secondmates.md" \
+    "ownwindow: a retired home should be out of the registry"
+  kill_registered_adopted_pids
+  pass "a retirement completes over a home whose own window was opened in it"
+}
+
 test_force_is_not_a_bypass_for_an_adopted_process() {
   local case_dir rc pid
   case_dir=$(make_case adopted-force)
@@ -3181,6 +3260,7 @@ test_secondmate_home_hosting_a_detached_process_stops_the_retirement
 test_plain_directory_home_hosting_a_detached_process_stops_the_retirement
 test_retirement_completes_over_a_child_orphaned_by_its_own_window_close
 test_retirement_completes_over_a_home_orphaned_by_its_own_window_close
+test_retirement_completes_over_a_home_holding_its_own_window
 test_force_is_not_a_bypass_for_an_adopted_process
 test_orphaned_process_refuses_after_the_patience_window
 test_crew_process_in_the_lane_session_does_not_refuse

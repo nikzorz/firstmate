@@ -58,6 +58,23 @@ $ ps -o pid=,ppid=,sid=,comm= -p 806462,806529,1390074,1390456
 A task's own agent tree (`bash`, `claude`) carries session `1389317`, led from outside the worktree by the shell that launched it.
 The daemon's session leader is itself, with its working directory inside the worktree, which is what the test reads.
 
+Residency alone is not enough, because a window opened in the directory being given up leads a session from inside it too: a multiplexer gives every pane a session and a pty of its own, and a secondmate's window is opened in the home itself.
+Measured on herdr 0.8.2, with a real pane and a stand-in detached service sharing one directory:
+
+```
+$ herdr workspace create --cwd /tmp/fm-evidence-home --label evid-ws --no-focus --session <lab>
+$ setsid bash -c "cd /tmp/fm-evidence-home && exec sleep 300" &
+$ ps -o pid=,ppid=,sid=,tty=,comm= -p 857212,858012
+ 857212  857146  857212 pts/10   bash
+ 858012     329  858012 ?        sleep
+$ fm_adopted_processes /tmp/fm-evidence-home
+858012	sleep
+exit=0
+```
+
+Both lead their own session from inside the directory; only the pane still holds a terminal, because detaching is what gives one up, and only the detached service is reported.
+The same two processes through the scan as it read before the terminal fact reported `857212 bash` as well, which is what stopped every retirement of a home whose window was still open.
+
 ## Cleanup refuses instead of letting the sweep run
 
 Two stand-in services were started detached inside a third lane's worktree, and that lane was cleaned up with the real `treehouse` on `PATH`:
@@ -82,10 +99,11 @@ And the trailing `error: treehouse return failed` line no longer prints, because
 
 ## Regression coverage
 
-`tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear.
+`tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear, and a window's own shell on a real pty, which leads its session from inside the directory and is not adopted.
 `tests/fm-teardown.test.sh` covers the refusal, its behaviour under `--force`, the absence of a false refusal for a crewmate's own process, and the two-other-lanes case above.
 It also covers the four paths a refusal stops on: a refused task worktree keeps its task branch and its turn-end hook files, a forced secondmate retirement stops at a child worktree hosting a detached service rather than removing it, it stops at a child's own secondmate home the same way, and the retiring secondmate's own home stops before anything is touched.
 Every one of those scans runs above the `fm_backend_kill` that closes that lane's window, and the retirement cases prove the ordering with a backend mock that really kills a real session leader, so a genuine post-kill orphan is exercised rather than assumed.
+Because the scan runs while that window is still open, one case retires a home holding its own window on a real pty and must complete.
 The home cases keep the registry entry and the state records that are the only way to name a home that survived.
 Both start real detached and attached processes rather than mocking the scan, because the whole guarantee rests on what a real process's session says about who owns it.
 
@@ -93,7 +111,7 @@ Both start real detached and attached processes rather than mocking the scan, be
 
 Three limits, the same three the `bin/fm-adopted-process-lib.sh` header states, plus the platform the guard does not run on at all.
 
-(a) A shared service started as an ordinary child of a crewmate's own terminal session, never detaching, is indistinguishable from that crewmate's work by any process fact and is not caught.
+(a) A shared service that never gave up a terminal is indistinguishable from the crew work that terminal belongs to by any process fact, and is not caught: an ordinary child of a crewmate's own terminal session, or a service left running in a window of its own inside the directory.
 No such service has been measured; the shared validation daemon detaches, as the session table above shows.
 
 (b) A task's own deliberately detached leftover, such as a background server a crewmate started with `setsid`, is refused even though killing it would have been fine.

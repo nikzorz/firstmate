@@ -17,6 +17,7 @@
 #   (g) the scanning shell itself                                    -> never reported
 #   (h) a directory reached through a symlink                        -> ADOPTED
 #   (i) a resident process whose session leader has died             -> UNKNOWN
+#   (j) a window's own shell, leading its session on a terminal      -> not adopted
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -98,6 +99,28 @@ start_detached_service_with_worker_in() {
   kill -0 "$leader" 2>/dev/null || fail "$marker: the service leader did not stay alive"
   kill -0 "$worker" 2>/dev/null || fail "$marker: the service worker did not stay alive"
   printf '%s %s\n' "$leader" "$worker"
+}
+
+# Start a window's own shell in <dir>: a session leader of its own that still
+# holds a terminal, which is what every multiplexer pane is. `script` allocates
+# the pty and puts the command behind it in a session of its own, the same two
+# acts a pane is made of.
+start_window_shell_in() {
+  local dir=$1 marker=$2 pidfile pid
+  pidfile=$(mktemp "$TMP_ROOT/window.XXXXXX")
+  script -qec "cd '$dir' && printf '%s\n' \$\$ > '$pidfile' && exec sleep 300" /dev/null \
+    </dev/null >/dev/null 2>&1 &
+  pid=$(read_reported_pid "$pidfile" "$marker")
+  kill -0 "$pid" 2>/dev/null || fail "$marker: could not start a window shell in $dir"
+  printf '%s\n' "$pid" >> "$SPAWNED_FILE"
+  printf '%s\n' "$pid"
+}
+
+# Read straight from /proc rather than through the library, so a fixture that
+# quietly stopped producing the shape under test cannot be confirmed by the same
+# code the test is checking.
+stat_field_of() {  # <pid> <field-after-comm>
+  awk -v n="$2" '{ sub(/^.*\) /, ""); print $n }' "/proc/$1/stat" 2>/dev/null
 }
 
 # Start a process in <dir> whose session leader then exits, the state a daemon
@@ -300,6 +323,28 @@ test_dead_session_leader_reads_as_unknown() {
   pass "a resident process whose session leader has died reads as unknown and is named"
 }
 
+# A pane's shell leads a session of its own wherever the pane was opened, so a
+# window opened in the directory being given up matches a detached service on
+# residency alone. The terminal it still holds is the whole difference, and
+# without it every secondmate home - whose window opens in the home itself - is
+# convicted of hosting a service.
+test_window_shell_on_a_terminal_is_not_adopted() {
+  local dir="$TMP_ROOT/window" pid found
+  mkdir -p "$dir"
+  pid=$(start_window_shell_in "$dir" window)
+  require_pid "$pid" window
+  [ "$(stat_field_of "$pid" 4)" = "$pid" ] \
+    || fail "window: the fixture did not lead a session of its own"
+  case "$(stat_field_of "$pid" 5)" in
+    ''|0) fail "window: the fixture did not keep a controlling terminal" ;;
+  esac
+
+  found=$(adopted_pids "$dir")
+  assert_not_contains "$found" "$pid" "window: a window's own shell must not be adopted"
+  expect_code 1 "$(scan_status "$dir")" "window: an open window must read as clear, not as unknown"
+  pass "a window's own shell, leading its session inside the directory on a terminal, is not adopted"
+}
+
 test_detached_process_is_adopted
 test_a_services_worker_is_adopted_with_its_leader
 test_attached_process_is_not_adopted
@@ -309,3 +354,4 @@ test_sibling_directory_is_not_reported
 test_symlinked_directory_still_finds_the_process
 test_scanning_shell_never_accuses_itself
 test_dead_session_leader_reads_as_unknown
+test_window_shell_on_a_terminal_is_not_adopted
