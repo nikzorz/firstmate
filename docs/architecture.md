@@ -90,7 +90,7 @@ Decision-only events such as `resolved` never become current state or leak their
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
 A `done:` event there is read against the done gate its recorded delivery mode defines.
 Every pull-request-based ship mode finishes on a pull request, so a `done:` with none reports `blocked`: the task is waiting on firstmate rather than finished.
-Three sources answer whether one exists, cheapest first: the pull request recorded in `state/<id>.meta`, then the event's own prose, then any pull request URL in the status stream, which is the same answer `bin/fm-fleet-snapshot.sh` gives the record's own `pr` field.
+Three sources answer whether one exists, cheapest first: the pull request recorded in `state/<id>.meta`, then the event's own prose, then a pull request URL named in a bounded tail of the status stream, which is the same file `bin/fm-fleet-snapshot.sh` already reads for the record's own `pr` field.
 So a crew that recorded or announced its pull request still reads done however it worded the line it wrote afterwards.
 What the crew's own brief asked of it before that line differs by mode, and so does the steer it now needs, which is what the detail carries; `status_done_gate_steer` in `bin/fm-classify-lib.sh` is the single owner of that distinction and every rendering of it.
 Local-only delivery and a scout, which finish without a pull request, are unaffected.
