@@ -393,8 +393,13 @@ fm_pane_is_busy() {  # <target> [harness]
 # `empty` so the caller does not re-send), while an idle pane keeps `pending` as
 # a genuine swallow. Pending-unproven receives the same Enter retry budget but
 # never reaches this exception.
-fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep>
-  local target=$1 retries=$2 sleep_s=$3 i=0 state
+# The optional <harness> selects that busy check's verified per-harness footer
+# signature, the same way bin/fm-crew-state.sh scopes it. Without it the check
+# falls back to the generic signature, which does not recognize every verified
+# harness's spinner, so a busy pane can read idle and a delivered message can be
+# reported as a swallow.
+fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness]
+  local target=$1 retries=$2 sleep_s=$3 harness=${4:-} i=0 state
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
@@ -415,16 +420,16 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep>
   # and queued the message for processing when the current turn ends.
   # Treat it as submitted so the caller does not re-send.
   # On an idle pane, keep reporting pending - a genuine swallow.
-  if fm_pane_is_busy "$target"; then
+  if fm_pane_is_busy "$target" "$harness"; then
     printf 'empty'
   else
     printf 'pending'
   fi
 }
 
-fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5
+fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-}
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s"
+  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$harness"
 }

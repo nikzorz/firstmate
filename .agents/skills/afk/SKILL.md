@@ -125,9 +125,9 @@ For tmux that confirmation is a cleared composer, using the same corrected,
 border-aware detector as the composer guard.
 For herdr, normal idle-baseline submits are confirmed by native agent-state showing a real turn started; the ANSI-aware composer classifier remains the affirmative-empty pre-injection guard and conservative fallback for non-idle or unreadable baselines.
 A bordered-empty or ghost-only composer is recognized as empty where that backend uses composer confirmation, rather than mistaken for a swallowed Enter.
-`fm-send.sh` uses the same primitive and exits non-zero
-when a steer's Enter is positively swallowed, so firstmate learns an instruction
-did not land instead of leaving it unsubmitted.
+`fm-send.sh` uses the same primitive and exits non-zero whenever it cannot confirm the submit, so firstmate never assumes a steer landed.
+Its exit status separates a refused send from a submitted-but-unconfirmed one, and an unconfirmed result is reported as unknown rather than as non-delivery, because these confirmation reads have reported unconfirmed for steers that did land.
+The script's header owns the exact statuses.
 
 **Busy-queued Enter exception (tmux backend, opencode 1.18.4).** While opencode
 is mid-turn, Enter is accepted and queued for after the current turn but the
