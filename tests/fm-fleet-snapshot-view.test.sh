@@ -1419,7 +1419,7 @@ test_handoff_without_a_pr_clears_the_request_it_reported_past() {
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "handoff")
     | .current_state.state == "blocked"
-      and (.current_state.detail | test("delivery steer"))
+      and (.current_state.detail | test("^steer it to "))
       and .hints.pending_decision == false
       and (.hints.open_decisions | length) == 0
   ' >/dev/null || fail "a handoff must clear the request the crew reported on past: $out"

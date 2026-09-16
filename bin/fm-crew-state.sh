@@ -1289,29 +1289,24 @@ fi
 # the verb->state mapping (including the configurable paused verb), so reusing its
 # `unknown` verdict as the "not a state" test needs no second verb list here.
 #
-# One thing the log CAN be read against is the gate the crew was briefed on. A
-# no-mistakes brief asks for `done: {summary}` as soon as implementation is
-# committed, so that line is the handoff it was told to write; a direct-PR brief
-# asks the crew to open the pull request itself first, so a bare `done:` there
-# has not reached its own done gate. Either way the pull request does not exist
-# and the task waits on firstmate, which is what `blocked` says - not `done`,
-# which would report a delivery that has not happened.
-# status_done_meets_delivery_gate (bin/fm-classify-lib.sh) owns the gate and
+# One thing the log CAN be read against is the gate the crew was briefed on.
+# status_done_meets_delivery_gate (bin/fm-classify-lib.sh) owns that gate and
 # answers from the recorded `pr=`, then the line's prose, then the wider stream,
 # so a crew that recorded or announced its pull request still reads done however
-# it worded the line it wrote afterwards. Nothing rewrites the status stream:
-# what the crew wrote stays exactly as written, and the next reading agrees once
-# the pull request exists. Reached only in this run-less fallback, because the
+# it worded the line it wrote afterwards. With no pull request from any of the
+# three the task is waiting on firstmate, which is what `blocked` says - not
+# `done`, which would report a delivery that has not happened. What each mode's
+# crew was actually asked for differs, and status_done_gate_steer beside that gate
+# is the one owner of how to say so; this reader publishes what it returns rather
+# than composing a second wording here. Nothing rewrites the status stream: what
+# the crew wrote stays exactly as written, and the next reading agrees once the
+# pull request exists. Reached only in this run-less fallback, because the
 # run-step path above is authoritative wherever a run exists and already demands
-# a PR plus green checks of its own (log_reports_ci_ready). The detail leads with
-# the next move and stays inside the bearings display budget recorded in
-# docs/verification/supervision.md, so what survives the cut is the action rather
-# than its reason.
+# a PR plus green checks of its own (log_reports_ci_ready).
 if [ -n "$LOG_VERB" ]; then
   LOG_STATE=$(map_log_state "$LOG_LINE")
   if ! status_done_meets_delivery_gate "$LOG_LINE" "$KIND" "$MODE" "$PR" "$LOG"; then
-    emit blocked status-log \
-      "needs the ${MODE:-no-mistakes} delivery steer: implementation handed off, no PR yet"
+    emit blocked status-log "$(status_done_gate_steer "$MODE")"
   fi
   if [ "$LOG_STATE" != unknown ]; then
     emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")"

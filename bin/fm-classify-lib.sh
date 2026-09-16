@@ -439,19 +439,16 @@ status_is_paused_or_captain_held() {  # <status-line>
 
 # --- the done gate a delivery mode actually asks for -------------------------
 #
-# Every PR-based delivery mode finishes on a pull request, but the two reach that
-# line from opposite ends. A no-mistakes brief asks for `done: {summary}` the
-# moment implementation is committed and stop, so its first `done:` is a HANDOFF
-# and the pipeline opens the pull request afterwards. A direct-PR brief asks the
-# crew to push and open the pull request ITSELF and only then append
-# `done: PR {url}`, so a bare `done:` there has not reached its own done gate
-# yet. Either way the task is waiting on firstmate and the pull request does not
-# exist, which is the one question this predicate asks.
+# Every PR-based delivery mode finishes on a pull request, so a `done:` on one
+# whose task has no pull request anywhere is a task still waiting on firstmate
+# rather than a finished delivery. That is the one question this predicate asks.
+# The two modes get there from opposite ends of their briefs, which changes what
+# firstmate should say next but not the answer here; status_done_gate_steer below
+# owns that difference and every wording of it.
 #
-# Three crews in a row wrote a no-mistakes handoff after a clean local gate and
-# nothing between them and firstmate said the delivery had not happened yet. This
-# predicate is what says it: it reads each line against the brief that line was
-# written under rather than against a single idea of what `done:` must carry.
+# Three crews in a row wrote such a line after a clean local gate and nothing
+# between them and firstmate said the delivery had not happened yet. This
+# predicate is what says it.
 #
 # It never rewrites or suppresses the crew's line - the status stream keeps what
 # the crew wrote - and a crew that genuinely cannot reach a pull request still
@@ -463,10 +460,12 @@ status_is_paused_or_captain_held() {  # <status-line>
 # a stronger test would need the forge.
 FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT='no-mistakes direct-PR'
 
-# How many URL-bearing status lines the stream scan below reads. The scan runs on
-# every crew read, including the per-crew reads bin/fm-fleet-snapshot.sh makes, so
-# it is bounded rather than open: a task announces its pull request in one of its
-# first events, and a stream with more URL lines than this has already answered.
+# How many URL-bearing status lines the stream scan below reads, counted from the
+# END. The scan runs on every crew read, including the per-crew reads
+# bin/fm-fleet-snapshot.sh makes, so it is bounded rather than open. It keeps the
+# tail because that is where the answer is: both briefs put the pull request at
+# the close of the stream, either on the `done:` line itself or on the event just
+# before it, so earlier URL lines are the ones a bound can afford to drop.
 FM_CLASSIFY_PR_SCAN_LINES_DEFAULT=64
 
 # 0 when any word of <prose> names a PR/MR URL. bin/fm-pr-lib.sh's fm_pr_url_parse
@@ -474,7 +473,8 @@ FM_CLASSIFY_PR_SCAN_LINES_DEFAULT=64
 # rather than carrying a second regex that could accept a URL the recorder would
 # then refuse. Prose sets a URL inside a sentence, so a candidate is cut at its
 # own scheme and trimmed of whatever closing marks cling to it: parentheses,
-# angle brackets and a markdown link all read as the bare URL they wrap.
+# angle brackets, a markdown link, and the backticks and asterisks agents wrap a
+# URL in all read as the bare URL inside them.
 #
 # The whole scan runs in ONE subshell, for the same reason
 # fm_classify_landing_route_armed uses one: a read-only probe must never clobber
@@ -500,7 +500,7 @@ _fm_classify_prose_names_pr_url() {  # <prose>
         esac
         while :; do
           case "$candidate" in
-            *[.,\;:\)\]\>\"\']) candidate=${candidate%?} ;;
+            *[.,\;:\)\]\>\"\'\`\*]) candidate=${candidate%?} ;;
             *) break ;;
           esac
         done
@@ -511,18 +511,57 @@ _fm_classify_prose_names_pr_url() {  # <prose>
   ) >/dev/null 2>&1
 }
 
-# 0 when <status-log> announces a PR/MR URL anywhere in its stream. The fixed
-# string pre-filter is what keeps this bounded: an ordinary status log carries no
-# URL at all and costs one grep, and only the lines that could answer are split
-# into words. It decides nothing about the URL's shape - fm_pr_url_parse above
-# still owns that.
+# 0 when <status-log> names a PR/MR URL anywhere in its stream. The fixed string
+# pre-filter is what keeps this bounded: an ordinary status log carries no URL at
+# all and costs one grep, and only the lines that could answer are split into
+# words. It decides nothing about the URL's shape - fm_pr_url_parse above still
+# owns that.
+#
+# KNOWN LIMITATION, accepted rather than fixed. This answers "has a pull request
+# been named for this task", not "is this task's own pull request open". A crew
+# that merely CITED somebody else's pull request in an earlier event satisfies it,
+# and the measured failure this gate exists to catch then goes unreported for that
+# task. The two error directions were weighed and this one was chosen: accusing a
+# crew that did deliver costs a wrong steer on a real, measured shape (a task's own
+# pull request announced on a `working:` line), while the citation shape was
+# measured zero times. The recorded `pr=` is the authoritative answer wherever
+# firstmate has recorded one, and it is consulted before this scan.
 _fm_classify_stream_names_pr_url() {  # <status-log>
   local log=$1 lines
   [ -f "$log" ] || return 1
-  lines=$(grep -F -m "${FM_CLASSIFY_PR_SCAN_LINES:-$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT}" \
-    '://' "$log" 2>/dev/null) || return 1
+  lines=$(grep -F '://' "$log" 2>/dev/null \
+    | tail -n "${FM_CLASSIFY_PR_SCAN_LINES:-$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT}") || return 1
   [ -n "$lines" ] || return 1
   _fm_classify_prose_names_pr_url "$lines"
+}
+
+# The operator-facing phrase for a `done:` this gate refused, one rendering per
+# delivery mode. It lives beside the gate because it is the same fact stated for
+# a reader: what the crew's own brief asked of it, and what firstmate owes it
+# next. ONE owner, because this distinction has already drifted apart three times
+# across the reader, the recovery skill and the architecture doc - those now name
+# this function rather than restating the split.
+#
+# The two briefs ask for opposite things, so the two phrases must too.
+# bin/fm-brief.sh's no-mistakes gate asks the crew to append `done:` once
+# implementation is committed and stop, and the pipeline ships the pull request
+# afterwards, so that line is the handoff it was told to write. Its direct-PR gate
+# asks the crew to push and open the pull request itself BEFORE reporting done, so
+# a bare `done:` there has not reached its own gate - a thing to finish, not a
+# thing to blame.
+#
+# Each rendering leads with the action and stays inside the 90-character budget
+# bin/fm-bearings-snapshot.sh renders a current-state detail through.
+FM_CLASSIFY_DONE_GATE_STEER_NO_MISTAKES='steer it to run /no-mistakes: it handed off at commit as briefed, no PR yet'
+FM_CLASSIFY_DONE_GATE_STEER_DIRECT_PR='steer it to push and open its PR: briefed to open one before done:, none yet'
+FM_CLASSIFY_DONE_GATE_STEER_OTHER='steer it to the pull request its delivery mode finishes on, none named yet'
+
+status_done_gate_steer() {  # <mode>
+  case "${1:-no-mistakes}" in
+    ''|no-mistakes) printf '%s\n' "$FM_CLASSIFY_DONE_GATE_STEER_NO_MISTAKES" ;;
+    direct-PR)      printf '%s\n' "$FM_CLASSIFY_DONE_GATE_STEER_DIRECT_PR" ;;
+    *)              printf '%s\n' "$FM_CLASSIFY_DONE_GATE_STEER_OTHER" ;;
+  esac
 }
 
 # 0 when a status line satisfies the done gate its task's delivery mode defines,

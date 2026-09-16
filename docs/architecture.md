@@ -89,12 +89,10 @@ Only when no matching run exists does it fall back to the pane busy-signature an
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
 A `done:` event there is read against the done gate its recorded delivery mode defines.
-Every pull-request-based ship mode finishes on a pull request, but the two modes reach that line from opposite ends, so the reading has to know which brief the crew wrote under.
-A no-mistakes brief asks for `done:` the moment implementation is committed, so that first `done:` is the handoff it was told to write and the pipeline opens the pull request afterwards.
-A direct-PR brief asks the crew to push and open the pull request itself and only then report done, so a bare `done:` there means it has not reached its own done gate yet.
-Reading either as `blocked` says the one thing both have in common: the pull request does not exist, and what the task waits on now is firstmate's steer.
-Three sources answer whether it exists, cheapest first: the pull request recorded in `state/<id>.meta`, then the event's own prose, then any pull request URL anywhere in the status stream, which is the same answer `bin/fm-fleet-snapshot.sh` gives the record's own `pr` field.
+Every pull-request-based ship mode finishes on a pull request, so a `done:` with none reports `blocked`: the task is waiting on firstmate rather than finished.
+Three sources answer whether one exists, cheapest first: the pull request recorded in `state/<id>.meta`, then the event's own prose, then any pull request URL in the status stream, which is the same answer `bin/fm-fleet-snapshot.sh` gives the record's own `pr` field.
 So a crew that recorded or announced its pull request still reads done however it worded the line it wrote afterwards.
+What the crew's own brief asked of it before that line differs by mode, and so does the steer it now needs, which is what the detail carries; `status_done_gate_steer` in `bin/fm-classify-lib.sh` is the single owner of that distinction and every rendering of it.
 Local-only delivery and a scout, which finish without a pull request, are unaffected.
 The status stream is never rewritten: it keeps exactly what the crew wrote, only this reading of it disagrees, and it agrees again once the pull request exists.
 `bin/fm-classify-lib.sh` owns that gate as the vocabulary it already owns for these lines, and reuses `bin/fm-pr-lib.sh`'s own URL parser rather than carrying a second idea of what a pull request URL is.
