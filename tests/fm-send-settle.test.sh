@@ -12,6 +12,8 @@
 #   2. FM_SEND_SETTLE=0 produces no pause at all (sleep is never invoked for it).
 #   3. The pause is tunable (FM_SEND_SETTLE=7 pauses 7).
 #   4. The --key path never pauses (it bypasses the submit/settle path entirely).
+#   5. An unusable value cannot turn a confirmed delivery into a failure: it is
+#      named on stderr and the send still reports what it delivered.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -47,6 +49,9 @@ SH
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >> "$FM_SLEEP_LOG"
+case "${1:-}" in
+  ''|*[!0-9.]*|*.*.*) printf 'sleep: invalid time interval %s\n' "${1:-}" >&2; exit 1 ;;
+esac
 exit 0
 SH
   chmod +x "$fb/sleep"
@@ -65,6 +70,16 @@ run_send() {
   env "$@" PATH="$fb:$PATH" \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SLEEP_LOG="$log" \
     "$SEND" "sess:win" "hello captain" 2>/dev/null
+}
+
+# run_send_capturing_stderr <fakebin> <sleep-log> <stderr-file> [env-assignments...]
+run_send_capturing_stderr() {
+  local fb=$1 log=$2 err=$3 home; shift 3
+  home="$TMP_ROOT/home-$RANDOM"; mkdir -p "$home/state"
+  : > "$log"
+  env "$@" PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SLEEP_LOG="$log" \
+    "$SEND" "sess:win" "hello captain" 2>"$err" >/dev/null
 }
 
 test_default_send_pauses_one_second() {
@@ -116,7 +131,27 @@ test_key_path_never_pauses() {
   pass "fm-send: the --key path never pauses (settle scoped to text submit)"
 }
 
+# The settle runs after the submit is confirmed and the pending-reply delivery is
+# committed, so a value the platform's sleep rejects must not be able to rewrite
+# that outcome into a non-delivery claim.
+test_unusable_value_reports_itself_without_failing_the_send() {
+  local dir fb log err rc
+  dir="$TMP_ROOT/unusable"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/sleep.log"; err="$dir/send.err"
+  run_send_capturing_stderr "$fb" "$log" "$err" FM_SEND_SETTLE=1s; rc=$?
+  expect_code 0 "$rc" "an unusable settle value must not fail a confirmed delivery"
+  assert_contains "$(cat "$err")" "FM_SEND_SETTLE" \
+    "an unusable settle value should be named on stderr"
+  if grep -Eq 'not submitted|not sent|did not land' "$err"; then
+    fail "the settle warning asserted a non-delivery: $(cat "$err")"
+  fi
+  [ "$(tail -1 "$log")" = 1 ] \
+    || fail "an unusable settle value should fall back to the default pause, got '$(tail -1 "$log")'"$'\n'"--- sleeps ---"$'\n'"$(cat "$log")"
+  pass "fm-send: an unusable FM_SEND_SETTLE is reported, never charged against the delivery"
+}
+
 test_default_send_pauses_one_second
 test_zero_disables_pause
 test_pause_is_tunable
 test_key_path_never_pauses
+test_unusable_value_reports_itself_without_failing_the_send

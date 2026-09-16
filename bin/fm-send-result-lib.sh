@@ -19,7 +19,10 @@ FM_SEND_EXIT_UNCONFIRMED=4
 #   delivered    the backend confirmed the submit.
 #   unconfirmed  the text was typed and submitted, but nothing proves it landed.
 #                It may have, so a resend delivers the same instruction twice.
-#   failed       fm-send has no confirmed delivery to report.
+#   failed       fm-send has no confirmed delivery to report. This also covers
+#                the one path where the text WAS delivered but its pending-reply
+#                commit failed; that run's own stderr says so and says not to
+#                resend, so a caller that resends on failed must read it first.
 fm_send_result() {  # <fm-send exit status>
   local status=${1:-1}
   if [ "$status" = 0 ]; then

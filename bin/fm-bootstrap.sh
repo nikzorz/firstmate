@@ -242,22 +242,13 @@ secondmate_sync() {
     mv -f "$tmp" "$marker" || { rm -f "$tmp"; return 1; }
   }
 
-  secondmate_send_nudge() {
-    local id=$1 home=$2 commit=$3 instr=$4 selector marker out send_status
-    selector="fm-$id"
-    marker=$(secondmate_nudge_marker_path "$id") || {
-      echo "NUDGE_SECONDMATES: secondmate $id: send failed: unsafe id"
-      return 0
-    }
-    if ! secondmate_write_nudge_marker "$id" "$home" "$commit" "$instr"; then
-      echo "NUDGE_SECONDMATES: secondmate $id: send failed: cannot record retry marker"
-      return 0
-    fi
-    # An unconfirmed nudge may already have landed, so it is reported as
-    # unconfirmed rather than failed. The retry marker survives either way: this
-    # nudge only asks the secondmate to re-read its instructions, so a repeat
-    # costs nothing.
-    send_status=0
+  # The first attempt and the retry read the nudge's result here and nowhere
+  # else, so the two paths cannot drift apart again. An unconfirmed nudge may
+  # already have landed, so it is reported as unconfirmed rather than failed;
+  # only a confirmed delivery clears the retry marker, because this nudge just
+  # asks the secondmate to re-read its instructions and a repeat costs nothing.
+  secondmate_report_nudge_send() {  # <id> <selector> <marker>
+    local id=$1 selector=$2 marker=$3 out send_status=0
     out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
     case "$(fm_send_result "$send_status")" in
       delivered)
@@ -273,13 +264,27 @@ secondmate_sync() {
     esac
   }
 
+  secondmate_send_nudge() {
+    local id=$1 home=$2 commit=$3 instr=$4 selector marker
+    selector="fm-$id"
+    marker=$(secondmate_nudge_marker_path "$id") || {
+      echo "NUDGE_SECONDMATES: secondmate $id: send failed: unsafe id"
+      return 0
+    }
+    if ! secondmate_write_nudge_marker "$id" "$home" "$commit" "$instr"; then
+      echo "NUDGE_SECONDMATES: secondmate $id: send failed: cannot record retry marker"
+      return 0
+    fi
+    secondmate_report_nudge_send "$id" "$selector" "$marker"
+  }
+
   fm_ff_after_instruction_update() {
     local id=$1 home=$2 _window=$3 instr=$4
     secondmate_send_nudge "$id" "$home" "$primary_head" "$instr"
   }
 
   secondmate_retry_pending_nudges() {
-    local marker id selector home commit message expected_marker meta meta_home home_real head out send_status
+    local marker id selector home commit message expected_marker meta meta_home home_real head
     [ -d "$SECOND_MATE_NUDGE_PENDING_DIR" ] || return 0
     for marker in "$SECOND_MATE_NUDGE_PENDING_DIR"/*.pending; do
       [ -f "$marker" ] || continue
@@ -325,20 +330,7 @@ secondmate_sync() {
         echo "NUDGE_SECONDMATES: secondmate $id: send failed: retry target is not at recorded instruction commit"
         continue
       }
-      send_status=0
-      out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
-      case "$(fm_send_result "$send_status")" in
-        delivered)
-          rm -f "$marker"
-          echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
-          ;;
-        unconfirmed)
-          echo "NUDGE_SECONDMATES: secondmate $id: send unconfirmed: $(first_line "$out")"
-          ;;
-        *)
-          echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
-          ;;
-      esac
+      secondmate_report_nudge_send "$id" "$selector" "$marker"
     done
   }
 

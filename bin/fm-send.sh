@@ -68,6 +68,8 @@
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
 set -eu
 
+FM_SEND_SETTLE_DEFAULT=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -343,5 +345,16 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
-  [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
+  # The pause runs after the delivery is already known, so it can never change
+  # what fm-send reports: an unusable value is named on stderr and the exit
+  # status still describes the delivery that happened.
+  settle_after=${FM_SEND_SETTLE:-$FM_SEND_SETTLE_DEFAULT}
+  if ! [[ $settle_after =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "warning: FM_SEND_SETTLE='$settle_after' is not a number of seconds; pausing $FM_SEND_SETTLE_DEFAULT instead" >&2
+    settle_after=$FM_SEND_SETTLE_DEFAULT
+  fi
+  if [ "$settle_after" != 0 ]; then
+    sleep "$settle_after" \
+      || echo "warning: the post-send settle pause did not run; the text was still delivered to $T" >&2
+  fi
 fi
