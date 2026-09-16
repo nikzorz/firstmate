@@ -91,6 +91,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-claude-limit-lib.sh
 . "$SCRIPT_DIR/fm-claude-limit-lib.sh"
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
@@ -250,17 +252,21 @@ esac
 
 STEER=${FM_LIMIT_RESUME_STEER:-"The claude usage limit that stalled you has reset. Do not assume where you stopped: re-read your own current state first, including whether your validation run still exists and belongs to your current commit, then continue from what you actually find."}
 
-# fm-send separates a refused send from a submitted-but-unconfirmed one (see its
-# exit-status contract); only the refusal proves the instruction did not land.
+# Only a refusal proves the instruction did not land, so ask fm_send_result what
+# happened rather than treating every non-zero status as non-delivery.
 send_status=0
 FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER" || send_status=$?
-if [ "$send_status" = 3 ]; then
-  echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2
-  exit 1
-elif [ "$send_status" != 0 ]; then
-  echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
-  exit 1
-fi
+case "$(fm_send_result "$send_status")" in
+  delivered) ;;
+  unconfirmed)
+    echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2
+    exit 1
+    ;;
+  *)
+    echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
+    exit 1
+    ;;
+esac
 
 close_pause
 

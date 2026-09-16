@@ -68,6 +68,8 @@ _FM_PENDING_REPLY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/n
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$_FM_PENDING_REPLY_LIB_DIR/fm-send-result-lib.sh"
 
 FM_PENDING_REPLY_SCHEMA='fm-pending-reply.v1'
 FM_PENDING_REPLY_CORR_RE='corr=[A-Fa-f0-9]{16}'
@@ -643,7 +645,7 @@ fm_pending_reply_recovery_message() {  # <record-path>
 # second expectation is not created.
 fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   local state=$1 corr=$2
-  local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0
+  local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0 result
   local sender_pid sender_identity
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
@@ -672,40 +674,33 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" recovery_sender_identity "$sender_identity" || return 1
   fm_pending_reply_set "$rec" recovery_attempted_epoch "$now" || return 1
   fm_pending_reply_set "$rec" phase recovery_sending || return 1
+  # The hook stands in for fm-send in tests and reports the same statuses, so
+  # both branches read their result the same way. An unconfirmed send becomes the
+  # unknown outcome rather than a failure, so the durable record never claims a
+  # non-delivery nobody proved.
   if [ -n "${FM_PENDING_REPLY_SEND_HOOK:-}" ]; then
     # Hook receives: task_id message
     # shellcheck disable=SC2086
     eval "$FM_PENDING_REPLY_SEND_HOOK" "$(printf '%q' "$task_id")" "$(printf '%q' "$msg")" \
       || send_status=$?
-    case "$send_status" in
-      0) ;;
-      3) send_status=unknown ;;
-      *) send_status=1 ;;
-    esac
+    result=$(fm_send_result "$send_status")
+  elif [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
+    result=failed
   else
-    if [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
-      send_status=1
-    else
-      # fm-send separates a refused send from a submitted-but-unconfirmed one
-      # (see its exit-status contract). Record the unconfirmed case as unknown so
-      # the durable record does not claim a non-delivery fm-send could not prove.
-      env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-        "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg" || send_status=$?
-      case "$send_status" in
-        0) ;;
-        3) send_status=unknown ;;
-        *) send_status=1 ;;
-      esac
-    fi
+    env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
+      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg" || send_status=$?
+    result=$(fm_send_result "$send_status")
   fi
-  if [ "$send_status" = 0 ]; then
-    fm_pending_reply_finish_recovery "$state" "$corr" confirmed
-    return $?
-  fi
-  if [ "$send_status" = unknown ]; then
-    fm_pending_reply_finish_recovery "$state" "$corr" unknown || return 1
-    return 1
-  fi
+  case "$result" in
+    delivered)
+      fm_pending_reply_finish_recovery "$state" "$corr" confirmed
+      return $?
+      ;;
+    unconfirmed)
+      fm_pending_reply_finish_recovery "$state" "$corr" unknown || return 1
+      return 1
+      ;;
+  esac
   fm_pending_reply_finish_recovery "$state" "$corr" failed || return 1
   return 1
 }

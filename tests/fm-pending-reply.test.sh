@@ -636,7 +636,8 @@ test_unconfirmed_send_keeps_the_expectation_for_reconciliation() {
   rc=0
   FM_STUB_PENDING=1 FM_SEND_RETRIES=1 FM_SEND_SLEEP=0 \
     run_send "$fb" "$home" "$log" "hibit" "audit the build" || rc=$?
-  expect_code 3 "$rc" "an unconfirmed secondmate send should use the unconfirmed status"
+  expect_code "$FM_SEND_EXIT_UNCONFIRMED" "$rc" \
+    "an unconfirmed secondmate send should use the unconfirmed status"
   corr=$(fm_pending_reply_extract_corr "$(cat "$log")")
   [ "${#corr}" -eq 16 ] || fail "corr id should still be embedded, got '$corr'"
   rec=$(fm_pending_reply_path "$home/state" "$corr")
@@ -952,7 +953,7 @@ test_unconfirmed_recovery_send_records_unknown_not_failed() {
   home=$(setup_parent recovery-unconfirmed)
   state="$home/state"
   export FM_PENDING_REPLY_NOW=2500
-  recovery_unconfirmed_hook() { return 3; }
+  recovery_unconfirmed_hook() { return "$FM_SEND_EXIT_UNCONFIRMED"; }
   export -f recovery_unconfirmed_hook
   export FM_PENDING_REPLY_SEND_HOOK=recovery_unconfirmed_hook
   corr=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed recovery")

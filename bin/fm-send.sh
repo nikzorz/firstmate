@@ -18,21 +18,29 @@
 # Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
 #
 # Exit status, which separates "I could not send this" from "I sent it and could
-# not confirm it":
+# not confirm it". This is the whole contract; callers read it through
+# fm_send_result (bin/fm-send-result-lib.sh) and never compare the numbers:
 #   0  the text was submitted, confirmed by the backend.
-#   1  the text was NOT sent: the target could not be resolved, or the backend
-#      refused the keystrokes. Nothing reached the endpoint.
-#   3  the text was typed and submitted, but delivery is UNCONFIRMED. It may have
+#   1  there is no confirmed delivery to report. On every resolution, expectation
+#      and backend-refusal path nothing reached the endpoint. The one exception
+#      is a confirmed submit whose pending-reply delivery commit then failed:
+#      that message states on stderr that the text WAS delivered and says not to
+#      resend, so a caller acting on 1 must read the message before resending.
+#   3  the no-mistakes gate refusal (bin/fm-gate-refuse-lib.sh), which fires
+#      before a target is resolved or a keystroke is typed.
+#   4  the text was typed and submitted, but delivery is UNCONFIRMED. It may have
 #      landed. Inspect the endpoint before resending, because a resend delivers
 #      the same instruction twice.
-# Status 3 is deliberately not phrased as non-delivery. Every backend confirms a
-# submit by reading the endpoint's own screen or status, and those reads have
-# reported an unconfirmed result for steers that did land, so fm-send reports
-# what it knows rather than asserting a negative it cannot support.
-# Closing status 3 entirely would need positive proof that the text reached the
-# conversation, which for a screen-reading backend means matching the submitted
-# text in the endpoint's own transcript across per-harness wrapping, truncation,
-# and styling. That is a per-harness project, not a confirmation-read tweak.
+# The unconfirmed status is deliberately not phrased as non-delivery. Every
+# backend confirms a submit by reading the endpoint's own screen or status, and
+# those reads have reported an unconfirmed result for steers that did land, so
+# fm-send reports what it knows rather than asserting a negative it cannot
+# support.
+# Closing the unconfirmed status entirely would need positive proof that the text
+# reached the conversation, which for a screen-reading backend means matching the
+# submitted text in the endpoint's own transcript across per-harness wrapping,
+# truncation, and styling. That is a per-harness project, not a
+# confirmation-read tweak.
 # Slash commands, and codex `$...` skill invocations resolved through harness
 # meta, get a longer pre-Enter settle so completion popups do not swallow Enter.
 #
@@ -60,13 +68,11 @@
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
 set -eu
 
-# Sent, but delivery could not be confirmed. Distinct from 1, which means the
-# text never reached the endpoint.
-FM_SEND_EXIT_UNCONFIRMED=3
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never steer

@@ -31,6 +31,9 @@
 # secondmates, and a secondmate never spawns secondmates, so it must not flow
 # downstream.
 
+# shellcheck source=bin/fm-send-result-lib.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-send-result-lib.sh"
+
 # The one shared data file in this inheritance contract. There is deliberately
 # no shared learnings file.
 FM_SHARED_CAPTAIN_FILE="captain-shared.md"
@@ -748,18 +751,20 @@ fm_config_reread_publish_stage() {
   printf '%s\n' "$final"
 }
 
-fm_config_reread_send_failure() {
-  local id=$1 instruction_path=$2 pending_path=$3 detail=$4
+# The label names what the send result proved, so an unconfirmed pointer is never
+# reported as a failure. Either way the generation keeps its retry marker.
+fm_config_reread_send_outcome() {  # <id> <instruction-path> <pending-path> <label> <detail>
+  local id=$1 instruction_path=$2 pending_path=$3 label=$4 detail=$5
   if ! fm_config_reread_mark_pending "$instruction_path" "$pending_path"; then
     detail="$detail; could not record retry marker"
   fi
-  printf 'CONFIG_REREAD: secondmate %s: send failed: %s\n' "$id" "$detail"
+  printf 'CONFIG_REREAD: secondmate %s: %s: %s\n' "$id" "$label" "$detail"
   return 1
 }
 
 # fm_config_reread_send_pointer <id> <instruction-path>
 fm_config_reread_send_pointer() {
-  local id=$1 instruction_path=$2 pending_path selector out rc send_bin message pending_pointer
+  local id=$1 instruction_path=$2 pending_path selector out rc result send_bin message pending_pointer
   pending_path="$instruction_path.pending"
   if [ ! -f "$instruction_path" ] || [ -L "$instruction_path" ]; then
     printf 'CONFIG_REREAD: secondmate %s: send failed: pending instruction file is missing\n' "$id"
@@ -773,11 +778,11 @@ fm_config_reread_send_pointer() {
   selector="fm-$id"
   send_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-send.sh"
   if [ ! -x "$send_bin" ]; then
-    fm_config_reread_send_failure "$id" "$instruction_path" "$pending_path" "fm-send.sh not executable at $send_bin"
+    fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send failed' "fm-send.sh not executable at $send_bin"
     return 1
   fi
   if [ -z "${FM_HOME:-}" ]; then
-    fm_config_reread_send_failure "$id" "$instruction_path" "$pending_path" "FM_HOME is not set"
+    fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send failed' "FM_HOME is not set"
     return 1
   fi
   message="CONFIG_REREAD: $instruction_path"
@@ -786,13 +791,21 @@ fm_config_reread_send_pointer() {
     FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-}" \
     FM_SEND_SETTLE="${FM_SEND_SETTLE:-0}" \
     "$send_bin" "$selector" "$message" 2>&1) && rc=0 || rc=$?
-  if [ "$rc" -eq 0 ]; then
+  result=$(fm_send_result "$rc")
+  if [ "$result" = delivered ]; then
     rm -f "$pending_path"
     return 0
   fi
   out=${out%%$'\n'*}
+  if [ "$result" = unconfirmed ]; then
+    # The pointer may already have landed, and re-reading a config pointer costs
+    # nothing, so this is reported as unknown rather than as a failure.
+    [ -n "$out" ] || out="delivery to $selector could not be confirmed"
+    fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send unconfirmed' "$out"
+    return 1
+  fi
   [ -n "$out" ] || out="fm-send exited $rc"
-  fm_config_reread_send_failure "$id" "$instruction_path" "$pending_path" "$out"
+  fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send failed' "$out"
   return 1
 }
 

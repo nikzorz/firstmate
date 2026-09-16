@@ -645,13 +645,17 @@ SH
     FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
 
-  assert_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send failed:" \
-    "stale herdr endpoint should surface a failed immediate nudge"
+  # The rotated endpoint accepts the text but its native agent-state never shows
+  # a turn starting, so the nudge is unconfirmed rather than proven undelivered.
+  assert_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send unconfirmed:" \
+    "an unconfirmed herdr nudge should surface as unconfirmed, not as a failure"
+  assert_not_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send failed:" \
+    "an unconfirmed herdr nudge must not be reported as a proven failure"
 
   window=$(grep '^window=' "$meta" | tail -1 | cut -d= -f2-)
   [ "$window" = "$fresh" ] || fail "respawn stub did not rotate meta window to '$fresh' (got '$window')"
   marker="$w/home/state/.secondmate-nudge-pending/sm-instr.pending"
-  assert_present "$marker" "failed stale herdr nudge should leave a retry marker"
+  assert_present "$marker" "an unconfirmed herdr nudge should leave a retry marker"
 
   # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
   resolved=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_resolve_selector fm-sm-instr "$1"' "$ROOT" "$w/home/state")
@@ -667,7 +671,7 @@ SH
     '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_send_literal "$1" "nudge"' "$ROOT" "$fresh" 2>/dev/null; printf '%s' "$?")
   [ "$fresh_send" = 0 ] || fail "send through fm-<id>-resolved fresh endpoint should succeed"
 
-  pass "T8b stale herdr nudge failures leave a retry marker after respawn rotates fm-<id> metadata"
+  pass "T8b unconfirmed herdr nudges leave a retry marker after respawn rotates fm-<id> metadata"
 }
 
 # --- T9: bootstrap surfaces a skipped dirty live secondmate home --------------

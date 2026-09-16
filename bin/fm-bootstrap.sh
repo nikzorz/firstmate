@@ -100,6 +100,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-send-result-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 
 fleet_sync_origin_backed_project_count() {
   local count proj
@@ -251,20 +253,24 @@ secondmate_sync() {
       echo "NUDGE_SECONDMATES: secondmate $id: send failed: cannot record retry marker"
       return 0
     fi
-    # fm-send's unconfirmed status means the nudge may already have landed, so
-    # report it as unconfirmed rather than failed (see its exit-status contract).
-    # The retry marker survives either way: this nudge only asks the secondmate
-    # to re-read its instructions, so a repeat costs nothing.
+    # An unconfirmed nudge may already have landed, so it is reported as
+    # unconfirmed rather than failed. The retry marker survives either way: this
+    # nudge only asks the secondmate to re-read its instructions, so a repeat
+    # costs nothing.
     send_status=0
     out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
-    if [ "$send_status" = 0 ]; then
-      rm -f "$marker"
-      echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
-    elif [ "$send_status" = 3 ]; then
-      echo "NUDGE_SECONDMATES: secondmate $id: send unconfirmed: $(first_line "$out")"
-    else
-      echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
-    fi
+    case "$(fm_send_result "$send_status")" in
+      delivered)
+        rm -f "$marker"
+        echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
+        ;;
+      unconfirmed)
+        echo "NUDGE_SECONDMATES: secondmate $id: send unconfirmed: $(first_line "$out")"
+        ;;
+      *)
+        echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
+        ;;
+    esac
   }
 
   fm_ff_after_instruction_update() {
@@ -273,7 +279,7 @@ secondmate_sync() {
   }
 
   secondmate_retry_pending_nudges() {
-    local marker id selector home commit message expected_marker meta meta_home home_real head
+    local marker id selector home commit message expected_marker meta meta_home home_real head out send_status
     [ -d "$SECOND_MATE_NUDGE_PENDING_DIR" ] || return 0
     for marker in "$SECOND_MATE_NUDGE_PENDING_DIR"/*.pending; do
       [ -f "$marker" ] || continue
@@ -319,12 +325,20 @@ secondmate_sync() {
         echo "NUDGE_SECONDMATES: secondmate $id: send failed: retry target is not at recorded instruction commit"
         continue
       }
-      if out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
-        rm -f "$marker"
-        echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
-      else
-        echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
-      fi
+      send_status=0
+      out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
+      case "$(fm_send_result "$send_status")" in
+        delivered)
+          rm -f "$marker"
+          echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
+          ;;
+        unconfirmed)
+          echo "NUDGE_SECONDMATES: secondmate $id: send unconfirmed: $(first_line "$out")"
+          ;;
+        *)
+          echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
+          ;;
+      esac
     done
   }
 
