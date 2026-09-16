@@ -14,6 +14,7 @@
 #                 "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
+#                 "NUDGE_SECONDMATES: secondmate <id>: send unconfirmed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
@@ -23,10 +24,16 @@
 #          or .agents/skills/) actually changed, bootstrap immediately nudges it
 #          via FM_HOME=<active-home> bin/fm-send.sh fm-<id> so meta resolves the
 #          current backend target and the standard from-firstmate marker is
-#          applied. A successful send prints one BOOTSTRAP_INFO line with the
-#          exact target and message sent; a failed send leaves an idempotent
-#          retry marker under state/.secondmate-nudge-pending/ and prints an
-#          actionable NUDGE_SECONDMATES line.
+#          applied.
+#          A confirmed send prints one BOOTSTRAP_INFO line with the exact target
+#          and message sent, and clears the idempotent retry marker under
+#          state/.secondmate-nudge-pending/.
+#          An unconfirmed send keeps that marker and prints the send unconfirmed
+#          NUDGE_SECONDMATES line, which is not a failure report: the nudge may
+#          already have landed, and it only asks that secondmate to re-read its
+#          instructions, so a repeat is harmless.
+#          A failed send keeps that marker and prints the send failed
+#          NUDGE_SECONDMATES line.
 #          Already-current or no-instruction-change homes are silently left alone.
 #          The secondmate sweep also propagates declared inherited local material
 #          into each validated live secondmate home.
