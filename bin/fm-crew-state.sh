@@ -98,11 +98,11 @@
 #      `resolved` never become current state or detail. A `done:` here is read
 #      against the done gate its recorded delivery mode defines
 #      (status_done_meets_delivery_gate, bin/fm-classify-lib.sh): on a PR-based
-#      ship mode the brief asks for that line as soon as implementation is
-#      committed, so with no pull request recorded or named it reports `blocked`,
-#      the state that says firstmate owes this crew the steer that carries it to
-#      delivery. The status stream is never rewritten - only this reading of it
-#      disagrees, and it agrees again once the pull request exists.
+#      ship mode, with no pull request recorded in the task record and none named
+#      anywhere in the status stream, it reports `blocked` - the state that says
+#      firstmate owes this crew the steer its mode calls for. The status stream is
+#      never rewritten - only this reading of it disagrees, and it agrees again
+#      once the pull request exists.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
@@ -1289,26 +1289,27 @@ fi
 # the verb->state mapping (including the configurable paused verb), so reusing its
 # `unknown` verdict as the "not a state" test needs no second verb list here.
 #
-# One thing the log CAN be read against is the gate the crew was briefed on. On a
-# PR-based delivery mode the brief asks for `done: {summary}` the moment
-# implementation is committed, so that line is a HANDOFF and firstmate owes the
-# steer that carries it to delivery. Until the pull request exists the task is
-# `blocked` on that steer, which is the word firstmate already reads as "this one
-# needs me" - not `done`, which would report a delivery that has not happened.
+# One thing the log CAN be read against is the gate the crew was briefed on. A
+# no-mistakes brief asks for `done: {summary}` as soon as implementation is
+# committed, so that line is the handoff it was told to write; a direct-PR brief
+# asks the crew to open the pull request itself first, so a bare `done:` there
+# has not reached its own done gate. Either way the pull request does not exist
+# and the task waits on firstmate, which is what `blocked` says - not `done`,
+# which would report a delivery that has not happened.
 # status_done_meets_delivery_gate (bin/fm-classify-lib.sh) owns the gate and
-# answers from the recorded `pr=` before the line's prose, so a crew whose pull
-# request firstmate already recorded still reads done however it worded the line
-# it wrote afterwards. Nothing rewrites the status stream, and nothing about the
-# crew's record needs repairing: what it wrote stays exactly as written, and the
-# next reading agrees once the pull request exists. Reached only in this run-less
-# fallback, because the run-step path above is authoritative wherever a run
-# exists and already demands a PR plus green checks of its own
-# (log_reports_ci_ready). The detail leads with the next move and stays inside
-# the bearings display budget recorded in docs/verification/supervision.md, so
-# what survives the cut is the action rather than its reason.
+# answers from the recorded `pr=`, then the line's prose, then the wider stream,
+# so a crew that recorded or announced its pull request still reads done however
+# it worded the line it wrote afterwards. Nothing rewrites the status stream:
+# what the crew wrote stays exactly as written, and the next reading agrees once
+# the pull request exists. Reached only in this run-less fallback, because the
+# run-step path above is authoritative wherever a run exists and already demands
+# a PR plus green checks of its own (log_reports_ci_ready). The detail leads with
+# the next move and stays inside the bearings display budget recorded in
+# docs/verification/supervision.md, so what survives the cut is the action rather
+# than its reason.
 if [ -n "$LOG_VERB" ]; then
   LOG_STATE=$(map_log_state "$LOG_LINE")
-  if ! status_done_meets_delivery_gate "$LOG_LINE" "$KIND" "$MODE" "$PR"; then
+  if ! status_done_meets_delivery_gate "$LOG_LINE" "$KIND" "$MODE" "$PR" "$LOG"; then
     emit blocked status-log \
       "needs the ${MODE:-no-mistakes} delivery steer: implementation handed off, no PR yet"
   fi

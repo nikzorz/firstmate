@@ -45,12 +45,14 @@ The detail names the step and why it is not advancing - either how long it has b
 Read the run's own logs for that step before touching the pane, and do not interrupt, exit, or relaunch the crew on this state alone.
 Report it to the captain as a validation that stopped making progress, with that detail as the evidence.
 
-A `blocked` state whose detail asks for a delivery steer is a handoff waiting on you, not a wedge and not a pipeline fault.
-The crew did exactly what its brief asks: it appended `done:` once the implementation was committed and stopped, and the next instruction is firstmate's to give.
-Nothing about its status record needs repairing, its work is intact, and the next reading agrees on its own once the pull request exists.
-Send the steer its delivery mode calls for in one line, and do not interrupt, exit, or relaunch it.
-For `no-mistakes`, that steer is to run `/no-mistakes`, which validates and ships the pull request for it; the crew must not push or open one itself.
-For `direct-PR`, that steer is to push its branch and open the pull request itself.
+A `blocked` state whose detail asks for a delivery steer means the crew reported done and its task has no pull request, so what it waits on is one line from you rather than a wedge or a pipeline fault.
+Which of the two modes it is decides what the crew has and has not already done, and the detail names the mode.
+For `no-mistakes`, the crew did exactly what its brief asks: it appended `done:` once the implementation was committed and stopped, and the next instruction is firstmate's to give.
+Steer it to run `/no-mistakes`, which validates and ships the pull request for it; the crew must not push or open one itself.
+For `direct-PR`, the brief asks the crew to push and open the pull request itself before reporting done, so a bare `done:` means it has not reached its own done gate yet.
+Steer it to push its branch and open the pull request, and read its answer: a crew that cannot get there has something to say, and `blocked:` is how it says it.
+Send that one line first in either case, and do not interrupt, exit, or relaunch on this state alone.
+Its work is intact, its status record needs no repairing, and the next reading agrees on its own once the pull request exists.
 
 Escalate in order:
 

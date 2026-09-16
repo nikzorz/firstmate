@@ -31,10 +31,10 @@
 #       prompt's own text quoted in tool output) never triggers it. The
 #       regression pair for the 2026-07-29 incident.
 #   (n) a `done:` read against its delivery mode's done gate: on a PR-based ship
-#       mode that line is the handoff the brief asks for, so with no pull request
-#       recorded or named it reads `blocked` on the delivery steer rather than
-#       done, while local-only and scout are untouched. The regression set for
-#       the three crews that handed off after a clean local gate on 2026-09-15.
+#       mode, with no pull request recorded and none named anywhere in the status
+#       stream, it reads `blocked` on the delivery steer rather than done, while
+#       local-only and scout are untouched. The regression set for the three
+#       crews that handed off after a clean local gate on 2026-09-15.
 #   (m) gate ownership and park episode on a parked run: which run shapes publish
 #       the two tokens the watcher's `deciding` absorb reads, plus that absorb
 #       decided over the REAL helper for the majority `fix_review` park - both
@@ -2649,9 +2649,42 @@ test_done_gate_honours_the_recorded_pull_request() {
     status_done_meets_delivery_gate "$line" ship direct-PR "$url" \
       || fail "a recorded pull request must satisfy the gate for: $line"
     status_done_meets_delivery_gate "$line" ship direct-PR \
-      && fail "with nothing recorded the line's own prose has to carry the URL: $line"
+      && fail "with nothing recorded and no stream to read, the line's own prose has to carry the URL: $line"
   done
   pass "a recorded pull request answers the gate ahead of the crew's own wording"
+}
+
+# A crew announces its pull request in one event and reports done in the next, so
+# the stream answers where neither the task record nor the last line does. This is
+# the same whole-file answer bin/fm-fleet-snapshot.sh gives the record's `pr` field.
+test_done_gate_honours_a_pull_request_announced_earlier() {
+  local d; d=$(new_case done-gate-stream)
+  local log="$d/announced.status"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$log"
+  status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR "" "$log" \
+    || fail "a pull request announced in an earlier event must satisfy the gate"
+  status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR \
+    && fail "without the stream the same line has nothing to answer with"
+
+  local quiet="$d/quiet.status"
+  {
+    printf 'working: implementing the fix\n'
+    printf 'done: local gate clean (check, build, 238 tests)\n'
+  } > "$quiet"
+  status_done_meets_delivery_gate "done: local gate clean (check, build, 238 tests)" ship no-mistakes "" "$quiet" \
+    && fail "a stream naming no pull request must not satisfy the gate"
+
+  local elsewhere="$d/elsewhere.status"
+  printf 'working: read https://example.invalid/docs/pull-requests first\ndone: implemented\n' > "$elsewhere"
+  status_done_meets_delivery_gate "done: implemented" ship no-mistakes "" "$elsewhere" \
+    && fail "a URL the recorder would refuse must not satisfy the gate"
+
+  status_done_meets_delivery_gate "done: implemented" ship no-mistakes "" "$d/never-written.status" \
+    && fail "an unreadable stream answers nothing and must not satisfy the gate"
+  pass "the gate reads the whole status stream when the record and the line are silent"
 }
 
 # With no URL parser there is nothing to read a payload against, so the predicate
@@ -2742,6 +2775,28 @@ test_no_run_idle_pane_done_with_recorded_pr_still_done() {
   pass "a recorded pull request keeps a bare done line reading done"
 }
 
+# The finding's own trace through the real reader: a direct-PR crew that opened
+# its pull request in an earlier event, whose `pr=` firstmate has not recorded yet,
+# and whose last line uses a bare completion wording.
+test_no_run_idle_pane_done_with_an_earlier_pr_announcement_still_done() {
+  reset_fakes
+  local d; d=$(new_case done-announced-pr)
+  make_repo_on_branch "$d/wt" fm/feat-annpr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-annpr.meta" \
+    "window=fm:fm-feat-annpr" "worktree=$d/wt" "kind=ship" "mode=direct-PR"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$d/state/feat-annpr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-annpr)
+  assert_contains "$out" "state: done" "a pull request announced earlier is still this task's delivery"
+  assert_not_contains "$out" "delivery steer" "so there is no steer left to ask for"
+  pass "a pull request announced in an earlier event keeps a bare done line reading done"
+}
+
 test_no_run_idle_pane_local_only_and_scout_done_untouched() {
   reset_fakes
   local d; d=$(new_case done-no-pr-modes)
@@ -2767,11 +2822,13 @@ test_deciding_class_over_the_real_helper
 
 test_done_gate_predicate_over_delivery_modes
 test_done_gate_honours_the_recorded_pull_request
+test_done_gate_honours_a_pull_request_announced_earlier
 test_done_gate_passes_when_the_pr_parser_is_unavailable
 test_no_run_idle_pane_done_without_pr_needs_the_delivery_steer
 test_no_run_idle_pane_direct_pr_done_without_pr_needs_the_delivery_steer
 test_no_run_idle_pane_done_with_pr_still_done
 test_no_run_idle_pane_done_with_recorded_pr_still_done
+test_no_run_idle_pane_done_with_an_earlier_pr_announcement_still_done
 test_no_run_idle_pane_local_only_and_scout_done_untouched
 
 echo "all fm-crew-state tests passed"

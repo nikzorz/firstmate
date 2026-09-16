@@ -439,26 +439,37 @@ status_is_paused_or_captain_held() {  # <status-line>
 
 # --- the done gate a delivery mode actually asks for -------------------------
 #
-# Every PR-based delivery mode finishes on a pull request, and the brief for one
-# asks the crew to append `done: {summary}` the moment implementation is
-# committed and stop, so that first `done:` is a HANDOFF rather than a finished
-# task. Three crews in a row wrote exactly that after a clean local gate, and
-# nothing between the crew and firstmate said the delivery had not happened yet.
-# This predicate is what says it: it agrees with the brief rather than
-# contradicting the crew, and it asks only whether the pull request exists yet.
+# Every PR-based delivery mode finishes on a pull request, but the two reach that
+# line from opposite ends. A no-mistakes brief asks for `done: {summary}` the
+# moment implementation is committed and stop, so its first `done:` is a HANDOFF
+# and the pipeline opens the pull request afterwards. A direct-PR brief asks the
+# crew to push and open the pull request ITSELF and only then append
+# `done: PR {url}`, so a bare `done:` there has not reached its own done gate
+# yet. Either way the task is waiting on firstmate and the pull request does not
+# exist, which is the one question this predicate asks.
+#
+# Three crews in a row wrote a no-mistakes handoff after a clean local gate and
+# nothing between them and firstmate said the delivery had not happened yet. This
+# predicate is what says it: it reads each line against the brief that line was
+# written under rather than against a single idea of what `done:` must carry.
 #
 # It never rewrites or suppresses the crew's line - the status stream keeps what
-# the crew wrote - and nothing about that record needs repairing. A crew that
-# genuinely cannot reach a pull request still says so with `blocked:`, which
-# stays a verb of its own.
+# the crew wrote - and a crew that genuinely cannot reach a pull request still
+# says so with `blocked:`, which stays a verb of its own.
 #
 # The check is deliberately narrow: it asks whether a pull request is PRESENT,
 # not whether it is the crew's own, is open, or has green checks. Presence is the
-# whole of what separates a handoff from a completed delivery, and a stronger
-# test would need the forge.
+# whole of what separates a delivered task from one still waiting on a steer, and
+# a stronger test would need the forge.
 FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT='no-mistakes direct-PR'
 
-# 0 when any word of <note> names a PR/MR URL. bin/fm-pr-lib.sh's fm_pr_url_parse
+# How many URL-bearing status lines the stream scan below reads. The scan runs on
+# every crew read, including the per-crew reads bin/fm-fleet-snapshot.sh makes, so
+# it is bounded rather than open: a task announces its pull request in one of its
+# first events, and a stream with more URL lines than this has already answered.
+FM_CLASSIFY_PR_SCAN_LINES_DEFAULT=64
+
+# 0 when any word of <prose> names a PR/MR URL. bin/fm-pr-lib.sh's fm_pr_url_parse
 # is the ONE owner of that shape for both supported forges, so this reuses it
 # rather than carrying a second regex that could accept a URL the recorder would
 # then refuse. Prose sets a URL inside a sentence, so a candidate is cut at its
@@ -469,33 +480,49 @@ FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT='no-mistakes direct-PR'
 # fm_classify_landing_route_armed uses one: a read-only probe must never clobber
 # FM_PR_* globals a caller is holding. Sourcing the library there once, rather
 # than per word, keeps that isolation off the per-word path.
-_fm_classify_note_names_pr_url() {  # <note>
+_fm_classify_prose_names_pr_url() {  # <prose>
   (
     # shellcheck source=bin/fm-pr-lib.sh
     . "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" || exit 1
-    local word candidate
+    local line word candidate
     local words=()
-    # A note is free prose that can carry a glob character, so it is split with
-    # `read -ra` rather than an unquoted expansion: word splitting is wanted
-    # here, pathname expansion against whatever happens to sit in the caller's
-    # directory is not.
-    read -ra words <<<"$1"
-    for word in ${words+"${words[@]}"}; do
-      case "$word" in
-        *https://*) candidate=https://${word#*https://} ;;
-        *http://*)  candidate=http://${word#*http://} ;;
-        *)          continue ;;
-      esac
-      while :; do
-        case "$candidate" in
-          *[.,\;:\)\]\>\"\']) candidate=${candidate%?} ;;
-          *) break ;;
+    while IFS= read -r line || [ -n "$line" ]; do
+      # Prose is free text that can carry a glob character, so it is split with
+      # `read -ra` rather than an unquoted expansion: word splitting is wanted
+      # here, pathname expansion against whatever happens to sit in the caller's
+      # directory is not.
+      read -ra words <<<"$line"
+      for word in ${words+"${words[@]}"}; do
+        case "$word" in
+          *https://*) candidate=https://${word#*https://} ;;
+          *http://*)  candidate=http://${word#*http://} ;;
+          *)          continue ;;
         esac
+        while :; do
+          case "$candidate" in
+            *[.,\;:\)\]\>\"\']) candidate=${candidate%?} ;;
+            *) break ;;
+          esac
+        done
+        fm_pr_url_parse "$candidate" && exit 0
       done
-      fm_pr_url_parse "$candidate" && exit 0
-    done
+    done <<<"$1"
     exit 1
   ) >/dev/null 2>&1
+}
+
+# 0 when <status-log> announces a PR/MR URL anywhere in its stream. The fixed
+# string pre-filter is what keeps this bounded: an ordinary status log carries no
+# URL at all and costs one grep, and only the lines that could answer are split
+# into words. It decides nothing about the URL's shape - fm_pr_url_parse above
+# still owns that.
+_fm_classify_stream_names_pr_url() {  # <status-log>
+  local log=$1 lines
+  [ -f "$log" ] || return 1
+  lines=$(grep -F -m "${FM_CLASSIFY_PR_SCAN_LINES:-$FM_CLASSIFY_PR_SCAN_LINES_DEFAULT}" \
+    '://' "$log" 2>/dev/null) || return 1
+  [ -n "$lines" ] || return 1
+  _fm_classify_prose_names_pr_url "$lines"
 }
 
 # 0 when a status line satisfies the done gate its task's delivery mode defines,
@@ -503,10 +530,13 @@ _fm_classify_note_names_pr_url() {  # <note>
 # about any status line without pre-screening the verb: anything but a `done:` on
 # a PR-based ship task has no claim to contradict and passes.
 #
-# <recorded-pr> is the pull request the system already holds for this task, and
-# it answers FIRST: a crew whose pull request firstmate recorded has delivered,
-# however it worded the line it wrote afterwards. Only with nothing recorded does
-# the line's own prose have to carry the URL.
+# Three sources answer "does this task have a pull request", cheapest first, and
+# any one of them is enough. <recorded-pr> is the one the system already holds,
+# so a crew whose pull request firstmate recorded has delivered however it worded
+# the line it wrote afterwards. The line's own prose is next. <status-log> is
+# last and widest: a crew that announced its pull request in an EARLIER event has
+# delivered too, which is the same answer bin/fm-fleet-snapshot.sh's own
+# first_pr_url_in_file gives the `.pr` field from the same file.
 #
 # An absent <kind> reads as `ship` and an absent <mode> as `no-mistakes`, the
 # defaults bin/fm-spawn.sh writes into the task record and bin/fm-project-mode.sh
@@ -516,8 +546,8 @@ _fm_classify_note_names_pr_url() {  # <note>
 # same reason an absent bin/fm-pr-lib.sh passes: with no URL parser there is
 # nothing to read the payload against, which is the decline
 # fm_classify_landing_route_armed makes on that same missing file.
-status_done_meets_delivery_gate() {  # <status-line> <kind> <mode> [<recorded-pr>]
-  local line=$1 kind=${2:-ship} mode=${3:-no-mistakes} recorded_pr=${4:-}
+status_done_meets_delivery_gate() {  # <status-line> <kind> <mode> [<recorded-pr>] [<status-log>]
+  local line=$1 kind=${2:-ship} mode=${3:-no-mistakes} recorded_pr=${4:-} log=${5:-}
   [ "$(status_line_verb "$line")" = "done" ] || return 0
   [ "$kind" = ship ] || return 0
   case " ${FM_CLASSIFY_PR_DELIVERY_MODES:-$FM_CLASSIFY_PR_DELIVERY_MODES_DEFAULT} " in
@@ -526,7 +556,9 @@ status_done_meets_delivery_gate() {  # <status-line> <kind> <mode> [<recorded-pr
   esac
   [ -z "$recorded_pr" ] || return 0
   [ -f "$_FM_CLASSIFY_LIB_DIR/fm-pr-lib.sh" ] || return 0
-  _fm_classify_note_names_pr_url "$(status_line_note "$line")"
+  _fm_classify_prose_names_pr_url "$(status_line_note "$line")" && return 0
+  [ -n "$log" ] || return 1
+  _fm_classify_stream_names_pr_url "$log"
 }
 
 # --- durable keyed decisions ------------------------------------------------
