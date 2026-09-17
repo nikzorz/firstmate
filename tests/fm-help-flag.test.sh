@@ -19,8 +19,11 @@ set -u
 
 HELP_BUDGET_SECS=30
 
-REPO_STATE_BEFORE=absent
-[ -e "$ROOT/state" ] && REPO_STATE_BEFORE=present
+repo_state_listing() {
+  find "$ROOT/state" 2>/dev/null | LC_ALL=C sort
+}
+
+REPO_STATE_BEFORE=$(repo_state_listing)
 
 HELP_HOME=$(fm_test_tmproot fm-help-flag)
 mkdir -p "$HELP_HOME/state" "$HELP_HOME/data" "$HELP_HOME/config" "$HELP_HOME/projects"
@@ -63,34 +66,60 @@ entrypoints() {
 
 # Every home-derived path a helper can resolve points into <home>, so a helper
 # that works before it reads its flag cannot reach an operator's real home.
-run_help() {  # <home> <basename> <flag>
+run_help() {  # <home> <program> <flag>
   FM_HOME="$1" \
   FM_STATE_OVERRIDE="$1/state" \
   FM_DATA_OVERRIDE="$1/data" \
   FM_CONFIG_OVERRIDE="$1/config" \
   FM_PROJECTS_OVERRIDE="$1/projects" \
-    fm_test_timeout "$HELP_BUDGET_SECS" "$ROOT/bin/$2" "$3" 2>&1
+    fm_test_timeout "$HELP_BUDGET_SECS" "$2" "$3" 2>&1
 }
 
-# bin/fm-afk-launch.sh takes the launcher lock, creating its state directory,
-# before it dispatches -h, so it shows the sandbox absorbing a real write rather
-# than the sweep merely assuming one cannot escape.
+# A stand-in helper that resolves its home the way bin/ helpers do and writes
+# before it reads its flag. Owning one keeps the proof that the sandbox holds
+# such a write independent of any real helper's argument ordering, which is free
+# to improve.
+write_before_help_fixture() {  # <dir>
+  local path="$1/bin/fm-pre-help-writer.sh"
+  mkdir -p "$1/bin"
+  cat > "$path" <<'SH'
+#!/usr/bin/env bash
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+mkdir -p "$STATE"
+: > "$STATE/pre-help-write"
+case "${1:-}" in
+  -h|--help) printf 'usage: %s\n' "${0##*/}"; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$path"
+  printf '%s\n' "$path"
+}
+
 test_pre_help_writes_land_in_the_sandbox_home() {
-  local home out rc
-  home=$(fm_test_tmproot fm-help-flag-probe)
-  out=$(run_help "$home" fm-afk-launch.sh --help)
+  local home fixture_root fixture out rc
+  home=$(fm_test_tmproot fm-help-flag-probe-home)
+  fixture_root=$(fm_test_tmproot fm-help-flag-probe-root)
+  fixture=$(write_before_help_fixture "$fixture_root")
+  out=$(run_help "$home" "$fixture" --help)
   rc=$?
-  [ "$rc" -eq 0 ] || fail "bin/fm-afk-launch.sh --help exited $rc: $out"
-  assert_present "$home/state" \
-    "bin/fm-afk-launch.sh --help must resolve its state directory from the sandbox home"
-  pass "a helper that writes before its flag check writes into the sandbox home"
+  [ "$rc" -eq 0 ] || fail "the pre-help writer exited $rc: $out"
+  assert_present "$home/state/pre-help-write" \
+    "a write made before the flag check must land in the sandbox home"
+  assert_absent "$fixture_root/state" \
+    "a write made before the flag check reached the default home instead of the sandbox"
+  pass "a write made before the flag check lands in the sandbox home"
 }
 
 test_every_entrypoint_prints_usage_and_exits_zero() {
   local base flag out rc
   while IFS= read -r base; do
     for flag in --help -h; do
-      out=$(run_help "$HELP_HOME" "$base" "$flag")
+      out=$(run_help "$HELP_HOME" "$ROOT/bin/$base" "$flag")
       rc=$?
       [ "$rc" -eq 0 ] || fail "bin/$base $flag exited $rc: $out"
       [ -n "$out" ] || fail "bin/$base $flag printed nothing"
@@ -103,7 +132,7 @@ test_every_entrypoint_prints_usage_and_exits_zero() {
 test_reported_helpers_answer_instead_of_rejecting() {
   local script out
   for script in fm-pr-merge.sh fm-promote.sh; do
-    out=$(run_help "$HELP_HOME" "$script" --help) || fail "bin/$script --help exited nonzero"
+    out=$(run_help "$HELP_HOME" "$ROOT/bin/$script" --help) || fail "bin/$script --help exited nonzero"
     assert_contains "$out" "Usage: $script" "bin/$script --help must print its documented usage line"
   done
   pass "fm-pr-merge.sh and fm-promote.sh answer --help with their usage line"
@@ -120,11 +149,17 @@ test_exemptions_still_exist() {
 }
 
 test_sweep_never_touched_the_repo_home() {
-  local now=absent
-  [ -e "$ROOT/state" ] && now=present
-  [ "$now" = "$REPO_STATE_BEFORE" ] \
-    || fail "the sweep changed $ROOT/state; helpers resolved the live home instead of the sandbox"
-  pass "the sweep leaves this repo's own state directory as it found it"
+  local path gained=
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case $'\n'"$REPO_STATE_BEFORE"$'\n' in
+      *$'\n'"$path"$'\n'*) ;;
+      *) gained="$gained $path" ;;
+    esac
+  done <<< "$(repo_state_listing)"
+  [ -z "$gained" ] \
+    || fail "the sweep created$gained; helpers resolved the live home instead of the sandbox"
+  pass "the sweep adds nothing to this repo's own state directory"
 }
 
 test_pre_help_writes_land_in_the_sandbox_home
