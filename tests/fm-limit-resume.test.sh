@@ -451,7 +451,10 @@ set -u
 if [ "${FM_FAKE_SEND_FAILS:-0}" = 1 ]; then exit 1; fi
 printf '%s\n' "$*" >> "${FM_FAKE_SENDLOG:?}"
 if [ "${FM_FAKE_SEND_UNCONFIRMED:-0}" = 1 ]; then exit "$FM_SEND_EXIT_UNCONFIRMED"; fi
-if [ "${FM_FAKE_SEND_UNCOMMITTED:-0}" = 1 ]; then exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"; fi
+if [ "${FM_FAKE_SEND_UNCOMMITTED:-0}" = 1 ]; then
+  printf 'error: text was delivered to %s, but its pending-reply delivery commit failed. Do not resend.\n' "$1" >&2
+  exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"
+fi
 exit 0
 SH
   chmod +x "$d/bin/fm-send.sh"
@@ -824,7 +827,9 @@ test_delivered_but_uncommitted_steer_is_treated_as_delivered() {
   esac
   assert_contains "$last" "the crew re-steered" \
     "a delivered steer should record the re-steer it proved"
-  pass "a delivered steer whose bookkeeping write failed closes the wait like any delivery"
+  assert_contains "$out" "pending-reply delivery commit" \
+    "fm-send's account of the broken durable state must reach the operator"
+  pass "a delivered steer whose bookkeeping write failed closes the wait and still reports the breakage"
 }
 
 # The end the whole feature turns on: the recorded wait carries the reset time,

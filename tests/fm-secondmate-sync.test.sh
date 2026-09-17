@@ -636,7 +636,11 @@ test_bootstrap_nudge_delivered_but_uncommitted_is_not_a_failure() {
   assert_not_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: send unconfirmed:" \
     "a confirmed submit must not be reported as unconfirmed"
   assert_absent "$marker" "a nudge that landed must not keep a retry marker that re-sends it"
-  pass "T8h a delivered nudge whose bookkeeping write failed clears its retry marker"
+  assert_contains "$out" "NUDGE_SECONDMATES: secondmate sm-instr: delivered, bookkeeping incomplete:" \
+    "the broken durable state should reach the operator as an actionable line"
+  assert_contains "$out" "pending-reply delivery commit" \
+    "the actionable line should carry fm-send's own account of what was not written"
+  pass "T8h a delivered nudge whose bookkeeping write failed clears its marker and still reports the breakage"
 }
 
 # --- T8b: stale herdr nudge failures retry through current fm-<id> metadata ---

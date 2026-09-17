@@ -1842,7 +1842,11 @@ test_config_reread_delivered_but_uncommitted_is_not_a_failure() {
     "a confirmed submit must not be reported as unconfirmed"
   assert_absent "$path.pending" \
     "a pointer that landed must not stay pending for a redelivery"
-  pass "B28 a delivered config reread pointer whose bookkeeping write failed clears its marker"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: delivered, bookkeeping incomplete:" \
+    "the broken durable state should reach the operator as an actionable line"
+  assert_contains "$out" "pending-reply delivery commit" \
+    "the actionable line should carry fm-send's own account of what was not written"
+  pass "B28 a delivered config reread pointer whose bookkeeping write failed clears its marker and still reports the breakage"
 }
 
 test_config_reread_stops_after_failed_generation() {
