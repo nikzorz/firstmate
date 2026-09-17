@@ -47,13 +47,17 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
-  echo "usage: fm-x-link.sh <task-id> <request_id> [--carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]]" >&2
+  echo "usage: fm-x-link.sh <task-id> <request_id> [--carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]]"
 }
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
 
 ID=${1:-}
 RID=${2:-}
 if [ -z "$ID" ] || [ -z "$RID" ]; then
-  usage
+  usage >&2
   exit 2
 fi
 shift 2
@@ -95,7 +99,7 @@ while [ "$#" -gt 0 ]; do
         *) [ "$CARRY_MAX" -ge 50 ] 2>/dev/null || { echo "fm-x-link: --carry-max needs an integer of at least 50" >&2; exit 2; } ;;
       esac
       ;;
-    *) usage; exit 2 ;;
+    *) usage >&2; exit 2 ;;
   esac
   shift
 done

@@ -38,12 +38,16 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 
 usage() {
-  echo "usage: fm-x-dismiss.sh <request_id>" >&2
+  echo "usage: fm-x-dismiss.sh <request_id>"
 }
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
 
 REQ=${1:-}
 if [ -z "$REQ" ] || [ "$#" -gt 1 ]; then
-  usage
+  usage >&2
   exit 2
 fi
 

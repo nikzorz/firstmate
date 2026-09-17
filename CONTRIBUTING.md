@@ -44,6 +44,8 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   It does not make `data/` tracked.
 - Helper scripts in `bin/` are plain bash.
   Each starts with a usage header comment; keep it accurate when you change behavior.
+  Each entrypoint must also answer `--help` and `-h` with its usage and exit 0, before it consumes `$1` as an identifier.
+  `tests/fm-help-flag.test.sh` enforces the flag, skips the sourced libraries that have no command line of their own, and owns the short exemption list.
   Test scripts and helpers in `tests/` are plain bash too.
   `bin/fm-lint.sh` must pass: it is the single owner of the lint definition (the shellcheck file set, config, and pinned shellcheck version), and both CI and the no-mistakes pre-push gate run it, so local and CI can never diverge.
   It pins one exact shellcheck version and refuses to run under any other; print it with `bin/fm-lint.sh --required-version` and install that build locally.

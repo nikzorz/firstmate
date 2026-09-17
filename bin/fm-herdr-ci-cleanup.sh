@@ -16,6 +16,18 @@
 #   fm-herdr-ci-cleanup.sh teardown <snapshot-path>
 set -eu
 
+usage() {
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 die() {
   printf 'fm-herdr-ci-cleanup.sh: %s\n' "$*" >&2
   exit 1

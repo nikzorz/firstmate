@@ -76,6 +76,25 @@ fm_test_tmproot() {
   printf '%s\n' "$root"
 }
 
+# --- bounded command execution ----------------------------------------------
+#
+# fm_test_timeout <seconds> <command...> bounds a command's wall clock where the
+# host offers a bound. GNU coreutils `timeout` is absent from a stock macOS
+# PATH, so Homebrew's `gtimeout` is tried next and the command otherwise runs
+# unbounded: a missing bound must not surface as the command's own failure.
+
+fm_test_timeout() {
+  local seconds=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 # --- fakebin / PATH shims ---------------------------------------------------
 #
 # fm_fakebin <dir> creates <dir>/fakebin and echoes it; prepend it to PATH to

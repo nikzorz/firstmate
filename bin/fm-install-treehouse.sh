@@ -12,6 +12,18 @@
 # Pins Treehouse v2.0.1, the version exercised by the local real-Herdr suite.
 set -eu
 
+usage() {
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 FM_TREEHOUSE_CI_VERSION=2.0.1
 FM_TREEHOUSE_CI_TAG="v${FM_TREEHOUSE_CI_VERSION}"
 # Bounded download ceiling (bytes). Official 2.0.1 archives are under 8 MiB.
