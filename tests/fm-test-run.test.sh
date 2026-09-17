@@ -445,6 +445,125 @@ test_ci_and_docs_call_the_owner() {
   pass "CI and CONTRIBUTING call the one-owner runner; no full-suite local Test"
 }
 
+# Prints one file per shell step of <job> into <outdir>, named <ordinal>.run and
+# holding that step's dedented run body, so a step can be executed rather than
+# pattern-matched.
+ci_job_shell_steps() {
+  local job=$1 outdir=$2
+  awk -v job="$job" -v outdir="$outdir" '
+    inrun {
+      if ($0 ~ /^          /) { print substr($0, 11) > (outdir "/" run_n ".run"); next }
+      if ($0 ~ /^[[:space:]]*$/) { print "" > (outdir "/" run_n ".run"); next }
+      inrun = 0
+    }
+    /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { injob = ($0 == "  " job ":"); next }
+    !injob { next }
+    /^      - / { step++ }
+    /^        run: \|[[:space:]]*$/ { inrun = 1; run_n = step; printf "" > (outdir "/" step ".run") }
+  ' "$CI"
+}
+
+# Writes a python3 stub reporting <version> whose module imports exit <import_rc>.
+fake_python3() {
+  local dir=$1 version=$2 import_rc=$3
+  mkdir -p "$dir"
+  cat > "$dir/python3" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  --version) echo "Python $version"; exit 0 ;;
+esac
+exit $import_rc
+SH
+  chmod +x "$dir/python3"
+}
+
+# The lane that carries tests/fm-kimi-harness.test.sh needs an interpreter whose
+# stdlib has tomllib, so its CI job must assert that capability before the lane
+# runs instead of inheriting whatever the runner image ships.
+test_ci_lane_declares_the_interpreter_capability_its_coverage_needs() {
+  local kimi='tests/fm-kimi-harness.test.sh' lane='' job dir f n guard='' lane_step='' out rc expected
+  for n in $("$RUNNER" --list-lanes); do
+    if "$RUNNER" --list --lane "$n" 2>/dev/null | grep -Fqx "$kimi"; then
+      lane=$n
+      break
+    fi
+  done
+  [ -n "$lane" ] || fail "no lane carries $kimi"
+  job=$(awk -v lane="$lane" '
+    /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { job=$0; sub(/^  /, "", job); sub(/:[[:space:]]*$/, "", job) }
+    {
+      n = index($0, "--lane ")
+      if (n > 0) {
+        split(substr($0, n + 7), arg, /[ \t\\]/)
+        if (arg[1] == lane) { print job; exit }
+      }
+    }
+  ' "$CI")
+  [ -n "$job" ] || fail "no CI job runs --lane $lane"
+
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-ci-interpreter-floor.XXXXXX")
+  mkdir -p "$dir/steps"
+  ci_job_shell_steps "$job" "$dir/steps"
+  for f in "$dir"/steps/*.run; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f" .run)
+    if grep -Fq -- "--lane $lane" "$f"; then
+      lane_step=$n
+      continue
+    fi
+    grep -Fq 'python3' "$f" && guard=$n
+  done
+  [ -n "$lane_step" ] || fail "job $job has no step running --lane $lane"
+  [ -n "$guard" ] || fail "job $job asserts no interpreter before running --lane $lane"
+  [ "$guard" -lt "$lane_step" ] \
+    || fail "interpreter assertion must precede the lane run in job $job"
+  guard="$dir/steps/$guard.run"
+
+  fake_python3 "$dir/has-tomllib" 3.10.14 0
+  fake_python3 "$dir/no-tomllib" 3.99.0 1
+  mkdir -p "$dir/no-python3"
+
+  # An interpreter below any plausible version floor still passes when it can
+  # import tomllib: the capability is the gate, so no version literal lives in
+  # CI to drift from the refusal in bin/fm-kimi-turnend-hook.sh.
+  set +e
+  out=$(PATH="$dir/has-tomllib:$PATH" "$BASH" "$guard" 2>&1)
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "interpreter with tomllib must pass: $out"
+
+  # A newer interpreter without tomllib is refused all the same.
+  set +e
+  out=$(PATH="$dir/no-tomllib:$PATH" "$BASH" "$guard" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "interpreter without tomllib must fail: $out"
+  assert_contains "$out" '::error::' "refusal must surface as a CI annotation"
+  assert_contains "$out" 'bin/fm-kimi-turnend-hook.sh' \
+    "annotation must name the file that requires tomllib"
+
+  set +e
+  out=$(PATH="$dir/no-python3" "$BASH" "$guard" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "missing python3 must fail: $out"
+  assert_contains "$out" '::error::' "missing python3 must surface as a CI annotation"
+
+  # On the host actually running this suite the assertion agrees with reality.
+  if python3 -c 'import tomllib' >/dev/null 2>&1; then
+    expected=0
+  else
+    expected=1
+  fi
+  set +e
+  out=$("$BASH" "$guard" 2>&1)
+  rc=$?
+  set -e
+  expect_code "$expected" "$rc" "assertion disagrees with this host's python3: $out"
+  rm -rf "$dir"
+  pass "CI job $job asserts the tomllib capability before running --lane $lane"
+}
+
 test_portable_shard_union_and_coverage_guard() {
   local s1 s2 proven serial herdr all_count union_count overlap out first
   s1=$("$RUNNER" --list --lane portable-parallel-1)
@@ -703,6 +822,7 @@ test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
 test_ci_and_docs_call_the_owner
+test_ci_lane_declares_the_interpreter_capability_its_coverage_needs
 test_portable_shard_union_and_coverage_guard
 test_portable_shard_docs_match_lanes
 test_jobs_requires_proven_isolated
