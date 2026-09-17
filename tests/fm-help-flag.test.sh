@@ -69,13 +69,20 @@ entrypoints() {
 
 # Every home-derived path a helper can resolve points into <home>, so a helper
 # that works before it reads its flag cannot reach an operator's real home.
+in_sandbox_home() {  # <home> <command...>
+  local home=$1
+  shift
+  FM_HOME="$home" \
+  FM_STATE_OVERRIDE="$home/state" \
+  FM_DATA_OVERRIDE="$home/data" \
+  FM_CONFIG_OVERRIDE="$home/config" \
+  FM_PROJECTS_OVERRIDE="$home/projects" \
+    fm_test_timeout "$HELP_BUDGET_SECS" "$@"
+}
+
+# The sweep asks only whether the flag is answered, so it merges both streams.
 run_help() {  # <home> <program> <flag>
-  FM_HOME="$1" \
-  FM_STATE_OVERRIDE="$1/state" \
-  FM_DATA_OVERRIDE="$1/data" \
-  FM_CONFIG_OVERRIDE="$1/config" \
-  FM_PROJECTS_OVERRIDE="$1/projects" \
-    fm_test_timeout "$HELP_BUDGET_SECS" "$2" "$3" 2>&1
+  in_sandbox_home "$1" "$2" "$3" 2>&1
 }
 
 # A stand-in helper that resolves its home the way bin/ helpers do and writes
@@ -141,6 +148,32 @@ test_reported_helpers_answer_instead_of_rejecting() {
   pass "fm-pr-merge.sh and fm-promote.sh answer --help with their usage line"
 }
 
+# bin/fm-x-dismiss.sh and bin/fm-x-link.sh answer the flag through the same
+# usage() their argument error uses, so for these two the stream is the whole
+# question: an operator keeps the text with `fm-x-dismiss.sh --help > notes.txt`
+# and still wants a genuine usage error where errors belong. The sweep merges
+# both streams and so cannot tell the two apart.
+test_shared_usage_helpers_answer_on_stdout() {
+  local base out err rc
+  for base in fm-x-dismiss.sh fm-x-link.sh; do
+    out=$(in_sandbox_home "$HELP_HOME" "$ROOT/bin/$base" --help 2>/dev/null)
+    rc=$?
+    expect_code 0 "$rc" "bin/$base --help"
+    [ -n "$out" ] || fail "bin/$base --help wrote nothing to stdout, so redirecting it to a file keeps an empty file"
+    err=$(in_sandbox_home "$HELP_HOME" "$ROOT/bin/$base" --help 2>&1 >/dev/null)
+    [ -z "$err" ] || fail "bin/$base --help wrote to stderr: $err"
+
+    out=$(in_sandbox_home "$HELP_HOME" "$ROOT/bin/$base" 2>/dev/null)
+    rc=$?
+    expect_code 2 "$rc" "bin/$base with no arguments"
+    [ -z "$out" ] || fail "bin/$base with no arguments wrote its usage error to stdout: $out"
+    err=$(in_sandbox_home "$HELP_HOME" "$ROOT/bin/$base" 2>&1 >/dev/null)
+    assert_contains "$err" "usage: $base" \
+      "bin/$base with no arguments must still fail with its usage error on stderr"
+  done
+  pass "the helpers that share usage() with their error path send help to stdout and errors to stderr"
+}
+
 # The exemption list must stay a statement about current reality, not a place
 # defects can be parked: every exempt helper must still exist.
 test_permanent_exemptions_still_exist() {
@@ -184,6 +217,7 @@ test_sweep_never_touched_the_repo_home() {
 test_pre_help_writes_land_in_the_sandbox_home
 test_every_entrypoint_answers_help_and_exits_zero
 test_reported_helpers_answer_instead_of_rejecting
+test_shared_usage_helpers_answer_on_stdout
 test_permanent_exemptions_still_exist
 test_pending_exemptions_still_reject_help
 test_sweep_never_touched_the_repo_home
