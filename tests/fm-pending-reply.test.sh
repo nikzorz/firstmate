@@ -547,14 +547,18 @@ test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
     fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: recovery completing tick failed"
     [ "$(phase_of "$state" "$corr")" = escalated ] \
       || fail "$corr: a missed recovery turn should escalate, got $(phase_of "$state" "$corr")"
-    grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$corr" "$state/hibit.status" \
-      || fail "$corr: escalation should name the missed report"
     fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: repeat tick failed"
     escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
     [ "${escalated:-0}" = 1 ] || fail "$corr: escalation should publish exactly once, got ${escalated:-0}"
     sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
     [ "${sent:-0}" = 1 ] || fail "$corr: recovery transport must be attempted exactly once"
   done
+
+  # One flow, and each escalation names what its own record proved.
+  grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$confirmed" "$state/hibit.status" \
+    || fail "a confirmed delivery should escalate as a missed report"
+  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unknown" "$state/hibit.status" \
+    || fail "a delivery that was never confirmed should escalate as an unknown delivery"
 
   # An endpoint the watcher cannot classify can never produce turn evidence, so
   # the unknown delivery must still reach the captain exactly once.
@@ -600,6 +604,68 @@ test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
   unset FM_PENDING_REPLY_SEND_HOOK
   unset FM_ALIGNED_HOOK_LOG
   pass "an unknown delivery takes the same one-recovery, one-escalation flow as a confirmed one"
+}
+
+# One flow means one bound: an endpoint that dies mid-turn stops producing the
+# turn evidence the flow waits on, so the request reaches the captain whether or
+# not its delivery was ever confirmed.
+test_an_endpoint_that_dies_mid_turn_still_reaches_the_captain() {
+  local home state hook_log confirmed unknown corr escalated
+  home=$(setup_parent endpoint-dies)
+  state="$home/state"
+  hook_log="$home/recovery.log"
+  : > "$hook_log"
+  # shellcheck disable=SC2030,SC2031
+  export FM_PENDING_REPLY_NOW=8000
+  export FM_DIES_HOOK_LOG="$hook_log"
+  dies_recovery_hook() { printf '%s\n' "$2" >> "$FM_DIES_HOOK_LOG"; return 0; }
+  export -f dies_recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=dies_recovery_hook
+
+  confirmed=$(fm_pending_reply_create "$home" "$state" hibit "confirmed then orphaned")
+  fm_pending_reply_mark_delivered "$state" "$confirmed"
+  unknown=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed then orphaned")
+  fm_pending_reply_prepare_delivery "$state" "$unknown" \
+    || fail "the unconfirmed delivery attempt should persist"
+
+  for corr in "$confirmed" "$unknown"; do
+    # The secondmate is genuinely mid-turn, so the endpoint reads busy once.
+    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: busy tick failed"
+    [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" turn_seen_busy)" = 1 ] \
+      || fail "$corr: the running turn should have been observed"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 0 ] || fail "$corr: escalated while the turn was still observable"
+
+    # The window dies mid-turn: no further reading is possible, and the turn the
+    # flow is waiting on never completes.
+    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: dead-endpoint tick failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "$corr: a dead endpoint mid-turn should escalate, got $(phase_of "$state" "$corr")"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 1 ] || fail "$corr: should reach the captain exactly once, got ${escalated:-0}"
+    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: repeat dead-endpoint tick failed"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 1 ] || fail "$corr: a dead endpoint must not re-escalate"
+    [ "$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)" = 0 ] \
+      || fail "$corr: a dead endpoint must not be sent a recovery request"
+    [ -f "$(fm_pending_reply_path "$state" "$corr")" ] \
+      || fail "$corr: the unresolved record must be retained"
+  done
+
+  grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$confirmed" "$state/hibit.status" \
+    || fail "a confirmed delivery orphaned mid-turn should escalate as a missed report"
+  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unknown" "$state/hibit.status" \
+    || fail "a delivery never confirmed should escalate as an unknown delivery"
+
+  # A correlated late report still wins after either escalation.
+  printf 'done [corr=%s]: late report\n' "$unknown" >> "$state/hibit.status"
+  fm_pending_reply_tick_one "$state" "$unknown" unknown || fail "late-report tick failed"
+  [ "$(phase_of "$state" "$unknown")" = resolved ] \
+    || fail "a late correlated report should still resolve an escalated record"
+
+  unset FM_PENDING_REPLY_SEND_HOOK
+  unset FM_DIES_HOOK_LOG
+  pass "an endpoint that dies mid-turn escalates once on both delivery paths"
 }
 
 test_unrelated_and_stale_corr_cannot_resolve() {
@@ -1099,6 +1165,7 @@ test_transport_success_is_not_reply_success
 test_undelivered_records_are_scan_immutable
 test_delivery_confirmation_fallback_reconciles
 test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one
+test_an_endpoint_that_dies_mid_turn_still_reaches_the_captain
 test_unrelated_and_stale_corr_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged
