@@ -336,9 +336,11 @@ The locked session-start bootstrap step also runs the guarded local secondmate s
 It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason, inheritance failed, or a divergent shared captain-preference copy was quarantined.
 When a running home advances and its loaded instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed, bootstrap sends the re-read nudge itself through the stable `fm-<id>` selector and reports the exact completed send as `BOOTSTRAP_INFO:`.
 If that send fails, bootstrap keeps an idempotent retry marker and emits `NUDGE_SECONDMATES:` with the failure reason.
+A send whose delivery could not be confirmed keeps the same marker but emits `NUDGE_SECONDMATES:` as `send unconfirmed:`, because that nudge may already have landed.
+A send that landed but whose pending-reply bookkeeping write failed clears the marker, so it is never repeated, and emits `NUDGE_SECONDMATES:` as `delivered, bookkeeping incomplete:` carrying the reason that says which write failed; [`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns how to handle each line.
 The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails; already-live and successfully relaunched secondmates are handled silently.
 For a mid-session inherited local-material edit where tracked-file sync is not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `herdr-presentation-spaces`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or config-reread send failures.
+It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `herdr-presentation-spaces`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or a config-reread pointer whose delivery it could not confirm.
 When an allowlisted config item changes for an already-running home, it sends the literal-content reread pointer described in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); unchanged allowlisted config sends no pointer unless a previous delivery is pending.
 The locked bootstrap inheritance pass uses the same per-home changed-set and reread path for already-running homes; see `secondmate-provisioning` for the single contract owner.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
@@ -524,8 +526,8 @@ FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0
 GROK_HOME=              # optional Grok config home for firstmate's global grok turn-end hook; defaults to ~/.grok
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
-FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables
-FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost
+FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables, and an unusable value is reported on stderr and replaced by the default rather than changing what the send reports
+FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost; a request whose delivery was never confirmed ages on the same grace before it escalates as unknown
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
 FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected

@@ -12,6 +12,10 @@ set -u
 
 DAEMON="$ROOT/bin/fm-supervise-daemon.sh"
 AFK_START="$ROOT/bin/fm-afk-start.sh"
+# The fm-send exit-status assertions below go through the same reader every
+# caller uses, so no test re-hard-codes a status number.
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$ROOT/bin/fm-send-result-lib.sh"
 # Source the daemon's pure functions once. Its main loop is skipped under sourcing
 # via a BASH_SOURCE guard, so only classify_*/housekeeping/escalate_*/afk_* and the
 # pane/submit helpers become defined.
@@ -2216,40 +2220,88 @@ test_inject_wedge_alarm_throttles_when_marker_cannot_be_written() {
   pass "in-process wedge throttle prevents alert spam when the marker cannot persist"
 }
 
-test_fm_send_exits_nonzero_on_confirmed_swallow() {
-  # fm-send.sh must exit NON-ZERO when a steer's Enter is positively swallowed
-  # (text left in the composer), so firstmate learns the instruction did not land
-  # — and exit ZERO on a clean submit.
-  local dir fakebin err
+test_fm_send_exits_nonzero_on_unconfirmed_submit() {
+  # fm-send.sh must exit NON-ZERO when a steer's submit cannot be confirmed, so
+  # firstmate never assumes the instruction landed — and exit ZERO on a clean
+  # submit.
+  local dir fakebin err status
   dir=$(make_bordered_case send-swallow)
   fakebin="$dir/fakebin"; err="$dir/send.err"
   # Clean submit -> exit 0.
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
     FM_SEND_SLEEP=0.05 "$ROOT/bin/fm-send.sh" sess:win 'route this work' >/dev/null 2>"$err" \
     || fail "fm-send exited non-zero on a clean submit: $(cat "$err")"
-  # Persistent swallow -> exit non-zero with a clear message.
+  # Persistent unconfirmed submit -> the dedicated unconfirmed status.
   printf '╭─────╮\n│ >   │\n╰─────╯\n' > "$dir/composer"
   touch "$dir/.swallow"
-  if PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
     FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_SEND_SLEEP=0.05 \
-    "$ROOT/bin/fm-send.sh" sess:win 'fix findings 1 and 3, skip 2' >/dev/null 2>"$err"; then
-    fail "fm-send exited zero despite a swallowed Enter (silent unsubmitted instruction)"
+    "$ROOT/bin/fm-send.sh" sess:win 'fix findings 1 and 3, skip 2' >/dev/null 2>"$err" || status=$?
+  [ "$(fm_send_result "$status")" = unconfirmed ] \
+    || fail "an unconfirmed submit must use the unconfirmed status, got $status: $(cat "$err")"
+  grep -F 'UNCONFIRMED' "$err" >/dev/null || fail "fm-send did not report the submit as unconfirmed: $(cat "$err")"
+  pass "fm-send reports an unconfirmed submit as unconfirmed, zero on a clean submit"
+}
+
+test_fm_send_never_asserts_non_delivery_it_cannot_prove() {
+  # The defect this pins: an unconfirmed verdict was reported as "text not
+  # submitted", a positive claim of non-delivery that was false three times on
+  # steers the crew was already acting on. Acting on it literally means
+  # re-sending, which delivers the same decision to a parked gate twice.
+  local dir fakebin err status
+  dir=$(make_bordered_case send-unconfirmed-wording)
+  fakebin="$dir/fakebin"; err="$dir/send.err"
+  printf '╭─────╮\n│ >   │\n╰─────╯\n' > "$dir/composer"
+  touch "$dir/.swallow"
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
+    FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_SEND_SLEEP=0.05 \
+    "$ROOT/bin/fm-send.sh" sess:win 'approve finding 4' >/dev/null 2>"$err" || status=$?
+  [ "$(fm_send_result "$status")" = unconfirmed ] \
+    || fail "unconfirmed delivery must use its own status, got $status: $(cat "$err")"
+  if grep -Eq 'not submitted|not sent|not deliver|did not land' "$err"; then
+    fail "fm-send asserted non-delivery it cannot prove: $(cat "$err")"
   fi
-  grep -F 'not submitted' "$err" >/dev/null || fail "fm-send did not explain the swallowed submit: $(cat "$err")"
-  pass "fm-send exits non-zero on a confirmed swallow, zero on a clean submit"
+  grep -F 'UNCONFIRMED' "$err" >/dev/null || fail "unconfirmed delivery must be named as unconfirmed: $(cat "$err")"
+  grep -F 'may have landed' "$err" >/dev/null || fail "unconfirmed delivery must say the text may have landed: $(cat "$err")"
+  grep -F 'Inspect sess:win' "$err" >/dev/null || fail "unconfirmed delivery must name the endpoint to inspect: $(cat "$err")"
+  grep -F 'resend' "$err" >/dev/null || fail "unconfirmed delivery must warn about the duplicate resend: $(cat "$err")"
+  pass "fm-send reports an unconfirmed submit as unknown, never as non-delivery"
+}
+
+test_fm_send_gate_refusal_never_reads_as_unconfirmed() {
+  # The gate refusal fires before a target is resolved or a keystroke is typed,
+  # so it must never read as a message that may have landed: a caller believing
+  # that would tell the captain to inspect an endpoint nothing was sent to.
+  local dir fakebin err sent status
+  dir=$(make_bordered_case send-gate-refusal)
+  fakebin="$dir/fakebin"; err="$dir/send.err"; sent="$dir/sent.log"; : > "$sent"
+  status=0
+  env -u FM_GATE_REFUSE_BYPASS "PATH=$fakebin:$PATH" "FM_HOME=$dir" \
+    "FM_STATE_OVERRIDE=$dir/state" "FM_FAKE_COMPOSER=$dir/composer" "FM_FAKE_SENT=$sent" \
+    NO_MISTAKES_GATE=1 FM_SEND_SLEEP=0.05 \
+    "$ROOT/bin/fm-send.sh" sess:win 'steer the crew' >/dev/null 2>"$err" || status=$?
+  [ "$(fm_send_result "$status")" = failed ] \
+    || fail "a gate refusal must read as a send that never happened, got $status: $(cat "$err")"
+  [ ! -s "$sent" ] || fail "a refused send still typed to the endpoint: $(cat "$sent")"
+  pass "fm-send's gate refusal reads as a refusal, never as an unconfirmed delivery"
 }
 
 test_fm_send_exits_nonzero_on_initial_send_failure() {
-  local dir fakebin err
+  # Proven non-delivery stays loud and keeps its own status, so a caller can
+  # tell "I could not send this" from an unconfirmed "I sent it".
+  local dir fakebin err status
   dir=$(make_bordered_case send-type-failure)
   fakebin="$dir/fakebin"; err="$dir/send.err"
-  if PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_FAKE_COMPOSER="$dir/composer" \
     FM_FAKE_SEND_FAIL=1 FM_SEND_SLEEP=0.05 \
-    "$ROOT/bin/fm-send.sh" sess:win 'route this work' >/dev/null 2>"$err"; then
-    fail "fm-send exited zero despite initial tmux send-keys failure"
-  fi
+    "$ROOT/bin/fm-send.sh" sess:win 'route this work' >/dev/null 2>"$err" || status=$?
+  [ "$(fm_send_result "$status")" = failed ] \
+    || fail "a refused send must read as failed, not as unconfirmed, got $status: $(cat "$err")"
   grep -F 'text not sent' "$err" >/dev/null || fail "fm-send did not explain initial send failure: $(cat "$err")"
-  pass "fm-send exits non-zero when initial text send fails"
+  pass "fm-send reports non-delivery loudly when the backend refuses the text"
 }
 
 test_fm_send_exits_nonzero_on_unproven_submit() {
@@ -2264,6 +2316,8 @@ test_fm_send_exits_nonzero_on_unproven_submit() {
   fi
   grep -F 'verdict=pending-unproven' "$err" >/dev/null \
     || fail "fm-send did not preserve the unproven-submit verdict: $(cat "$err")"
+  grep -F 'UNCONFIRMED' "$err" >/dev/null \
+    || fail "an unproven submit must read as unconfirmed, not as non-delivery: $(cat "$err")"
   pass "fm-send exits non-zero unless delivery is proven empty"
 }
 
@@ -2584,7 +2638,9 @@ test_wedge_alarm_hung_override_times_out_and_falls_through
 test_wedge_alarm_shutdown_stops_active_notifier_group
 test_inject_wedge_alarm_fires_active_alert_on_non_tmux_backend
 test_inject_wedge_alarm_throttles_when_marker_cannot_be_written
-test_fm_send_exits_nonzero_on_confirmed_swallow
+test_fm_send_exits_nonzero_on_unconfirmed_submit
+test_fm_send_never_asserts_non_delivery_it_cannot_prove
+test_fm_send_gate_refusal_never_reads_as_unconfirmed
 test_fm_send_exits_nonzero_on_initial_send_failure
 test_fm_send_exits_nonzero_on_unproven_submit
 test_discover_supervisor_backend_precedence

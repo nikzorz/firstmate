@@ -56,12 +56,22 @@ case "${1:-}" in
     done
     if [ "$literal" = 1 ]; then
       printf '%s' "${1:-}" >> "$FM_SEND_LOG"
+    elif [ -n "${FM_STUB_DROP_RECORDS:-}" ]; then
+      rm -f "$FM_STUB_DROP_RECORDS"/* 2>/dev/null || true
     fi
     exit 0 ;;
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
     printf 'fakepane\n'; exit 0 ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
+  capture-pane)
+    # FM_STUB_PENDING keeps text in the composer so the submit is never
+    # confirmed, the shape fm-send reports as unconfirmed delivery.
+    if [ "${FM_STUB_PENDING:-0}" = 1 ]; then
+      printf '╭──────────╮\n│ > steer  │\n╰──────────╯\n'
+    else
+      printf '╭────╮\n│    │\n╰────╯\n'
+    fi
+    exit 0 ;;
   list-windows) exit 0 ;;
 esac
 exit 0
@@ -86,7 +96,9 @@ run_send() {
   : > "$log"
   env PATH="$fb:$PATH" \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
-    FM_PENDING_REPLY_GRACE_SECS=0 \
+    FM_PENDING_REPLY_GRACE_SECS=0 FM_STUB_PENDING="${FM_STUB_PENDING:-0}" \
+    FM_STUB_DROP_RECORDS="${FM_STUB_DROP_RECORDS:-}" \
+    FM_SEND_RETRIES="${FM_SEND_RETRIES:-3}" FM_SEND_SLEEP="${FM_SEND_SLEEP:-0.4}" \
     "$SEND" "$@" 2>/dev/null
 }
 
@@ -480,6 +492,91 @@ test_delivery_confirmation_fallback_reconciles() {
   pass "delivery confirmation fallback reconciles durably"
 }
 
+# An unconfirmed send keeps its expectation, so the record that survives is the
+# one the captain has to hear about. Once the attempted marker ages past grace it
+# escalates on the first tick that sees it: nothing proved the endpoint received
+# the request, so the parent asks the captain rather than reposting to an
+# endpoint whose delivery it could not confirm.
+test_unknown_delivery_escalates_after_grace_without_a_recovery_request() {
+  local home state hook_log corr rec escalated sent
+  home=$(setup_parent unknown-escalates)
+  state="$home/state"
+  hook_log="$home/recovery.log"
+  : > "$hook_log"
+  # shellcheck disable=SC2030,SC2031
+  export FM_PENDING_REPLY_NOW=7000
+  export FM_UNKNOWN_HOOK_LOG="$hook_log"
+  unknown_recovery_hook() { printf '%s\n' "$2" >> "$FM_UNKNOWN_HOOK_LOG"; return 0; }
+  export -f unknown_recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=unknown_recovery_hook
+
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed request")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" \
+    || fail "the attempted delivery marker should persist"
+  fm_pending_reply_set "$rec" grace_secs 10 || fail "grace fixture should persist"
+
+  # Inside grace the expectation simply waits.
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "in-grace tick failed"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "an attempted delivery should wait out its grace, got $(phase_of "$state" "$corr")"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 0 ] || fail "escalated before the attempted marker aged past grace"
+
+  # Past grace it escalates on the first tick, with no turn evidence required.
+  export FM_PENDING_REPLY_NOW=7010
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "post-grace tick failed"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "an aged delivery attempt should escalate, got $(phase_of "$state" "$corr")"
+  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$corr" "$state/hibit.status" \
+    || fail "the escalation should name the unknown delivery"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] \
+    || fail "escalating an unknown delivery must not manufacture delivery"
+  sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+  [ "${sent:-0}" = 0 ] \
+    || fail "an unknown delivery must not repost to an endpoint nothing proved reachable"
+
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "repeat tick failed"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 1 ] || fail "escalation should publish exactly once, got ${escalated:-0}"
+
+  # A correlated late report still wins, idempotently.
+  printf 'done [corr=%s]: late report\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "late-report tick failed"
+  [ "$(phase_of "$state" "$corr")" = resolved ] \
+    || fail "a late correlated report should resolve an escalated unknown delivery"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 1 ] || fail "a late report must not re-escalate"
+
+  unset FM_PENDING_REPLY_SEND_HOOK
+  unset FM_UNKNOWN_HOOK_LOG
+  pass "an unknown delivery escalates after grace with no automatic recovery request"
+}
+
+# A delivery the backend confirmed whose bookkeeping write then failed is not a
+# non-delivery: the text landed, and a caller that resends on it delivers the
+# same instruction twice.
+test_delivered_but_uncommitted_reads_as_delivered_not_as_a_failure() {
+  local dir fb home log err rc
+  dir="$TMP_ROOT/delivered-uncommitted"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_parent delivered-uncommitted)
+  fm_write_secondmate_meta "$home/state/hibit.meta" "$home/sm" "sess:fm-hibit"
+  rc=0
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" \
+    FM_SEND_SETTLE=0 FM_PENDING_REPLY_GRACE_SECS=0 \
+    FM_STUB_DROP_RECORDS="$(fm_pending_reply_dir "$home/state")" \
+    "$SEND" "hibit" "audit the build" 2>"$err" >/dev/null || rc=$?
+  [ "$(fm_send_result "$rc")" = delivered-uncommitted ] \
+    || fail "a delivered send whose commit failed should read as delivered-uncommitted, got $(fm_send_result "$rc") (status $rc): $(cat "$err")"
+  grep -Fq "was delivered to" "$err" || fail "fm-send should say the text was delivered: $(cat "$err")"
+  grep -Fq "Do not resend" "$err" || fail "fm-send should say not to resend: $(cat "$err")"
+  if grep -Eq 'not submitted|not sent|did not land' "$err"; then
+    fail "a delivered send must not be reported as non-delivery: $(cat "$err")"
+  fi
+  pass "a delivered send whose pending-reply commit failed reads as delivered, never as a failure"
+}
+
 test_unrelated_and_stale_corr_cannot_resolve() {
   local home state corr other
   home=$(setup_parent stale-corr)
@@ -612,6 +709,37 @@ test_fm_send_marked_secondmate_creates_pending_and_embeds_corr() {
   [ "$(fm_pending_reply_get "$rec" task_id)" = hibit ] \
     || fail "task_id must match secondmate id"
   pass "fm-send marked secondmate path creates pending and embeds corr"
+}
+
+test_unconfirmed_send_keeps_the_expectation_for_reconciliation() {
+  # An unconfirmed submit may have landed, so fm-send must not discard the
+  # expectation: discarding would record the same unprovable non-delivery in
+  # durable state and drop a request the secondmate may still answer. The
+  # attempted marker is what carries it into the delivery_unknown phase.
+  local dir fb log home rc corr rec
+  dir="$TMP_ROOT/send-unconfirmed"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_parent send-unconfirmed)
+  fm_write_secondmate_meta "$home/state/hibit.meta" "$home/sm" "sess:fm-hibit"
+  rc=0
+  FM_STUB_PENDING=1 FM_SEND_RETRIES=1 FM_SEND_SLEEP=0 \
+    run_send "$fb" "$home" "$log" "hibit" "audit the build" || rc=$?
+  expect_code "$FM_SEND_EXIT_UNCONFIRMED" "$rc" \
+    "an unconfirmed secondmate send should use the unconfirmed status"
+  corr=$(fm_pending_reply_extract_corr "$(cat "$log")")
+  [ "${#corr}" -eq 16 ] || fail "corr id should still be embedded, got '$corr'"
+  rec=$(fm_pending_reply_path "$home/state" "$corr")
+  [ -f "$rec" ] || fail "an unconfirmed send must keep the pending-reply record"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] \
+    || fail "an unconfirmed send must not claim delivery"
+  [ -f "$(fm_pending_reply_delivery_confirmation_path "$home/state" "$corr")" ] \
+    || fail "the attempted delivery marker must survive for reconciliation"
+  FM_PENDING_REPLY_NOW=$(( $(fm_pending_reply_now) + 1 )) \
+    fm_pending_reply_reconcile_delivery "$home/state" "$corr" \
+    || fail "the kept record should reconcile into the unknown-delivery phase"
+  [ "$(phase_of "$home/state" "$corr")" = delivery_unknown ] \
+    || fail "an unconfirmed send should reconcile to delivery_unknown, got $(phase_of "$home/state" "$corr")"
+  pass "an unconfirmed send keeps its expectation and reconciles as unknown delivery"
 }
 
 test_document_pointer_resolves() {
@@ -905,6 +1033,35 @@ test_failed_send_discards_undelivered_expectation() {
   pass "failed transport discards undelivered expectation only"
 }
 
+test_unconfirmed_recovery_send_records_unknown_not_failed() {
+  # fm-send's unconfirmed status must not become a durable claim of
+  # non-delivery: the recovery request may have landed, so the record escalates
+  # as unknown rather than failed.
+  local home state corr
+  home=$(setup_parent recovery-unconfirmed)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=2500
+  recovery_unconfirmed_hook() { return "$FM_SEND_EXIT_UNCONFIRMED"; }
+  export -f recovery_unconfirmed_hook
+  export FM_PENDING_REPLY_SEND_HOOK=recovery_unconfirmed_hook
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed recovery")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  fm_pending_reply_mark_turn_completed "$state" "$corr" request
+  if fm_pending_reply_send_recovery "$state" "$corr"; then
+    fail "an unconfirmed recovery send must not report success"
+  fi
+  [ "$(phase_of "$state" "$corr")" = recovery_unknown ] \
+    || fail "unconfirmed recovery delivery should record unknown, got $(phase_of "$state" "$corr")"
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" recovery_delivery_outcome)" = unknown ] \
+    || fail "unconfirmed recovery must record the unknown outcome"
+  fm_pending_reply_maybe_escalate "$state" "$corr" \
+    || fail "unconfirmed recovery delivery should still escalate"
+  grep -Fq "pending-reply-recovery-delivery-unknown:" "$state/hibit.status" \
+    || fail "unconfirmed recovery escalation should name the unknown delivery"
+  unset FM_PENDING_REPLY_SEND_HOOK
+  pass "an unconfirmed recovery send escalates as unknown, never as failed"
+}
+
 # --- run --------------------------------------------------------------------
 
 test_normal_correlated_reply_resolves_once
@@ -916,11 +1073,14 @@ test_escalation_publication_failure_retries
 test_transport_success_is_not_reply_success
 test_undelivered_records_are_scan_immutable
 test_delivery_confirmation_fallback_reconciles
+test_unknown_delivery_escalates_after_grace_without_a_recovery_request
+test_delivered_but_uncommitted_reads_as_delivered_not_as_a_failure
 test_unrelated_and_stale_corr_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged
 test_unmarked_captain_input_creates_no_expectation
 test_fm_send_marked_secondmate_creates_pending_and_embeds_corr
+test_unconfirmed_send_keeps_the_expectation_for_reconciliation
 test_document_pointer_resolves
 test_helper_report_resolves
 test_busy_idle_observation_via_backend_abstraction
@@ -930,5 +1090,6 @@ test_tick_skips_terminal_and_reuses_target_observation
 test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
+test_unconfirmed_recovery_send_records_unknown_not_failed
 
 printf 'ok - all pending-reply tests passed\n'

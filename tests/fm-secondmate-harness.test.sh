@@ -24,7 +24,8 @@
 #      config under an already-running home, a literal-content reread instruction
 #      is written to the secondmate home and only its pointer is sent via the
 #      routed secondmate path (exact destination bytes, no summaries); unchanged
-#      config sends nothing unless a previous send failure is pending.
+#      config sends nothing unless a previous send that was never confirmed
+#      delivered is still pending.
 
 #   C) Model/effort pin. config/secondmate-harness may carry optional model and
 #      effort tokens after the harness ("<harness> [<model>] [<effort>]"), read by
@@ -741,14 +742,30 @@ fi
 case "$*" in
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
-  *capture-pane*) printf '\n'; exit 0 ;;
+  *display-message*'#{cursor_y}'*)
+    [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ] && { printf '%s\n' 1; exit 0; }
+    printf '%s\n' 0
+    exit 0
+    ;;
+  *capture-pane*)
+    # A composer that keeps the typed text: submitted, never confirmed.
+    if [ "${FM_FAKE_TMUX_PENDING_COMPOSER:-0}" = 1 ]; then
+      printf '╭──────────╮\n│ > steer  │\n╰──────────╯\n'
+    else
+      printf '\n'
+    fi
+    exit 0
+    ;;
   *'send-keys'*' -l '*)
     [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
     exit 0
     ;;
   *send-keys*)
     [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
+    # The record is removed mid-submit, so the pointer lands with nothing left to
+    # commit its delivery against.
+    [ -n "${FM_FAKE_DROP_PENDING_RECORDS:-}" ] \
+      && rm -f "$FM_FAKE_DROP_PENDING_RECORDS"/* 2>/dev/null
     exit 0
     ;;
 esac
@@ -1759,6 +1776,92 @@ SH
   pass "B23 mixed config reread delivery failures still bound sent history"
 }
 
+# The CONFIG_REREAD pointer is a third reader of fm-send's result, and it was
+# the caller the first round missed entirely.
+test_config_reread_separates_an_unconfirmed_pointer_from_a_refused_one() {
+  local w head fakebin state_real path report out status
+  w=$(new_world config-reread-unconfirmed)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+  mkdir -p "$w/sm/state"
+  state_real=$(cd "$w/sm/state" && pwd -P)
+  path="$state_real/.fm-inherited-config-reread.0001"
+  printf 'unconfirmed-generation\n' > "$path"
+  chmod 0600 "$path"
+  fm_config_reread_mark_pending "$path" "$path.pending" \
+    || fail "could not mark the unconfirmed generation pending"
+  fakebin=$(make_fake_toolchain "$w")
+  report="$w/empty-reread.report"
+  : > "$report"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_SEND_RETRIES=1 FM_SEND_SLEEP=0 FM_FAKE_TMUX_PENDING_COMPOSER=1 \
+    fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 1 "$status" "an unconfirmed pointer should remain diagnostic"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: send unconfirmed" \
+    "an unconfirmed pointer should be reported as unconfirmed"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "an unconfirmed pointer must not be reported as a proven failure"
+  assert_present "$path.pending" "an unconfirmed pointer should keep its retry marker"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_FAKE_TMUX_FAIL_LITERAL=1 \
+    fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 1 "$status" "a refused pointer should remain diagnostic"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "a refused pointer should still be reported as a failure"
+  assert_present "$path.pending" "a refused pointer should keep its retry marker"
+
+  # The clean reading completes the set: it clears the pointer and says nothing.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 0 "$status" "a delivered pointer should not be diagnostic"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "a delivered pointer must not be reported as a failure"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send unconfirmed" \
+    "a delivered pointer must not be reported as unconfirmed"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: delivered, bookkeeping incomplete" \
+    "a delivered pointer whose bookkeeping succeeded must report nothing to fix"
+  assert_absent "$path.pending" "a delivered pointer should clear its retry marker"
+  pass "B27 config reread reads delivered, unconfirmed and refused pointers apart"
+}
+
+# A pointer the backend confirmed whose pending-reply bookkeeping write then
+# failed still landed, so it must not be reported as a failure nor left pending
+# for a delivery that already happened.
+test_config_reread_delivered_but_uncommitted_is_not_a_failure() {
+  local w head fakebin state_real path report out status
+  w=$(new_world config-reread-uncommitted)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+  mkdir -p "$w/sm/state"
+  state_real=$(cd "$w/sm/state" && pwd -P)
+  path="$state_real/.fm-inherited-config-reread.0001"
+  printf 'uncommitted-generation\n' > "$path"
+  chmod 0600 "$path"
+  fm_config_reread_mark_pending "$path" "$path.pending" \
+    || fail "could not mark the generation pending"
+  fakebin=$(make_fake_toolchain "$w")
+  report="$w/empty-reread.report"
+  : > "$report"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_FAKE_DROP_PENDING_RECORDS="$w/home/state/pending-replies" \
+    fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 0 "$status" "a pointer that landed should not fail the nudge"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "a pointer that landed must not be reported as a send failure"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send unconfirmed" \
+    "a confirmed submit must not be reported as unconfirmed"
+  assert_absent "$path.pending" \
+    "a pointer that landed must not stay pending for a redelivery"
+  assert_contains "$out" "CONFIG_REREAD: secondmate sm: delivered, bookkeeping incomplete:" \
+    "the broken durable state should reach the operator as an actionable line"
+  assert_contains "$out" "pending-reply delivery commit" \
+    "the actionable line should carry fm-send's own account of what was not written"
+  pass "B28 a delivered config reread pointer whose bookkeeping write failed clears its marker and still reports the breakage"
+}
+
 test_config_reread_stops_after_failed_generation() {
   local w fakebin state_real old new report log out status
   w=$(new_world config-reread-order)
@@ -2083,6 +2186,8 @@ test_config_reread_serializes_concurrent_pushes
 test_config_reread_full_retry_queue_drains_before_new_push
 test_config_reread_cleanup_runs_after_mixed_delivery_failure
 test_config_reread_stops_after_failed_generation
+test_config_reread_separates_an_unconfirmed_pointer_from_a_refused_one
+test_config_reread_delivered_but_uncommitted_is_not_a_failure
 test_config_reread_skips_when_unchanged_and_reads_after_push
 test_config_reread_bootstrap_path_and_spawn_flexibility
 test_bootstrap_respawns_before_config_reread

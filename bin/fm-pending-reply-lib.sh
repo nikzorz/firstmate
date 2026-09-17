@@ -16,6 +16,12 @@
 # report. Never loop, never repeatedly inject, never silently expire unresolved
 # records, and never treat wrong-home or structured-home heuristics as
 # acknowledgement.
+# A send the backend could not confirm keeps its expectation rather than
+# discarding it as undelivered, because the secondmate may still answer a request
+# nothing proved lost.
+# Its attempted-delivery marker ages past the same grace into delivery_unknown,
+# which escalates once and asks no automatic recovery request, since nothing
+# proved the endpoint received the original request to repost against.
 #
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
@@ -68,6 +74,8 @@ _FM_PENDING_REPLY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/n
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$_FM_PENDING_REPLY_LIB_DIR/fm-send-result-lib.sh"
 
 FM_PENDING_REPLY_SCHEMA='fm-pending-reply.v1'
 FM_PENDING_REPLY_CORR_RE='corr=[A-Fa-f0-9]{16}'
@@ -643,7 +651,7 @@ fm_pending_reply_recovery_message() {  # <record-path>
 # second expectation is not created.
 fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   local state=$1 corr=$2
-  local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0
+  local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0 result
   local sender_pid sender_identity
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
@@ -672,24 +680,33 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" recovery_sender_identity "$sender_identity" || return 1
   fm_pending_reply_set "$rec" recovery_attempted_epoch "$now" || return 1
   fm_pending_reply_set "$rec" phase recovery_sending || return 1
+  # The hook stands in for fm-send in tests and reports the same statuses, so
+  # both branches read their result the same way. An unconfirmed send becomes the
+  # unknown outcome rather than a failure, so the durable record never claims a
+  # non-delivery nobody proved.
   if [ -n "${FM_PENDING_REPLY_SEND_HOOK:-}" ]; then
     # Hook receives: task_id message
     # shellcheck disable=SC2086
-    if ! eval "$FM_PENDING_REPLY_SEND_HOOK" "$(printf '%q' "$task_id")" "$(printf '%q' "$msg")"; then
-      send_status=1
-    fi
+    eval "$FM_PENDING_REPLY_SEND_HOOK" "$(printf '%q' "$task_id")" "$(printf '%q' "$msg")" \
+      || send_status=$?
+    result=$(fm_send_result "$send_status")
+  elif [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
+    result=failed
   else
-    if [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
-      send_status=1
-    elif ! env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg"; then
-      send_status=1
-    fi
+    env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
+      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg" || send_status=$?
+    result=$(fm_send_result "$send_status")
   fi
-  if [ "$send_status" = 0 ]; then
-    fm_pending_reply_finish_recovery "$state" "$corr" confirmed
-    return $?
-  fi
+  case "$result" in
+    delivered|delivered-uncommitted)
+      fm_pending_reply_finish_recovery "$state" "$corr" confirmed
+      return $?
+      ;;
+    unconfirmed)
+      fm_pending_reply_finish_recovery "$state" "$corr" unknown || return 1
+      return 1
+      ;;
+  esac
   fm_pending_reply_finish_recovery "$state" "$corr" failed || return 1
   return 1
 }
@@ -711,7 +728,10 @@ fm_pending_reply_sender_alive() {  # <record-path>
   [ "$actual" = "$expected" ]
 }
 
-fm_pending_reply_finish_recovery() {  # <state-dir> <corr_id> <confirmed|failed>
+# An unknown outcome is a recovery request that was submitted without a delivery
+# confirmation. It escalates on the same path as a failed one, but never records
+# a non-delivery nobody proved.
+fm_pending_reply_finish_recovery() {  # <state-dir> <corr_id> <confirmed|failed|unknown>
   local state=$1 corr=$2 outcome=$3 rec phase now sent
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
@@ -727,6 +747,8 @@ fm_pending_reply_finish_recovery() {  # <state-dir> <corr_id> <confirmed|failed>
     fm_pending_reply_set "$rec" recovery_turn_seen_busy 0 || return 1
     fm_pending_reply_set "$rec" recovery_turn_completed_epoch "" || return 1
     fm_pending_reply_set "$rec" phase recovery_sent || return 1
+  elif [ "$outcome" = unknown ]; then
+    fm_pending_reply_set "$rec" phase recovery_unknown || return 1
   else
     [ "$outcome" = failed ] || return 1
     fm_pending_reply_set "$rec" phase recovery_failed || return 1

@@ -447,8 +447,14 @@ make_case() {  # <name> -> echoes case dir
   cat > "$d/bin/fm-send.sh" <<'SH'
 #!/usr/bin/env bash
 set -u
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-send-result-lib.sh"
 if [ "${FM_FAKE_SEND_FAILS:-0}" = 1 ]; then exit 1; fi
 printf '%s\n' "$*" >> "${FM_FAKE_SENDLOG:?}"
+if [ "${FM_FAKE_SEND_UNCONFIRMED:-0}" = 1 ]; then exit "$FM_SEND_EXIT_UNCONFIRMED"; fi
+if [ "${FM_FAKE_SEND_UNCOMMITTED:-0}" = 1 ]; then
+  printf 'error: text was delivered to %s, but its pending-reply delivery commit failed. Do not resend.\n' "$1" >&2
+  exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"
+fi
 exit 0
 SH
   chmod +x "$d/bin/fm-send.sh"
@@ -622,6 +628,8 @@ test_recovery_closes_the_wait_it_opened() {
   case "$last" in
     paused:*) fail "recovery left its own paused: line standing as the crew's last event" ;;
   esac
+  assert_contains "$last" "the crew re-steered" \
+    "a confirmed recovery should record the re-steer it proved"
   pass "recovery closes the bounded wait it opened, returning the crew to the wedge cadence"
 }
 
@@ -680,15 +688,148 @@ test_malformed_settle_falls_back_to_the_default() {
 }
 
 test_failed_steer_is_reported_not_swallowed() {
-  local d; d=$(make_case steer-fails)
+  local d out; d=$(make_case steer-fails)
   setup_task "$d" stalled claude
   limit_prompt_pane > "$d/pane.txt"
   dismissed_pane > "$d/after.txt"
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
+    && fail "a resume instruction that did not land was reported as success"
+  assert_contains "$out" "did not land" "a refused steer must still report non-delivery loudly"
+  pass "a resume instruction that does not land is reported, not swallowed"
+}
+
+# An unconfirmed steer WAS submitted, so reporting it as non-delivery invites a
+# second steer that repeats the same instruction to the crewmate.
+test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery() {
+  local d out; d=$(make_case steer-unconfirmed)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
+    && fail "an unconfirmed resume instruction was reported as success"
+  assert_contains "$out" "unconfirmed" "an unconfirmed steer should be named as unconfirmed"
+  assert_contains "$out" "inspect stalled" "an unconfirmed steer should name the endpoint to inspect"
+  assert_not_contains "$out" "did not land" \
+    "an unconfirmed steer must not assert a non-delivery nobody proved"
+  [ -s "$d/sent.log" ] || fail "an unconfirmed steer should still record the submitted instruction"
+  pass "an unconfirmed resume instruction is reported as unknown, never as non-delivery"
+}
+
+# The wait asserts two things this run settles BEFORE it steers: the account
+# window has reset, and the prompt is provably gone. So closing it is not
+# governed by whether the steer's delivery could be confirmed - leaving it open
+# would park a crew that is no longer waiting on the window on the hour-long
+# recheck, the exact hours-unnoticed failure this feature ends.
+test_unconfirmed_steer_still_closes_the_wait_it_opened() {
+  local d soon out last
+  d=$(make_case close-pause-unconfirmed)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded external wait was not recorded"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not recorded"
+
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
+    && fail "an unconfirmed steer was reported as a completed recovery"
+  assert_contains "$out" "unconfirmed" "the unconfirmed delivery should still be reported"
+  assert_contains "$out" "inspect stalled" "the unconfirmed report should still name the endpoint"
+  [ -s "$d/sent.log" ] || fail "the resume instruction was not submitted"
+  [ ! -e "$d/state/stalled.pause-recheck" ] \
+    || fail "an unconfirmed steer left the recheck deadline behind on a window that had reset"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) fail "an unconfirmed steer left the quota wait standing as the crew's last event" ;;
+  esac
+  assert_contains "$last" "delivery unconfirmed" \
+    "the recorded outcome should say the instruction's delivery was unconfirmed"
+  assert_not_contains "$last" "re-steered" \
+    "an unconfirmed steer must not record a re-steer it could not prove"
+  pass "an unconfirmed steer closes the quota wait and records only what it proved"
+}
+
+# The close must not widen past what the run proved. A refusal that dismissed
+# nothing, or that sent nothing, leaves the wait exactly as it found it.
+test_refused_recovery_leaves_the_wait_standing() {
+  local d soon last
+  d=$(make_case refusal-keeps-pause)
+  setup_task "$d" stalled claude
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 97)" \
+    run_resume "$d" stalled >/dev/null 2>&1 \
+    && fail "a prompt surviving Escape was reported as a recovery"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "a surviving prompt cleared the recheck deadline"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) ;;
+    *) fail "a surviving prompt closed the quota wait, last event was '$last'" ;;
+  esac
+
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
     run_resume "$d" stalled >/dev/null 2>&1 \
-    && fail "a resume instruction that did not land was reported as success"
-  pass "a resume instruction that does not land is reported, not swallowed"
+    && fail "a refused resume instruction was reported as a recovery"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "a refused send cleared the recheck deadline"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) ;;
+    *) fail "a refused send closed the quota wait, last event was '$last'" ;;
+  esac
+  pass "a refusal that dismissed or sent nothing leaves the quota wait exactly as it found it"
+}
+
+# A steer whose delivery the backend confirmed, but whose pending-reply
+# bookkeeping write then failed, landed. Reporting it as a refusal would have the
+# captain steer by hand and deliver the same instruction twice.
+test_delivered_but_uncommitted_steer_is_treated_as_delivered() {
+  local d soon out last
+  d=$(make_case steer-uncommitted)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCOMMITTED=1 \
+    run_resume "$d" stalled 2>&1) \
+    || fail "a delivered steer whose bookkeeping failed was reported as a refusal: $out"
+  assert_not_contains "$out" "did not land" \
+    "a steer that landed must not be reported as non-delivery"
+  assert_not_contains "$out" "steer it by hand" \
+    "a steer that landed must not ask the captain to repeat it"
+  [ -s "$d/sent.log" ] || fail "the resume instruction was not submitted"
+  [ ! -e "$d/state/stalled.pause-recheck" ] \
+    || fail "a delivered steer should close the quota wait's recheck deadline"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) fail "a delivered steer left the quota wait standing, got '$last'" ;;
+  esac
+  assert_contains "$last" "the crew re-steered" \
+    "a delivered steer should record the re-steer it proved"
+  assert_contains "$out" "pending-reply delivery commit" \
+    "fm-send's account of the broken durable state must reach the operator"
+  pass "a delivered steer whose bookkeeping write failed closes the wait and still reports the breakage"
 }
 
 # The end the whole feature turns on: the recorded wait carries the reset time,
@@ -804,6 +945,10 @@ test_recovery_closes_only_a_wait_it_owns
 test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
+test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery
+test_unconfirmed_steer_still_closes_the_wait_it_opened
+test_refused_recovery_leaves_the_wait_standing
+test_delivered_but_uncommitted_steer_is_treated_as_delivered
 test_exhausted_wait_schedules_its_own_recheck
 test_check_only_never_sends
 

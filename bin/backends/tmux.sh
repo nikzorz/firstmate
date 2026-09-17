@@ -48,10 +48,12 @@ fm_backend_tmux_send_key() {  # <target> <key>
 
 # fm_backend_tmux_send_text_submit: type <text> into <target> once, then
 # submit with Enter, retried (Enter only, never retyped) until the composer
-# clears. Re-exports fm_tmux_submit_core (bin/fm-tmux-lib.sh) verbatim; see
-# that file for the composer-verification contract and echoed verdicts.
-fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  fm_tmux_submit_core "$@"
+# clears. Delegates to fm_tmux_submit_core (bin/fm-tmux-lib.sh); see that file
+# for the composer-verification contract and echoed verdicts. The dispatcher's
+# expected-label argument is unused here, and the harness that follows it scopes
+# the core's busy check to that harness's verified footer signature.
+fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness]
+  fm_tmux_submit_core "$1" "$2" "$3" "$4" "$5" "${7:-}"
 }
 
 # fm_backend_tmux_container_ensure: reuse the current tmux session when

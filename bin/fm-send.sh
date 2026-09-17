@@ -12,12 +12,35 @@
 #
 # Text submission is verified: the line is typed ONCE, then Enter is sent and
 # retried (Enter only, never retyped) until the target backend confirms a
-# submit or reports an inconclusive send. If a swallowed Enter is positively
-# confirmed, fm-send exits NON-ZERO so the caller knows the steer did not land
-# instead of silently leaving an unsubmitted instruction.
+# submit or runs out of ways to prove one.
 # Submission dispatches through the target's recorded backend; the tmux adapter
 # shares its composer/submit core with the away-mode daemon via bin/fm-tmux-lib.sh.
 # Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
+#
+# Exit status, which separates "I could not send this" from "I sent it and could
+# not confirm it". This is the whole contract; callers read it through
+# fm_send_result (bin/fm-send-result-lib.sh) and never compare the numbers:
+#   0  the text was submitted, confirmed by the backend.
+#   1  there is no confirmed delivery to report: on every resolution, expectation
+#      and backend-refusal path nothing reached the endpoint.
+#   3  the no-mistakes gate refusal (bin/fm-gate-refuse-lib.sh), which fires
+#      before a target is resolved or a keystroke is typed.
+#   4  the text was typed and submitted, but delivery is UNCONFIRMED. It may have
+#      landed. Inspect the endpoint before resending, because a resend delivers
+#      the same instruction twice.
+#   5  the text WAS delivered, confirmed by the backend, but the pending-reply
+#      bookkeeping write that follows it failed. Never resend; the message names
+#      what was left unwritten.
+# The unconfirmed status is deliberately not phrased as non-delivery. Every
+# backend confirms a submit by reading the endpoint's own screen or status, and
+# those reads have reported an unconfirmed result for steers that did land, so
+# fm-send reports what it knows rather than asserting a negative it cannot
+# support.
+# Closing the unconfirmed status entirely would need positive proof that the text
+# reached the conversation, which for a screen-reading backend means matching the
+# submitted text in the endpoint's own transcript across per-harness wrapping,
+# truncation, and styling. That is a per-harness project, not a
+# confirmation-read tweak.
 # Slash commands, and codex `$...` skill invocations resolved through harness
 # meta, get a longer pre-Enter settle so completion popups do not swallow Enter.
 #
@@ -45,9 +68,13 @@
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
 set -eu
 
+FM_SEND_SETTLE_DEFAULT=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never steer
@@ -268,9 +295,11 @@ else
   esac
   retries=${FM_SEND_RETRIES:-3}
   sleep_s=${FM_SEND_SLEEP:-0.4}
-  # Type once, submit, verify. Only exact empty confirms delivery; every other
-  # verdict preserves the loud refusal boundary.
-  if ! verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+  # Type once, submit, verify. Only exact empty confirms delivery. A verdict of
+  # send-failed is proven non-delivery and stays a hard "not sent". Every other
+  # verdict, including a composer that still reads pending, is unconfirmed: the
+  # text may have landed, so fm-send says so and leaves the caller to inspect.
+  if ! verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" "$TARGET_HARNESS"); then
     if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
       fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
     fi
@@ -288,11 +317,12 @@ else
       exit 1
       ;;
     *)
-      if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
-        fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
-      fi
-      echo "error: text not submitted to $T (delivery unconfirmed; verdict=${verdict:-unknown}; tried $RESOLUTION_TRIED)" >&2
-      exit 1
+      # Keep any pending-reply expectation. Discarding it here would record the
+      # same unsupported claim in durable state; the undelivered marker left by
+      # fm_pending_reply_prepare_delivery is what the watcher reconciles into the
+      # delivery_unknown phase (bin/fm-pending-reply-lib.sh).
+      echo "error: delivery to $T is UNCONFIRMED: the text was typed and submitted, but $TARGET_BACKEND could not prove it landed (verdict=${verdict:-unknown}; tried $RESOLUTION_TRIED). It may have landed. Inspect $T before resending, because a resend delivers the same instruction twice." >&2
+      exit "$FM_SEND_EXIT_UNCONFIRMED"
       ;;
   esac
   # Delivery confirmed. Mark the pending expectation delivered without resolving
@@ -307,7 +337,7 @@ else
       else
         echo "error: text was delivered to $T, but its pending-reply delivery commit and recovery marker both failed. Do not resend; inspect $STATE manually." >&2
       fi
-      exit 1
+      exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"
     fi
   fi
   # Submit landed with exact empty. Confirmation only proves the text was
@@ -315,5 +345,16 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
-  [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
+  # The pause runs after the delivery is already known, so it can never change
+  # what fm-send reports: an unusable value is named on stderr and the exit
+  # status still describes the delivery that happened.
+  settle_after=${FM_SEND_SETTLE:-$FM_SEND_SETTLE_DEFAULT}
+  if ! [[ $settle_after =~ ^([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]]; then
+    echo "warning: FM_SEND_SETTLE='$settle_after' is not a number of seconds; pausing $FM_SEND_SETTLE_DEFAULT instead" >&2
+    settle_after=$FM_SEND_SETTLE_DEFAULT
+  fi
+  if [ "$settle_after" != 0 ]; then
+    sleep "$settle_after" \
+      || echo "warning: the post-send settle pause did not run; the text was still delivered to $T" >&2
+  fi
 fi

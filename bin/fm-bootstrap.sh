@@ -14,7 +14,12 @@
 #                 "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
+#                 "NUDGE_SECONDMATES: secondmate <id>: send unconfirmed: <reason>",
+#                 "NUDGE_SECONDMATES: secondmate <id>: delivered, bookkeeping incomplete: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
+#                 "CONFIG_REREAD: secondmate <id>: send failed: <reason>",
+#                 "CONFIG_REREAD: secondmate <id>: send unconfirmed: <reason>",
+#                 "CONFIG_REREAD: secondmate <id>: delivered, bookkeeping incomplete: <reason>",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING secondmate worktree is fast-forwarded to firstmate's
@@ -23,13 +28,28 @@
 #          or .agents/skills/) actually changed, bootstrap immediately nudges it
 #          via FM_HOME=<active-home> bin/fm-send.sh fm-<id> so meta resolves the
 #          current backend target and the standard from-firstmate marker is
-#          applied. A successful send prints one BOOTSTRAP_INFO line with the
-#          exact target and message sent; a failed send leaves an idempotent
-#          retry marker under state/.secondmate-nudge-pending/ and prints an
-#          actionable NUDGE_SECONDMATES line.
+#          applied.
+#          A confirmed send prints one BOOTSTRAP_INFO line with the exact target
+#          and message sent, and clears the idempotent retry marker under
+#          state/.secondmate-nudge-pending/.
+#          An unconfirmed send keeps that marker and prints the send unconfirmed
+#          NUDGE_SECONDMATES line, which is not a failure report: the nudge may
+#          already have landed, and it only asks that secondmate to re-read its
+#          instructions, so a repeat is harmless.
+#          A failed send keeps that marker and prints the send failed
+#          NUDGE_SECONDMATES line.
+#          A send the backend confirmed whose pending-reply bookkeeping write
+#          then failed clears the marker, because the nudge landed and must not
+#          be repeated, and prints the delivered, bookkeeping incomplete
+#          NUDGE_SECONDMATES line beside the BOOTSTRAP_INFO one so the write
+#          that failed behind it is not hidden behind a clean success; the
+#          reason says which write failed.
 #          Already-current or no-instruction-change homes are silently left alone.
 #          The secondmate sweep also propagates declared inherited local material
 #          into each validated live secondmate home.
+#          CONFIG_REREAD lines report only actionable outcomes of that home's
+#          inherited-config re-read pointer send, in the same three readings as
+#          the nudge lines above; a confirmed pointer is silent.
 #          SECONDMATE_SYNC lines report actionable skipped local-HEAD syncs or
 #          inheritance failures for live secondmate homes, plus quarantine
 #          diagnostics for divergent shared captain-preference copies;
@@ -100,6 +120,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-send-result-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 
 fleet_sync_origin_backed_project_count() {
   local count proj
@@ -240,8 +262,37 @@ secondmate_sync() {
     mv -f "$tmp" "$marker" || { rm -f "$tmp"; return 1; }
   }
 
+  # The first attempt and the retry read the nudge's result here and nowhere
+  # else, so the two paths cannot drift apart again. An unconfirmed nudge may
+  # already have landed, so it is reported as unconfirmed rather than failed;
+  # only a delivery clears the retry marker, because this nudge just asks the
+  # secondmate to re-read its instructions and a repeat costs nothing. A delivery
+  # whose bookkeeping write failed clears it too, and says so: the nudge landed,
+  # but a write behind it did not, and the reason carries which.
+  secondmate_report_nudge_send() {  # <id> <selector> <marker>
+    local id=$1 selector=$2 marker=$3 out send_status=0
+    out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
+    case "$(fm_send_result "$send_status")" in
+      delivered)
+        rm -f "$marker"
+        echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
+        ;;
+      delivered-uncommitted)
+        rm -f "$marker"
+        echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
+        echo "NUDGE_SECONDMATES: secondmate $id: delivered, bookkeeping incomplete: $(first_line "$out")"
+        ;;
+      unconfirmed)
+        echo "NUDGE_SECONDMATES: secondmate $id: send unconfirmed: $(first_line "$out")"
+        ;;
+      *)
+        echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
+        ;;
+    esac
+  }
+
   secondmate_send_nudge() {
-    local id=$1 home=$2 commit=$3 instr=$4 selector marker out
+    local id=$1 home=$2 commit=$3 instr=$4 selector marker
     selector="fm-$id"
     marker=$(secondmate_nudge_marker_path "$id") || {
       echo "NUDGE_SECONDMATES: secondmate $id: send failed: unsafe id"
@@ -251,12 +302,7 @@ secondmate_sync() {
       echo "NUDGE_SECONDMATES: secondmate $id: send failed: cannot record retry marker"
       return 0
     fi
-    if out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
-      rm -f "$marker"
-      echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
-    else
-      echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
-    fi
+    secondmate_report_nudge_send "$id" "$selector" "$marker"
   }
 
   fm_ff_after_instruction_update() {
@@ -311,12 +357,7 @@ secondmate_sync() {
         echo "NUDGE_SECONDMATES: secondmate $id: send failed: retry target is not at recorded instruction commit"
         continue
       }
-      if out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
-        rm -f "$marker"
-        echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
-      else
-        echo "NUDGE_SECONDMATES: secondmate $id: send failed: $(first_line "$out")"
-      fi
+      secondmate_report_nudge_send "$id" "$selector" "$marker"
     done
   }
 

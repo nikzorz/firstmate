@@ -125,9 +125,9 @@ For tmux that confirmation is a cleared composer, using the same corrected,
 border-aware detector as the composer guard.
 For herdr, normal idle-baseline submits are confirmed by native agent-state showing a real turn started; the ANSI-aware composer classifier remains the affirmative-empty pre-injection guard and conservative fallback for non-idle or unreadable baselines.
 A bordered-empty or ghost-only composer is recognized as empty where that backend uses composer confirmation, rather than mistaken for a swallowed Enter.
-`fm-send.sh` uses the same primitive and exits non-zero
-when a steer's Enter is positively swallowed, so firstmate learns an instruction
-did not land instead of leaving it unsubmitted.
+`fm-send.sh` uses the same primitive and exits non-zero whenever it cannot confirm the submit, so firstmate never assumes a steer landed.
+Its exit status separates a refused send from a submitted-but-unconfirmed one, and an unconfirmed result is reported as unknown rather than as non-delivery, because these confirmation reads have reported unconfirmed for steers that did land.
+The script's header owns the exact statuses.
 
 **Busy-queued Enter exception (tmux backend, opencode 1.18.4).** While opencode
 is mid-turn, Enter is accepted and queued for after the current turn but the
@@ -136,12 +136,19 @@ check alone false-positives on a swallowed Enter for every steer sent to a
 busy opencode pane. The shared `fm_tmux_submit_enter_core` falls back to
 `fm_pane_is_busy` once the Enter-retry budget is spent: a busy pane means the
 Enter was accepted and queued (reported as `empty` so the caller does not
-re-send), while an idle pane keeps `pending` as a genuine swallow. The
-strict-buffer-clears-only-on-`empty` policy above still holds for the daemon
-and the lenient-`pending`-fails-for-`fm-send` policy still holds for steer
-verification - this exception is a busy-queue is treated as a delivered
-Enter, not a swallowed one. The herdr adapter observes the same opencode
-behavior but needs a separate fix; the gap is recorded in
+re-send), while an idle pane keeps `pending` as a genuine swallow.
+That busy read is scoped to the target's recorded harness signature, falling
+back to the generic one only when the harness is unrecorded or has no verified
+signature of its own, so the exception reaches every harness whose spinner is
+actually recognized rather than only the ones the generic footer matches.
+That scoping is why a mid-turn Claude pane now confirms its queued Enter
+instead of reporting a swallow for a steer that landed; `bin/fm-tmux-lib.sh`
+owns the signatures and the submit-verdict contract.
+The strict-buffer-clears-only-on-`empty` policy above still holds for the
+daemon, and `pending` still never confirms a steer for `fm-send`, which reports
+it as unconfirmed rather than as a swallow - this exception is a busy-queue is
+treated as a delivered Enter, not a swallowed one. The herdr adapter observes
+the same opencode behavior but needs a separate fix; the gap is recorded in
 `docs/herdr-backend.md` rather than papered over here.
 
 ## Classification policy

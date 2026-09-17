@@ -84,26 +84,29 @@ FM_TMUX_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
 FM_TMUX_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 FM_TMUX_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
+# fm_busy_regex_for_harness: the verified busy-footer signature for <harness>,
+# and the one place that knows which harnesses have one. An unrecorded harness
+# gets the generic signature; a harness with no verified signature of its own
+# gets nothing, because it must never borrow another harness's.
+fm_busy_regex_for_harness() {  # [harness]
+  case "${1:-}" in
+    claude) printf '%s' "$FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT" ;;
+    codex) printf '%s' "$FM_TMUX_CODEX_BUSY_REGEX_DEFAULT" ;;
+    opencode) printf '%s' "$FM_TMUX_OPENCODE_BUSY_REGEX_DEFAULT" ;;
+    pi) printf '%s' "$FM_TMUX_PI_BUSY_REGEX_DEFAULT" ;;
+    grok) printf '%s' "$FM_TMUX_GROK_BUSY_REGEX_DEFAULT" ;;
+    kimi) printf '%s' "$FM_TMUX_KIMI_BUSY_REGEX_DEFAULT" ;;
+    '') printf '%s' "$FM_TMUX_BUSY_REGEX_DEFAULT" ;;
+  esac
+}
+
 fm_busy_lines_match() {  # [harness]
   local harness=${1:-} lines regex
   IFS= read -r -d '' lines || true
   if [ -n "${FM_BUSY_REGEX:-}" ]; then
     regex=$FM_BUSY_REGEX
   else
-    case "$harness" in
-      claude) regex=$FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT ;;
-      codex) regex=$FM_TMUX_CODEX_BUSY_REGEX_DEFAULT ;;
-      opencode) regex=$FM_TMUX_OPENCODE_BUSY_REGEX_DEFAULT ;;
-      pi) regex=$FM_TMUX_PI_BUSY_REGEX_DEFAULT ;;
-      grok) regex=$FM_TMUX_GROK_BUSY_REGEX_DEFAULT ;;
-      kimi) regex=$FM_TMUX_KIMI_BUSY_REGEX_DEFAULT ;;
-      '') regex=$FM_TMUX_BUSY_REGEX_DEFAULT ;;
-      *)
-        # A supplied harness must never borrow another harness's signature.
-        # Register its verified signature explicitly before classifying it busy.
-        regex=
-        ;;
-    esac
+    regex=$(fm_busy_regex_for_harness "$harness")
   fi
   [ -n "$regex" ] && printf '%s' "$lines" | grep -qiE "$regex"
 }
@@ -393,8 +396,13 @@ fm_pane_is_busy() {  # <target> [harness]
 # `empty` so the caller does not re-send), while an idle pane keeps `pending` as
 # a genuine swallow. Pending-unproven receives the same Enter retry budget but
 # never reaches this exception.
-fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep>
-  local target=$1 retries=$2 sleep_s=$3 i=0 state
+# The optional <harness> selects that busy check's verified per-harness footer
+# signature, the same way bin/fm-crew-state.sh scopes it. Without it the check
+# falls back to the generic signature, which does not recognize every verified
+# harness's spinner, so a busy pane can read idle and a delivered message can be
+# reported as a swallow.
+fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness]
+  local target=$1 retries=$2 sleep_s=$3 harness=${4:-} i=0 state
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
@@ -415,16 +423,21 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep>
   # and queued the message for processing when the current turn ends.
   # Treat it as submitted so the caller does not re-send.
   # On an idle pane, keep reporting pending - a genuine swallow.
-  if fm_pane_is_busy "$target"; then
+  # A harness with no verified signature of its own cannot be classified, and
+  # "not busy" is an assertion this check would have no basis for. Fall back to
+  # the generic signature there, exactly as an unrecorded harness does. A
+  # verified harness keeps its own and never borrows another's.
+  [ -z "$harness" ] || [ -n "$(fm_busy_regex_for_harness "$harness")" ] || harness=
+  if fm_pane_is_busy "$target" "$harness"; then
     printf 'empty'
   else
     printf 'pending'
   fi
 }
 
-fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5
+fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-}
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s"
+  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$harness"
 }

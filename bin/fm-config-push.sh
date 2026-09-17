@@ -13,8 +13,10 @@
 # sends its pointer to that live secondmate via fm-config-inherit-lib.sh
 # (fm_config_send_reread_nudge).
 # Unchanged config and data/captain-shared.md-only updates send no reread
-# message unless a previous send failure is pending for that home.
-# Warnings-only skips exit 0; real propagation or reread-send errors exit non-zero.
+# message unless a previous send that was never confirmed delivered is still
+# pending for that home.
+# Warnings-only skips exit 0; a real propagation error, or a reread pointer whose
+# delivery is not confirmed, exits non-zero.
 set -u
 
 usage() {
@@ -28,10 +30,12 @@ This is local-material-only:
   - does not fast-forward tracked files
   - after successful config/* changes, writes a generation-specific
     literal-content reread instruction and sends its pointer to that live secondmate
-    (no message when config is unchanged unless a previous send failure is pending)
+    (no message when config is unchanged unless a previous send that was never
+    confirmed delivered is still pending)
   - reports each live home and each inheritable item as pushed, unchanged,
     skipped, or error
-  - exits non-zero for real propagation errors or reread-send failures
+  - exits non-zero for real propagation errors or a reread pointer whose
+    delivery is not confirmed
 
 Live homes come from state/*.meta records with kind=secondmate.
 data/secondmates.md is only a fallback for missing home= fields in older or

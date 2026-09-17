@@ -256,6 +256,75 @@ test_claude_busy_signature_uses_real_capture_shapes() {
   pass "fm_pane_is_busy: Claude spinner is scoped, multi-frame, and backward-compatible"
 }
 
+test_submit_core_scopes_the_busy_check_to_the_target_harness() {
+  # The false "not submitted" report on a delivered steer: a live Claude spinner
+  # is only recognized under the claude signature, so a harness-less busy check
+  # read the busy pane as idle and the queued Enter as a swallow.
+  local dir fakebin composer sent vfile
+  dir="$TMP_ROOT/harness-scoped-busy"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  sent="$dir/sent.log"
+  vfile="$dir/verdict"
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$composer"
+  : > "$sent"
+  touch "$dir/.swallow"
+  # A real busy-Claude tail beside the still-pending composer, read through the
+  # genuine fm_pane_is_busy rather than this file's override.
+  run_core() {  # <harness> -> verdict
+    PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
+      FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 \
+      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "$2"' \
+      _ "$ROOT" "$1" 2>/dev/null
+  }
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n✢ Pollinating… (16s · ↓ 1.1k tokens)\n' > "$composer"
+  run_core claude > "$vfile"
+  [ "$(cat "$vfile")" = empty ] \
+    || fail "a busy Claude pane must confirm the queued submit, got '$(cat "$vfile")'"
+  run_core '' > "$vfile"
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "without a harness the generic signature still cannot see the Claude spinner, got '$(cat "$vfile")'"
+  pass "fm_tmux_submit_enter_core: the busy check is scoped to the target harness"
+}
+
+test_submit_core_falls_back_for_an_unregistered_harness() {
+  # bin/fm-spawn.sh's raw-launch escape hatch records the launch command's
+  # basename as the harness, so meta can hold a name with no verified signature.
+  # "Not busy" is an assertion, and the confirmation read has no basis for it
+  # there: it must fall back to the generic signature rather than report a
+  # delivered message as a swallow.
+  local dir fakebin composer sent vfile
+  dir="$TMP_ROOT/unregistered-harness-busy"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  sent="$dir/sent.log"
+  vfile="$dir/verdict"
+  : > "$sent"
+  touch "$dir/.swallow"
+  run_unregistered_core() {  # <harness> -> verdict
+    PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
+      FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 \
+      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "$2"' \
+      _ "$ROOT" "$1" 2>/dev/null
+  }
+  # A generic busy footer beside a still-pending composer: the queued Enter.
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\nesc to interrupt\n' > "$composer"
+  run_unregistered_core amp > "$vfile"
+  [ "$(cat "$vfile")" = empty ] \
+    || fail "an unregistered harness must keep the generic busy fallback, got '$(cat "$vfile")'"
+  # An idle pane under the same unregistered name is still a genuine swallow.
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$composer"
+  run_unregistered_core amp > "$vfile"
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "an idle unregistered-harness pane must stay pending, got '$(cat "$vfile")'"
+  # The fallback must not let a verified harness borrow another's signature.
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\nCtrl+c:cancel\n' > "$composer"
+  run_unregistered_core claude > "$vfile"
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "a verified harness must not borrow another harness's footer, got '$(cat "$vfile")'"
+  pass "fm_tmux_submit_enter_core: an unregistered harness falls back to the generic signature"
+}
+
 test_busy_pane_pending_returns_empty
 test_idle_pane_pending_returns_pending
 test_busy_pane_composer_clears_first_try
@@ -264,3 +333,5 @@ test_busy_pane_unknown_stays_unknown
 test_busy_pane_ambiguous_pending_retries_without_conversion
 test_unrecognized_state_skips_busy_conversion
 test_claude_busy_signature_uses_real_capture_shapes
+test_submit_core_scopes_the_busy_check_to_the_target_harness
+test_submit_core_falls_back_for_an_unregistered_harness

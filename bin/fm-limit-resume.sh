@@ -9,7 +9,11 @@
 #
 # Exit codes: 0 recovered, the bounded wait was recorded, or --check reported a
 #               verdict it could establish.
-#             1 refused - the condition is not proven, or a step did not land.
+#             1 refused - the condition is not proven, a step did not land, or
+#               the resume steer was submitted and its delivery could not be
+#               confirmed.
+#               The stderr line says which, so exit 1 alone never establishes
+#               that nothing reached the crewmate.
 #             2 usage error.
 #
 # WHY (incident 2026-07-29): a crew that exhausts the account usage limit
@@ -62,6 +66,12 @@
 # recheck when it should be back on the wedge cadence, and this feature exists
 # because crews sat frozen for hours unnoticed. So the recover path closes it,
 # and only its OWN line, identified exactly as the idempotent open identifies it.
+# The close follows what the run proved BEFORE it steered - a reset window and a
+# dismissed prompt - so an unconfirmed steer closes the wait too, while a refusal
+# that dismissed or sent nothing leaves it standing.
+# What it RECORDS follows the same rule: the unconfirmed path writes that the
+# instruction was submitted with its delivery unconfirmed, never that the crew
+# was re-steered.
 #
 # THE STEER deliberately does not assert where the crew stopped. In the live
 # incident the interrupted validation run had lost custody and the crew correctly
@@ -91,6 +101,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-claude-limit-lib.sh
 . "$SCRIPT_DIR/fm-claude-limit-lib.sh"
+# shellcheck source=bin/fm-send-result-lib.sh
+. "$SCRIPT_DIR/fm-send-result-lib.sh"
 
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
@@ -187,15 +199,16 @@ record_pause() {
 # bin/fm-supervise-daemon.sh), which drops it alongside every other pause artifact
 # the moment the crew stops declaring the pause.
 RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
-close_pause() {
-  local last
+RESUME_NOTE_UNCONFIRMED="claude usage limit window reset; prompt dismissed and the resume instruction submitted, delivery unconfirmed"
+close_pause() {  # [note]
+  local last note=${1:-$RESUME_NOTE}
   pause_deadline_clear "$STATE" "$ID"
   last=$(last_status_line "$LOG")
   case "$last" in
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") ;;
     *) return 0 ;;
   esac
-  printf 'working: %s\n' "$RESUME_NOTE" >> "$LOG" 2>/dev/null || true
+  printf 'working: %s\n' "$note" >> "$LOG" 2>/dev/null || true
   return 0
 }
 
@@ -250,10 +263,22 @@ esac
 
 STEER=${FM_LIMIT_RESUME_STEER:-"The claude usage limit that stalled you has reset. Do not assume where you stopped: re-read your own current state first, including whether your validation run still exists and belongs to your current commit, then continue from what you actually find."}
 
-if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER"; then
-  echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
-  exit 1
-fi
+# Only a refusal proves the instruction did not land, so ask fm_send_result what
+# happened rather than treating every non-zero status as non-delivery.
+send_status=0
+FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER" || send_status=$?
+case "$(fm_send_result "$send_status")" in
+  delivered|delivered-uncommitted) ;;
+  unconfirmed)
+    close_pause "$RESUME_NOTE_UNCONFIRMED"
+    echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2
+    exit 1
+    ;;
+  *)
+    echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
+    exit 1
+    ;;
+esac
 
 close_pause
 
