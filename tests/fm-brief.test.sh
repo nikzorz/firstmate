@@ -749,6 +749,43 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# Every PR-producing mode must state the closing-keyword rule, and the
+# no-mistakes variant must state the timing too: the pipeline composes the PR
+# body from its own step results, so a keyword written before its PR step is
+# replaced. A silent brief is one of the two causes this rule exists for.
+test_pr_modes_carry_the_closing_keyword_rule() {
+  local home brief
+  home="$TMP_ROOT/closing-keyword-home"
+  write_registry "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-nm-ck-a7 no-registry-proj >/dev/null 2>&1 \
+    || fail "closing-keyword: no-mistakes scaffold exited non-zero"
+  brief="$home/data/brief-nm-ck-a7/brief.md"
+  assert_grep "immediately precedes the reference" "$brief" \
+    "no-mistakes brief does not state the closing-keyword form"
+  assert_grep "Closes #{issue}" "$brief" \
+    "no-mistakes brief does not show the closing-keyword line to write"
+  assert_grep "Put the closing keyword in AFTER that step" "$brief" \
+    "no-mistakes brief does not state the after-the-PR-step timing"
+  assert_grep "confirm the line is still there before you report the PR green" "$brief" \
+    "no-mistakes brief does not require re-verifying the keyword at green"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-dpr-ck-a8 direct-proj >/dev/null 2>&1 \
+    || fail "closing-keyword: direct-PR scaffold exited non-zero"
+  brief="$home/data/brief-dpr-ck-a8/brief.md"
+  assert_grep "immediately precedes the reference" "$brief" \
+    "direct-PR brief does not state the closing-keyword form"
+  assert_grep "Include the line in the body when you open the PR" "$brief" \
+    "direct-PR brief does not say when to write the keyword"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lo-ck-a9 local-proj >/dev/null 2>&1 \
+    || fail "closing-keyword: local-only scaffold exited non-zero"
+  brief="$home/data/brief-lo-ck-a9/brief.md"
+  assert_no_grep "closing keyword" "$brief" \
+    "local-only brief carries a closing-keyword rule for a mode that opens no PR"
+  pass "fm-brief.sh: PR-producing briefs carry the closing-keyword rule and its timing"
+}
+
 test_script_parses
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
@@ -771,3 +808,4 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_task_placeholder_appears_only_as_a_fill_site
 test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate
+test_pr_modes_carry_the_closing_keyword_rule

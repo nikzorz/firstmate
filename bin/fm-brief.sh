@@ -314,10 +314,28 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
 EOF
 PROJECT_MEMORY=$("$FM_ROOT/bin/fm-project-mode.sh" --project-memory "$REPO" 2>/dev/null || echo agents-md)
 
+# Every PR-producing mode carries the closing-keyword rule, because a generated
+# brief that stays silent about it is how a merged PR leaves its issue open. The
+# no-mistakes variant additionally states the timing: the pipeline composes the
+# PR body from its own step results, so a keyword written before its PR step is
+# replaced by it, and only a keyword written afterwards survives to the merge.
+CLOSING_KEYWORD_RULE="If this task owns an issue, the PR body must close it, and the form is exact: GitHub acts only when a closing keyword immediately precedes the reference.
+Write one \`Closes #{issue}\` line per issue.
+\`Close issues #12 and #13\` closes nothing, because the words between the keyword and the reference break it."
+
+CLOSING_KEYWORD_SECTION_PIPELINE="$CLOSING_KEYWORD_RULE
+The pipeline composes the PR body from its own step results, so anything you write into the body before its PR step is replaced.
+Put the closing keyword in AFTER that step, with \`gh-axi pr edit {number} --body-file {file}\`, keeping the body the pipeline wrote and adding the line.
+Re-read the body and confirm the line is still there before you report the PR green."
+
+CLOSING_KEYWORD_SECTION_DIRECT="$CLOSING_KEYWORD_RULE
+Include the line in the body when you open the PR, then re-read the body and confirm it is there before you report the PR."
+
 case "$MODE" in
   direct-PR)
     SETUP2=""
     PAUSE_EXAMPLE="a long test or build run you are waiting out, an upstream release, a rate-limit reset, a scheduled window"
+    CLOSING_KEYWORD_SECTION="$CLOSING_KEYWORD_SECTION_DIRECT"
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
     DOD=$(cat <<EOF
 # Definition of done
@@ -325,6 +343,8 @@ This project ships **direct-PR**: you raise the PR yourself, without the no-mist
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+
+$CLOSING_KEYWORD_SECTION
 EOF
 )
     ;;
@@ -343,6 +363,7 @@ EOF
 )
     ;;
   *)  # no-mistakes (default)
+    CLOSING_KEYWORD_SECTION="$CLOSING_KEYWORD_SECTION_PIPELINE"
     PAUSE_EXAMPLE="a fix round, re-review, or long test step you handed back to the no-mistakes pipeline, an upstream release, a rate-limit reset, a scheduled window"
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
@@ -362,6 +383,8 @@ Two firstmate-specific rules layer on top of that guidance:
   Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
+
+$CLOSING_KEYWORD_SECTION
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
