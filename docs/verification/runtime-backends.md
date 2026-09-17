@@ -146,7 +146,7 @@ Observed guarantees included:
 
 ```text
 ok - real Herdr lab: primary and two secondmate homes each own a top-level contiguous child block
-ok - real Herdr lab: concurrent primary/A/B spawns stay session-locked with zero focus drift
+ok - real Herdr lab: concurrent primary/A/B spawns preserve parent order and exact focus
 ok - real Herdr lab: session lock contention from a secondmate home falls back flat with no journal
 ok - real Herdr lab: legacy projection labels and flat secondmate tabs are left unmigrated
 ok - real Herdr lab: multi-home exact-pane teardowns restore captain focus without workspace close authority
