@@ -165,15 +165,19 @@ test_pending_exemptions_still_reject_help() {
   pass "every pending exemption still rejects --help and -h"
 }
 
+# The snapshot is a set of paths, so an in-place write to a path that already
+# exists is deliberately out of reach. Catching that needs modification times,
+# and on a live home those turn ordinary concurrent fleet activity into a
+# failure often enough to cost more than the case is worth.
 test_sweep_never_touched_the_repo_home() {
   local after added removed
   after=$(repo_state_listing)
   if [ "$after" != "$REPO_STATE_BEFORE" ]; then
-    added=$(comm -13 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
-    removed=$(comm -23 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
-    fail "$ROOT/state changed during the sweep: either a helper resolved the live home instead of the sandbox, or ordinary fleet activity wrote to this live home while the suite ran"$'\n'"added:"$'\n'"$added"$'\n'"removed:"$'\n'"$removed"
+    added=$(LC_ALL=C comm -13 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
+    removed=$(LC_ALL=C comm -23 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
+    fail "the set of paths under $ROOT/state differs from before the sweep: either a helper resolved the live home instead of the sandbox, or ordinary fleet activity wrote to this live home while the suite ran"$'\n'"added:"$'\n'"$added"$'\n'"removed:"$'\n'"$removed"
   fi
-  pass "the sweep leaves this repo's own state directory unchanged"
+  pass "the sweep adds and removes no path under this repo's own state directory"
 }
 
 test_pre_help_writes_land_in_the_sandbox_home
