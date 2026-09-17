@@ -88,6 +88,14 @@ The fleet views count `stalled` as live work alongside `working`, because a run 
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.
 Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
 In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
+A `done:` event there is read against the done gate its recorded delivery mode defines.
+Every pull-request-based ship mode finishes on a pull request, so a `done:` with none reports `blocked`: the task is waiting on firstmate rather than finished.
+Three sources answer whether one exists, cheapest first: the pull request recorded in `state/<id>.meta`, then the event's own prose, then a pull request URL named in a bounded tail of the status stream, which is the same file `bin/fm-fleet-snapshot.sh` already reads for the record's own `pr` field.
+So a crew that recorded or announced its pull request still reads done however it worded the line it wrote afterwards.
+What the crew's own brief asked of it before that line differs by mode, and so does the steer it now needs, which is what the detail carries; `status_done_gate_steer` in `bin/fm-classify-lib.sh` is the single owner of that distinction and every rendering of it.
+Local-only delivery and a scout, which finish without a pull request, are unaffected.
+The status stream is never rewritten: it keeps exactly what the crew wrote, only this reading of it disagrees, and it agrees again once the pull request exists.
+`bin/fm-classify-lib.sh` owns that gate as the vocabulary it already owns for these lines, and reuses `bin/fm-pr-lib.sh`'s own URL parser rather than carrying a second idea of what a pull request URL is.
 For herdr, that pane fallback trusts a native `busy` verdict outright, but corroborates native `idle` or unknown verdicts against the recorded harness's rendered busy signature before deciding the crew is not working.
 
 Ahead of all of that, and only for a crew whose recorded harness is claude, the same reader checks whether the pane is parked on Claude Code's usage-limit prompt and reports the distinct `usage-limited` state.

@@ -30,6 +30,11 @@
 #       safety direction, that ordinary worker output discussing limits (and the
 #       prompt's own text quoted in tool output) never triggers it. The
 #       regression pair for the 2026-07-29 incident.
+#   (n) a `done:` read against its delivery mode's done gate: on a PR-based ship
+#       mode, with no pull request recorded and none named anywhere in the status
+#       stream, it reads `blocked` on the delivery steer rather than done, while
+#       local-only and scout are untouched. The regression set for the three
+#       crews that handed off after a clean local gate on 2026-09-15.
 #   (m) gate ownership and park episode on a parked run: which run shapes publish
 #       the two tokens the watcher's `deciding` absorb reads, plus that absorb
 #       decided over the REAL helper for the majority `fix_review` park - both
@@ -1867,7 +1872,9 @@ test_other_branch_run_ignored() {
   make_repo_on_branch "$d/wt" fm/feat-g
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-g.meta" "window=fm:fm-feat-g" "worktree=$d/wt" "kind=ship"
-  printf 'done: implemented, ready to validate\n' > "$d/state/feat-g.status"
+  # A done line that meets its delivery mode's own done gate, so this case pins
+  # attribution alone and not the gate that test_no_run_idle_pane_done_* owns.
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$d/state/feat-g.status"
   FM_FAKE_AXI_STATUS="$(run_running fm/some-other)"
   FM_FAKE_RUNS_LIST="$(cat <<'EOF'
   running    fm/some-other aaaaaaa  2026-07-02 22:10
@@ -2587,6 +2594,338 @@ test_steps_row_approval_gate_publishes_the_authority_marker
 test_unreadable_gate_status_keeps_the_note_without_the_marker
 test_ask_user_in_prose_does_not_publish_the_authority_marker
 test_a_park_publishes_an_identity_that_moves_with_the_round
+# (n) a `done:` is read against the done gate its delivery mode defines. On a
+# pull-request mode the brief asks for that line the moment implementation is
+# committed, so it is a HANDOFF: three crews in a row wrote one after a clean
+# local gate and this reader called each of them a finished delivery. The unit
+# half pins the predicate over both real measured lines, over the punctuation
+# prose wraps a URL in, and over the pull request the task record already holds;
+# the end-to-end half pins what the reader now says, in both pull-request ship
+# modes, and that a scout and a local-only ship are untouched.
+test_done_gate_predicate_over_delivery_modes() {
+  local nm="done: every show-* read reports earlier-release bytes with its disagreeing pins; local gate clean (check, build, 238 tests)"
+  status_done_meets_delivery_gate "$nm" ship no-mistakes \
+    && fail "a measured no-mistakes done line naming no pull request must not meet its gate"
+  status_done_meets_delivery_gate \
+    "done: #231 fixed on fm/x; both artifacts opened before answering, local gate (install/check/build/test 247 passed) clean" \
+    ship no-mistakes \
+    && fail "the second measured no-mistakes done line naming no pull request must not meet its gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12 checks green" ship no-mistakes \
+    || fail "a no-mistakes done line naming a pull request must satisfy its gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12" ship direct-PR \
+    || fail "a direct-PR done line naming a pull request must satisfy its gate"
+  status_done_meets_delivery_gate "done: raised https://gitlab.com/g/s/p/-/merge_requests/9." ship direct-PR \
+    || fail "a merge request URL closing a sentence must satisfy the gate"
+  status_done_meets_delivery_gate "done: shipped (https://github.com/o/r/pull/12)" ship no-mistakes \
+    || fail "a parenthesised pull request URL must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR <https://github.com/o/r/pull/12>" ship no-mistakes \
+    || fail "an angle-bracketed pull request URL must satisfy the gate"
+  status_done_meets_delivery_gate "done: shipped [PR](https://github.com/o/r/pull/12)" ship no-mistakes \
+    || fail "a markdown-linked pull request URL must satisfy the gate"
+  local tick='`'
+  status_done_meets_delivery_gate "done: PR ${tick}https://github.com/o/r/pull/12${tick}" ship direct-PR \
+    || fail "a backticked pull request URL must satisfy the gate"
+  status_done_meets_delivery_gate "done: shipped **https://github.com/o/r/pull/12**" ship direct-PR \
+    || fail "a bolded pull request URL must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12/files" ship direct-PR \
+    || fail "a pull request URL pasted from its files tab must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12/" ship direct-PR \
+    || fail "a trailing slash after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: PR https://github.com/o/r/pull/12#issuecomment-99" ship direct-PR \
+    || fail "a fragment after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: see https://github.com/o/r/pull/12?w=1" ship direct-PR \
+    || fail "a query after the number must satisfy the gate"
+  status_done_meets_delivery_gate "done: raised https://gitlab.com/g/s/p/-/merge_requests/9/diffs" ship direct-PR \
+    || fail "a merge request URL pasted from its diffs tab must satisfy the gate"
+  status_done_meets_delivery_gate "done: read https://example.invalid/docs/pull-requests first" ship no-mistakes \
+    && fail "a URL the recorder would refuse must not satisfy the gate"
+  status_done_meets_delivery_gate "done: PR #12 checks green" ship no-mistakes \
+    && fail "a bare PR number is not the full URL the gate asks for"
+  status_done_meets_delivery_gate "done: ready in branch fm/x" ship local-only \
+    || fail "local-only delivery finishes without a PR and must stay untouched"
+  status_done_meets_delivery_gate "done: findings in data/x/report.md" scout no-mistakes \
+    || fail "a scout keeps its own report gate and must stay untouched"
+  status_done_meets_delivery_gate "done: charter accepted" secondmate "" \
+    || fail "a secondmate is not a ship task and must stay untouched"
+  status_done_meets_delivery_gate "done: implemented" ship "" \
+    && fail "an unrecorded mode reads as the no-mistakes default, not as no gate"
+  status_done_meets_delivery_gate "done: implemented" ship future-mode \
+    || fail "a mode with no owner must pass rather than have a gate invented for it"
+  status_done_meets_delivery_gate "working: implementing the fix" ship no-mistakes \
+    || fail "a nonterminal verb has no completion claim to contradict"
+  status_done_meets_delivery_gate "blocked: cannot reach the forge to open a PR" ship no-mistakes \
+    || fail "blocked: is how a crew that cannot reach a PR says so and must stay usable"
+  pass "the done gate accepts only what its delivery mode actually delivers through"
+}
+
+# The pull request firstmate already recorded answers before the crew's prose, so
+# the captain-merge wording the classifier treats as first-class stays a delivery.
+test_done_gate_honours_the_recorded_pull_request() {
+  local url=https://github.com/o/r/pull/12 line
+  for line in "done: PR ready, awaiting captain merge" "done: PR ready" "done: merged"; do
+    status_done_meets_delivery_gate "$line" ship direct-PR "$url" \
+      || fail "a recorded pull request must satisfy the gate for: $line"
+    status_done_meets_delivery_gate "$line" ship direct-PR \
+      && fail "with nothing recorded and no stream to read, the line's own prose has to carry the URL: $line"
+  done
+  pass "a recorded pull request answers the gate ahead of the crew's own wording"
+}
+
+# A crew announces its pull request in one event and reports done in the next, so
+# the stream answers where neither the task record nor the last line does. This is
+# the same whole-file answer bin/fm-fleet-snapshot.sh gives the record's `pr` field.
+test_done_gate_honours_a_pull_request_announced_earlier() {
+  local d; d=$(new_case done-gate-stream)
+  local log="$d/announced.status"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$log"
+  status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR "" "$log" \
+    || fail "a pull request announced in an earlier event must satisfy the gate"
+  status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR \
+    && fail "without the stream the same line has nothing to answer with"
+
+  local quiet="$d/quiet.status"
+  {
+    printf 'working: implementing the fix\n'
+    printf 'done: local gate clean (check, build, 238 tests)\n'
+  } > "$quiet"
+  status_done_meets_delivery_gate "done: local gate clean (check, build, 238 tests)" ship no-mistakes "" "$quiet" \
+    && fail "a stream naming no pull request must not satisfy the gate"
+
+  local elsewhere="$d/elsewhere.status"
+  printf 'working: read https://example.invalid/docs/pull-requests first\ndone: implemented\n' > "$elsewhere"
+  status_done_meets_delivery_gate "done: implemented" ship no-mistakes "" "$elsewhere" \
+    && fail "a URL the recorder would refuse must not satisfy the gate"
+
+  status_done_meets_delivery_gate "done: implemented" ship no-mistakes "" "$d/never-written.status" \
+    && fail "an unreadable stream answers nothing and must not satisfy the gate"
+  pass "the gate reads the whole status stream when the record and the line are silent"
+}
+
+# One owner for the phrase firstmate reads, because what each brief asked of the
+# crew before its `done:` is opposite between the two modes.
+test_done_gate_steer_speaks_for_each_brief() {
+  local nm dpr other
+  nm=$(status_done_gate_steer no-mistakes)
+  dpr=$(status_done_gate_steer direct-PR)
+  other=$(status_done_gate_steer future-mode)
+  [ "$nm" = "$(status_done_gate_steer '')" ] \
+    || fail "an unrecorded mode must read as the no-mistakes default"
+  case "$nm" in
+    "steer it to "*) ;;
+    *) fail "the no-mistakes steer must lead with the action: $nm" ;;
+  esac
+  case "$dpr" in
+    "steer it to "*) ;;
+    *) fail "the direct-PR steer must lead with the action: $dpr" ;;
+  esac
+  case "$nm" in *handed\ off*) ;; *) fail "no-mistakes asks for that done: line, so say it handed off: $nm" ;; esac
+  case "$dpr" in *handed\ off*) fail "direct-PR is briefed to open its PR before done:, so nothing was handed off: $dpr" ;; esac
+  case "$nm" in *no-mistakes*) ;; *) fail "the no-mistakes steer must name the pipeline to run: $nm" ;; esac
+  case "$dpr" in *open*) ;; *) fail "the direct-PR steer must name opening the pull request: $dpr" ;; esac
+  [ "$nm" != "$dpr" ] || fail "the two modes must not share one wording"
+  local phrase
+  for phrase in "$nm" "$dpr" "$other"; do
+    [ "${#phrase}" -le 90 ] \
+      || fail "every steer must fit the bearings 90-character budget, got ${#phrase}: $phrase"
+  done
+  pass "each delivery mode gets the steer its own brief calls for"
+}
+
+# An unreadable bound caps work, so it must never decide the answer: the scan
+# still reads the stream and still finds the announcement at its end.
+test_done_gate_stream_scan_survives_an_unreadable_bound() {
+  local d; d=$(new_case done-gate-bad-bound)
+  local log="$d/announced.status"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$log"
+  local saved=${FM_CLASSIFY_PR_SCAN_LINES:-}
+  local bad
+  for bad in "not-a-number" "" "0" "-5"; do
+    FM_CLASSIFY_PR_SCAN_LINES=$bad \
+      status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR "" "$log" \
+      || fail "a bound of '$bad' must fall back to the default, not accuse a crew that delivered"
+  done
+  if [ -n "$saved" ]; then FM_CLASSIFY_PR_SCAN_LINES=$saved; else unset FM_CLASSIFY_PR_SCAN_LINES; fi
+  pass "an unusable scan bound falls back to the default instead of emptying the scan"
+}
+
+# The bound keeps the END of the stream, because both briefs put the pull request
+# on the done line or the event just before it.
+test_done_gate_stream_scan_keeps_the_end_of_the_stream() {
+  local d; d=$(new_case done-gate-stream-cap)
+  local log="$d/long.status"
+  local i
+  : > "$log"
+  for i in $(seq 1 80); do
+    printf 'working: consulted https://example.invalid/ref/%s\n' "$i" >> "$log"
+  done
+  printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n' >> "$log"
+  printf 'done: checks green, ready for captain merge\n' >> "$log"
+  status_done_meets_delivery_gate "done: checks green, ready for captain merge" ship direct-PR "" "$log" \
+    || fail "an announcement at the end of a long stream must still satisfy the gate"
+  pass "the stream scan reads the end of the stream, where the announcement is"
+}
+
+# With no URL parser there is nothing to read a payload against, so the predicate
+# declines rather than reporting every finished crew as undelivered.
+test_done_gate_passes_when_the_pr_parser_is_unavailable() {
+  local saved=$_FM_CLASSIFY_LIB_DIR
+  _FM_CLASSIFY_LIB_DIR="$saved/definitely-not-a-lib-dir"
+  status_done_meets_delivery_gate "done: local gate clean" ship no-mistakes
+  local rc=$?
+  _FM_CLASSIFY_LIB_DIR=$saved
+  [ "$rc" -eq 0 ] || fail "an unavailable bin/fm-pr-lib.sh must decline, not accuse"
+  pass "the done gate declines when its URL parser is unavailable"
+}
+
+test_no_run_idle_pane_done_without_pr_needs_the_delivery_steer() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr)
+  make_repo_on_branch "$d/wt" fm/feat-nopr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-nopr.meta" \
+    "window=fm:fm-feat-nopr" "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  printf 'done: local gate clean (check, build, 238 tests)\n' > "$d/state/feat-nopr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-nopr)
+  assert_not_contains "$out" "state: done" "a handoff with no pull request is not a finished delivery"
+  assert_contains "$out" "state: blocked" "it reads as a task waiting on firstmate"
+  assert_contains "$out" "steer it to run /no-mistakes" \
+    "the detail leads with the action this mode's brief leaves to firstmate"
+  assert_contains "$out" "handed off" \
+    "and says the crew handed off at commit, which is what its brief asked for"
+  local detail=${out#*"state: blocked"}
+  detail=${detail#*source: status-log · }
+  [ "${#detail}" -le 90 ] \
+    || fail "the detail must survive the bearings 90-character budget, got ${#detail}"
+  local logged; logged=$(cat "$d/state/feat-nopr.status")
+  assert_contains "$logged" "done: local gate clean (check, build, 238 tests)" \
+    "the status stream keeps exactly what the crew wrote"
+  pass "no-mistakes ship: a done with no PR reads blocked on the delivery steer"
+}
+
+test_no_run_idle_pane_direct_pr_done_without_pr_needs_the_delivery_steer() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr-direct)
+  make_repo_on_branch "$d/wt" fm/feat-nopr-d
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-nopr-d.meta" \
+    "window=fm:fm-feat-nopr-d" "worktree=$d/wt" "kind=ship" "mode=direct-PR"
+  printf 'done: implemented and committed on the branch\n' > "$d/state/feat-nopr-d.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-nopr-d)
+  assert_not_contains "$out" "state: done" "a handoff with no pull request is not a finished delivery"
+  assert_contains "$out" "state: blocked" "it reads as a task waiting on firstmate"
+  assert_contains "$out" "steer it to push and open its PR" \
+    "the detail leads with the action this mode's brief asks the crew for"
+  assert_not_contains "$out" "handed off" \
+    "a direct-PR brief asks for the pull request before done:, so nothing was handed off"
+  local detail=${out#*"state: blocked"}
+  detail=${detail#*source: status-log · }
+  [ "${#detail}" -le 90 ] \
+    || fail "the detail must survive the bearings 90-character budget, got ${#detail}"
+  pass "direct-PR ship: a done with no PR reads blocked on its own unmet gate"
+}
+
+test_no_run_idle_pane_done_with_pr_still_done() {
+  reset_fakes
+  local d; d=$(new_case done-with-pr)
+  make_repo_on_branch "$d/wt" fm/feat-pr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pr.meta" \
+    "window=fm:fm-feat-pr" "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  printf 'done: PR https://github.com/o/r/pull/12 checks green\n' > "$d/state/feat-pr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-pr)
+  assert_contains "$out" "state: done" "a done naming its PR still reads as finished"
+  assert_contains "$out" "source: status-log" "and still from the status log"
+  pass "no-mistakes ship: a done naming its PR is untouched"
+}
+
+# The pull request bin/fm-pr-check.sh recorded is the task's own durable answer,
+# so a last line that does not repeat the URL is still a finished delivery.
+test_no_run_idle_pane_done_with_recorded_pr_still_done() {
+  reset_fakes
+  local d; d=$(new_case done-recorded-pr)
+  make_repo_on_branch "$d/wt" fm/feat-recpr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-recpr.meta" \
+    "window=fm:fm-feat-recpr" "worktree=$d/wt" "kind=ship" "mode=direct-PR" \
+    "pr=https://github.com/o/r/pull/12"
+  printf 'done: PR ready, awaiting captain merge\n' > "$d/state/feat-recpr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-recpr)
+  assert_contains "$out" "state: done" "a recorded pull request makes this a finished delivery"
+  assert_not_contains "$out" "steer it to" "and there is no steer left to ask for"
+  pass "a recorded pull request keeps a bare done line reading done"
+}
+
+# The finding's own trace through the real reader: a direct-PR crew that opened
+# its pull request in an earlier event, whose `pr=` firstmate has not recorded yet,
+# and whose last line uses a bare completion wording.
+test_no_run_idle_pane_done_with_an_earlier_pr_announcement_still_done() {
+  reset_fakes
+  local d; d=$(new_case done-announced-pr)
+  make_repo_on_branch "$d/wt" fm/feat-annpr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-annpr.meta" \
+    "window=fm:fm-feat-annpr" "worktree=$d/wt" "kind=ship" "mode=direct-PR"
+  {
+    printf 'working: opened https://github.com/o/r/pull/12, waiting on checks\n'
+    printf 'done: checks green, ready for captain merge\n'
+  } > "$d/state/feat-annpr.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-annpr)
+  assert_contains "$out" "state: done" "a pull request announced earlier is still this task's delivery"
+  assert_not_contains "$out" "steer it to" "so there is no steer left to ask for"
+  pass "a pull request announced in an earlier event keeps a bare done line reading done"
+}
+
+test_no_run_idle_pane_local_only_and_scout_done_untouched() {
+  reset_fakes
+  local d; d=$(new_case done-no-pr-modes)
+  make_repo_on_branch "$d/wt" fm/feat-lo
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-lo.meta" \
+    "window=fm:fm-feat-lo" "worktree=$d/wt" "kind=ship" "mode=local-only"
+  printf 'done: ready in branch fm/feat-lo\n' > "$d/state/feat-lo.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" feat-lo)
+  assert_contains "$out" "state: done" "local-only delivery finishes with no PR and must stay done"
+
+  fm_write_meta "$d/state/scout-x.meta" \
+    "window=fm:fm-scout-x" "worktree=$d/wt" "kind=scout" "mode=no-mistakes"
+  printf 'done: findings written to data/scout-x/report.md\n' > "$d/state/scout-x.status"
+  out=$(run_crew_state "$d" scout-x)
+  assert_contains "$out" "state: done" "a scout keeps its own report gate and must stay done"
+  pass "local-only ship and scout done lines are untouched"
+}
+
 test_deciding_class_over_the_real_helper
+
+test_done_gate_predicate_over_delivery_modes
+test_done_gate_honours_the_recorded_pull_request
+test_done_gate_honours_a_pull_request_announced_earlier
+test_done_gate_steer_speaks_for_each_brief
+test_done_gate_stream_scan_keeps_the_end_of_the_stream
+test_done_gate_stream_scan_survives_an_unreadable_bound
+test_done_gate_passes_when_the_pr_parser_is_unavailable
+test_no_run_idle_pane_done_without_pr_needs_the_delivery_steer
+test_no_run_idle_pane_direct_pr_done_without_pr_needs_the_delivery_steer
+test_no_run_idle_pane_done_with_pr_still_done
+test_no_run_idle_pane_done_with_recorded_pr_still_done
+test_no_run_idle_pane_done_with_an_earlier_pr_announcement_still_done
+test_no_run_idle_pane_local_only_and_scout_done_untouched
 
 echo "all fm-crew-state tests passed"

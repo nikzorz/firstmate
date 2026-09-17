@@ -729,7 +729,9 @@ EOF
   fm_write_meta "$mate/state/failed.meta" \
     "window=firstmate:fm-failed" "worktree=$mate/projects/failed" "project=sample" \
     "harness=codex" "kind=ship" "mode=no-mistakes"
-  printf 'done: complete\n' > "$mate/state/done.status"
+  # A done line that meets its delivery mode's own done gate, so this case pins
+  # the terminal-child disclosure alone and not that gate.
+  printf 'done: PR https://github.com/o/r/pull/5 checks green\n' > "$mate/state/done.status"
   printf 'failed: stopped\n' > "$mate/state/failed.status"
   rm "$mate/state/parked.meta" "$mate/state/parked.status"
   canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \

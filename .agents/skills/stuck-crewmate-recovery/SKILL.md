@@ -45,6 +45,12 @@ The detail names the step and why it is not advancing - either how long it has b
 Read the run's own logs for that step before touching the pane, and do not interrupt, exit, or relaunch the crew on this state alone.
 Report it to the captain as a validation that stopped making progress, with that detail as the evidence.
 
+A `blocked` state whose detail opens with `steer it to` means the crew reported done and its task has no pull request, so what it waits on is one line from you rather than a wedge or a pipeline fault.
+That detail is the steer itself, already written for the delivery mode the task records; `status_done_gate_steer` in `bin/fm-classify-lib.sh` owns that wording and the reason each mode gets the one it does.
+Send it as one line and read the answer, because a crew that cannot get there has something to say and `blocked:` is how it says it.
+Do not interrupt, exit, or relaunch on this state alone.
+Its work is intact, its status record needs no repairing, and the next reading agrees on its own once the pull request exists.
+
 Escalate in order:
 
 1. Peek the pane.

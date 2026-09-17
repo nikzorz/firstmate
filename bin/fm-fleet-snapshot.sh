@@ -448,7 +448,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 task_json_lines() {
   local meta id kind harness mode yolo project worktree home projects backend target status_log report_path
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
-  local current_state current_source pending_decision blocked_event report_present=0 pr_from_status
+  local current_state current_source current_event_verb pending_decision blocked_event report_present=0 pr_from_status
   local open_decisions_tsv open_decisions_json
   local -a row_pipeline_status
 
@@ -483,6 +483,7 @@ task_json_lines() {
     event_json=$(status_event_json "$status_log")
     current_state=$(printf '%s' "$current_json" | jq -r '.state // ""')
     current_source=$(printf '%s' "$current_json" | jq -r '.source // ""')
+    current_event_verb=$(printf '%s' "$event_json" | jq -r '.last_event.state // ""')
 
     # Durable keyed open-decision set: fold the WHOLE status stream
     # (fm-classify-lib.sh's status_open_decisions) so a later unrelated event can
@@ -504,6 +505,12 @@ task_json_lines() {
     #     surviving request can still carry fm-crew-state.sh's "status-log
     #     superseded" stamp in current_state.detail, which is prose about that
     #     run-step read; hints.open_decisions is the authoritative open set.
+    #     A `done:` the reader answers `blocked` off, because the task's delivery
+    #     mode has no pull request yet, is the same finish and clears the same
+    #     way: the crew completed the implementation its requests were raised
+    #     during and handed it back, and only the state word differs. Keying on
+    #     that word alone would resurface an answered decision beside the very row
+    #     asking for the delivery steer, so this branch names the case itself.
     #   - a live activity read (run-step or busy pane) that is working, so a
     #     crew that resumed past a gate is not still reported as parked. It stays
     #     unnarrowed: a crew actively working is moving past its gates as it goes,
@@ -519,7 +526,9 @@ task_json_lines() {
     open_decisions_tsv=$(status_open_decisions "$status_log")
     if [ "$kind" = secondmate ]; then
       :
-    elif [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; then
+    elif [ "$current_state" = "done" ] || [ "$current_state" = "failed" ] \
+         || { [ "$current_source" = status-log ] && [ "$current_state" = blocked ] \
+              && [ "$current_event_verb" = "done" ]; }; then
       open_decisions_tsv=$(status_trailing_open_decisions "$status_log")
     elif { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
          && [ "$current_state" != parked ] && [ "$current_state" != blocked ] \
