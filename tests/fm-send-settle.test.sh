@@ -14,6 +14,8 @@
 #   4. The --key path never pauses (it bypasses the submit/settle path entirely).
 #   5. An unusable value cannot turn a confirmed delivery into a failure: it is
 #      named on stderr and the send still reports what it delivered.
+#   6. Every fractional form sleep accepts is accepted here too, including the
+#      leading-dot form.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -150,8 +152,24 @@ test_unusable_value_reports_itself_without_failing_the_send() {
   pass "fm-send: an unusable FM_SEND_SETTLE is reported, never charged against the delivery"
 }
 
+# FM_SEND_SETTLE is a documented tunable that previously passed through whatever
+# sleep accepts, so the guard must not reject a form sleep takes.
+test_leading_dot_fraction_is_accepted() {
+  local dir fb log err rc
+  dir="$TMP_ROOT/leading-dot"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/sleep.log"; err="$dir/send.err"
+  run_send_capturing_stderr "$fb" "$log" "$err" FM_SEND_SETTLE=.5; rc=$?
+  expect_code 0 "$rc" "a leading-dot settle value should succeed"
+  assert_not_contains "$(cat "$err")" "FM_SEND_SETTLE" \
+    "a value sleep accepts should not be reported as a configuration problem"
+  [ "$(tail -1 "$log")" = .5 ] \
+    || fail "the leading-dot settle value should reach sleep unchanged, got '$(tail -1 "$log")'"$'\n'"--- sleeps ---"$'\n'"$(cat "$log")"
+  pass "fm-send: FM_SEND_SETTLE accepts the leading-dot fractional form sleep takes"
+}
+
 test_default_send_pauses_one_second
 test_zero_disables_pause
 test_pause_is_tunable
 test_key_path_never_pauses
 test_unusable_value_reports_itself_without_failing_the_send
+test_leading_dot_fraction_is_accepted

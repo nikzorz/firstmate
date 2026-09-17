@@ -443,26 +443,27 @@ test_delivery_confirmation_fallback_reconciles() {
       "$state" "$prepared_corr" attempted 5750 \
       || fail "orphaned attempt fixture should persist"
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
-      || fail "orphaned delivery attempt should escalate"
-    [ "$(phase_of "$state" "$prepared_corr")" = escalated ] \
-      || fail "orphaned delivery attempt should become one durable escalation"
+      || fail "orphaned delivery attempt should reconcile"
+    [ "$(phase_of "$state" "$prepared_corr")" = delivery_unknown ] \
+      || fail "an aged delivery attempt should record the delivery as unknown"
     [ -z "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" ] \
-      || fail "delivery-unknown escalation must not manufacture delivery"
-    grep -Fq "pending-reply-delivery-unknown:" "$state/hibit.status" \
-      || fail "delivery uncertainty should use its distinct escalation"
+      || fail "an unknown delivery must not manufacture delivery"
+    # It escalates on the recovery flow's evidence, not on the marker's age.
+    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalations:-0}" = 0 ] \
+      || fail "an unknown delivery escalated before any recovery request, got $escalations"
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
       || fail "repeated delivery-unknown tick should be inert"
-    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status")
-    [ "$escalations" = 1 ] \
-      || fail "delivery-unknown escalation should publish once, got $escalations"
+    [ "$(phase_of "$state" "$prepared_corr")" = delivery_unknown ] \
+      || fail "a repeated tick without turn evidence should change nothing"
     printf 'done [corr=%s]: late report proves delivery\n' "$prepared_corr" >> "$state/hibit.status"
     fm_pending_reply_tick "$state" || fail "watcher should accept a late delivery report"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
-      || fail "late report should resolve escalated delivery-unknown"
+      || fail "late report should resolve an unknown delivery"
     [ "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" = 5760 ] \
       || fail "late report should provide delivery evidence"
-    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status")
-    [ "$escalations" = 1 ] || fail "late report must not re-escalate delivery-unknown"
+    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalations:-0}" = 0 ] || fail "a resolved unknown delivery must never escalate"
     fm_pending_reply_tick "$state" || fail "resolved late report should remain idempotent"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
       || fail "late report resolution should remain durable"
@@ -487,6 +488,89 @@ test_delivery_confirmation_fallback_reconciles() {
     fi
   ) || fail "delivery confirmation fallback regression failed"
   pass "delivery confirmation fallback reconciles durably"
+}
+
+# An unknown delivery and a confirmed one are the same request with different
+# evidence about the transport, so they must take the one recovery flow the
+# captain's direction describes: the request turn completes, exactly one
+# recovery request goes out, and one escalation follows only if that recovery
+# turn also completes with no correlated report.
+test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
+  local home state hook_log confirmed unknown reported corr sent escalated
+  home=$(setup_parent aligned-recovery)
+  state="$home/state"
+  hook_log="$home/recovery.log"
+  : > "$hook_log"
+  # shellcheck disable=SC2030,SC2031
+  export FM_PENDING_REPLY_NOW=7000
+  export FM_ALIGNED_HOOK_LOG="$hook_log"
+  aligned_recovery_hook() { printf '%s\n' "$2" >> "$FM_ALIGNED_HOOK_LOG"; return 0; }
+  export -f aligned_recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=aligned_recovery_hook
+
+  confirmed=$(fm_pending_reply_create "$home" "$state" hibit "confirmed request")
+  fm_pending_reply_mark_delivered "$state" "$confirmed"
+  unknown=$(fm_pending_reply_create "$home" "$state" hibit "unknown request")
+  fm_pending_reply_prepare_delivery "$state" "$unknown" \
+    || fail "the unknown delivery attempt should persist"
+  fm_pending_reply_tick_one "$state" "$unknown" unknown \
+    || fail "the unknown delivery should reconcile"
+  [ "$(phase_of "$state" "$unknown")" = delivery_unknown ] \
+    || fail "the unknown delivery should record its uncertainty"
+
+  for corr in "$confirmed" "$unknown"; do
+    # No turn evidence yet: neither path may send a recovery request.
+    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: idle-evidence tick failed"
+    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+    [ "${sent:-0}" = 0 ] \
+      || fail "$corr: a recovery request went out before the request turn completed"
+    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: busy tick failed"
+    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+    [ "${sent:-0}" = 0 ] \
+      || fail "$corr: a recovery request went out while the request turn was still running"
+
+    # The request turn completes: exactly one recovery request, no escalation yet.
+    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: completing tick failed"
+    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+    [ "${sent:-0}" = 1 ] || fail "$corr: expected exactly one recovery request, got ${sent:-0}"
+    [ "$(phase_of "$state" "$corr")" = recovery_sent ] \
+      || fail "$corr: a delivered recovery request should await its own turn, got $(phase_of "$state" "$corr")"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 0 ] || fail "$corr: escalated before the recovery turn completed"
+
+    # The recovery turn completes with no correlated report: escalate once.
+    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: recovery busy tick failed"
+    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: recovery completing tick failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "$corr: a missed recovery turn should escalate, got $(phase_of "$state" "$corr")"
+    grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$corr" "$state/hibit.status" \
+      || fail "$corr: escalation should name the missed report"
+    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: repeat tick failed"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 1 ] || fail "$corr: escalation should publish exactly once, got ${escalated:-0}"
+    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+    [ "${sent:-0}" = 1 ] || fail "$corr: recovery transport must be attempted exactly once"
+  done
+
+  # A correlated report still resolves an unknown delivery without escalating.
+  reported=$(fm_pending_reply_create "$home" "$state" hibit "reported unknown request")
+  fm_pending_reply_prepare_delivery "$state" "$reported" \
+    || fail "the reported delivery attempt should persist"
+  fm_pending_reply_tick_one "$state" "$reported" unknown || fail "reported reconcile tick failed"
+  [ "$(phase_of "$state" "$reported")" = delivery_unknown ] \
+    || fail "the reported request should first record its delivery as unknown"
+  printf 'done [corr=%s]: report proves delivery\n' "$reported" >> "$state/hibit.status"
+  fm_pending_reply_tick_one "$state" "$reported" idle || fail "reported resolving tick failed"
+  [ "$(phase_of "$state" "$reported")" = resolved ] \
+    || fail "a correlated report should resolve an unknown delivery"
+  escalated=$(grep -Fc "pending-reply-id=$reported" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 0 ] || fail "a resolved unknown delivery must not escalate"
+  sent=$(grep -Fc "$reported" "$hook_log" 2>/dev/null || true)
+  [ "${sent:-0}" = 0 ] || fail "a resolved unknown delivery must not send a recovery request"
+
+  unset FM_PENDING_REPLY_SEND_HOOK
+  unset FM_ALIGNED_HOOK_LOG
+  pass "an unknown delivery takes the same one-recovery, one-escalation flow as a confirmed one"
 }
 
 test_unrelated_and_stale_corr_cannot_resolve() {
@@ -985,6 +1069,7 @@ test_escalation_publication_failure_retries
 test_transport_success_is_not_reply_success
 test_undelivered_records_are_scan_immutable
 test_delivery_confirmation_fallback_reconciles
+test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one
 test_unrelated_and_stale_corr_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged

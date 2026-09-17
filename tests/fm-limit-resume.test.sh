@@ -624,6 +624,8 @@ test_recovery_closes_the_wait_it_opened() {
   case "$last" in
     paused:*) fail "recovery left its own paused: line standing as the crew's last event" ;;
   esac
+  assert_contains "$last" "the crew re-steered" \
+    "a confirmed recovery should record the re-steer it proved"
   pass "recovery closes the bounded wait it opened, returning the crew to the wedge cadence"
 }
 
@@ -745,7 +747,11 @@ test_unconfirmed_steer_still_closes_the_wait_it_opened() {
   case "$last" in
     paused:*) fail "an unconfirmed steer left the quota wait standing as the crew's last event" ;;
   esac
-  pass "an unconfirmed steer still closes the quota wait this run had already disproved"
+  assert_contains "$last" "delivery unconfirmed" \
+    "the recorded outcome should say the instruction's delivery was unconfirmed"
+  assert_not_contains "$last" "re-steered" \
+    "an unconfirmed steer must not record a re-steer it could not prove"
+  pass "an unconfirmed steer closes the quota wait and records only what it proved"
 }
 
 # The close must not widen past what the run proved. A refusal that dismissed

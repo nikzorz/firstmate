@@ -349,7 +349,7 @@ else
   # what fm-send reports: an unusable value is named on stderr and the exit
   # status still describes the delivery that happened.
   settle_after=${FM_SEND_SETTLE:-$FM_SEND_SETTLE_DEFAULT}
-  if ! [[ $settle_after =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  if ! [[ $settle_after =~ ^([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]]; then
     echo "warning: FM_SEND_SETTLE='$settle_after' is not a number of seconds; pausing $FM_SEND_SETTLE_DEFAULT instead" >&2
     settle_after=$FM_SEND_SETTLE_DEFAULT
   fi

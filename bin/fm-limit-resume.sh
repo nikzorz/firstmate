@@ -69,6 +69,9 @@
 # The close follows what the run proved BEFORE it steered - a reset window and a
 # dismissed prompt - so an unconfirmed steer closes the wait too, while a refusal
 # that dismissed or sent nothing leaves it standing.
+# What it RECORDS follows the same rule: the unconfirmed path writes that the
+# instruction was submitted with its delivery unconfirmed, never that the crew
+# was re-steered.
 #
 # THE STEER deliberately does not assert where the crew stopped. In the live
 # incident the interrupted validation run had lost custody and the crew correctly
@@ -196,15 +199,16 @@ record_pause() {
 # bin/fm-supervise-daemon.sh), which drops it alongside every other pause artifact
 # the moment the crew stops declaring the pause.
 RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
-close_pause() {
-  local last
+RESUME_NOTE_UNCONFIRMED="claude usage limit window reset; prompt dismissed and the resume instruction submitted, delivery unconfirmed"
+close_pause() {  # [note]
+  local last note=${1:-$RESUME_NOTE}
   pause_deadline_clear "$STATE" "$ID"
   last=$(last_status_line "$LOG")
   case "$last" in
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") ;;
     *) return 0 ;;
   esac
-  printf 'working: %s\n' "$RESUME_NOTE" >> "$LOG" 2>/dev/null || true
+  printf 'working: %s\n' "$note" >> "$LOG" 2>/dev/null || true
   return 0
 }
 
@@ -266,7 +270,7 @@ FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER" || send_status=$?
 case "$(fm_send_result "$send_status")" in
   delivered) ;;
   unconfirmed)
-    close_pause
+    close_pause "$RESUME_NOTE_UNCONFIRMED"
     echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2
     exit 1
     ;;
