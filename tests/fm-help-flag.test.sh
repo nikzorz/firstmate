@@ -41,14 +41,17 @@ is_library() {
 # bytes are copied verbatim into state/<id>.check.sh and revalidated against
 # this template, so adding a flag to it would invalidate every published poll.
 # It already exits zero and silently on any unrecognized argument.
-#
+EXEMPT_PERMANENT=(fm-pr-poll.sh)
+
 # bin/fm-send.sh and bin/fm-limit-resume.sh are pending the same fix; they were
-# held by concurrent work when this sweep landed.
-EXEMPT=(fm-pr-poll.sh fm-send.sh fm-limit-resume.sh)
+# held by concurrent work when this sweep landed. Their exemption retires
+# itself: it is asserted below to still be true, so the follow-up that teaches
+# either one the flag fails here until the name is moved into the sweep.
+EXEMPT_PENDING=(fm-send.sh fm-limit-resume.sh)
 
 is_exempt() {
   local base
-  for base in "${EXEMPT[@]}"; do
+  for base in "${EXEMPT_PERMANENT[@]}" "${EXEMPT_PENDING[@]}"; do
     [ "$1" = "$base" ] && return 0
   done
   return 1
@@ -140,30 +143,42 @@ test_reported_helpers_answer_instead_of_rejecting() {
 
 # The exemption list must stay a statement about current reality, not a place
 # defects can be parked: every exempt helper must still exist.
-test_exemptions_still_exist() {
+test_permanent_exemptions_still_exist() {
   local base
-  for base in "${EXEMPT[@]}"; do
+  for base in "${EXEMPT_PERMANENT[@]}"; do
     assert_present "$ROOT/bin/$base" "exempt helper bin/$base no longer exists; drop or update the exemption"
   done
-  pass "every documented exemption still names a real helper"
+  pass "every permanent exemption still names a real helper"
+}
+
+test_pending_exemptions_still_reject_help() {
+  local base flag out rc
+  for base in "${EXEMPT_PENDING[@]}"; do
+    assert_present "$ROOT/bin/$base" "exempt helper bin/$base no longer exists; drop or update the exemption"
+    for flag in --help -h; do
+      out=$(run_help "$HELP_HOME" "$ROOT/bin/$base" "$flag")
+      rc=$?
+      [ "$rc" -ne 0 ] \
+        || fail "bin/$base now answers $flag; move it out of EXEMPT_PENDING so the sweep covers it: $out"
+    done
+  done
+  pass "every pending exemption still rejects --help and -h"
 }
 
 test_sweep_never_touched_the_repo_home() {
-  local path gained=
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    case $'\n'"$REPO_STATE_BEFORE"$'\n' in
-      *$'\n'"$path"$'\n'*) ;;
-      *) gained="$gained $path" ;;
-    esac
-  done <<< "$(repo_state_listing)"
-  [ -z "$gained" ] \
-    || fail "the sweep created$gained; helpers resolved the live home instead of the sandbox"
-  pass "the sweep adds nothing to this repo's own state directory"
+  local after added removed
+  after=$(repo_state_listing)
+  if [ "$after" != "$REPO_STATE_BEFORE" ]; then
+    added=$(comm -13 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
+    removed=$(comm -23 <(printf '%s\n' "$REPO_STATE_BEFORE") <(printf '%s\n' "$after") | grep -v '^$')
+    fail "$ROOT/state changed during the sweep: either a helper resolved the live home instead of the sandbox, or ordinary fleet activity wrote to this live home while the suite ran"$'\n'"added:"$'\n'"$added"$'\n'"removed:"$'\n'"$removed"
+  fi
+  pass "the sweep leaves this repo's own state directory unchanged"
 }
 
 test_pre_help_writes_land_in_the_sandbox_home
 test_every_entrypoint_prints_usage_and_exits_zero
 test_reported_helpers_answer_instead_of_rejecting
-test_exemptions_still_exist
+test_permanent_exemptions_still_exist
+test_pending_exemptions_still_reject_help
 test_sweep_never_touched_the_repo_home
