@@ -442,28 +442,29 @@ test_delivery_confirmation_fallback_reconciles() {
     fm_pending_reply_write_delivery_confirmation \
       "$state" "$prepared_corr" attempted 5750 \
       || fail "orphaned attempt fixture should persist"
+    # An endpoint the watcher cannot classify can never supply turn evidence, so
+    # the unknown delivery escalates there rather than sitting unresolved.
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
-      || fail "orphaned delivery attempt should reconcile"
-    [ "$(phase_of "$state" "$prepared_corr")" = delivery_unknown ] \
-      || fail "an aged delivery attempt should record the delivery as unknown"
+      || fail "orphaned delivery attempt should escalate"
+    [ "$(phase_of "$state" "$prepared_corr")" = escalated ] \
+      || fail "orphaned delivery attempt should become one durable escalation"
     [ -z "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" ] \
-      || fail "an unknown delivery must not manufacture delivery"
-    # It escalates on the recovery flow's evidence, not on the marker's age.
-    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalations:-0}" = 0 ] \
-      || fail "an unknown delivery escalated before any recovery request, got $escalations"
+      || fail "delivery-unknown escalation must not manufacture delivery"
+    grep -Fq "pending-reply-delivery-unknown:" "$state/hibit.status" \
+      || fail "delivery uncertainty should use its distinct escalation"
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
       || fail "repeated delivery-unknown tick should be inert"
-    [ "$(phase_of "$state" "$prepared_corr")" = delivery_unknown ] \
-      || fail "a repeated tick without turn evidence should change nothing"
+    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalations:-0}" = 1 ] \
+      || fail "delivery-unknown escalation should publish once, got $escalations"
     printf 'done [corr=%s]: late report proves delivery\n' "$prepared_corr" >> "$state/hibit.status"
     fm_pending_reply_tick "$state" || fail "watcher should accept a late delivery report"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
-      || fail "late report should resolve an unknown delivery"
+      || fail "late report should resolve escalated delivery-unknown"
     [ "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" = 5760 ] \
       || fail "late report should provide delivery evidence"
     escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalations:-0}" = 0 ] || fail "a resolved unknown delivery must never escalate"
+    [ "${escalations:-0}" = 1 ] || fail "late report must not re-escalate delivery-unknown"
     fm_pending_reply_tick "$state" || fail "resolved late report should remain idempotent"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
       || fail "late report resolution should remain durable"
@@ -496,7 +497,7 @@ test_delivery_confirmation_fallback_reconciles() {
 # recovery request goes out, and one escalation follows only if that recovery
 # turn also completes with no correlated report.
 test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
-  local home state hook_log confirmed unknown reported corr sent escalated
+  local home state hook_log confirmed unknown unobservable reported corr sent escalated
   home=$(setup_parent aligned-recovery)
   state="$home/state"
   hook_log="$home/recovery.log"
@@ -513,21 +514,24 @@ test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
   unknown=$(fm_pending_reply_create "$home" "$state" hibit "unknown request")
   fm_pending_reply_prepare_delivery "$state" "$unknown" \
     || fail "the unknown delivery attempt should persist"
-  fm_pending_reply_tick_one "$state" "$unknown" unknown \
+  fm_pending_reply_tick_one "$state" "$unknown" busy \
     || fail "the unknown delivery should reconcile"
   [ "$(phase_of "$state" "$unknown")" = delivery_unknown ] \
     || fail "the unknown delivery should record its uncertainty"
 
   for corr in "$confirmed" "$unknown"; do
-    # No turn evidence yet: neither path may send a recovery request.
-    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: idle-evidence tick failed"
-    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
-    [ "${sent:-0}" = 0 ] \
-      || fail "$corr: a recovery request went out before the request turn completed"
+    # The request turn is observably still running: no recovery, no escalation.
     fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: busy tick failed"
     sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
     [ "${sent:-0}" = 0 ] \
       || fail "$corr: a recovery request went out while the request turn was still running"
+    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+    [ "${escalated:-0}" = 0 ] \
+      || fail "$corr: escalated while the request turn was still running"
+    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: repeat busy tick failed"
+    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
+    [ "${sent:-0}" = 0 ] \
+      || fail "$corr: a recovery request went out before the request turn completed"
 
     # The request turn completes: exactly one recovery request, no escalation yet.
     fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: completing tick failed"
@@ -552,11 +556,36 @@ test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
     [ "${sent:-0}" = 1 ] || fail "$corr: recovery transport must be attempted exactly once"
   done
 
+  # An endpoint the watcher cannot classify can never produce turn evidence, so
+  # the unknown delivery must still reach the captain exactly once.
+  unobservable=$(fm_pending_reply_create "$home" "$state" hibit "unobservable request")
+  fm_pending_reply_prepare_delivery "$state" "$unobservable" \
+    || fail "the unobservable delivery attempt should persist"
+  fm_pending_reply_tick_one "$state" "$unobservable" unknown \
+    || fail "unobservable reconcile tick failed"
+  [ "$(phase_of "$state" "$unobservable")" = escalated ] \
+    || fail "an unobservable endpoint should escalate, got $(phase_of "$state" "$unobservable")"
+  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unobservable" "$state/hibit.status" \
+    || fail "the unobservable escalation should name the unknown delivery"
+  [ -z "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$unobservable")" delivered_epoch)" ] \
+    || fail "an unobservable escalation must not manufacture delivery"
+  sent=$(grep -Fc "$unobservable" "$hook_log" 2>/dev/null || true)
+  [ "${sent:-0}" = 0 ] \
+    || fail "an unobservable endpoint must not be sent a recovery request"
+  fm_pending_reply_tick_one "$state" "$unobservable" unknown || fail "unobservable repeat tick failed"
+  escalated=$(grep -Fc "pending-reply-id=$unobservable" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 1 ] \
+    || fail "an unobservable endpoint should escalate exactly once, got ${escalated:-0}"
+  printf 'done [corr=%s]: late report proves delivery\n' "$unobservable" >> "$state/hibit.status"
+  fm_pending_reply_tick_one "$state" "$unobservable" unknown || fail "unobservable late-report tick failed"
+  [ "$(phase_of "$state" "$unobservable")" = resolved ] \
+    || fail "a late correlated report should still resolve an escalated unknown delivery"
+
   # A correlated report still resolves an unknown delivery without escalating.
   reported=$(fm_pending_reply_create "$home" "$state" hibit "reported unknown request")
   fm_pending_reply_prepare_delivery "$state" "$reported" \
     || fail "the reported delivery attempt should persist"
-  fm_pending_reply_tick_one "$state" "$reported" unknown || fail "reported reconcile tick failed"
+  fm_pending_reply_tick_one "$state" "$reported" busy || fail "reported reconcile tick failed"
   [ "$(phase_of "$state" "$reported")" = delivery_unknown ] \
     || fail "the reported request should first record its delivery as unknown"
   printf 'done [corr=%s]: report proves delivery\n' "$reported" >> "$state/hibit.status"

@@ -136,7 +136,15 @@ check alone false-positives on a swallowed Enter for every steer sent to a
 busy opencode pane. The shared `fm_tmux_submit_enter_core` falls back to
 `fm_pane_is_busy` once the Enter-retry budget is spent: a busy pane means the
 Enter was accepted and queued (reported as `empty` so the caller does not
-re-send), while an idle pane keeps `pending` as a genuine swallow. The
+re-send), while an idle pane keeps `pending` as a genuine swallow.
+That busy read is scoped to the target's recorded harness signature, falling
+back to the generic one only when the harness is unrecorded or has no verified
+signature of its own, so the exception reaches every harness whose spinner is
+actually recognized rather than only the ones the generic footer matches.
+That scoping is why a mid-turn Claude pane now confirms its queued Enter
+instead of reporting a swallow for a steer that landed; `bin/fm-tmux-lib.sh`
+owns the signatures and the submit-verdict contract.
+The
 strict-buffer-clears-only-on-`empty` policy above still holds for the daemon
 and the lenient-`pending`-fails-for-`fm-send` policy still holds for steer
 verification - this exception is a busy-queue is treated as a delivered

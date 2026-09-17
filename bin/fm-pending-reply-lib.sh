@@ -20,6 +20,10 @@
 # records the uncertainty and delivered_epoch stays empty, but the recovery
 # request and the single escalation wait on exactly the turn-completion evidence
 # a confirmed delivery waits on.
+# Its one exception is an endpoint the watcher cannot classify at all, where that
+# evidence can never arrive: a dead window, a killed pane, or a restarted
+# terminal server escalates once on the spot rather than leaving a request that
+# may be lost unreported.
 #
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
@@ -806,6 +810,14 @@ fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id>
       completed=$(fm_pending_reply_get "$rec" recovery_turn_completed_epoch)
       [ -n "$completed" ] || return 1
       ;;
+    delivery_unknown)
+      # An unknown delivery escalates only once the endpoint itself cannot be
+      # classified, which leaves both turn fields untouched. Any busy or idle
+      # reading moves the record onto the recovery flow instead, so a request
+      # that did land is never escalated while the secondmate is mid-turn.
+      [ "$(fm_pending_reply_get "$rec" turn_seen_busy)" != 1 ] || return 1
+      [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] || return 1
+      ;;
     recovery_failed|recovery_unknown) ;;
     *) return 1 ;;
   esac
@@ -820,6 +832,9 @@ fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id>
   # mistaken for a secondmate acknowledgement by fm_pending_reply_line_resolves.
   outcome=$(fm_pending_reply_get "$rec" recovery_delivery_outcome)
   case "$phase" in
+    delivery_unknown)
+      payload="pending-reply-delivery-unknown: task=${task_id} pending-reply-id=${corr} request=${summary}"
+      ;;
     recovery_failed|recovery_unknown)
       payload="pending-reply-recovery-delivery-${outcome}: task=${task_id} pending-reply-id=${corr} request=${summary}"
       ;;
@@ -948,7 +963,7 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   esac
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
-    recovery_sent|recovery_failed|recovery_unknown)
+    delivery_unknown|recovery_sent|recovery_failed|recovery_unknown)
       fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true
       ;;
   esac
