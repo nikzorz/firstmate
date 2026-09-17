@@ -51,7 +51,7 @@ EXEMPT_PENDING=(fm-send.sh fm-limit-resume.sh)
 
 is_exempt() {
   local base
-  for base in "${EXEMPT_PERMANENT[@]}" "${EXEMPT_PENDING[@]}"; do
+  for base in "${EXEMPT_PERMANENT[@]}" "${EXEMPT_PENDING[@]:-}"; do
     [ "$1" = "$base" ] && return 0
   done
   return 1
@@ -118,7 +118,7 @@ test_pre_help_writes_land_in_the_sandbox_home() {
   pass "a write made before the flag check lands in the sandbox home"
 }
 
-test_every_entrypoint_prints_usage_and_exits_zero() {
+test_every_entrypoint_answers_help_and_exits_zero() {
   local base flag out rc
   while IFS= read -r base; do
     for flag in --help -h; do
@@ -128,7 +128,7 @@ test_every_entrypoint_prints_usage_and_exits_zero() {
       [ -n "$out" ] || fail "bin/$base $flag printed nothing"
     done
   done < <(entrypoints)
-  pass "every bin entrypoint prints usage and exits zero for --help and -h"
+  pass "every bin entrypoint answers --help and -h with output and exits zero"
 }
 
 # The two reported helpers, named so a regression in either is unambiguous.
@@ -153,6 +153,7 @@ test_permanent_exemptions_still_exist() {
 
 test_pending_exemptions_still_reject_help() {
   local base flag out rc
+  [ "${#EXEMPT_PENDING[@]}" -gt 0 ] || return
   for base in "${EXEMPT_PENDING[@]}"; do
     assert_present "$ROOT/bin/$base" "exempt helper bin/$base no longer exists; drop or update the exemption"
     for flag in --help -h; do
@@ -181,7 +182,7 @@ test_sweep_never_touched_the_repo_home() {
 }
 
 test_pre_help_writes_land_in_the_sandbox_home
-test_every_entrypoint_prints_usage_and_exits_zero
+test_every_entrypoint_answers_help_and_exits_zero
 test_reported_helpers_answer_instead_of_rejecting
 test_permanent_exemptions_still_exist
 test_pending_exemptions_still_reject_help
