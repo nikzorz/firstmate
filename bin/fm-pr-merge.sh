@@ -58,16 +58,18 @@
 # case-insensitively, and "#N", "owner/repo#N", and the full issue URL all count
 # as the reference.
 #
-# A body missing a well-formed keyword is repaired here when the record names
-# exactly one issue, and refused when it names more, because a repair then has no
-# single unambiguous issue to write and guessing is the one thing this must not
-# do. Repairing at all narrows the standing rule that a worker fixes its own PR
-# body: that rule exists so a worker owns its WORK, and a missing closing keyword
-# is bookkeeping rather than authorship. The narrowing is deliberate and approved.
+# A body missing a well-formed keyword refuses the merge, naming every issue it
+# fails to close and the line that would satisfy each. Nothing on this path ever
+# writes that line in: the record names the issues its row links to and cannot
+# tell one the task OWNS from one it merely references, so an automatic rewrite
+# could close an issue the work never touched, and closing the wrong issue is
+# worse than leaving one open. Writing the body stays with the worker, which is
+# also where the standing rule already puts it.
 #
 # After the merge, every named issue is read back and reported when it did not
 # close. That check is the only one no keyword form can fool, so it runs even
-# when the body passed the pre-merge read.
+# when the body passed the pre-merge read. An armed --auto merge has not landed
+# yet, so it has no post-merge state to read and the report is skipped there.
 #
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
@@ -182,10 +184,16 @@ caller_arms_auto_merge() {
 
 # Not merged and not readable are deliberately the same answer here, so an
 # unreadable state falls through to the ordinary read rather than skipping it.
+# The state is read once and reused: the closing-keyword gate and the
+# squash-message read both ask for it, and the merge is still ahead of both.
+PR_MERGED_STATE=
 pr_is_already_merged() {
   local state
-  state=$(gh pr view "$URL" --json state -q .state 2>"$GH_STDERR_FILE") || return 1
-  [ "$state" = MERGED ]
+  if [ -z "$PR_MERGED_STATE" ]; then
+    state=$(gh pr view "$URL" --json state -q .state 2>"$GH_STDERR_FILE") || state=
+    PR_MERGED_STATE=${state:-UNREADABLE}
+  fi
+  [ "$PR_MERGED_STATE" = MERGED ]
 }
 
 # The refusal stays fail-closed and fixed; only its cause comes from gh, which
@@ -225,11 +233,18 @@ read_task_issue_urls() {
     awk '!seen[$0]++' || true)
 }
 
+# A bare "#N" resolves against the PR's own repository, so it names this issue
+# only when the issue lives there. Both the form check and the refusal turn on
+# that, and they must turn on it identically or the gate names a spelling it
+# would then reject.
+issue_is_in_pr_repo() {  # <owner> <repo>
+  [ "$1" = "$PR_OWNER" ] && [ "$2" = "$PR_REPO" ]
+}
+
 # The reference a closing keyword must immediately precede, in the spelling this
-# PR's own repository makes valid. A cross-repository issue needs its owner and
-# repository in the reference, because a bare "#N" resolves against the PR's repo.
+# PR's own repository makes valid.
 issue_reference() {  # <owner> <repo> <number>
-  if [ "$1" = "$PR_OWNER" ] && [ "$2" = "$PR_REPO" ]; then
+  if issue_is_in_pr_repo "$1" "$2"; then
     printf '#%s\n' "$3"
   else
     printf '%s/%s#%s\n' "$1" "$2" "$3"
@@ -241,7 +256,10 @@ issue_reference() {  # <owner> <repo> <number>
 body_closes_issue() {  # <body-file> <owner> <repo> <number>
   local body=$1 path number=$4 refs
   path=$(ere_escape "$2/$3")
-  refs="#$number|$path#$number|https://github\.com/$path/issues/$number"
+  refs="$path#$number|https://github\.com/$path/issues/$number"
+  if issue_is_in_pr_repo "$2" "$3"; then
+    refs="#$number|$refs"
+  fi
   grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}[[:space:]]+($refs)([^0-9]|\$)" "$body"
 }
 
@@ -276,9 +294,8 @@ grep -qxF "pr=$URL" "$META" || {
 # later would replace this one and leak whatever it did not name.
 GH_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-gh-stderr.XXXXXX")
 PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-pr-body.XXXXXX")
-REPAIRED_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-repaired-body.XXXXXX")
 SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
-trap 'rm -f "$GH_STDERR_FILE" "$PR_BODY_FILE" "$REPAIRED_BODY_FILE" "$SQUASH_BODY_FILE"' EXIT
+trap 'rm -f "$GH_STDERR_FILE" "$PR_BODY_FILE" "$SQUASH_BODY_FILE"' EXIT
 
 refuse_unreadable_pr_body() {
   echo "error: the PR body could not be read, so its closing keyword cannot be checked" >&2
@@ -289,8 +306,14 @@ refuse_unreadable_pr_body() {
   exit 1
 }
 
-# Refuse or repair before any merge argument is composed, so a PR that owes a
-# closing keyword costs no forge round trip beyond the reads the decision needs.
+# Refuse before any merge argument is composed, so a PR that owes a closing
+# keyword costs no forge round trip beyond the reads the decision needs.
+#
+# The refusal is the whole remedy: the record names the issues its row links to
+# and cannot tell one this task owns from one it merely references, so writing a
+# keyword in from it would be a guess, and a guess here closes an unrelated
+# issue. Leaving one open is the lesser harm, and the worker who wrote the body
+# is the one who can name the issue with certainty.
 closing_keyword_gate() {
   local url owner repo number ref
   local -a issues=() missing=()
@@ -312,7 +335,7 @@ closing_keyword_gate() {
     echo "error: the forge CLI needed to read the PR body is unavailable" >&2
     exit 1
   fi
-  # An already-merged PR has nothing left to repair: the forge acted on whatever
+  # An already-merged PR has nothing left to gate: the forge acted on whatever
   # body it had. The post-merge read is what reports that outcome.
   pr_is_already_merged && return 0
   gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE" \
@@ -330,30 +353,12 @@ closing_keyword_gate() {
   done
   [ "${#missing[@]}" -eq 0 ] && return 0
 
-  if [ "${#issues[@]}" -ne 1 ]; then
-    echo "error: this PR's body carries no well-formed closing keyword for:" >&2
-    for ref in "${missing[@]}"; do
-      echo "error:   $ref" >&2
-    done
-    echo "error: task $ID names ${#issues[@]} issues, so no single issue is unambiguous to repair with; add one \"Closes <reference>\" line per issue to the PR body, then merge again" >&2
-    exit 1
-  fi
-
-  url=${issues[0]}
-  owner=${url#https://github.com/}
-  repo=${owner#*/}
-  number=${repo##*/issues/}
-  repo=${repo%%/issues/*}
-  owner=${owner%%/*}
-  ref=$(issue_reference "$owner" "$repo" "$number")
-  # The blank line keeps the appended keyword off the end of whatever sentence
-  # the body last wrote, where a keyword reads as prose rather than a directive.
-  {
-    cat "$PR_BODY_FILE"
-    printf '\n\nCloses %s\n' "$ref"
-  } > "$REPAIRED_BODY_FILE"
-  gh-axi pr edit "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" --body-file "$REPAIRED_BODY_FILE"
-  echo "fm-pr-merge: the PR body named no well-formed closing keyword for $url, so \"Closes $ref\" was appended before merging" >&2
+  echo "error: this PR's body carries no well-formed closing keyword for:" >&2
+  for ref in "${missing[@]}"; do
+    echo "error:   $ref" >&2
+  done
+  echo "error: add one line reading \"Closes <reference>\" per issue above to the PR body, with nothing between the keyword and the reference, then merge again" >&2
+  exit 1
 }
 
 # The one check no keyword form can fool, and the reason it runs after the merge
@@ -366,11 +371,6 @@ report_unclosed_issues() {
   while IFS= read -r url; do
     if [ -n "$url" ]; then
       state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
-      if [ "$state" != CLOSED ]; then
-        # The forge closes on merge, but not always before this read returns.
-        sleep "${FM_ISSUE_RECHECK_DELAY:-3}"
-        state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
-      fi
       if [ "$state" != CLOSED ]; then
         echo "warning: $url is still open after this merge; close it by hand and check the PR body's closing keyword" >&2
       fi
@@ -435,4 +435,6 @@ fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
 
-report_unclosed_issues
+# --auto arms the merge for the forge to land later, so there is no post-merge
+# state to read yet and an issue still open here says nothing.
+caller_arms_auto_merge "$@" || report_unclosed_issues

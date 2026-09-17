@@ -34,13 +34,15 @@
 #   (t) --auto is refused rather than freezing a supplied squash message
 #   (u) --auto still merges when the caller owns the body
 #   (v) a task whose record names no issue merges with no PR-body read at all
-#   (w) a keyword the reference does not immediately follow is repaired, not passed
+#   (w) a keyword the reference does not immediately follow refuses the merge
 #   (x) a lowercase keyword is accepted, because the forge matches them case-insensitively
 #   (y) a shorter issue number does not satisfy a longer one it is a prefix of
-#   (z) a record naming several issues refuses rather than choosing one to repair
-#  (aa) a record naming several issues merges when every one of them is closed
-#  (bb) a record that cannot be read refuses rather than merging on a guess
-#  (cc) an issue still open after the merge is reported
+#   (z) a bare "#N" does not satisfy an issue in another repository
+#  (aa) a refusal names every issue the body fails to close, and edits nothing
+#  (bb) a record naming several issues merges when every one of them is closed
+#  (cc) a record that cannot be read refuses rather than merging on a guess
+#  (dd) an issue still open after the merge is reported
+#  (ee) an armed --auto merge skips the post-merge read, which has nothing to see
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -71,7 +73,12 @@ make_case() {
 #!/usr/bin/env bash
 if [ "${1:-}" = show ]; then
   [ -f "$FM_TEST_TASK_LINKS" ] || exit 1
-  printf '  id: %s\n  links: %s\n' "${2:-}" "$(cat "$FM_TEST_TASK_LINKS")"
+  links=$(cat "$FM_TEST_TASK_LINKS")
+  if [ "$links" = none ]; then
+    printf '  id: %s\n  links: none\n' "${2:-}"
+  else
+    printf '  id: %s\n  links: "%s"\n' "${2:-}" "$links"
+  fi
   exit 0
 fi
 exit 0
@@ -83,7 +90,8 @@ SH
   printf '%s\n' "$case_dir"
 }
 
-# Record the task's links: entry exactly as tasks-axi renders it. Args: case_dir value
+# Set the links: value the tasks-axi mock renders, which quotes a non-empty
+# value and prints a bare "none" for a row that links nothing. Args: case_dir value
 set_task_links() {
   printf '%s\n' "$2" > "$1/task-links"
 }
@@ -198,10 +206,8 @@ run_pr_merge() {
   FM_TEST_GH_API_LOG="$case_dir/gh-api.log" \
   FM_TEST_TASK_LINKS="$case_dir/task-links" \
   FM_TEST_GH_LOG="$case_dir/gh.log" \
-  FM_TEST_EDIT_BODY_OUT="$case_dir/edit-body" \
   FM_TEST_PR_BODY="$case_dir/pr-body" \
   FM_TEST_ISSUE_STATE="$case_dir/issue-state" \
-  FM_ISSUE_RECHECK_DELAY=0 \
   FM_HOME="$case_dir" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
@@ -678,8 +684,8 @@ SH
 }
 
 # gh and gh-axi mocks for the closing-keyword gate: gh answers the PR body from
-# a file the case writes and the issue state from another, and gh-axi keeps the
-# body it was handed for `pr edit` separate from the one it was handed to merge.
+# a file the case writes and the issue state from another, and gh-axi records
+# every invocation so a case can prove no PR body was ever edited.
 # Args: case_dir head_sha
 add_gh_issue_mocks() {
   local case_dir=$1 head=$2
@@ -688,15 +694,11 @@ add_gh_issue_mocks() {
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-out=$FM_TEST_BODY_OUT
-if [ "${1:-} ${2:-}" = "pr edit" ]; then
-  out=$FM_TEST_EDIT_BODY_OUT
-fi
 prev=
 for arg in "$@"; do
   case "$prev" in
     --subject) printf '%s\n' "$arg" > "$FM_TEST_SUBJECT_OUT" ;;
-    --body-file) cp "$arg" "$out" ;;
+    --body-file) cp "$arg" "$FM_TEST_BODY_OUT" ;;
   esac
   prev=$arg
 done
@@ -752,31 +754,34 @@ test_task_without_an_issue_merges_unchanged() {
   grep -qF 'pr merge 40 --repo example/repo --squash' "$case_dir/gh-axi.log" \
     || fail "no-owning-issue: the merge did not run"
   assert_no_grep 'pr edit' "$case_dir/gh-axi.log" \
-    "no-owning-issue: a body repair ran for a task that owns no issue"
+    "no-owning-issue: the gate edited a PR body for a task that owns no issue"
   assert_no_grep '--json body' "$case_dir/gh.log" \
     "no-owning-issue: the PR body was read for a task that owns no issue"
   pass "fm-pr-merge merges a task that owns no issue without reading the PR body"
 }
 
-test_keyword_not_adjacent_to_reference_is_repaired() {
-  local case_dir
+test_keyword_not_adjacent_to_reference_refuses() {
+  local case_dir rc
   case_dir=$(make_issue_case keyword-not-adjacent bbbb111122223333444455556666777788889999 \
     'Close dota-oracle issues #148' \
     'doc:https://github.com/example/repo/issues/148')
 
+  set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/41 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "keyword-not-adjacent: fm-pr-merge refused instead of repairing"
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
 
-  grep -qF 'pr edit 41 --repo example/repo --body-file /' "$case_dir/gh-axi.log" \
-    || fail "keyword-not-adjacent: the body was not repaired before merging"
-  grep -qxF 'Closes #148' "$case_dir/edit-body" \
-    || fail "keyword-not-adjacent: the repaired body carries no well-formed closing keyword"
-  assert_grep 'Close dota-oracle issues #148' "$case_dir/edit-body" \
-    "keyword-not-adjacent: the repair discarded the body it was handed"
-  grep -qF 'pr merge 41 --repo example/repo' "$case_dir/gh-axi.log" \
-    || fail "keyword-not-adjacent: the merge did not run after the repair"
-  pass "fm-pr-merge repairs a keyword the reference does not immediately follow"
+  expect_code 1 "$rc" "keyword-not-adjacent: fm-pr-merge should refuse a keyword the reference does not follow"
+  assert_grep 'issues/148' "$case_dir/stderr" \
+    "keyword-not-adjacent: the refusal did not name the issue the body fails to close"
+  assert_grep 'Closes <reference>' "$case_dir/stderr" \
+    "keyword-not-adjacent: the refusal did not show what a correct line looks like"
+  assert_no_grep 'pr edit' "$case_dir/gh-axi.log" \
+    "keyword-not-adjacent: the gate rewrote the PR body"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "keyword-not-adjacent: the merge ran despite the refusal"
+  pass "fm-pr-merge refuses a keyword the reference does not immediately follow"
 }
 
 test_lowercase_keyword_is_accepted() {
@@ -797,21 +802,48 @@ test_lowercase_keyword_is_accepted() {
 }
 
 test_shorter_issue_number_does_not_satisfy_a_longer_one() {
-  local case_dir
+  local case_dir rc
   case_dir=$(make_issue_case number-prefix dddd111122223333444455556666777788889999 \
     'Closes #148' \
     'doc:https://github.com/example/repo/issues/14')
 
+  set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/43 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "number-prefix: fm-pr-merge refused instead of repairing"
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
 
-  grep -qxF 'Closes #14' "$case_dir/edit-body" \
-    || fail "number-prefix: #148 was accepted as closing #14"
+  expect_code 1 "$rc" "number-prefix: #148 was accepted as closing #14"
+  assert_grep '#14 (https://github.com/example/repo/issues/14)' "$case_dir/stderr" \
+    "number-prefix: the refusal did not name the issue the body fails to close"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "number-prefix: the merge ran with #148 taken for #14"
   pass "fm-pr-merge does not read #148 as a closing keyword for #14"
 }
 
-test_several_issues_refuse_rather_than_guess() {
+# A bare "#N" resolves against the PR's own repository, so it cannot close an
+# issue that lives anywhere else no matter how well formed the line is.
+test_cross_repository_bare_number_does_not_satisfy() {
+  local case_dir rc
+  case_dir=$(make_issue_case cross-repo-bare-number 5555aaaa22223333444455556666777788889999 \
+    'Closes #5' \
+    'doc:https://github.com/acme/api/issues/5')
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/acme/site/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "cross-repo-bare-number: a bare #5 was accepted for an issue in another repository"
+  assert_grep 'acme/api#5' "$case_dir/stderr" \
+    "cross-repo-bare-number: the refusal did not name the owner/repo#N form the issue needs"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "cross-repo-bare-number: the merge ran with a reference that closes the wrong repository's issue"
+  pass "fm-pr-merge refuses a bare #N for an issue in another repository"
+}
+
+test_several_issues_each_named_in_the_refusal() {
   local case_dir rc
   case_dir=$(make_issue_case several-issues eeee111122223333444455556666777788889999 \
     'Close dota-oracle issues #148 and #117' \
@@ -823,16 +855,16 @@ test_several_issues_refuse_rather_than_guess() {
   rc=$?
   set -e
 
-  expect_code 1 "$rc" "several-issues: fm-pr-merge should refuse when no single issue is unambiguous"
-  assert_grep '#148' "$case_dir/stderr" \
-    "several-issues: the refusal did not name the issue the body fails to close"
-  assert_grep 'names 2 issues' "$case_dir/stderr" \
-    "several-issues: the refusal did not say why it will not repair"
+  expect_code 1 "$rc" "several-issues: fm-pr-merge should refuse a body that closes neither issue"
+  assert_grep '#148 (https://github.com/example/repo/issues/148)' "$case_dir/stderr" \
+    "several-issues: the refusal did not name the first issue the body fails to close"
+  assert_grep '#117 (https://github.com/example/repo/issues/117)' "$case_dir/stderr" \
+    "several-issues: the refusal did not name the second issue the body fails to close"
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
     "several-issues: the merge ran despite the refusal"
   assert_no_grep 'pr edit' "$case_dir/gh-axi.log" \
-    "several-issues: a body repair guessed an issue"
-  pass "fm-pr-merge refuses rather than choosing between the issues a task names"
+    "several-issues: the gate rewrote the PR body"
+  pass "fm-pr-merge names every issue the body fails to close and merges none of them"
 }
 
 test_several_issues_all_closed_still_merge() {
@@ -846,7 +878,7 @@ test_several_issues_all_closed_still_merge() {
     || fail "several-issues-ok: fm-pr-merge refused a body that closes every issue named"
 
   assert_no_grep 'pr edit' "$case_dir/gh-axi.log" \
-    "several-issues-ok: a well-formed body was repaired"
+    "several-issues-ok: the gate edited a PR body that was already well formed"
   grep -qF 'pr merge 45 --repo example/repo' "$case_dir/gh-axi.log" \
     || fail "several-issues-ok: the merge did not run"
   pass "fm-pr-merge merges when every issue the record names is already closed by the body"
@@ -888,6 +920,26 @@ test_issue_left_open_after_merge_is_reported() {
   assert_grep 'issues/77 is still open after this merge' "$case_dir/stderr" \
     "issue-left-open: an issue the merge left open went unreported"
   pass "fm-pr-merge reports an issue that is still open after the merge"
+}
+
+test_armed_auto_merge_reports_no_open_issue() {
+  local case_dir
+  case_dir=$(make_issue_case auto-merge-open-issue 3333aaaa22223333444455556666777788889999 \
+    'Closes #78' \
+    'doc:https://github.com/example/repo/issues/78')
+  printf 'OPEN\n' > "$case_dir/issue-state"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/48 -- --squash --auto --body 'mine' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "auto-merge-open-issue: fm-pr-merge refused a caller who owns the message"
+
+  grep -qF 'pr merge 48 --repo example/repo --squash --auto' "$case_dir/gh-axi.log" \
+    || fail "auto-merge-open-issue: auto-merge was not armed"
+  assert_no_grep 'issue view' "$case_dir/gh.log" \
+    "auto-merge-open-issue: the post-merge issue read ran for a merge that has not landed"
+  assert_no_grep 'is still open after this merge' "$case_dir/stderr" \
+    "auto-merge-open-issue: an armed auto-merge was reported as having left the issue open"
+  pass "fm-pr-merge skips the post-merge issue read when the merge is only armed"
 }
 
 test_already_merged_pr_skips_the_message_read() {
@@ -1092,10 +1144,12 @@ test_unreadable_merged_state_takes_the_ordinary_path
 test_auto_merge_refused_when_message_would_be_supplied
 test_auto_merge_allowed_when_caller_owns_the_body
 test_task_without_an_issue_merges_unchanged
-test_keyword_not_adjacent_to_reference_is_repaired
+test_keyword_not_adjacent_to_reference_refuses
 test_lowercase_keyword_is_accepted
 test_shorter_issue_number_does_not_satisfy_a_longer_one
-test_several_issues_refuse_rather_than_guess
+test_cross_repository_bare_number_does_not_satisfy
+test_several_issues_each_named_in_the_refusal
 test_several_issues_all_closed_still_merge
 test_unreadable_task_record_refuses
 test_issue_left_open_after_merge_is_reported
+test_armed_auto_merge_reports_no_open_issue
