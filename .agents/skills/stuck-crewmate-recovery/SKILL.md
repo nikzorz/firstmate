@@ -2,7 +2,7 @@
 name: stuck-crewmate-recovery
 description: >-
   Agent-only playbook for stuck or missing ordinary Firstmate direct reports.
-  Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
+  Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a steer that failed or whose delivery could not be confirmed.
   Reconciles recorded work before escalating from targeted inspection through safe relaunch or failure.
 user-invocable: false
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # stuck-crewmate-recovery
 
-Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land.
+Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land or its delivery could not be confirmed.
 
 Load `harness-adapters` before sending an interrupt, exit command, resume command, or harness-specific skill invocation.
 The target window's harness is recorded as `harness=` in `state/<id>.meta`.
@@ -50,6 +50,9 @@ That detail is the steer itself, already written for the delivery mode the task 
 Send it as one line and read the answer, because a crew that cannot get there has something to say and `blocked:` is how it says it.
 Do not interrupt, exit, or relaunch on this state alone.
 Its work is intact, its status record needs no repairing, and the next reading agrees on its own once the pull request exists.
+
+A steer whose delivery could not be confirmed may already have landed, so the peek must establish whether it did before anything is re-sent or interrupted.
+When the steer is visible in the pane it was delivered: stop there, because a resend delivers the same instruction twice and interrupting a crew that is already acting on it costs the work the steer asked for.
 
 Escalate in order:
 
