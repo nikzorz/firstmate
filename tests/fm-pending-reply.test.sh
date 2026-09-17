@@ -442,8 +442,6 @@ test_delivery_confirmation_fallback_reconciles() {
     fm_pending_reply_write_delivery_confirmation \
       "$state" "$prepared_corr" attempted 5750 \
       || fail "orphaned attempt fixture should persist"
-    # An endpoint the watcher cannot classify can never supply turn evidence, so
-    # the unknown delivery escalates there rather than sitting unresolved.
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
       || fail "orphaned delivery attempt should escalate"
     [ "$(phase_of "$state" "$prepared_corr")" = escalated ] \
@@ -454,8 +452,8 @@ test_delivery_confirmation_fallback_reconciles() {
       || fail "delivery uncertainty should use its distinct escalation"
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
       || fail "repeated delivery-unknown tick should be inert"
-    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalations:-0}" = 1 ] \
+    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status")
+    [ "$escalations" = 1 ] \
       || fail "delivery-unknown escalation should publish once, got $escalations"
     printf 'done [corr=%s]: late report proves delivery\n' "$prepared_corr" >> "$state/hibit.status"
     fm_pending_reply_tick "$state" || fail "watcher should accept a late delivery report"
@@ -463,8 +461,8 @@ test_delivery_confirmation_fallback_reconciles() {
       || fail "late report should resolve escalated delivery-unknown"
     [ "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" = 5760 ] \
       || fail "late report should provide delivery evidence"
-    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalations:-0}" = 1 ] || fail "late report must not re-escalate delivery-unknown"
+    escalations=$(grep -Fc "pending-reply-id=$prepared_corr" "$state/hibit.status")
+    [ "$escalations" = 1 ] || fail "late report must not re-escalate delivery-unknown"
     fm_pending_reply_tick "$state" || fail "resolved late report should remain idempotent"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
       || fail "late report resolution should remain durable"
@@ -491,181 +489,65 @@ test_delivery_confirmation_fallback_reconciles() {
   pass "delivery confirmation fallback reconciles durably"
 }
 
-# An unknown delivery and a confirmed one are the same request with different
-# evidence about the transport, so they must take the one recovery flow the
-# captain's direction describes: the request turn completes, exactly one
-# recovery request goes out, and one escalation follows only if that recovery
-# turn also completes with no correlated report.
-test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one() {
-  local home state hook_log confirmed unknown unobservable reported corr sent escalated
-  home=$(setup_parent aligned-recovery)
+# An unconfirmed send keeps its expectation, so the record that survives is the
+# one the captain has to hear about. Once the attempted marker ages past grace it
+# escalates on the first tick that sees it: nothing proved the endpoint received
+# the request, so the parent asks the captain rather than reposting to an
+# endpoint whose delivery it could not confirm.
+test_unknown_delivery_escalates_after_grace_without_a_recovery_request() {
+  local home state hook_log corr rec escalated sent
+  home=$(setup_parent unknown-escalates)
   state="$home/state"
   hook_log="$home/recovery.log"
   : > "$hook_log"
   # shellcheck disable=SC2030,SC2031
   export FM_PENDING_REPLY_NOW=7000
-  export FM_ALIGNED_HOOK_LOG="$hook_log"
-  aligned_recovery_hook() { printf '%s\n' "$2" >> "$FM_ALIGNED_HOOK_LOG"; return 0; }
-  export -f aligned_recovery_hook
-  export FM_PENDING_REPLY_SEND_HOOK=aligned_recovery_hook
+  export FM_UNKNOWN_HOOK_LOG="$hook_log"
+  unknown_recovery_hook() { printf '%s\n' "$2" >> "$FM_UNKNOWN_HOOK_LOG"; return 0; }
+  export -f unknown_recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=unknown_recovery_hook
 
-  confirmed=$(fm_pending_reply_create "$home" "$state" hibit "confirmed request")
-  fm_pending_reply_mark_delivered "$state" "$confirmed"
-  unknown=$(fm_pending_reply_create "$home" "$state" hibit "unknown request")
-  fm_pending_reply_prepare_delivery "$state" "$unknown" \
-    || fail "the unknown delivery attempt should persist"
-  fm_pending_reply_tick_one "$state" "$unknown" busy \
-    || fail "the unknown delivery should reconcile"
-  [ "$(phase_of "$state" "$unknown")" = delivery_unknown ] \
-    || fail "the unknown delivery should record its uncertainty"
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed request")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" \
+    || fail "the attempted delivery marker should persist"
+  fm_pending_reply_set "$rec" grace_secs 10 || fail "grace fixture should persist"
 
-  for corr in "$confirmed" "$unknown"; do
-    # The request turn is observably still running: no recovery, no escalation.
-    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: busy tick failed"
-    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
-    [ "${sent:-0}" = 0 ] \
-      || fail "$corr: a recovery request went out while the request turn was still running"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 0 ] \
-      || fail "$corr: escalated while the request turn was still running"
-    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: repeat busy tick failed"
-    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
-    [ "${sent:-0}" = 0 ] \
-      || fail "$corr: a recovery request went out before the request turn completed"
+  # Inside grace the expectation simply waits.
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "in-grace tick failed"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "an attempted delivery should wait out its grace, got $(phase_of "$state" "$corr")"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 0 ] || fail "escalated before the attempted marker aged past grace"
 
-    # The request turn completes: exactly one recovery request, no escalation yet.
-    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: completing tick failed"
-    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
-    [ "${sent:-0}" = 1 ] || fail "$corr: expected exactly one recovery request, got ${sent:-0}"
-    [ "$(phase_of "$state" "$corr")" = recovery_sent ] \
-      || fail "$corr: a delivered recovery request should await its own turn, got $(phase_of "$state" "$corr")"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 0 ] || fail "$corr: escalated before the recovery turn completed"
-
-    # The recovery turn completes with no correlated report: escalate once.
-    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: recovery busy tick failed"
-    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: recovery completing tick failed"
-    [ "$(phase_of "$state" "$corr")" = escalated ] \
-      || fail "$corr: a missed recovery turn should escalate, got $(phase_of "$state" "$corr")"
-    fm_pending_reply_tick_one "$state" "$corr" idle || fail "$corr: repeat tick failed"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 1 ] || fail "$corr: escalation should publish exactly once, got ${escalated:-0}"
-    sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
-    [ "${sent:-0}" = 1 ] || fail "$corr: recovery transport must be attempted exactly once"
-  done
-
-  # One flow, and each escalation names what its own record proved.
-  grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$confirmed" "$state/hibit.status" \
-    || fail "a confirmed delivery should escalate as a missed report"
-  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unknown" "$state/hibit.status" \
-    || fail "a delivery that was never confirmed should escalate as an unknown delivery"
-
-  # An endpoint the watcher cannot classify can never produce turn evidence, so
-  # the unknown delivery must still reach the captain exactly once.
-  unobservable=$(fm_pending_reply_create "$home" "$state" hibit "unobservable request")
-  fm_pending_reply_prepare_delivery "$state" "$unobservable" \
-    || fail "the unobservable delivery attempt should persist"
-  fm_pending_reply_tick_one "$state" "$unobservable" unknown \
-    || fail "unobservable reconcile tick failed"
-  [ "$(phase_of "$state" "$unobservable")" = escalated ] \
-    || fail "an unobservable endpoint should escalate, got $(phase_of "$state" "$unobservable")"
-  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unobservable" "$state/hibit.status" \
-    || fail "the unobservable escalation should name the unknown delivery"
-  [ -z "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$unobservable")" delivered_epoch)" ] \
-    || fail "an unobservable escalation must not manufacture delivery"
-  sent=$(grep -Fc "$unobservable" "$hook_log" 2>/dev/null || true)
+  # Past grace it escalates on the first tick, with no turn evidence required.
+  export FM_PENDING_REPLY_NOW=7010
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "post-grace tick failed"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "an aged delivery attempt should escalate, got $(phase_of "$state" "$corr")"
+  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$corr" "$state/hibit.status" \
+    || fail "the escalation should name the unknown delivery"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] \
+    || fail "escalating an unknown delivery must not manufacture delivery"
+  sent=$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)
   [ "${sent:-0}" = 0 ] \
-    || fail "an unobservable endpoint must not be sent a recovery request"
-  fm_pending_reply_tick_one "$state" "$unobservable" unknown || fail "unobservable repeat tick failed"
-  escalated=$(grep -Fc "pending-reply-id=$unobservable" "$state/hibit.status" 2>/dev/null || true)
-  [ "${escalated:-0}" = 1 ] \
-    || fail "an unobservable endpoint should escalate exactly once, got ${escalated:-0}"
-  printf 'done [corr=%s]: late report proves delivery\n' "$unobservable" >> "$state/hibit.status"
-  fm_pending_reply_tick_one "$state" "$unobservable" unknown || fail "unobservable late-report tick failed"
-  [ "$(phase_of "$state" "$unobservable")" = resolved ] \
-    || fail "a late correlated report should still resolve an escalated unknown delivery"
+    || fail "an unknown delivery must not repost to an endpoint nothing proved reachable"
 
-  # A correlated report still resolves an unknown delivery without escalating.
-  reported=$(fm_pending_reply_create "$home" "$state" hibit "reported unknown request")
-  fm_pending_reply_prepare_delivery "$state" "$reported" \
-    || fail "the reported delivery attempt should persist"
-  fm_pending_reply_tick_one "$state" "$reported" busy || fail "reported reconcile tick failed"
-  [ "$(phase_of "$state" "$reported")" = delivery_unknown ] \
-    || fail "the reported request should first record its delivery as unknown"
-  printf 'done [corr=%s]: report proves delivery\n' "$reported" >> "$state/hibit.status"
-  fm_pending_reply_tick_one "$state" "$reported" idle || fail "reported resolving tick failed"
-  [ "$(phase_of "$state" "$reported")" = resolved ] \
-    || fail "a correlated report should resolve an unknown delivery"
-  escalated=$(grep -Fc "pending-reply-id=$reported" "$state/hibit.status" 2>/dev/null || true)
-  [ "${escalated:-0}" = 0 ] || fail "a resolved unknown delivery must not escalate"
-  sent=$(grep -Fc "$reported" "$hook_log" 2>/dev/null || true)
-  [ "${sent:-0}" = 0 ] || fail "a resolved unknown delivery must not send a recovery request"
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "repeat tick failed"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 1 ] || fail "escalation should publish exactly once, got ${escalated:-0}"
+
+  # A correlated late report still wins, idempotently.
+  printf 'done [corr=%s]: late report\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_tick_one "$state" "$corr" busy || fail "late-report tick failed"
+  [ "$(phase_of "$state" "$corr")" = resolved ] \
+    || fail "a late correlated report should resolve an escalated unknown delivery"
+  escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
+  [ "${escalated:-0}" = 1 ] || fail "a late report must not re-escalate"
 
   unset FM_PENDING_REPLY_SEND_HOOK
-  unset FM_ALIGNED_HOOK_LOG
-  pass "an unknown delivery takes the same one-recovery, one-escalation flow as a confirmed one"
-}
-
-# One flow means one bound: an endpoint that dies mid-turn stops producing the
-# turn evidence the flow waits on, so the request reaches the captain whether or
-# not its delivery was ever confirmed.
-test_an_endpoint_that_dies_mid_turn_still_reaches_the_captain() {
-  local home state hook_log confirmed unknown corr escalated
-  home=$(setup_parent endpoint-dies)
-  state="$home/state"
-  hook_log="$home/recovery.log"
-  : > "$hook_log"
-  # shellcheck disable=SC2030,SC2031
-  export FM_PENDING_REPLY_NOW=8000
-  export FM_DIES_HOOK_LOG="$hook_log"
-  dies_recovery_hook() { printf '%s\n' "$2" >> "$FM_DIES_HOOK_LOG"; return 0; }
-  export -f dies_recovery_hook
-  export FM_PENDING_REPLY_SEND_HOOK=dies_recovery_hook
-
-  confirmed=$(fm_pending_reply_create "$home" "$state" hibit "confirmed then orphaned")
-  fm_pending_reply_mark_delivered "$state" "$confirmed"
-  unknown=$(fm_pending_reply_create "$home" "$state" hibit "unconfirmed then orphaned")
-  fm_pending_reply_prepare_delivery "$state" "$unknown" \
-    || fail "the unconfirmed delivery attempt should persist"
-
-  for corr in "$confirmed" "$unknown"; do
-    # The secondmate is genuinely mid-turn, so the endpoint reads busy once.
-    fm_pending_reply_tick_one "$state" "$corr" busy || fail "$corr: busy tick failed"
-    [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" turn_seen_busy)" = 1 ] \
-      || fail "$corr: the running turn should have been observed"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 0 ] || fail "$corr: escalated while the turn was still observable"
-
-    # The window dies mid-turn: no further reading is possible, and the turn the
-    # flow is waiting on never completes.
-    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: dead-endpoint tick failed"
-    [ "$(phase_of "$state" "$corr")" = escalated ] \
-      || fail "$corr: a dead endpoint mid-turn should escalate, got $(phase_of "$state" "$corr")"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 1 ] || fail "$corr: should reach the captain exactly once, got ${escalated:-0}"
-    fm_pending_reply_tick_one "$state" "$corr" unknown || fail "$corr: repeat dead-endpoint tick failed"
-    escalated=$(grep -Fc "pending-reply-id=$corr" "$state/hibit.status" 2>/dev/null || true)
-    [ "${escalated:-0}" = 1 ] || fail "$corr: a dead endpoint must not re-escalate"
-    [ "$(grep -Fc "$corr" "$hook_log" 2>/dev/null || true)" = 0 ] \
-      || fail "$corr: a dead endpoint must not be sent a recovery request"
-    [ -f "$(fm_pending_reply_path "$state" "$corr")" ] \
-      || fail "$corr: the unresolved record must be retained"
-  done
-
-  grep -Fq "pending-reply-missed: task=hibit pending-reply-id=$confirmed" "$state/hibit.status" \
-    || fail "a confirmed delivery orphaned mid-turn should escalate as a missed report"
-  grep -Fq "pending-reply-delivery-unknown: task=hibit pending-reply-id=$unknown" "$state/hibit.status" \
-    || fail "a delivery never confirmed should escalate as an unknown delivery"
-
-  # A correlated late report still wins after either escalation.
-  printf 'done [corr=%s]: late report\n' "$unknown" >> "$state/hibit.status"
-  fm_pending_reply_tick_one "$state" "$unknown" unknown || fail "late-report tick failed"
-  [ "$(phase_of "$state" "$unknown")" = resolved ] \
-    || fail "a late correlated report should still resolve an escalated record"
-
-  unset FM_PENDING_REPLY_SEND_HOOK
-  unset FM_DIES_HOOK_LOG
-  pass "an endpoint that dies mid-turn escalates once on both delivery paths"
+  unset FM_UNKNOWN_HOOK_LOG
+  pass "an unknown delivery escalates after grace with no automatic recovery request"
 }
 
 test_unrelated_and_stale_corr_cannot_resolve() {
@@ -1164,8 +1046,7 @@ test_escalation_publication_failure_retries
 test_transport_success_is_not_reply_success
 test_undelivered_records_are_scan_immutable
 test_delivery_confirmation_fallback_reconciles
-test_unknown_delivery_takes_the_same_recovery_flow_as_a_confirmed_one
-test_an_endpoint_that_dies_mid_turn_still_reaches_the_captain
+test_unknown_delivery_escalates_after_grace_without_a_recovery_request
 test_unrelated_and_stale_corr_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged

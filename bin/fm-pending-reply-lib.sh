@@ -16,14 +16,6 @@
 # report. Never loop, never repeatedly inject, never silently expire unresolved
 # records, and never treat wrong-home or structured-home heuristics as
 # acknowledgement.
-# A delivery the backend could not confirm takes that same one flow. The phase
-# records the uncertainty and delivered_epoch stays empty, but the recovery
-# request and the single escalation wait on exactly the turn-completion evidence
-# a confirmed delivery waits on.
-# An endpoint the tick cannot classify at all is the one bound on that wait, and
-# it covers a confirmed delivery the same way: a dead window, a killed pane, or a
-# restarted terminal server escalates once on the spot, because the turn
-# evidence the flow waits on can never arrive from an endpoint nobody can read.
 #
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
@@ -174,7 +166,7 @@ fm_pending_reply_corr_reusable() {  # <state-dir> <corr_id> <task_id>
   [ "$(fm_pending_reply_get "$rec" task_id)" = "$task_id" ] || return 1
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
-    awaiting_report|delivery_unknown|recovery_sending|recovery_sent) return 0 ;;
+    awaiting_report|recovery_sending|recovery_sent) return 0 ;;
   esac
   return 1
 }
@@ -520,23 +512,18 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
   [ -f "$rec" ] || return 1
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
-    awaiting_report|delivery_unknown|recovery_sent) ;;
+    awaiting_report|recovery_sent) ;;
     *) return 0 ;;
   esac
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
-  if [ -z "$delivered" ] && [ "$phase" = awaiting_report ]; then
-    return 0
+  [ -n "$delivered" ] || return 0
+  if [ "$phase" = awaiting_report ]; then
+    field_seen=turn_seen_busy
+    field_completed=request_turn_completed_epoch
+  else
+    field_seen=recovery_turn_seen_busy
+    field_completed=recovery_turn_completed_epoch
   fi
-  case "$phase" in
-    awaiting_report|delivery_unknown)
-      field_seen=turn_seen_busy
-      field_completed=request_turn_completed_epoch
-      ;;
-    *)
-      field_seen=recovery_turn_seen_busy
-      field_completed=recovery_turn_completed_epoch
-      ;;
-  esac
   seen=$(fm_pending_reply_get "$rec" "$field_seen")
   completed=$(fm_pending_reply_get "$rec" "$field_completed")
   case "$busy_state" in
@@ -552,12 +539,6 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
         if [ "$seen" = 1 ] || [ "$seen" = 0 ]; then
           now=$(fm_pending_reply_now)
           fm_pending_reply_set "$rec" "$field_completed" "$now" || return 1
-          # The evidence the flow waits on now exists, so an unknown delivery
-          # rejoins it exactly as a late confirmation does. The empty
-          # delivered_epoch stays as the record of what was never confirmed.
-          if [ "$phase" = delivery_unknown ]; then
-            fm_pending_reply_set "$rec" phase awaiting_report || return 1
-          fi
         fi
       fi
       ;;
@@ -578,11 +559,6 @@ fm_pending_reply_fallback_idle_eligible() {  # <record-path>
     awaiting_report)
       start=$(fm_pending_reply_get "$rec" delivered_epoch)
       seen=$(fm_pending_reply_get "$rec" turn_seen_busy)
-      ;;
-    delivery_unknown)
-      # Reached only once the submit attempt itself aged past grace, so the
-      # turn-start window this gate protects has already passed.
-      return 0
       ;;
     recovery_sent)
       start=$(fm_pending_reply_get "$rec" recovery_sent_epoch)
@@ -664,10 +640,7 @@ fm_pending_reply_recovery_message() {  # <record-path>
 }
 
 # Deliver the recovery message once. Caller must hold phase awaiting_report with
-# the request turn completed, and with grace elapsed since a confirmed delivery.
-# A delivery that was never confirmed already waited that grace out as an
-# attempted marker, so it carries no second clock.
-# Uses FM_PENDING_REPLY_SEND_HOOK when set
+# turn completed and grace elapsed. Uses FM_PENDING_REPLY_SEND_HOOK when set
 # (tests), otherwise invokes fm-send with FM_PENDING_REPLY_EXISTING_CORR so a
 # second expectation is not created.
 fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
@@ -685,14 +658,13 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   fi
   completed=$(fm_pending_reply_get "$rec" request_turn_completed_epoch)
   [ -n "$completed" ] || return 1
-  now=$(fm_pending_reply_now)
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
-  if [ -n "$delivered" ]; then
-    grace=$(fm_pending_reply_get "$rec" grace_secs)
-    case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
-    age=$((now - delivered))
-    [ "$age" -ge "$grace" ] || return 1
-  fi
+  [ -n "$delivered" ] || return 1
+  grace=$(fm_pending_reply_get "$rec" grace_secs)
+  case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
+  now=$(fm_pending_reply_now)
+  age=$((now - delivered))
+  [ "$age" -ge "$grace" ] || return 1
   task_id=$(fm_pending_reply_get "$rec" task_id)
   parent_home=$(fm_pending_reply_get "$rec" parent_home)
   msg=$(fm_pending_reply_recovery_message "$rec")
@@ -800,32 +772,25 @@ fm_pending_reply_reconcile_recovery() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" phase recovery_unknown || return 1
 }
 
-# Escalate once after a missed recovery report, a failed delivery outcome, or an
-# endpoint the tick could not classify while the request turn was still open.
-# busy_state is the tick's own raw observation, where unknown means the endpoint
-# could not be read; without it only the first two apply.
+# Escalate once after a missed recovery report or failed delivery outcome.
 # Retains the durable unresolved record. Never loops.
-fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id> [busy_state]
-  local state=$1 corr=$2 busy_state=${3-}
-  local rec phase completed now task_id summary payload parent_status outcome delivered
+fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2
+  local rec phase completed now task_id summary payload parent_status outcome
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   phase=$(fm_pending_reply_get "$rec" phase)
+  if [ "$phase" = delivery_unknown ]; then
+    fm_pending_reply_reconcile_delivery "$state" "$corr" || true
+    phase=$(fm_pending_reply_get "$rec" phase)
+    [ "$phase" = delivery_unknown ] || return 0
+  fi
   case "$phase" in
     recovery_sent)
       completed=$(fm_pending_reply_get "$rec" recovery_turn_completed_epoch)
       [ -n "$completed" ] || return 1
       ;;
-    awaiting_report|delivery_unknown)
-      # This tick could not classify the endpoint and the request turn never
-      # completed, so the evidence the flow waits on can never arrive. Report it
-      # rather than leave a request that may be lost silent. A busy or idle
-      # reading fails this gate, so a request that did land is never escalated
-      # while the secondmate is mid-turn.
-      [ "$busy_state" = unknown ] || return 1
-      [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] || return 1
-      ;;
-    recovery_failed|recovery_unknown) ;;
+    delivery_unknown|recovery_failed|recovery_unknown) ;;
     *) return 1 ;;
   esac
   # Resolve wins if a late report arrived between completion and this call.
@@ -838,18 +803,14 @@ fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id> [busy_state]
   # Use pending-reply-id= (not corr=) so this parent-written line cannot be
   # mistaken for a secondmate acknowledgement by fm_pending_reply_line_resolves.
   outcome=$(fm_pending_reply_get "$rec" recovery_delivery_outcome)
-  delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
   case "$phase" in
+    delivery_unknown)
+      payload="pending-reply-delivery-unknown: task=${task_id} pending-reply-id=${corr} request=${summary}"
+      ;;
     recovery_failed|recovery_unknown)
       payload="pending-reply-recovery-delivery-${outcome}: task=${task_id} pending-reply-id=${corr} request=${summary}"
       ;;
-    *)
-      if [ -z "$delivered" ]; then
-        payload="pending-reply-delivery-unknown: task=${task_id} pending-reply-id=${corr} request=${summary}"
-      else
-        payload="pending-reply-missed: task=${task_id} pending-reply-id=${corr} request=${summary}"
-      fi
-      ;;
+    *) payload="pending-reply-missed: task=${task_id} pending-reply-id=${corr} request=${summary}" ;;
   esac
   [ -n "$parent_status" ] || return 1
   mkdir -p "$(dirname "$parent_status")" 2>/dev/null || return 1
@@ -910,14 +871,11 @@ fm_pending_reply_detect_wrong_home() {  # <state-dir> <corr_id> <secondmate-home
 }
 
 # One reconciliation tick for a single record: resolve, observe, recover, escalate.
-# observation is busy|idle|unknown|fallback-idle for the secondmate endpoint.
-# Only unknown means the endpoint could not be read at all; a fallback-idle the
-# record is not yet eligible to trust is a withheld judgement, not an
-# unreachable endpoint, so the two must not collapse before the escalation bound
-# reads them. secondmate_home may be empty when unknown.
-fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <observation> [secondmate-home]
-  local state=$1 corr=$2 observation=$3 sm_home=${4-}
-  local rec phase delivered busy_state
+# busy_state is busy|idle|unknown for the secondmate endpoint.
+# secondmate_home may be empty when unknown.
+fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-home]
+  local state=$1 corr=$2 busy_state=$3 sm_home=${4-}
+  local rec phase delivered
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   fm_pending_reply_reconcile_delivery "$state" "$corr" || true
@@ -925,13 +883,10 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <observation> [secondmate
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
   if [ -z "$delivered" ]; then
     case "$phase" in
-      escalated)
-        fm_pending_reply_try_resolve "$state" "$corr" >/dev/null 2>&1 || true
-        return 0
-        ;;
-      delivery_unknown|recovery_sending|recovery_sent|recovery_failed|recovery_unknown) ;;
-      *) return 0 ;;
+      delivery_unknown) fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true ;;
+      escalated) fm_pending_reply_try_resolve "$state" "$corr" >/dev/null 2>&1 || true ;;
     esac
+    return 0
   fi
   # Correlated parent report always wins and is idempotent.
   if fm_pending_reply_try_resolve "$state" "$corr"; then
@@ -964,7 +919,6 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <observation> [secondmate
   if [ -n "$sm_home" ]; then
     fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" || true
   fi
-  busy_state=$(fm_pending_reply_busy_state_from_observation "$rec" "$observation")
   fm_pending_reply_observe_busy "$state" "$corr" "$busy_state" || true
   # Re-check resolve after observation in case a concurrent status write landed.
   if fm_pending_reply_try_resolve "$state" "$corr"; then
@@ -976,8 +930,8 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <observation> [secondmate
   fi
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
-    awaiting_report|delivery_unknown|recovery_sent|recovery_failed|recovery_unknown)
-      fm_pending_reply_maybe_escalate "$state" "$corr" "$observation" 2>/dev/null || true
+    recovery_sent|recovery_failed|recovery_unknown)
+      fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true
       ;;
   esac
   return 0
@@ -1007,13 +961,11 @@ fm_pending_reply_tick() {  # <state-dir>
     delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
     if [ -z "$delivered" ]; then
       case "$phase" in
-        escalated)
+        delivery_unknown|escalated)
           fm_pending_reply_tick_one "$state" "$corr" unknown "" || true
-          continue
           ;;
-        delivery_unknown|recovery_sending|recovery_sent|recovery_failed|recovery_unknown) ;;
-        *) continue ;;
       esac
+      continue
     fi
     case "$phase" in
       awaiting_report|recovery_sending)
@@ -1043,7 +995,7 @@ fm_pending_reply_tick() {  # <state-dir>
         ;;
     esac
     case "$phase" in
-      awaiting_report|delivery_unknown|recovery_sent) ;;
+      awaiting_report|recovery_sent) ;;
       *) continue ;;
     esac
     backend=tmux
@@ -1072,7 +1024,7 @@ fm_pending_reply_tick() {  # <state-dir>
           observation_tasks+=("$task_id")
           observation_values+=("$observation")
         fi
-        busy=$observation
+        busy=$(fm_pending_reply_busy_state_from_observation "$rec" "$observation")
       fi
     fi
     fm_pending_reply_tick_one "$state" "$corr" "$busy" "$sm_home" || true
