@@ -713,6 +713,78 @@ test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery() {
   pass "an unconfirmed resume instruction is reported as unknown, never as non-delivery"
 }
 
+# The wait asserts two things this run settles BEFORE it steers: the account
+# window has reset, and the prompt is provably gone. So closing it is not
+# governed by whether the steer's delivery could be confirmed - leaving it open
+# would park a crew that is no longer waiting on the window on the hour-long
+# recheck, the exact hours-unnoticed failure this feature ends.
+test_unconfirmed_steer_still_closes_the_wait_it_opened() {
+  local d soon out last
+  d=$(make_case close-pause-unconfirmed)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded external wait was not recorded"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not recorded"
+
+  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
+    run_resume "$d" stalled 2>&1 >/dev/null) \
+    && fail "an unconfirmed steer was reported as a completed recovery"
+  assert_contains "$out" "unconfirmed" "the unconfirmed delivery should still be reported"
+  assert_contains "$out" "inspect stalled" "the unconfirmed report should still name the endpoint"
+  [ -s "$d/sent.log" ] || fail "the resume instruction was not submitted"
+  [ ! -e "$d/state/stalled.pause-recheck" ] \
+    || fail "an unconfirmed steer left the recheck deadline behind on a window that had reset"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) fail "an unconfirmed steer left the quota wait standing as the crew's last event" ;;
+  esac
+  pass "an unconfirmed steer still closes the quota wait this run had already disproved"
+}
+
+# The close must not widen past what the run proved. A refusal that dismissed
+# nothing, or that sent nothing, leaves the wait exactly as it found it.
+test_refused_recovery_leaves_the_wait_standing() {
+  local d soon last
+  d=$(make_case refusal-keeps-pause)
+  setup_task "$d" stalled claude
+  dismissed_pane > "$d/after.txt"
+  soon=$(( $(date +%s) + 2400 ))
+
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 97)" \
+    run_resume "$d" stalled >/dev/null 2>&1 \
+    && fail "a prompt surviving Escape was reported as a recovery"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "a surviving prompt cleared the recheck deadline"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) ;;
+    *) fail "a surviving prompt closed the quota wait, last event was '$last'" ;;
+  esac
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
+    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
+    run_resume "$d" stalled >/dev/null 2>&1 \
+    && fail "a refused resume instruction was reported as a recovery"
+  [ -e "$d/state/stalled.pause-recheck" ] || fail "a refused send cleared the recheck deadline"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) ;;
+    *) fail "a refused send closed the quota wait, last event was '$last'" ;;
+  esac
+  pass "a refusal that dismissed or sent nothing leaves the quota wait exactly as it found it"
+}
+
 # The end the whole feature turns on: the recorded wait carries the reset time,
 # so the supervisors recheck when the window actually rolls rather than up to an
 # hour later. It is refreshed on each recheck, never left behind after recovery,
@@ -827,6 +899,8 @@ test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
 test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery
+test_unconfirmed_steer_still_closes_the_wait_it_opened
+test_refused_recovery_leaves_the_wait_standing
 test_exhausted_wait_schedules_its_own_recheck
 test_check_only_never_sends
 
