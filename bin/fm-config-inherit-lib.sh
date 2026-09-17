@@ -792,29 +792,34 @@ fm_config_reread_send_pointer() {
     FM_SEND_SETTLE="${FM_SEND_SETTLE:-0}" \
     "$send_bin" "$selector" "$message" 2>&1) && rc=0 || rc=$?
   result=$(fm_send_result "$rc")
-  if [ "$result" = delivered ]; then
-    rm -f "$pending_path"
-    return 0
-  fi
   out=${out%%$'\n'*}
-  if [ "$result" = delivered-uncommitted ]; then
-    # The pointer landed, so it is never resent, but the bookkeeping write behind
-    # it failed and that needs a human rather than a silent success.
-    rm -f "$pending_path"
-    [ -n "$out" ] || out="delivery to $selector was recorded incompletely"
-    printf 'CONFIG_REREAD: secondmate %s: delivered, bookkeeping incomplete: %s\n' "$id" "$out"
-    return 0
-  fi
-  if [ "$result" = unconfirmed ]; then
-    # The pointer may already have landed, and re-reading a config pointer costs
-    # nothing, so this is reported as unknown rather than as a failure.
-    [ -n "$out" ] || out="delivery to $selector could not be confirmed"
-    fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send unconfirmed' "$out"
-    return 1
-  fi
-  [ -n "$out" ] || out="fm-send exited $rc"
-  fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send failed' "$out"
-  return 1
+  case "$result" in
+    delivered)
+      rm -f "$pending_path"
+      return 0
+      ;;
+    delivered-uncommitted)
+      # The pointer landed, so it is never resent, but fm-send's account of the
+      # write that failed behind it goes to the operator rather than being lost
+      # behind a silent success.
+      rm -f "$pending_path"
+      [ -n "$out" ] || out="delivery to $selector was recorded incompletely"
+      printf 'CONFIG_REREAD: secondmate %s: delivered, bookkeeping incomplete: %s\n' "$id" "$out"
+      return 0
+      ;;
+    unconfirmed)
+      # The pointer may already have landed, and re-reading a config pointer
+      # costs nothing, so this is reported as unknown rather than as a failure.
+      [ -n "$out" ] || out="delivery to $selector could not be confirmed"
+      fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send unconfirmed' "$out"
+      return 1
+      ;;
+    *)
+      [ -n "$out" ] || out="fm-send exited $rc"
+      fm_config_reread_send_outcome "$id" "$instruction_path" "$pending_path" 'send failed' "$out"
+      return 1
+      ;;
+  esac
 }
 
 # fm_config_reread_discard_pending <dest-home>

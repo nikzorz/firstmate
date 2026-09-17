@@ -50,7 +50,9 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Inspect the reason, keep the pending marker under `state/.secondmate-nudge-pending/` intact, and rerun session start after the endpoint or metadata issue is fixed so bootstrap can retry the exact same marked send.
 - `NUDGE_SECONDMATES: secondmate <id>: send unconfirmed: <reason>` - the same nudge was submitted but its delivery could not be confirmed, so it may already have landed.
   Treat it as unknown rather than as a failure, and handle it exactly like the failed line above: the retry only asks that secondmate to re-read its instructions, so a repeat is harmless.
-- `NUDGE_SECONDMATES: secondmate <id>: delivered, bookkeeping incomplete: <reason>` - the nudge itself landed, and bootstrap already cleared its retry marker, so never re-send it.
-  What failed is the durable pending-reply record behind that send, so inspect the named state path by hand; until it is repaired that request has no missed-report guard.
+- `NUDGE_SECONDMATES: secondmate <id>: delivered, bookkeeping incomplete: <reason>` - the nudge itself landed, and bootstrap already cleared its retry marker, so never re-send it whatever the reason says.
+  What failed is a write behind that send, and the reason distinguishes the two cases; read it before deciding whether to act.
+  A reason saying a durable recovery marker was stored needs nothing from you: the watcher reconciles that marker on its next tick and the request's missed-report guard comes back on its own.
+  A reason saying both the commit and the recovery marker failed names the state path to inspect by hand, and that request has no missed-report guard until you repair it.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local X-mode poll artifacts (`docs/configuration.md` "X mode (.env)").
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.

@@ -1810,7 +1810,19 @@ test_config_reread_separates_an_unconfirmed_pointer_from_a_refused_one() {
   assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
     "a refused pointer should still be reported as a failure"
   assert_present "$path.pending" "a refused pointer should keep its retry marker"
-  pass "B27 config reread separates an unconfirmed pointer from a refused one"
+
+  # The clean reading completes the set: it clears the pointer and says nothing.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
+  expect_code 0 "$status" "a delivered pointer should not be diagnostic"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
+    "a delivered pointer must not be reported as a failure"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: send unconfirmed" \
+    "a delivered pointer must not be reported as unconfirmed"
+  assert_not_contains "$out" "CONFIG_REREAD: secondmate sm: delivered, bookkeeping incomplete" \
+    "a delivered pointer whose bookkeeping succeeded must report nothing to fix"
+  assert_absent "$path.pending" "a delivered pointer should clear its retry marker"
+  pass "B27 config reread reads delivered, unconfirmed and refused pointers apart"
 }
 
 # A pointer the backend confirmed whose pending-reply bookkeeping write then
