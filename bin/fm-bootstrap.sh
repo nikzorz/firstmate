@@ -17,6 +17,9 @@
 #                 "NUDGE_SECONDMATES: secondmate <id>: send unconfirmed: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: delivered, bookkeeping incomplete: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
+#                 "CONFIG_REREAD: secondmate <id>: send failed: <reason>",
+#                 "CONFIG_REREAD: secondmate <id>: send unconfirmed: <reason>",
+#                 "CONFIG_REREAD: secondmate <id>: delivered, bookkeeping incomplete: <reason>",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING secondmate worktree is fast-forwarded to firstmate's
@@ -38,11 +41,15 @@
 #          A send the backend confirmed whose pending-reply bookkeeping write
 #          then failed clears the marker, because the nudge landed and must not
 #          be repeated, and prints the delivered, bookkeeping incomplete
-#          NUDGE_SECONDMATES line beside the BOOTSTRAP_INFO one so the durable
-#          state that needs a human is not hidden behind a clean success.
+#          NUDGE_SECONDMATES line beside the BOOTSTRAP_INFO one so the write
+#          that failed behind it is not hidden behind a clean success; the
+#          reason says which write failed.
 #          Already-current or no-instruction-change homes are silently left alone.
 #          The secondmate sweep also propagates declared inherited local material
 #          into each validated live secondmate home.
+#          CONFIG_REREAD lines report only actionable outcomes of that home's
+#          inherited-config re-read pointer send, in the same three readings as
+#          the nudge lines above; a confirmed pointer is silent.
 #          SECONDMATE_SYNC lines report actionable skipped local-HEAD syncs or
 #          inheritance failures for live secondmate homes, plus quarantine
 #          diagnostics for divergent shared captain-preference copies;
@@ -261,7 +268,7 @@ secondmate_sync() {
   # only a delivery clears the retry marker, because this nudge just asks the
   # secondmate to re-read its instructions and a repeat costs nothing. A delivery
   # whose bookkeeping write failed clears it too, and says so: the nudge landed,
-  # but the durable state behind it needs a human.
+  # but a write behind it did not, and the reason carries which.
   secondmate_report_nudge_send() {  # <id> <selector> <marker>
     local id=$1 selector=$2 marker=$3 out send_status=0
     out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?

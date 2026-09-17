@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, NUDGE_SECONDMATES, CONFIG_REREAD, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -54,5 +54,11 @@ When any diagnostic needs captain attention, report the plain consequence and re
   What failed is a write behind that send, and the reason distinguishes the two cases; read it before deciding whether to act.
   A reason saying a durable recovery marker was stored needs nothing from you: the watcher reconciles that marker on its next tick and the request's missed-report guard comes back on its own.
   A reason saying both the commit and the recovery marker failed names the state path to inspect by hand, and that request has no missed-report guard until you repair it.
+- `CONFIG_REREAD: secondmate <id>: send failed: <reason>` - the live agent in that secondmate home was not told to re-read its inherited config, so it keeps applying the values it read earlier even where the files under it changed.
+  Inspect the reason, which names what blocked the pointer and flags any generation that could not be retained for a later retry, then fix that cause and rerun session start (or `bin/fm-config-push.sh` mid-session) so the home converges.
+- `CONFIG_REREAD: secondmate <id>: send unconfirmed: <reason>` - the same pointer was submitted but its delivery could not be confirmed, so it may already have landed.
+  Treat it as unknown rather than as a failure, and handle it exactly like the failed line above: the retry only asks that secondmate to re-read files, so a repeat is harmless.
+- `CONFIG_REREAD: secondmate <id>: delivered, bookkeeping incomplete: <reason>` - the pointer landed and its retry marker is already cleared, so never re-send it whatever the reason says.
+  What failed is a write behind that send, and the reason distinguishes the same two cases as the `NUDGE_SECONDMATES` line of the same name above; read it and respond as that entry says.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local X-mode poll artifacts (`docs/configuration.md` "X mode (.env)").
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.
