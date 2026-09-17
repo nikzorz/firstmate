@@ -50,6 +50,10 @@ usage() {
   echo "usage: fm-x-link.sh <task-id> <request_id> [--carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]]" >&2
 }
 
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 ID=${1:-}
 RID=${2:-}
 if [ -z "$ID" ] || [ -z "$RID" ]; then
