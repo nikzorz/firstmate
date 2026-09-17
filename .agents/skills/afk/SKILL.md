@@ -144,12 +144,11 @@ actually recognized rather than only the ones the generic footer matches.
 That scoping is why a mid-turn Claude pane now confirms its queued Enter
 instead of reporting a swallow for a steer that landed; `bin/fm-tmux-lib.sh`
 owns the signatures and the submit-verdict contract.
-The
-strict-buffer-clears-only-on-`empty` policy above still holds for the daemon
-and the lenient-`pending`-fails-for-`fm-send` policy still holds for steer
-verification - this exception is a busy-queue is treated as a delivered
-Enter, not a swallowed one. The herdr adapter observes the same opencode
-behavior but needs a separate fix; the gap is recorded in
+The strict-buffer-clears-only-on-`empty` policy above still holds for the
+daemon, and `pending` still never confirms a steer for `fm-send`, which reports
+it as unconfirmed rather than as a swallow - this exception is a busy-queue is
+treated as a delivered Enter, not a swallowed one. The herdr adapter observes
+the same opencode behavior but needs a separate fix; the gap is recorded in
 `docs/herdr-backend.md` rather than papered over here.
 
 ## Classification policy
