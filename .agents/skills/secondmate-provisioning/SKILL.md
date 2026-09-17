@@ -178,7 +178,12 @@ When safe, teardown kills the direct tmux window, removes the `data/secondmates.
 Removing a leased home releases its durable treehouse lease via `treehouse return`, so the pool slot is freed for reuse rather than left leased forever.
 A plain-clone home with no pool slot is simply removed.
 If `treehouse return` fails for a leased home, teardown stops with state intact rather than raw-removing the directory and hiding a held lease.
+Before it touches anything, teardown also scans the retiring home for a process that detached from whatever started it, and scans each child's own home, or each non-Orca child's worktree, before closing that child's window.
+Such a process may be a service another lane is using, and giving up the directory would take it down, so teardown stops instead; `bin/fm-teardown.sh`'s header owns which paths stop and what each stop leaves in place.
 
 With `--force`, teardown is the explicit discard path.
 It kills child windows, discards the work of children that still have a meta, clears every child's records inside the secondmate home, removes the route, releases the lease, and removes the retired secondmate home.
+A forced retirement stops rather than completing when one of those scans convicts a directory, and there is no flag that bypasses it: `--force` authorizes discarding this fleet's own work, never killing another lane's.
+The stop names the child it stopped at, every child already returned or removed before it, and what it left standing, so read it as a part-done retirement to resume rather than a finished one.
+Resolve it by establishing what the named process is and ending it deliberately, then run the same retirement again.
 Never use `--force` unless the captain explicitly said to discard the work.

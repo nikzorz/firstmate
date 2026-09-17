@@ -513,6 +513,8 @@ FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before
 FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS when the new variable is unset
 FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES=2   # retries after a treehouse return fails with no git lock in evidence, over a worktree that re-proves it holds nothing to lose; 0 disables that arm
 FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS= # seconds before each of those retries; unset defaults to FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
+FM_ADOPTED_PROCESS_RECHECKS=2             # rescans fm-teardown.sh makes before refusing over a process that detached from whatever started it, so one on its way out is not taken for a resident one; invalid uses 2
+FM_ADOPTED_PROCESS_RECHECK_WAIT_SECS=1    # seconds between those rescans; nonnegative whole or fractional, invalid warns and uses 1
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
@@ -563,6 +565,11 @@ That proof is deliberately narrower than the pre-return landed-work check, and n
 While it holds, the return is retried up to `FM_TREEHOUSE_RETURN_TRANSIENT_RETRIES` times (nonnegative integer; unset, blank, or invalid uses the default of 2, and 0 disables the arm) waiting `FM_TREEHOUSE_RETURN_TRANSIENT_RETRY_WAIT_SECS` seconds (nonnegative whole or fractional; unset or blank defaults to the lock retry wait, and an invalid nonblank value falls back to 1 second) between attempts.
 When the proof does not hold - the worktree still has work, or no proof is available, as for a returned secondmate home - the return failure keeps its loud abort, reporting which observation denied the proof when one was derived at all.
 Every attempt that fails with no lock in evidence records what the return target ref resolved to before and after it, so a return that raced a moving `origin/main` is visible in teardown's own output; that movement is recorded evidence, never the gate.
+
+`FM_ADOPTED_PROCESS_RECHECKS` and `FM_ADOPTED_PROCESS_RECHECK_WAIT_SECS` tune only the settle window of the scan that stops teardown from giving up a directory holding a process that detached from whatever started it, or one that cannot be attributed at all.
+Neither knob can switch that refusal off, and neither can `--force`.
+The scan reads `/proc`, so on macOS it cannot run at all: teardown says so once in a warning and proceeds unguarded, exactly as it did before the guard existed.
+`bin/fm-teardown.sh`'s header owns which paths stop and what a stop leaves in place, and `bin/fm-adopted-process-lib.sh`'s header owns the ownership test and its stated limits.
 
 `fm-fleet-sync.sh` applies the same shape to an orphaned `.git/packed-refs.lock`: it retries only Git's `Unable to create '...packed-refs.lock': File exists` fetch failure up to `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES` times (nonnegative integer; unset, blank, or invalid uses the default of 3), waiting `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS` seconds (nonnegative whole or fractional; invalid falls back to 1 second) before each.
 Only after those retries exhaust does it remove the lock, and only when it is provably stale - still present, mtime age at least `FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS` (default 30), and no `lsof` holder of the lock file or of the clone worktree itself (a live `git` keeps that as its cwd even in the window after it closes the lock and before it exits).
