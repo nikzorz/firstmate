@@ -268,7 +268,7 @@ STEER=${FM_LIMIT_RESUME_STEER:-"The claude usage limit that stalled you has rese
 send_status=0
 FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER" || send_status=$?
 case "$(fm_send_result "$send_status")" in
-  delivered) ;;
+  delivered|delivered-uncommitted) ;;
   unconfirmed)
     close_pause "$RESUME_NOTE_UNCONFIRMED"
     echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2

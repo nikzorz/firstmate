@@ -21,16 +21,16 @@
 # not confirm it". This is the whole contract; callers read it through
 # fm_send_result (bin/fm-send-result-lib.sh) and never compare the numbers:
 #   0  the text was submitted, confirmed by the backend.
-#   1  there is no confirmed delivery to report. On every resolution, expectation
-#      and backend-refusal path nothing reached the endpoint. The one exception
-#      is a confirmed submit whose pending-reply delivery commit then failed:
-#      that message states on stderr that the text WAS delivered and says not to
-#      resend, so a caller acting on 1 must read the message before resending.
+#   1  there is no confirmed delivery to report: on every resolution, expectation
+#      and backend-refusal path nothing reached the endpoint.
 #   3  the no-mistakes gate refusal (bin/fm-gate-refuse-lib.sh), which fires
 #      before a target is resolved or a keystroke is typed.
 #   4  the text was typed and submitted, but delivery is UNCONFIRMED. It may have
 #      landed. Inspect the endpoint before resending, because a resend delivers
 #      the same instruction twice.
+#   5  the text WAS delivered, confirmed by the backend, but the pending-reply
+#      bookkeeping write that follows it failed. Never resend; the message names
+#      what was left unwritten.
 # The unconfirmed status is deliberately not phrased as non-delivery. Every
 # backend confirms a submit by reading the endpoint's own screen or status, and
 # those reads have reported an unconfirmed result for steers that did land, so
@@ -337,7 +337,7 @@ else
       else
         echo "error: text was delivered to $T, but its pending-reply delivery commit and recovery marker both failed. Do not resend; inspect $STATE manually." >&2
       fi
-      exit 1
+      exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"
     fi
   fi
   # Submit landed with exact empty. Confirmation only proves the text was

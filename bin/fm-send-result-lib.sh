@@ -15,20 +15,26 @@
 # a keystroke is typed, so it must keep reading as a send that never happened.
 FM_SEND_EXIT_UNCONFIRMED=4
 
+# Delivered, but the bookkeeping write that follows a delivery did not land.
+FM_SEND_EXIT_DELIVERED_UNCOMMITTED=5
+
 # fm_send_result: what a finished fm-send run proves about the text.
-#   delivered    the backend confirmed the submit.
-#   unconfirmed  the text was typed and submitted, but nothing proves it landed.
-#                It may have, so a resend delivers the same instruction twice.
-#   failed       fm-send has no confirmed delivery to report. This also covers
-#                the one path where the text WAS delivered but its pending-reply
-#                commit failed; that run's own stderr says so and says not to
-#                resend, so a caller that resends on failed must read it first.
+#   delivered              the backend confirmed the submit.
+#   delivered-uncommitted  the text DID land; the bookkeeping write after it did
+#                          not. Never resend, and read the run's own stderr for
+#                          what was left unwritten.
+#   unconfirmed            the text was typed and submitted, but nothing proves
+#                          it landed. It may have, so a resend delivers the same
+#                          instruction twice.
+#   failed                 fm-send has no confirmed delivery to report.
 fm_send_result() {  # <fm-send exit status>
   local status=${1:-1}
   if [ "$status" = 0 ]; then
     printf 'delivered'
   elif [ "$status" = "$FM_SEND_EXIT_UNCONFIRMED" ]; then
     printf 'unconfirmed'
+  elif [ "$status" = "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED" ]; then
+    printf 'delivered-uncommitted'
   else
     printf 'failed'
   fi

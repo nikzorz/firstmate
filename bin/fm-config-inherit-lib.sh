@@ -792,7 +792,7 @@ fm_config_reread_send_pointer() {
     FM_SEND_SETTLE="${FM_SEND_SETTLE:-0}" \
     "$send_bin" "$selector" "$message" 2>&1) && rc=0 || rc=$?
   result=$(fm_send_result "$rc")
-  if [ "$result" = delivered ]; then
+  if [ "$result" = delivered ] || [ "$result" = delivered-uncommitted ]; then
     rm -f "$pending_path"
     return 0
   fi

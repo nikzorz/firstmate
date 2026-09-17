@@ -56,6 +56,8 @@ case "${1:-}" in
     done
     if [ "$literal" = 1 ]; then
       printf '%s' "${1:-}" >> "$FM_SEND_LOG"
+    elif [ -n "${FM_STUB_DROP_RECORDS:-}" ]; then
+      rm -f "$FM_STUB_DROP_RECORDS"/* 2>/dev/null || true
     fi
     exit 0 ;;
   display-message)
@@ -95,6 +97,7 @@ run_send() {
   env PATH="$fb:$PATH" \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
     FM_PENDING_REPLY_GRACE_SECS=0 FM_STUB_PENDING="${FM_STUB_PENDING:-0}" \
+    FM_STUB_DROP_RECORDS="${FM_STUB_DROP_RECORDS:-}" \
     FM_SEND_RETRIES="${FM_SEND_RETRIES:-3}" FM_SEND_SLEEP="${FM_SEND_SLEEP:-0.4}" \
     "$SEND" "$@" 2>/dev/null
 }
@@ -548,6 +551,30 @@ test_unknown_delivery_escalates_after_grace_without_a_recovery_request() {
   unset FM_PENDING_REPLY_SEND_HOOK
   unset FM_UNKNOWN_HOOK_LOG
   pass "an unknown delivery escalates after grace with no automatic recovery request"
+}
+
+# A delivery the backend confirmed whose bookkeeping write then failed is not a
+# non-delivery: the text landed, and a caller that resends on it delivers the
+# same instruction twice.
+test_delivered_but_uncommitted_reads_as_delivered_not_as_a_failure() {
+  local dir fb home log err rc
+  dir="$TMP_ROOT/delivered-uncommitted"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_parent delivered-uncommitted)
+  fm_write_secondmate_meta "$home/state/hibit.meta" "$home/sm" "sess:fm-hibit"
+  rc=0
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" \
+    FM_SEND_SETTLE=0 FM_PENDING_REPLY_GRACE_SECS=0 \
+    FM_STUB_DROP_RECORDS="$(fm_pending_reply_dir "$home/state")" \
+    "$SEND" "hibit" "audit the build" 2>"$err" >/dev/null || rc=$?
+  [ "$(fm_send_result "$rc")" = delivered-uncommitted ] \
+    || fail "a delivered send whose commit failed should read as delivered-uncommitted, got $(fm_send_result "$rc") (status $rc): $(cat "$err")"
+  grep -Fq "was delivered to" "$err" || fail "fm-send should say the text was delivered: $(cat "$err")"
+  grep -Fq "Do not resend" "$err" || fail "fm-send should say not to resend: $(cat "$err")"
+  if grep -Eq 'not submitted|not sent|did not land' "$err"; then
+    fail "a delivered send must not be reported as non-delivery: $(cat "$err")"
+  fi
+  pass "a delivered send whose pending-reply commit failed reads as delivered, never as a failure"
 }
 
 test_unrelated_and_stale_corr_cannot_resolve() {
@@ -1047,6 +1074,7 @@ test_transport_success_is_not_reply_success
 test_undelivered_records_are_scan_immutable
 test_delivery_confirmation_fallback_reconciles
 test_unknown_delivery_escalates_after_grace_without_a_recovery_request
+test_delivered_but_uncommitted_reads_as_delivered_not_as_a_failure
 test_unrelated_and_stale_corr_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged

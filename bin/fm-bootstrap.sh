@@ -258,7 +258,7 @@ secondmate_sync() {
     local id=$1 selector=$2 marker=$3 out send_status=0
     out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-send.sh" "$selector" "$SECOND_MATE_NUDGE_MESSAGE" 2>&1) || send_status=$?
     case "$(fm_send_result "$send_status")" in
-      delivered)
+      delivered|delivered-uncommitted)
         rm -f "$marker"
         echo "BOOTSTRAP_INFO: nudged $selector with '$SECOND_MATE_NUDGE_MESSAGE'"
         ;;

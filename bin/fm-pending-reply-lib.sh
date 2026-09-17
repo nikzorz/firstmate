@@ -16,6 +16,12 @@
 # report. Never loop, never repeatedly inject, never silently expire unresolved
 # records, and never treat wrong-home or structured-home heuristics as
 # acknowledgement.
+# A send the backend could not confirm keeps its expectation rather than
+# discarding it as undelivered, because the secondmate may still answer a request
+# nothing proved lost.
+# Its attempted-delivery marker ages past the same grace into delivery_unknown,
+# which escalates once and asks no automatic recovery request, since nothing
+# proved the endpoint received the original request to repost against.
 #
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
@@ -692,7 +698,7 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
     result=$(fm_send_result "$send_status")
   fi
   case "$result" in
-    delivered)
+    delivered|delivered-uncommitted)
       fm_pending_reply_finish_recovery "$state" "$corr" confirmed
       return $?
       ;;
