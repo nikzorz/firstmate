@@ -49,8 +49,16 @@
 # Which issue a task owns comes from that task's own backlog record, through the
 # links: entry tasks-axi derives from the URLs recorded on its row. The task id,
 # the branch name, and the PR prose are never read for it: a guessed issue closes
-# something the work never touched, which is worse than leaving one open. A task
-# whose record names no issue merges unchanged, and that is the common case.
+# something the work never touched, which is worse than leaving one open.
+#
+# That read has three answers and they are kept apart, because only one of them
+# is a reason to stop. A record naming no issue, and an id the backlog genuinely
+# does not hold, are both determinate: the task owns no issue, so the merge runs
+# unchanged with no PR-body read at all, and that is the common firstmate-repo
+# case. A home whose tasks-axi is missing or too old to answer cannot be checked
+# but is a supported configuration, so the merge runs with one warning saying the
+# check did not happen. Only a backlog that should have answered and did not is
+# indeterminate, and only that refuses.
 #
 # The check is on the FORM, not on the presence of the number: GitHub acts only
 # when a closing keyword immediately precedes the reference, so "Close issues
@@ -67,7 +75,9 @@
 # also where the standing rule already puts it.
 #
 # After the merge, every named issue is read back and reported when it did not
-# close. That check is the only one no keyword form can fool, so it runs even
+# close, and reported as unknown when the read itself did not answer, because a
+# token that cannot see the issue has not established that it stayed open.
+# That check is the only one no keyword form can fool, so it runs even
 # when the body passed the pre-merge read. An armed --auto merge has not landed
 # yet, so it has no post-merge state to read and the report is skipped there.
 #
@@ -97,6 +107,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-attribution-lib.sh
 . "$SCRIPT_DIR/fm-attribution-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -217,17 +229,24 @@ ere_escape() {  # <text>
 }
 
 # Sets TASK_ISSUE_URLS to the issue URLs this task's own record names, one per
-# line. A record that cannot be read returns non-zero, which is deliberately not
-# the same answer as a record that names no issue: one is undeterminable and the
-# other is the ordinary firstmate-repo task. config/backlog-backend=manual routes
-# routine backlog MUTATIONS to hand-editing and leaves this read unaffected.
+# line, and answers in the three states a backlog read really has. Collapsing
+# them refuses merges that have a determinate answer: a task never filed as a
+# backlog item names no issue just as plainly as a filed one whose row links
+# none, and that is the common firstmate-repo case.
+# config/backlog-backend=manual routes routine backlog MUTATIONS to hand-editing
+# and leaves this read unaffected.
+#   0 the record names issues     1 determinate, it names none
+#   2 indeterminate               3 no answer this gate can read
 read_task_issue_urls() {
-  local show links
+  local links rc=0
   TASK_ISSUE_URLS=
-  command -v tasks-axi >/dev/null 2>&1 || return 1
-  show=$(cd "$FM_HOME" && tasks-axi show "$ID" --full 2>/dev/null) || return 1
-  links=$(printf '%s\n' "$show" | sed -n 's/^  links: //p' | head -1)
-  [ -n "$links" ] || return 1
+  fm_backlog_item_read "$ID" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  links=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" links)
+  if [ -z "$links" ]; then
+    FM_BACKLOG_ITEM_ERROR="the backlog record for $ID names no links field, so this tasks-axi cannot answer which issue the task owns"
+    return 3
+  fi
   TASK_ISSUE_URLS=$(printf '%s\n' "$links" |
     grep -Eo 'https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]*' |
     awk '!seen[$0]++' || true)
@@ -236,9 +255,12 @@ read_task_issue_urls() {
 # A bare "#N" resolves against the PR's own repository, so it names this issue
 # only when the issue lives there. Both the form check and the refusal turn on
 # that, and they must turn on it identically or the gate names a spelling it
-# would then reject.
+# would then reject. GitHub resolves owner and repository case-insensitively, so
+# a hand-typed "Firstmate" in a backlog row is the same repository as "firstmate"
+# in the PR URL and must not read as another one.
+PR_REPO_PATH_LC=$(printf '%s' "$PR_OWNER/$PR_REPO" | LC_ALL=C tr '[:upper:]' '[:lower:]')
 issue_is_in_pr_repo() {  # <owner> <repo>
-  [ "$1" = "$PR_OWNER" ] && [ "$2" = "$PR_REPO" ]
+  [ "$(printf '%s' "$1/$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$PR_REPO_PATH_LC" ]
 }
 
 # The reference a closing keyword must immediately precede, in the spelling this
@@ -315,14 +337,25 @@ refuse_unreadable_pr_body() {
 # issue. Leaving one open is the lesser harm, and the worker who wrote the body
 # is the one who can name the issue with certainty.
 closing_keyword_gate() {
-  local url owner repo number ref
+  local url owner repo number ref rc=0
   local -a issues=() missing=()
 
-  if ! read_task_issue_urls; then
-    echo "error: task $ID's own record could not be read, so the issue this PR owes a closing keyword for cannot be determined" >&2
-    echo "error: record $ID in this home's backlog, then merge again" >&2
-    exit 1
-  fi
+  read_task_issue_urls || rc=$?
+  case "$rc" in
+    2)
+      echo "error: task $ID's own record could not be read, so the issue this PR owes a closing keyword for cannot be determined" >&2
+      echo "error: $FM_BACKLOG_ITEM_ERROR" >&2
+      echo "error: repair this home's backlog, then merge again" >&2
+      exit 1
+      ;;
+    # A home whose backlog tool is missing or too old is a supported fallback,
+    # and refusing every task merge there would be worse than the missed check
+    # this gate exists for. It says so once rather than passing silently.
+    3)
+      echo "warning: the closing-keyword check did not run: $FM_BACKLOG_ITEM_ERROR" >&2
+      echo "warning: confirm by hand that this PR's body closes any issue task $ID owns" >&2
+      ;;
+  esac
   [ -n "$TASK_ISSUE_URLS" ] || return 0
 
   while IFS= read -r url; do
@@ -371,9 +404,14 @@ report_unclosed_issues() {
   while IFS= read -r url; do
     if [ -n "$url" ]; then
       state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
-      if [ "$state" != CLOSED ]; then
-        echo "warning: $url is still open after this merge; close it by hand and check the PR body's closing keyword" >&2
-      fi
+      case "$state" in
+        CLOSED) : ;;
+        # A read that did not answer is unknown, never the negative outcome: a
+        # token that cannot see a cross-repository issue would otherwise report
+        # one this merge did close as left open.
+        '') echo "warning: $url could not be read, so whether this merge closed it is unknown" >&2 ;;
+        *) echo "warning: $url is still open after this merge; close it by hand and check the PR body's closing keyword" >&2 ;;
+      esac
     fi
   done <<< "$TASK_ISSUE_URLS"
 }

@@ -165,11 +165,6 @@ task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
 
-show_field() {  # <show-output> <field>
-  local output=$1 field=$2
-  printf '%s\n' "$output" | sed -n "s/^  $field: //p" | head -1
-}
-
 origin_exists_here() {  # <origin-id>
   [ -f "$STATE/$1.meta" ] && return 0
   [ -f "$DATA/$1/report.md" ] && return 0
@@ -215,10 +210,10 @@ origin_open_decisions() {  # <origin-id>
 verify_hold_active() {  # <hold-id>
   local id=$1 show state held kind hold_kind
   show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
-  state=$(show_field "$show" state)
-  held=$(show_field "$show" held)
-  kind=$(show_field "$show" kind)
-  hold_kind=$(show_field "$show" hold_kind)
+  state=$(fm_backlog_show_field "$show" state)
+  held=$(fm_backlog_show_field "$show" held)
+  kind=$(fm_backlog_show_field "$show" kind)
+  hold_kind=$(fm_backlog_show_field "$show" hold_kind)
   [ "$state" = queued ] || fail "captain hold $id is not queued (state=$state)"
   [ "$held" = yes ] || fail "captain hold $id is not active"
   [ "$kind" = captain ] || fail "backlog item $id is not kind captain"
@@ -228,9 +223,9 @@ verify_hold_active() {  # <hold-id>
 verify_hold_resolved() {  # <hold-id>
   local id=$1 show state kind body
   show=$(task_show "$id") || return 1
-  state=$(show_field "$show" state)
-  kind=$(show_field "$show" kind)
-  body=$(show_field "$show" body)
+  state=$(fm_backlog_show_field "$show" state)
+  kind=$(fm_backlog_show_field "$show" kind)
+  body=$(fm_backlog_show_field "$show" body)
   [ "$state" = "done" ] || return 1
   [ "$kind" = captain ] || return 1
   case "$body" in
@@ -242,11 +237,11 @@ verify_hold_resolved() {  # <hold-id>
 verify_hold_durable() {  # <hold-id>
   local id=$1 show state held kind hold_kind body
   show=$(task_show "$id") || fail "captain decision $id is absent from $FM_HOME/data/backlog.md"
-  state=$(show_field "$show" state)
-  held=$(show_field "$show" held)
-  kind=$(show_field "$show" kind)
-  hold_kind=$(show_field "$show" hold_kind)
-  body=$(show_field "$show" body)
+  state=$(fm_backlog_show_field "$show" state)
+  held=$(fm_backlog_show_field "$show" held)
+  kind=$(fm_backlog_show_field "$show" kind)
+  hold_kind=$(fm_backlog_show_field "$show" hold_kind)
+  body=$(fm_backlog_show_field "$show" body)
   if [ "$state" = queued ] && [ "$held" = yes ] && [ "$kind" = captain ] && [ "$hold_kind" = captain ]; then
     return 0
   fi
@@ -397,127 +392,15 @@ origin_gate_records() {  # <origin-id>
   [ "$dotglob" = on ] || shopt -u dotglob
 }
 
-# Reads the item without ever deciding, on its own, that a failure means absence.
-# The result lands in GATE_ITEM_SHOW and the verdict in the return code, so the
-# caller raises any refusal from its own shell instead of inside a `$( )` where
-# `fail` would only exit the subshell.
-#   0 read           1 genuinely absent           2 could not be established
-GATE_ITEM_SHOW=''
-GATE_ITEM_ERROR=''
-
-# tasks-axi answers NOT_FOUND both for an id absent from a readable store and for
-# a store it could not open at all, so absence is only trusted once the store the
-# active home is configured to read is itself a readable regular file.
-gate_backlog_store() {
-  local config="$FM_HOME/.tasks.toml" path=''
-  if [ -e "$config" ]; then
-    [ -f "$config" ] && [ -r "$config" ] || return 1
-    # A `path` key the parser cannot read a value out of is a store this command
-    # has not established, so it refuses rather than falling back to the default.
-    path=$(awk '
-      /^[[:space:]]*\[/ {
-        section = $0
-        sub(/^[[:space:]]*\[[[:space:]]*/, "", section)
-        sub(/[[:space:]]*\].*$/, "", section)
-        next
-      }
-      section == "markdown" && /^[[:space:]]*path[[:space:]]*=/ {
-        saw_path = 1
-        value = $0
-        sub(/^[^=]*=[[:space:]]*/, "", value)
-        quote = substr(value, 1, 1)
-        if (quote == "\"" || quote == "\047") {
-          rest = substr(value, 2)
-          close_at = index(rest, quote)
-          if (close_at == 0) next
-          value = substr(rest, 1, close_at - 1)
-        } else {
-          sub(/#.*$/, "", value)
-          sub(/[[:space:]]+$/, "", value)
-        }
-        if (value != "") { printed = 1; print value; exit }
-      }
-      END { if (saw_path && !printed) exit 1 }
-    ' "$config") || return 1
-  fi
-  # With no `path` key tasks-axi discovers its store against the working
-  # directory this script runs it in rather than defaulting to a fixed one: it
-  # reads backlog.md in that directory when one is there and data/backlog.md
-  # otherwise. A guard naming a single path would answer about a file the tool
-  # never opens, which reads as protection either way it is wrong: it would
-  # refuse a genuine departure, or trust a not-found from a store nothing reads.
-  if [ -z "$path" ]; then
-    if [ -e "$FM_HOME/backlog.md" ] || [ -L "$FM_HOME/backlog.md" ]; then
-      path="$FM_HOME/backlog.md"
-    else
-      path="$FM_HOME/data/backlog.md"
-    fi
-  fi
-  case "$path" in
-    /*) : ;;
-    *) path="$FM_HOME/$path" ;;
-  esac
-  printf '%s\n' "$path"
-}
-
-gate_item_read() {  # <item-id>
-  local out rc store shown_id
-  GATE_ITEM_SHOW=''
-  GATE_ITEM_ERROR=''
-  if ! command -v tasks-axi >/dev/null 2>&1; then
-    GATE_ITEM_ERROR='tasks-axi is not available in this home'
-    return 2
-  fi
-  # `out=$(...)` under `set -e` exits the shell on a non-zero substitution before
-  # the status can be read, which would end the command with no message at all.
-  rc=0
-  out=$( (cd "$FM_HOME" && tasks-axi show "$1" --full) 2>&1 ) || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    # An exit status of zero is not by itself a record for this id: tasks-axi
-    # reads a flag-shaped argument as a flag and prints its usage successfully,
-    # so the output has to name the id that was asked for. Exactly one pair of
-    # surrounding quotes comes off, which is what the renderer puts around an id
-    # that would otherwise read as a number or a boolean, so an id whose own
-    # characters include a quote is compared as it is rather than normalised.
-    shown_id=$(show_field "$out" id)
-    shown_id=${shown_id#\"}
-    shown_id=${shown_id%\"}
-    if [ "$shown_id" != "$1" ]; then
-      GATE_ITEM_ERROR="the backlog answered without naming $1, so no record for it was established"
-      return 2
-    fi
-    GATE_ITEM_SHOW=$out
-    return 0
-  fi
-  case "$out" in
-    *'code: NOT_FOUND'*)
-      store=''
-      store=$(gate_backlog_store) || store=''
-      if [ -z "$store" ]; then
-        GATE_ITEM_ERROR="the backlog store configured in $FM_HOME/.tasks.toml could not be established, so a not-found reading cannot be trusted"
-      elif [ -f "$store" ] && [ -r "$store" ]; then
-        return 1
-      else
-        GATE_ITEM_ERROR="the configured backlog store $store is not a readable file, so a not-found reading cannot be trusted"
-      fi
-      return 2
-      ;;
-  esac
-  GATE_ITEM_ERROR=$(printf '%s' "$out" | sed -n 's/^ *code: //p' | head -1)
-  [ -n "$GATE_ITEM_ERROR" ] || GATE_ITEM_ERROR='unknown error'
-  GATE_ITEM_ERROR="the backlog could not be read (tasks-axi $GATE_ITEM_ERROR)"
-  return 2
-}
-
 # The settled definition of "the captain still owes an answer on this item".
 # `kind` is deliberately absent: `tasks-axi update --kind` leaves these fields
 # intact, and reading `kind` let a still-held item read as no longer captain-owned.
 item_asserts_owed_decision() {  # <show-output>
-  [ "$(show_field "$1" hold_kind)" = captain ] || return 1
-  case "$(show_field "$1" hold_reason)" in
+  [ "$(fm_backlog_show_field "$1" hold_kind)" = captain ] || return 1
+  case "$(fm_backlog_show_field "$1" hold_reason)" in
     ''|'"-"'|-) return 1 ;;
   esac
-  [ "$(show_field "$1" state)" != "done" ] || return 1
+  [ "$(fm_backlog_show_field "$1" state)" != "done" ] || return 1
   return 0
 }
 
@@ -551,10 +434,10 @@ command_gate_link() {
     fail "origin $origin is a secondmate; a captain decision it raises belongs in that secondmate's own home, not $FM_HOME"
   fi
   rc=0
-  gate_item_read "$item" || rc=$?
-  [ "$rc" -ne 2 ] || fail "captain-gated item $item could not be checked: $GATE_ITEM_ERROR"
+  fm_backlog_item_read "$item" || rc=$?
+  [ "$rc" -lt 2 ] || fail "captain-gated item $item could not be checked: $FM_BACKLOG_ITEM_ERROR"
   [ "$rc" -ne 1 ] || fail "captain-gated item $item is not in $FM_HOME/data/backlog.md"
-  item_asserts_owed_decision "$GATE_ITEM_SHOW" \
+  item_asserts_owed_decision "$FM_BACKLOG_ITEM_SHOW" \
     || fail "backlog item $item does not assert an owed captain decision"
   rc=0
   gate_link_state "$file" || rc=$?
@@ -628,10 +511,10 @@ command_gate_answered() {
   item=$(linked_item_for "$origin" "$key" "$file")
 
   rc=0
-  gate_item_read "$item" || rc=$?
+  fm_backlog_item_read "$item" || rc=$?
   # A read that could not establish the item keeps the link, so cleanup keeps
   # refusing and a retry after repair still lands the write.
-  [ "$rc" -ne 2 ] || fail "captain-gated item $item was not written: $GATE_ITEM_ERROR"
+  [ "$rc" -lt 2 ] || fail "captain-gated item $item was not written: $FM_BACKLOG_ITEM_ERROR"
   if [ "$rc" -eq 1 ]; then
     drop_gate_link "$file"
     printf 'gate-answered: %s/%s answered by %s; %s is no longer in this backlog, nothing to reconcile\n' \
@@ -639,7 +522,7 @@ command_gate_answered() {
     return 0
   fi
 
-  item_body=$(show_field "$GATE_ITEM_SHOW" body)
+  item_body=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" body)
   # Every discriminator here has to be right about what else can match it, not
   # only about what it is meant to match. Four separate defects on this path were
   # each a correct description that was an incomplete specification: a note this
@@ -670,8 +553,8 @@ command_gate_answered() {
   # An item that no longer asserts an owed decision was settled by someone else,
   # so this gate never writes its answer over it: overwriting would displace
   # whoever actually decided and label the record with this caller.
-  if ! item_asserts_owed_decision "$GATE_ITEM_SHOW"; then
-    state=$(show_field "$GATE_ITEM_SHOW" state)
+  if ! item_asserts_owed_decision "$FM_BACKLOG_ITEM_SHOW"; then
+    state=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" state)
     case "$item_body" in
       *"through gate $origin/$key."|*"through gate $origin/$key."[!A-Za-z0-9._-]*)
         # The answer landed but the close did not, so the retry finishes the
@@ -723,7 +606,7 @@ command_gate_answered() {
   tasks_axi update "$item" --body-file "$STATE/.gate-answer.$$" --archive-body >/dev/null \
     || { discard_staging "$STATE/.gate-answer.$$"; fail "could not record the gate answer on $item"; }
   rm -f "$STATE/.gate-answer.$$"
-  if [ "$(show_field "$GATE_ITEM_SHOW" held)" = yes ]; then
+  if [ "$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" held)" = yes ]; then
     tasks_axi unhold "$item" >/dev/null || fail "could not release the captain hold on $item"
   fi
   tasks_axi "done" "$item" >/dev/null || fail "could not close answered captain item $item"
@@ -832,9 +715,9 @@ command_hold() {
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
   id=$(hold_id "$origin" "$key")
   if show=$(task_show "$id"); then
-    state=$(show_field "$show" state)
-    kind=$(show_field "$show" kind)
-    existing_title=$(show_field "$show" title)
+    state=$(fm_backlog_show_field "$show" state)
+    kind=$(fm_backlog_show_field "$show" kind)
+    existing_title=$(fm_backlog_show_field "$show" title)
     [ "$state" != "done" ] || fail "captain decision $id is already durably resolved; use a new decision key for a new decision"
     [ "$kind" = captain ] || fail "existing backlog identity $id is not kind captain"
     [ "$existing_title" = "$title" ] || fail "existing captain hold $id has a different title"
@@ -977,14 +860,14 @@ command_resolve() {
   id=$(hold_id "$origin" "$key")
   if verify_hold_resolved "$id"; then
     hold_show=$(task_show "$id")
-    hold_body=$(show_field "$hold_show" body)
+    hold_body=$(fm_backlog_show_field "$hold_show" body)
     verify_resolution_identity "$id" "$hold_body" "$decision_digest" "$routed_csv"
     printf 'resolved: %s\n' "$id"
     return 0
   fi
   verify_hold_active "$id"
   hold_show=$(task_show "$id")
-  hold_body=$(show_field "$hold_show" body)
+  hold_body=$(fm_backlog_show_field "$hold_show" body)
   case "$hold_body" in
     *"Resolution recorded by fm-decision-hold."*)
       verify_resolution_identity "$id" "$hold_body" "$decision_digest" "$routed_csv"
@@ -994,11 +877,11 @@ command_resolve() {
 
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep does not exist in the active home"
-    state=$(show_field "$show" state)
+    state=$(fm_backlog_show_field "$show" state)
     [ "$state" != "done" ] || [ "$resolution_recorded" = 1 ] \
       || fail "routed task $dep is already done"
     # tasks-axi quotes multi-entry blocked_by as "a,b,c"; strip so edge ids match.
-    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]')
+    blocked=$(fm_backlog_show_field "$show" blocked_by | tr -d '[:space:]')
     blocked=${blocked#\"}
     blocked=${blocked%\"}
     case ",$blocked," in
@@ -1020,7 +903,7 @@ command_resolve() {
     || fail "could not record the captain decision on $id"
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep disappeared before routing"
-    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]')
+    blocked=$(fm_backlog_show_field "$show" blocked_by | tr -d '[:space:]')
     blocked=${blocked#\"}
     blocked=${blocked%\"}
     case ",$blocked," in

@@ -40,9 +40,14 @@
 #   (z) a bare "#N" does not satisfy an issue in another repository
 #  (aa) a refusal names every issue the body fails to close, and edits nothing
 #  (bb) a record naming several issues merges when every one of them is closed
-#  (cc) a record that cannot be read refuses rather than merging on a guess
-#  (dd) an issue still open after the merge is reported
-#  (ee) an armed --auto merge skips the post-merge read, which has nothing to see
+#  (cc) a backlog that should have answered and did not refuses the merge
+#  (dd) a not-found no readable store vouches for is still indeterminate
+#  (ee) an id a readable backlog does not hold merges unchanged and silently
+#  (ff) a home with no tasks-axi merges, with one warning that the check was skipped
+#  (gg) a repository name differing only in case is still the PR's own repository
+#  (hh) an issue still open after the merge is reported
+#  (ii) an issue that could not be read is reported as unknown, not as still open
+#  (jj) an armed --auto merge skips the post-merge read, which has nothing to see
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -51,6 +56,12 @@ fm_git_identity fmtest fmtest@example.invalid
 
 PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-merge-tests)
+
+# System directories only, so a tool a case does not mock is genuinely absent
+# from the sandbox rather than picked up from the developer's own PATH.
+BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+# What run_pr_merge appends to the case's fakebin. Empty keeps the caller's PATH.
+RUN_PATH_TAIL=
 
 # Build a fresh sandbox for one test case: a state dir with a task meta and a
 # fakebin with a gh-axi mock that records how it was invoked. Echoes the case dir.
@@ -74,6 +85,10 @@ make_case() {
 if [ "${1:-}" = show ]; then
   [ -f "$FM_TEST_TASK_LINKS" ] || exit 1
   links=$(cat "$FM_TEST_TASK_LINKS")
+  if [ "$links" = NOT_FOUND ]; then
+    printf 'error: "Task \\"%s\\" not found in this backlog"\ncode: NOT_FOUND\n' "${2:-}" >&2
+    exit 1
+  fi
   if [ "$links" = none ]; then
     printf '  id: %s\n  links: none\n' "${2:-}"
   else
@@ -96,9 +111,16 @@ set_task_links() {
   printf '%s\n' "$2" > "$1/task-links"
 }
 
-# Remove the task's record entirely, which is the undeterminable case.
+# Make the tasks-axi mock fail with no diagnosis at all, which is the answer a
+# backlog that should have responded and did not gives.
 drop_task_record() {
   rm -f "$1/task-links"
+}
+
+# Give the home a readable backlog store, which is what turns a NOT_FOUND from
+# "the tool could not open anything" into "this backlog does not hold that id".
+write_backlog_store() {
+  printf '# Backlog\n' > "$1/backlog.md"
 }
 
 # The forge's default squash message for a task PR as this repo actually sees
@@ -209,7 +231,7 @@ run_pr_merge() {
   FM_TEST_PR_BODY="$case_dir/pr-body" \
   FM_TEST_ISSUE_STATE="$case_dir/issue-state" \
   FM_HOME="$case_dir" \
-  PATH="$case_dir/fakebin:$PATH" \
+  PATH="$case_dir/fakebin:${RUN_PATH_TAIL:-$PATH}" \
     "$PR_MERGE" "$@"
   rc=$?
   if [ "${case_dir##*/}" = unsafe-url-segment ] && [ "$rc" -eq 2 ]; then
@@ -904,6 +926,136 @@ test_unreadable_task_record_refuses() {
   pass "fm-pr-merge refuses when the task's own record cannot be read"
 }
 
+# A not-found the backlog store itself cannot vouch for is still indeterminate:
+# tasks-axi answers NOT_FOUND both for an absent id and for a store it never
+# opened, so absence counts only once the configured store is a readable file.
+test_not_found_without_a_readable_store_refuses() {
+  local case_dir rc
+  case_dir=$(make_issue_case not-found-no-store 6666aaaa22223333444455556666777788889999 \
+    'Closes #9' NOT_FOUND)
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "not-found-no-store: a not-found from an unopened store was trusted as absence"
+  assert_grep 'is not a readable file' "$case_dir/stderr" \
+    "not-found-no-store: the refusal did not name the store it could not vouch for"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "not-found-no-store: the merge ran on an untrusted not-found"
+  pass "fm-pr-merge refuses a not-found the configured backlog store cannot vouch for"
+}
+
+# An id a readable backlog genuinely does not hold is a determinate answer: the
+# task owns no issue, which is the ordinary firstmate-repo case and must be as
+# quiet as a row that links none.
+test_determinate_not_found_merges_unchanged() {
+  local case_dir
+  case_dir=$(make_issue_case not-found-determinate 7777aaaa22223333444455556666777788889999 \
+    'Closes #9' NOT_FOUND)
+  write_backlog_store "$case_dir"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/51 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "not-found-determinate: fm-pr-merge refused a task the backlog does not hold"
+
+  grep -qF 'pr merge 51 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "not-found-determinate: the merge did not run"
+  assert_no_grep '--json body' "$case_dir/gh.log" \
+    "not-found-determinate: the PR body was read for a task that owns no issue"
+  assert_no_grep 'the closing-keyword check did not run' "$case_dir/stderr" \
+    "not-found-determinate: the common no-owning-issue path became noisy"
+  pass "fm-pr-merge merges unchanged and silently when the backlog does not hold the task"
+}
+
+# A home without tasks-axi is a supported fallback, so the merge proceeds; the
+# warning is what keeps that from being a silent no-op.
+test_missing_tasks_axi_merges_with_a_warning() {
+  local case_dir rc
+  case_dir=$(make_issue_case no-tasks-axi 8888aaaa22223333444455556666777788889999 \
+    'Closes #9' 'doc:https://github.com/example/repo/issues/9')
+  rm -f "$case_dir/fakebin/tasks-axi"
+
+  RUN_PATH_TAIL=$BASE_PATH
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/52 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  RUN_PATH_TAIL=
+
+  expect_code 0 "$rc" "no-tasks-axi: fm-pr-merge bricked a merge in a home with no backlog tool"
+  grep -qF 'pr merge 52 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "no-tasks-axi: the merge did not run"
+  assert_grep 'the closing-keyword check did not run' "$case_dir/stderr" \
+    "no-tasks-axi: the skipped check passed silently"
+  assert_grep 'tasks-axi is not available in this home' "$case_dir/stderr" \
+    "no-tasks-axi: the warning did not say why the check was skipped"
+  pass "fm-pr-merge merges with one warning when the backlog tool is unavailable"
+}
+
+# GitHub resolves owner and repository case-insensitively, so a hand-typed
+# "Repo" in a backlog row still names the PR's own repository and a bare "#N"
+# still closes it.
+test_repository_case_difference_is_still_the_same_repo() {
+  local case_dir
+  case_dir=$(make_issue_case repo-case 9999aaaa22223333444455556666777788889999 \
+    'Closes #79' \
+    'doc:https://github.com/example/repo/issues/79')
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/Repo/pull/53 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "repo-case: a case difference in the repository name refused a body GitHub would honor"
+
+  grep -qF 'pr merge 53 --repo example/Repo' "$case_dir/gh-axi.log" \
+    || fail "repo-case: the merge did not run"
+  pass "fm-pr-merge reads a repository name that differs only in case as the same repository"
+}
+
+# An issue read that did not answer is unknown, never the negative outcome: the
+# same rule this repo applies to an unconfirmed fm-send.
+test_unreadable_issue_is_reported_as_unknown() {
+  local case_dir
+  case_dir=$(make_issue_case issue-unreadable aaaabbbb22223333444455556666777788889999 \
+    'Closes #80' \
+    'doc:https://github.com/example/repo/issues/80')
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+if [ "\${1:-}" = api ] && [ "\${2:-}" = graphql ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *viewerMergeHeadlineText) cat '$case_dir/headline' ; exit 0 ;;
+      *viewerMergeBodyText) cat '$case_dir/body' ; exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json body"*) cat "\$FM_TEST_PR_BODY" ; exit 0 ;;
+    esac
+    ;;
+  "issue view") echo "gh: HTTP 404: Not Found" >&2 ; exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/54 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "issue-unreadable: fm-pr-merge failed a merge whose body was well formed"
+
+  assert_grep 'issues/80 could not be read, so whether this merge closed it is unknown' "$case_dir/stderr" \
+    "issue-unreadable: an unreadable issue was not reported as unknown"
+  assert_no_grep 'is still open after this merge' "$case_dir/stderr" \
+    "issue-unreadable: an unconfirmed read was reported as the negative outcome"
+  pass "fm-pr-merge reports an issue it could not read as unknown, not as still open"
+}
+
 test_issue_left_open_after_merge_is_reported() {
   local case_dir
   case_dir=$(make_issue_case issue-left-open 2222111122223333444455556666777788889999 \
@@ -1151,5 +1303,10 @@ test_cross_repository_bare_number_does_not_satisfy
 test_several_issues_each_named_in_the_refusal
 test_several_issues_all_closed_still_merge
 test_unreadable_task_record_refuses
+test_not_found_without_a_readable_store_refuses
+test_determinate_not_found_merges_unchanged
+test_missing_tasks_axi_merges_with_a_warning
+test_repository_case_difference_is_still_the_same_repo
 test_issue_left_open_after_merge_is_reported
+test_unreadable_issue_is_reported_as_unknown
 test_armed_auto_merge_reports_no_open_issue
