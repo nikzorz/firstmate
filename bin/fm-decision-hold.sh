@@ -435,7 +435,7 @@ command_gate_link() {
   fi
   rc=0
   fm_backlog_item_read "$item" || rc=$?
-  [ "$rc" -lt 2 ] || fail "captain-gated item $item could not be checked: $FM_BACKLOG_ITEM_ERROR"
+  [ "$rc" -ne 2 ] || fail "captain-gated item $item could not be checked: $FM_BACKLOG_ITEM_ERROR"
   [ "$rc" -ne 1 ] || fail "captain-gated item $item is not in $FM_HOME/data/backlog.md"
   item_asserts_owed_decision "$FM_BACKLOG_ITEM_SHOW" \
     || fail "backlog item $item does not assert an owed captain decision"
@@ -514,7 +514,7 @@ command_gate_answered() {
   fm_backlog_item_read "$item" || rc=$?
   # A read that could not establish the item keeps the link, so cleanup keeps
   # refusing and a retry after repair still lands the write.
-  [ "$rc" -lt 2 ] || fail "captain-gated item $item was not written: $FM_BACKLOG_ITEM_ERROR"
+  [ "$rc" -ne 2 ] || fail "captain-gated item $item was not written: $FM_BACKLOG_ITEM_ERROR"
   if [ "$rc" -eq 1 ]; then
     drop_gate_link "$file"
     printf 'gate-answered: %s/%s answered by %s; %s is no longer in this backlog, nothing to reconcile\n' \

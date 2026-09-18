@@ -77,8 +77,14 @@
 # finish after the read returns, and that explanation holds only where the body
 # asked the forge to close the issue at all: an issue the body does not close
 # will never close on its own, and the body read has already said so with the
-# hedge that case needs. When the body read could not run, no narrower set is
-# known and every named issue is read back instead.
+# hedge that case needs. When the body read could not run at all, no narrower set
+# is knowable and every named issue is read back instead.
+#
+# A PR that had already landed before this run still gets that body read, because
+# the narrowing is about which issues this report may explain and that does not
+# change with who merged. What it does not get is the advice: the body the forge
+# acted on is already the merged one, so there is nothing left to tell a reader
+# to fix, and the pre-merge warnings stay silent on that path.
 #
 # An issue the read could not answer for is reported as unknown, because a token
 # that cannot see the issue has not established anything about it. An armed
@@ -244,7 +250,7 @@ ere_escape() {  # <text>
 # config/backlog-backend=manual routes routine backlog MUTATIONS to hand-editing
 # and leaves this read unaffected.
 #   0 the record names issues     1 determinate, it names none
-#   2 indeterminate               3 no answer this check can read
+#   2 indeterminate, by any of the ways a backlog read can come up short
 read_task_issue_urls() {
   local rc=0
   TASK_ISSUE_URLS=
@@ -256,9 +262,10 @@ read_task_issue_urls() {
 }
 
 # A bare "#N" resolves against the PR's own repository, so it names this issue
-# only when the issue lives there. Both the form check and the refusal turn on
-# that, and they must turn on it identically or the gate names a spelling it
-# would then reject. GitHub resolves owner and repository case-insensitively, so
+# only when the issue lives there. The form check and the spelling the warning
+# names both turn on that, and they must turn on it identically or the warning
+# names a form the check would not accept. GitHub resolves owner and repository
+# case-insensitively, so
 # a hand-typed "Firstmate" in a backlog row is the same repository as "firstmate"
 # in the PR URL and must not read as another one.
 PR_REPO_PATH_LC=$(printf '%s' "$PR_OWNER/$PR_REPO" | LC_ALL=C tr '[:upper:]' '[:lower:]')
@@ -333,7 +340,7 @@ check_could_not_run() {  # <why>
 # entry it reads cannot establish that this work owns an issue, and a refusal
 # built on it would hand that same guess to whoever had to satisfy the refusal.
 closing_keyword_gate() {
-  local url owner repo number ref rc=0
+  local url owner repo number ref rc=0 advise=1
   local -a issues=() missing=() closing=()
 
   read_task_issue_urls || rc=$?
@@ -355,9 +362,13 @@ closing_keyword_gate() {
     check_could_not_run "the forge CLI needed to read the PR body is unavailable"
     return 0
   fi
-  # An already-merged PR has nothing left to advise on: the forge acted on
-  # whatever body it had. The post-merge read is what reports that outcome.
-  pr_is_already_merged && return 0
+  # A PR that already landed is past advising: the body the forge acted on is
+  # the one it merged with, and nothing said here could change it. Its body is
+  # still read, because which issues it asked the forge to close is exactly what
+  # the post-merge read is entitled to explain.
+  if pr_is_already_merged; then
+    advise=0
+  fi
   if ! gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE"; then
     check_could_not_run "the PR body could not be read"
     if [ -s "$GH_STDERR_FILE" ]; then
@@ -380,6 +391,7 @@ closing_keyword_gate() {
     fi
   done
   VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
+  [ "$advise" = 1 ] || return 0
   [ "${#missing[@]}" -eq 0 ] && return 0
 
   for ref in "${missing[@]}"; do

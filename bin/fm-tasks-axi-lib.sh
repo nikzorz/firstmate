@@ -86,9 +86,10 @@ fm_backlog_show_field() {  # <show-output> <field>
 # absence. The result lands in FM_BACKLOG_ITEM_SHOW and the verdict in the return
 # code, so a caller raises any refusal from its own shell instead of inside a
 # `$( )` where a fatal helper would only exit the subshell.
-#   0 read     1 genuinely absent     2 could not be established     3 no tool
-# 3 is separate because a home without tasks-axi is a supported fallback state
-# here, not an unknown answer, and a caller may want to continue rather than stop.
+#   0 read     1 genuinely absent     2 could not be established
+# A home without tasks-axi answers 2 like any other read that produced nothing:
+# what a caller does about an unestablished item is the caller's policy, and no
+# caller has ever needed to know which way the read came up short.
 FM_BACKLOG_ITEM_SHOW=''
 FM_BACKLOG_ITEM_ERROR=''
 
@@ -153,7 +154,7 @@ fm_backlog_item_read() {  # <item-id>
   FM_BACKLOG_ITEM_ERROR=''
   if ! command -v tasks-axi >/dev/null 2>&1; then
     FM_BACKLOG_ITEM_ERROR='tasks-axi is not available in this home'
-    return 3
+    return 2
   fi
   # `out=$(...)` under `set -e` exits the shell on a non-zero substitution before
   # the status can be read, which would end the command with no message at all.

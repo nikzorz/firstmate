@@ -56,7 +56,8 @@
 #  (kk) an issue not observed closed is reported as that, not as a defect
 #  (ll) an issue the body does not close is not read back at all, because the
 #       lagging-background-job explanation cannot apply to it
-#  (mm) every named issue is read back when the body read could not run
+#  (mm) every named issue is read back only when the body read could not run,
+#       and an already-merged PR narrows the same way while advising nothing
 #  (nn) an issue that could not be read is reported as unknown
 #  (oo) an armed --auto merge skips the post-merge read, which has nothing to see
 set -u
@@ -919,6 +920,7 @@ test_unreadable_pr_body_warns_and_merges() {
   case_dir=$(make_issue_case body-unreadable dddd222233334444555566667777888899990000 \
     'Closes #81' \
     'doc:https://github.com/example/repo/issues/81')
+  printf 'OPEN\n' > "$case_dir/issue-state"
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
@@ -953,6 +955,8 @@ SH
     "body-unreadable: the cause the forge CLI reported was discarded"
   grep -qF 'pr merge 56 --repo example/repo' "$case_dir/gh-axi.log" \
     || fail "body-unreadable: the merge did not run"
+  assert_grep 'issues/81 was not observed closed' "$case_dir/stderr" \
+    "body-unreadable: no narrower set was knowable, so every named issue should have been read back"
   pass "fm-pr-merge warns and still merges when the PR body cannot be read"
 }
 
@@ -1219,13 +1223,14 @@ test_issue_the_body_does_not_close_is_not_read_back() {
   pass "fm-pr-merge does not read back an issue its body does not close"
 }
 
-# The narrowing needs the body read to have happened. An already-merged PR skips
-# that read, so no narrower set is known and every named issue is read back.
-test_already_merged_pr_reads_back_every_named_issue() {
+# An already-merged PR still gets its body read, so the post-merge report covers
+# only the issues that body asks the forge to close. The advice is what the
+# landed PR is past: nothing said now could change the body it merged with.
+test_already_merged_pr_narrows_without_advising() {
   local case_dir
-  case_dir=$(make_issue_case merged-fallback 5555bbbb22223333444455556666777788889999 \
-    'No keyword here at all' \
-    'doc:https://github.com/example/repo/issues/201')
+  case_dir=$(make_issue_case merged-narrowing 5555bbbb22223333444455556666777788889999 \
+    'Closes #201' \
+    'doc:https://github.com/example/repo/issues/201,doc:https://github.com/example/repo/issues/202')
   printf 'OPEN\n' > "$case_dir/issue-state"
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
@@ -1245,15 +1250,17 @@ SH
 
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "merged-fallback: fm-pr-merge refused a pull request that had already merged"
+    || fail "merged-narrowing: fm-pr-merge refused a pull request that had already merged"
 
-  assert_no_grep '--json body' "$case_dir/gh.log" \
-    "merged-fallback: an already-merged PR still paid for the body read"
   assert_grep 'issues/201 was not observed closed' "$case_dir/stderr" \
-    "merged-fallback: no narrower set was known, so every named issue should have been read back"
+    "merged-narrowing: the issue the body closes was not read back"
+  assert_no_grep 'issues/202 was not observed closed' "$case_dir/stderr" \
+    "merged-narrowing: an issue the body never asked to close was blamed on a lagging background job"
+  assert_no_grep "does not close" "$case_dir/stderr" \
+    "merged-narrowing: a landed PR was advised to fix the body it already merged with"
   assert_no_ere 'after this merge' "$case_dir/stderr" \
-    "merged-fallback: the report claimed a merge this run did not perform"
-  pass "fm-pr-merge reads back every named issue when the body read could not run"
+    "merged-narrowing: the report claimed a merge this run did not perform"
+  pass "fm-pr-merge narrows the post-merge read on an already-merged PR without advising"
 }
 
 test_armed_auto_merge_reports_no_open_issue() {
@@ -1495,6 +1502,6 @@ test_missing_tasks_axi_merges_with_a_warning
 test_repository_case_difference_is_still_the_same_repo
 test_issue_not_observed_closed_after_merge_is_reported
 test_issue_the_body_does_not_close_is_not_read_back
-test_already_merged_pr_reads_back_every_named_issue
+test_already_merged_pr_narrows_without_advising
 test_unreadable_issue_is_reported_as_unknown
 test_armed_auto_merge_reports_no_open_issue
