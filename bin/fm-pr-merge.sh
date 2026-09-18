@@ -40,46 +40,44 @@
 # composed at merge time without also composing the trailers back in. A caller
 # passing --body or --body-file owns the message already and is unaffected.
 #
-# Before merging, the closing-keyword gate checks that the PR body actually
-# closes the issue the task owns. This is the last point at which nothing can
-# rewrite that body again: the validation pipeline composes the body from its
-# own step results, so a keyword written before a later push does not survive
-# to here, and a merge without one leaves the issue open after its work landed.
+# Before merging, the closing-keyword check reads the PR body and says whether it
+# closes the issues the task's record mentions. This is the last point at which
+# nothing can rewrite that body again: the validation pipeline composes the body
+# from its own step results, so a keyword written before a later push does not
+# survive to here, and a merge without one leaves the issue open after its work
+# landed.
 #
-# Which issue a task owns comes from that task's own backlog record, through the
-# links: entry tasks-axi derives from the URLs recorded on its row. The task id,
-# the branch name, and the PR prose are never read for it: a guessed issue closes
-# something the work never touched, which is worse than leaving one open.
+# The check is ADVISORY and blocks nothing. Its only source is the links: entry
+# tasks-axi derives from the URLs on the task's row, and that entry records every
+# URL the row carries, not the issues the work owns: a follow-up mentioned for
+# context reads exactly like an issue the task closes. Refusing on a signal that
+# cannot tell those apart does not avoid the guess, it relocates it to whoever is
+# told to satisfy the refusal, so this reports and merges. Every other guard in
+# this file still refuses; only this one advises. The task id, the branch name,
+# and the PR prose are never read for the issue either.
 #
-# That read has three answers and they are kept apart, because only one of them
-# is a reason to stop. A record naming no issue, and an id the backlog genuinely
-# does not hold, are both determinate: the task owns no issue, so the merge runs
-# unchanged with no PR-body read at all, and that is the common firstmate-repo
-# case. A home whose tasks-axi is missing or too old to answer cannot be checked
-# but is a supported configuration, so the merge runs with one warning saying the
-# check did not happen. Only a backlog that should have answered and did not is
-# indeterminate, and only that refuses.
+# The read has three answers and each says something different. A record naming
+# no issue, and an id the backlog genuinely does not hold, are both determinate:
+# nothing to check, so the merge runs with no PR-body read at all, silently, and
+# that is the common firstmate-repo case. A body missing a well-formed keyword
+# for an issue the record mentions gets one warning naming the issue and leaving
+# the judgment to a reader. A backlog, a forge CLI, or a PR body that could not
+# be read gets one warning saying the check did not run and why.
 #
 # The check is on the FORM, not on the presence of the number: GitHub acts only
 # when a closing keyword immediately precedes the reference, so "Close issues
-# #148 and #117" closes nothing while carrying both numbers. Keywords are matched
-# case-insensitively, and "#N", "owner/repo#N", and the full issue URL all count
-# as the reference.
+# #148 and #117" closes nothing while carrying both numbers, and "Closes #117x"
+# names no issue at all. Keywords are matched case-insensitively, and "#N",
+# "owner/repo#N", and the full issue URL all count as the reference.
 #
-# A body missing a well-formed keyword refuses the merge, naming every issue it
-# fails to close and the line that would satisfy each. Nothing on this path ever
-# writes that line in: the record names the issues its row links to and cannot
-# tell one the task OWNS from one it merely references, so an automatic rewrite
-# could close an issue the work never touched, and closing the wrong issue is
-# worse than leaving one open. Writing the body stays with the worker, which is
-# also where the standing rule already puts it.
-#
-# After the merge, every named issue is read back and reported when it did not
-# close, and reported as unknown when the read itself did not answer, because a
-# token that cannot see the issue has not established that it stayed open.
-# That check is the only one no keyword form can fool, so it runs even
-# when the body passed the pre-merge read. An armed --auto merge has not landed
-# yet, so it has no post-merge state to read and the report is skipped there.
+# After the merge, every named issue is read back. One that did not read CLOSED
+# is reported as not observed closed rather than as a defect, because the forge
+# acts on a closing keyword in a background job that can land after this read
+# returns. One the read could not answer for at all is reported as unknown,
+# because a token that cannot see the issue has not established anything about
+# it. That check is the only one no keyword form can fool, so it runs even when
+# the body passed the pre-merge read. An armed --auto merge has not landed yet,
+# so it has no post-merge state to read and the report is skipped there.
 #
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
@@ -230,13 +228,13 @@ ere_escape() {  # <text>
 
 # Sets TASK_ISSUE_URLS to the issue URLs this task's own record names, one per
 # line, and answers in the three states a backlog read really has. Collapsing
-# them refuses merges that have a determinate answer: a task never filed as a
-# backlog item names no issue just as plainly as a filed one whose row links
-# none, and that is the common firstmate-repo case.
+# them reports a missed check over an answer that was determinate: a task never
+# filed as a backlog item names no issue just as plainly as a filed one whose row
+# links none, and that is the common firstmate-repo case.
 # config/backlog-backend=manual routes routine backlog MUTATIONS to hand-editing
 # and leaves this read unaffected.
 #   0 the record names issues     1 determinate, it names none
-#   2 indeterminate               3 no answer this gate can read
+#   2 indeterminate               3 no answer this check can read
 read_task_issue_urls() {
   local links rc=0
   TASK_ISSUE_URLS=
@@ -274,7 +272,9 @@ issue_reference() {  # <owner> <repo> <number>
 }
 
 # Whether a closing keyword directly precedes a reference to this issue. The
-# trailing guard keeps "#1" from matching inside "#14".
+# reference has to end on a word boundary the way GitHub's own parser ends it:
+# that keeps "#1" from matching inside "#14", and keeps "#117x" from reading as
+# a reference to 117, which GitHub parses as no reference at all.
 body_closes_issue() {  # <body-file> <owner> <repo> <number>
   local body=$1 path number=$4 refs
   path=$(ere_escape "$2/$3")
@@ -282,7 +282,7 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   if issue_is_in_pr_repo "$2" "$3"; then
     refs="#$number|$refs"
   fi
-  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}[[:space:]]+($refs)([^0-9]|\$)" "$body"
+  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}[[:space:]]+($refs)([^[:alnum:]_]|\$)" "$body"
 }
 
 reject_repo_overrides() {
@@ -319,42 +319,22 @@ PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-pr-body.XXXXXX")
 SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
 trap 'rm -f "$GH_STDERR_FILE" "$PR_BODY_FILE" "$SQUASH_BODY_FILE"' EXIT
 
-refuse_unreadable_pr_body() {
-  echo "error: the PR body could not be read, so its closing keyword cannot be checked" >&2
-  if [ -s "$GH_STDERR_FILE" ]; then
-    echo "error: the forge CLI reported:" >&2
-    cat "$GH_STDERR_FILE" >&2
-  fi
-  exit 1
+check_could_not_run() {  # <why>
+  echo "warning: the closing-keyword check did not run: $1" >&2
 }
 
-# Refuse before any merge argument is composed, so a PR that owes a closing
-# keyword costs no forge round trip beyond the reads the decision needs.
-#
-# The refusal is the whole remedy: the record names the issues its row links to
-# and cannot tell one this task owns from one it merely references, so writing a
-# keyword in from it would be a guess, and a guess here closes an unrelated
-# issue. Leaving one open is the lesser harm, and the worker who wrote the body
-# is the one who can name the issue with certainty.
+# Runs before any merge argument is composed, so a PR with nothing to check
+# costs no forge round trip. Every answer it can reach is a report: the links:
+# entry it reads cannot establish that this work owns an issue, and a refusal
+# built on it would hand that same guess to whoever had to satisfy the refusal.
 closing_keyword_gate() {
   local url owner repo number ref rc=0
   local -a issues=() missing=()
 
   read_task_issue_urls || rc=$?
   case "$rc" in
-    2)
-      echo "error: task $ID's own record could not be read, so the issue this PR owes a closing keyword for cannot be determined" >&2
-      echo "error: $FM_BACKLOG_ITEM_ERROR" >&2
-      echo "error: repair this home's backlog, then merge again" >&2
-      exit 1
-      ;;
-    # A home whose backlog tool is missing or too old is a supported fallback,
-    # and refusing every task merge there would be worse than the missed check
-    # this gate exists for. It says so once rather than passing silently.
-    3)
-      echo "warning: the closing-keyword check did not run: $FM_BACKLOG_ITEM_ERROR" >&2
-      echo "warning: confirm by hand that this PR's body closes any issue task $ID owns" >&2
-      ;;
+    0|1) : ;;
+    *) check_could_not_run "$FM_BACKLOG_ITEM_ERROR" ; return 0 ;;
   esac
   [ -n "$TASK_ISSUE_URLS" ] || return 0
 
@@ -365,14 +345,20 @@ closing_keyword_gate() {
   done <<< "$TASK_ISSUE_URLS"
 
   if ! command -v gh >/dev/null 2>&1; then
-    echo "error: the forge CLI needed to read the PR body is unavailable" >&2
-    exit 1
+    check_could_not_run "the forge CLI needed to read the PR body is unavailable"
+    return 0
   fi
-  # An already-merged PR has nothing left to gate: the forge acted on whatever
-  # body it had. The post-merge read is what reports that outcome.
+  # An already-merged PR has nothing left to advise on: the forge acted on
+  # whatever body it had. The post-merge read is what reports that outcome.
   pr_is_already_merged && return 0
-  gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE" \
-    || refuse_unreadable_pr_body
+  if ! gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE"; then
+    check_could_not_run "the PR body could not be read"
+    if [ -s "$GH_STDERR_FILE" ]; then
+      echo "warning: the forge CLI reported:" >&2
+      cat "$GH_STDERR_FILE" >&2
+    fi
+    return 0
+  fi
 
   for url in "${issues[@]}"; do
     owner=${url#https://github.com/}
@@ -386,17 +372,18 @@ closing_keyword_gate() {
   done
   [ "${#missing[@]}" -eq 0 ] && return 0
 
-  echo "error: this PR's body carries no well-formed closing keyword for:" >&2
   for ref in "${missing[@]}"; do
-    echo "error:   $ref" >&2
+    echo "warning: this PR's body does not close $ref, which task $ID's record mentions" >&2
   done
-  echo "error: add one line reading \"Closes <reference>\" per issue above to the PR body, with nothing between the keyword and the reference, then merge again" >&2
-  exit 1
+  # No edit is prescribed here on purpose. The record cannot establish that this
+  # work owns the issue, so only a reader can tell which of these two it is.
+  echo "warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong" >&2
 }
 
 # The one check no keyword form can fool, and the reason it runs after the merge
-# rather than instead of the body read. It reports rather than refuses, because
-# the merge has already landed and the remedy is to close the issue by hand.
+# rather than instead of the body read. Every outcome it reports is an
+# observation rather than a verdict, because neither a state it read nor a state
+# it failed to read establishes what the merge did.
 report_unclosed_issues() {
   local url state
   [ -n "$TASK_ISSUE_URLS" ] || return 0
@@ -406,11 +393,10 @@ report_unclosed_issues() {
       state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
       case "$state" in
         CLOSED) : ;;
-        # A read that did not answer is unknown, never the negative outcome: a
-        # token that cannot see a cross-repository issue would otherwise report
-        # one this merge did close as left open.
         '') echo "warning: $url could not be read, so whether this merge closed it is unknown" >&2 ;;
-        *) echo "warning: $url is still open after this merge; close it by hand and check the PR body's closing keyword" >&2 ;;
+        # The forge acts on a closing keyword in a background job that can land
+        # after this read returns, so a state of OPEN here is not yet a defect.
+        *) echo "warning: $url was not observed closed immediately after this merge; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2 ;;
       esac
     fi
   done <<< "$TASK_ISSUE_URLS"
