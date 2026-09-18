@@ -4,6 +4,8 @@
 # is guarded exactly like the main primary; only child crew/scout worktrees are
 # exempt (see the scoping block below and docs/turnend-guard.md).
 #
+# Usage: fm-turnend-guard.sh [--claude]   (the turn-end payload arrives on stdin)
+#
 # fm-guard.sh (bin/fm-guard.sh) is pull-based: it only warns when some other
 # supervision script happens to run. A primary session that ends a turn without
 # resuming its harness supervision protocol, and then never runs another

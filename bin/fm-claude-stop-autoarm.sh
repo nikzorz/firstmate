@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Claude Stop-owned watcher auto-arm (asyncRewake hook).
 #
+# Usage: fm-claude-stop-autoarm.sh   (no arguments; the Stop payload arrives on stdin)
+#
 # Registered in tracked .claude/settings.json as a Stop command hook with
 # "asyncRewake": true and an explicit multi-hour timeout. Claude Code fires it
 # in the background on EVERY Stop of a Claude primary session, with no

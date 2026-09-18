@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Grok Stop-hook adapter for the firstmate PRIMARY turn-end guard.
 #
+# Usage: fm-turnend-guard-grok.sh   (no arguments; the Stop payload arrives on stdin)
+#
 # Grok Stop hooks are passive: exit 2 does not block or feed stderr back to the
 # model. This adapter still uses the shared primary-scoped predicate in
 # fm-turnend-guard.sh. When that predicate says the primary would end blind, the

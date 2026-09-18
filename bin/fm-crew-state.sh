@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
 #
+# Usage: fm-crew-state.sh <task-id>
+#
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
 # and nothing when they silently resume, so `tail -1` of that log reports the

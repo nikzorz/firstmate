@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # One short-poll of the relay connector for a pending X-mode mention.
 #
+# Usage: fm-x-poll.sh   (no arguments; see Config below)
+#
 # Inert by default: a HARD no-op (exit 0, no output) unless X mode is configured
 # via a non-empty FMX_PAIRING_TOKEN (from the home's .env or the environment).
 # The watcher invokes this trusted repository script directly only after
