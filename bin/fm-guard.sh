@@ -17,6 +17,7 @@
 # suppressed by that dedup. Normal wake handling (watcher briefly down between a
 # wake and the next supervision resume) stays inside the grace window and stays
 # silent. Always exits 0: the guard warns, it never blocks.
+# Usage: fm-guard.sh   (no arguments)
 set -u
 
 usage() {

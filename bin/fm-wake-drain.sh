@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Atomically drain durable watcher wake records, optionally annotate validated
 # signal status keys after raw consumption commits, then assert liveness.
+# Usage: fm-wake-drain.sh   (no arguments)
 set -u
 
 usage() {

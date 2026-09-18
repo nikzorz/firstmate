@@ -3,6 +3,7 @@
 # primary whose current harness session has not already acquired the home lock.
 # Every silence and error path exits 0 because Claude SessionStart exit 2 blocks
 # session initialization.
+# Usage: fm-sessionstart-nudge.sh   (no arguments)
 set -u
 
 usage() {

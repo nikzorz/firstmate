@@ -68,6 +68,7 @@
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
+# Usage: fm-watch.sh   (no arguments)
 set -u
 
 usage() {
