@@ -73,12 +73,11 @@
 # After the merge, the issues the body read found a well-formed keyword for are
 # read back. That check is the only one no keyword form can fool, which is why it
 # runs even though the body already passed. It covers only those issues because
-# its one explanation for a state of OPEN is a forge background job that can
-# finish after the read returns, and that explanation holds only where the body
-# asked the forge to close the issue at all: an issue the body does not close
-# will never close on its own, and the body read has already said so with the
-# hedge that case needs. When the body read could not run at all, no narrower set
-# is knowable and every named issue is read back instead.
+# everything it can say about an open one assumes the body asked the forge to
+# close it: an issue the body does not close was never going to close, and the
+# body read has already said so with the hedge that case needs. When the body
+# read could not run at all, no narrower set is knowable and every named issue is
+# read back instead.
 #
 # A PR that had already landed before this run still gets that body read, because
 # the narrowing is about which issues this report may explain and that does not
@@ -86,10 +85,16 @@
 # acted on is already the merged one, so there is nothing left to tell a reader
 # to fix, and the pre-merge warnings stay silent on that path.
 #
-# An issue the read could not answer for is reported as unknown, because a token
-# that cannot see the issue has not established anything about it. An armed
-# --auto merge has not landed yet, so it has no post-merge state to read and the
-# report is skipped there.
+# What an open issue means there depends on whether this run's merge call did
+# anything. Right after a merge this run asked for, the forge's close job may
+# still be in flight, so an open state is reported as not yet observed closed.
+# On a PR that landed in an earlier run that job is long done, so an open issue
+# is reported plainly as one the merge left open for a reader to close.
+#
+# An issue the read could not answer for is reported as unknown on either path,
+# because a token that cannot see the issue has not established anything about
+# it. An armed --auto merge has not landed yet, so it has no post-merge state to
+# read and the report is skipped there.
 #
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
@@ -206,8 +211,9 @@ caller_arms_auto_merge() {
 
 # Not merged and not readable are deliberately the same answer here, so an
 # unreadable state falls through to the ordinary read rather than skipping it.
-# The state is read once and reused: the closing-keyword gate and the
-# squash-message read both ask for it, and the merge is still ahead of both.
+# The state is read once and reused, and what it records is the answer from
+# before this run's merge call. The post-merge report depends on that: whether
+# the PR had already landed is what decides which explanation it may offer.
 PR_MERGED_STATE=
 pr_is_already_merged() {
   local state
@@ -403,11 +409,17 @@ closing_keyword_gate() {
 }
 
 # The one check no keyword form can fool, and the reason it runs after the merge
-# rather than instead of the body read. Every outcome it reports is an
-# observation rather than a verdict, because neither a state it read nor a state
-# it failed to read establishes what the merge did. It speaks of the merge call
-# this run made rather than of a merge this run performed, because the call is a
-# no-op against a PR that had already landed.
+# rather than instead of the body read. It speaks of the merge call this run
+# made rather than of a merge this run performed, because the call is a no-op
+# against a PR that had already landed.
+#
+# An open issue means two different things on the two paths, so it gets two
+# reports. When this run just asked the forge to merge, the close job may still
+# be in flight and an open state settles nothing. When the PR landed in an
+# earlier run, that job has had its whole chance, so an open issue is the miss
+# this whole check exists to catch and saying it may resolve itself would be the
+# one wrong thing to say. A read that could not answer settles nothing either
+# way, on both paths alike.
 report_unclosed_issues() {
   local url state
   [ "${#VERIFY_ISSUE_URLS[@]}" -gt 0 ] || return 0
@@ -417,9 +429,13 @@ report_unclosed_issues() {
     case "$state" in
       CLOSED) : ;;
       '') echo "warning: $url could not be read, so whether it closed is unknown" >&2 ;;
-      # The forge acts on a closing keyword in a background job that can land
-      # after this read returns, so a state of OPEN here is not yet a defect.
-      *) echo "warning: $url was not observed closed when read just after the merge call; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2 ;;
+      *)
+        if pr_is_already_merged; then
+          echo "warning: $url is still open and this PR landed before this run, so the forge has already had its chance to close it and will not now; close it by hand" >&2
+        else
+          echo "warning: $url was not observed closed when read just after the merge call; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2
+        fi
+        ;;
     esac
   done
 }

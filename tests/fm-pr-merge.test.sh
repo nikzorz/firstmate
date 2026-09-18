@@ -53,7 +53,9 @@
 #  (hh) an id a readable backlog does not hold merges unchanged and silently
 #  (ii) a home with no tasks-axi merges, with one warning that the check was skipped
 #  (jj) a repository name differing only in case is still the PR's own repository
-#  (kk) an issue not observed closed is reported as that, not as a defect
+#  (kk) an issue not observed closed right after this run's merge call is
+#       reported as that, not as a defect; on a PR that landed earlier the
+#       same open state is reported plainly as a miss
 #  (ll) an issue the body does not close is not read back at all, because the
 #       lagging-background-job explanation cannot apply to it
 #  (mm) every named issue is read back only when the body read could not run,
@@ -1193,6 +1195,8 @@ test_issue_not_observed_closed_after_merge_is_reported() {
     "issue-left-open: an issue that did not read CLOSED went unreported"
   assert_grep 'background job' "$case_dir/stderr" \
     "issue-left-open: the report asserted a defect instead of naming why the read can be early"
+  assert_no_grep 'landed before this run' "$case_dir/stderr" \
+    "issue-left-open: a merge this run called was reported as a settled miss"
   assert_no_ere '(still open|left open|open) after this merge' "$case_dir/stderr" \
     "issue-left-open: the report called an early read a settled open state"
   pass "fm-pr-merge reports an issue it did not observe closed without calling it a defect"
@@ -1225,7 +1229,9 @@ test_issue_the_body_does_not_close_is_not_read_back() {
 
 # An already-merged PR still gets its body read, so the post-merge report covers
 # only the issues that body asks the forge to close. The advice is what the
-# landed PR is past: nothing said now could change the body it merged with.
+# landed PR is past: nothing said now could change the body it merged with. Its
+# close job has also had its whole chance, so an open issue there is a real miss
+# rather than a read that arrived early.
 test_already_merged_pr_narrows_without_advising() {
   local case_dir
   case_dir=$(make_issue_case merged-narrowing 5555bbbb22223333444455556666777788889999 \
@@ -1252,10 +1258,12 @@ SH
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "merged-narrowing: fm-pr-merge refused a pull request that had already merged"
 
-  assert_grep 'issues/201 was not observed closed' "$case_dir/stderr" \
-    "merged-narrowing: the issue the body closes was not read back"
-  assert_no_grep 'issues/202 was not observed closed' "$case_dir/stderr" \
-    "merged-narrowing: an issue the body never asked to close was blamed on a lagging background job"
+  assert_grep 'issues/201 is still open and this PR landed before this run' "$case_dir/stderr" \
+    "merged-narrowing: an issue a landed PR left open was not reported as a real finding"
+  assert_no_grep 'may still close on its own' "$case_dir/stderr" \
+    "merged-narrowing: a miss the forge has already had its chance at was hedged as still pending"
+  assert_no_grep 'issues/202' "$case_dir/stderr" \
+    "merged-narrowing: an issue the body never asked to close was reported after the merge"
   assert_no_grep "does not close" "$case_dir/stderr" \
     "merged-narrowing: a landed PR was advised to fix the body it already merged with"
   assert_no_ere 'after this merge' "$case_dir/stderr" \
