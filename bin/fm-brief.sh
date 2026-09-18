@@ -38,6 +38,10 @@
 #                captain approves, firstmate merges to local main
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
+# Both PR-producing modes carry the closing-keyword rule in their definition of
+# done, each naming the one place that mode's worker writes the PR body, so a
+# worker is never told to hand-edit a PR the pipeline still owns; local-only
+# stays silent because that mode opens no PR.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
@@ -314,10 +318,28 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
 EOF
 PROJECT_MEMORY=$("$FM_ROOT/bin/fm-project-mode.sh" --project-memory "$REPO" 2>/dev/null || echo agents-md)
 
+# Every PR-producing mode carries the closing-keyword rule, because a generated
+# brief that stays silent about it is how a merged PR leaves its issue open.
+# Each variant names the one place that mode's worker actually writes the body,
+# so the rule never reads as licence to hand-edit a PR mid-run: under the
+# pipeline that place is the intent, and under direct-PR it is the body itself.
+CLOSING_KEYWORD_RULE="If this task owns an issue, the PR body must close it, and the form is exact: GitHub acts only when a closing keyword immediately precedes the reference.
+Write one \`Closes #{issue}\` line per issue.
+\`Close issues #12 and #13\` closes nothing, because the words between the keyword and the reference break it."
+
+CLOSING_KEYWORD_SECTION_PIPELINE="$CLOSING_KEYWORD_RULE
+The pipeline composes the PR body from the intent you give it plus its own step results, so your intent is where that line has to be: put it there when you start the run.
+Do not edit the PR yourself to add it later - the no-hand-edit rule above covers the PR body too.
+If it is missing once the PR is open, leave it: firstmate's merge step reports any issue the body does not close."
+
+CLOSING_KEYWORD_SECTION_DIRECT="$CLOSING_KEYWORD_RULE
+You write this body yourself, so include the line when you open the PR, then re-read the body and confirm it is there before you report the PR."
+
 case "$MODE" in
   direct-PR)
     SETUP2=""
     PAUSE_EXAMPLE="a long test or build run you are waiting out, an upstream release, a rate-limit reset, a scheduled window"
+    CLOSING_KEYWORD_SECTION="$CLOSING_KEYWORD_SECTION_DIRECT"
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
     DOD=$(cat <<EOF
 # Definition of done
@@ -325,6 +347,8 @@ This project ships **direct-PR**: you raise the PR yourself, without the no-mist
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+
+$CLOSING_KEYWORD_SECTION
 EOF
 )
     ;;
@@ -343,6 +367,7 @@ EOF
 )
     ;;
   *)  # no-mistakes (default)
+    CLOSING_KEYWORD_SECTION="$CLOSING_KEYWORD_SECTION_PIPELINE"
     PAUSE_EXAMPLE="a fix round, re-review, or long test step you handed back to the no-mistakes pipeline, an upstream release, a rate-limit reset, a scheduled window"
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
@@ -362,6 +387,8 @@ Two firstmate-specific rules layer on top of that guidance:
   Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
+
+$CLOSING_KEYWORD_SECTION
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF

@@ -40,6 +40,62 @@
 # composed at merge time without also composing the trailers back in. A caller
 # passing --body or --body-file owns the message already and is unaffected.
 #
+# Before merging, the closing-keyword check reads the PR body and says whether it
+# closes the issues the task's record mentions. This is the last point at which
+# nothing can rewrite that body again: the validation pipeline composes the body
+# from its own step results, so a keyword written before a later push does not
+# survive to here, and a merge without one leaves the issue open after its work
+# landed.
+#
+# The check is ADVISORY and blocks nothing. Its only source is the links: entry
+# tasks-axi derives from the URLs on the task's row, and that entry records every
+# URL the row carries, not the issues the work owns: a follow-up mentioned for
+# context reads exactly like an issue the task closes. Refusing on a signal that
+# cannot tell those apart does not avoid the guess, it relocates it to whoever is
+# told to satisfy the refusal, so this reports and merges. Every other guard in
+# this file still refuses; only this one advises. The task id, the branch name,
+# and the PR prose are never read for the issue either.
+#
+# The read has three answers and each says something different. A record naming
+# no issue, and an id the backlog genuinely does not hold, are both determinate:
+# nothing to check, so the merge runs with no PR-body read at all, silently, and
+# that is the common firstmate-repo case. A body missing a well-formed keyword
+# for an issue the record mentions gets one warning naming the issue and leaving
+# the judgment to a reader. A backlog, a forge CLI, or a PR body that could not
+# be read gets one warning saying the check did not run and why.
+#
+# The check is on the FORM, not on the presence of the number: GitHub acts only
+# when a closing keyword immediately precedes the reference, so "Close issues
+# #148 and #117" closes nothing while carrying both numbers, and "Closes #117x"
+# names no issue at all. Keywords are matched case-insensitively, and "#N",
+# "owner/repo#N", and the full issue URL all count as the reference.
+#
+# After the merge, the issues the body read found a well-formed keyword for are
+# read back. That check is the only one no keyword form can fool, which is why it
+# runs even though the body already passed. It covers only those issues because
+# everything it can say about an open one assumes the body asked the forge to
+# close it: an issue the body does not close was never going to close, and the
+# body read has already said so with the hedge that case needs. When the body
+# read could not run at all, no narrower set is knowable and every named issue is
+# read back instead.
+#
+# A PR that had already landed before this run is read exactly the same way. No
+# edit will change what that merge did, but the issue is still sitting open and
+# someone has to close it, so the notice is owed there most of all: it is the
+# one path where no earlier run ever gave it.
+#
+# What an open issue means afterwards depends on whether anything established
+# that the body asked for the close. Right after a merge this run called, the
+# forge's close job may still be in flight, so an open state is reported as not
+# yet observed closed. When the merge landed earlier and the body read proved
+# the keyword, that job is long done, so an open issue is reported plainly as
+# one the merge left open for a reader to close.
+#
+# An issue the read could not answer for is reported as unknown on either path,
+# because a token that cannot see the issue has not established anything about
+# it. An armed --auto merge has not landed yet, so it has no post-merge state to
+# read and the report is skipped there.
+#
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
 # whatever trailers they carry.
@@ -66,6 +122,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-attribution-lib.sh
 . "$SCRIPT_DIR/fm-attribution-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -153,10 +211,17 @@ caller_arms_auto_merge() {
 
 # Not merged and not readable are deliberately the same answer here, so an
 # unreadable state falls through to the ordinary read rather than skipping it.
+# The state is read once and reused, and what it records is the answer from
+# before this run's merge call. The post-merge report depends on that: whether
+# the PR had already landed is what decides which explanation it may offer.
+PR_MERGED_STATE=
 pr_is_already_merged() {
   local state
-  state=$(gh pr view "$URL" --json state -q .state 2>"$GH_STDERR_FILE") || return 1
-  [ "$state" = MERGED ]
+  if [ -z "$PR_MERGED_STATE" ]; then
+    state=$(gh pr view "$URL" --json state -q .state 2>"$GH_STDERR_FILE") || state=
+    PR_MERGED_STATE=${state:-UNREADABLE}
+  fi
+  [ "$PR_MERGED_STATE" = MERGED ]
 }
 
 # The refusal stays fail-closed and fixed; only its cause comes from gh, which
@@ -168,6 +233,79 @@ refuse_unreadable_default_message() {
     cat "$GH_STDERR_FILE" >&2
   fi
   exit 1
+}
+
+# GitHub's closing keywords, which it matches case-insensitively.
+CLOSING_KEYWORD_RE='(close[sd]?|fix|fixe[sd]|resolve[sd]?)'
+TASK_ISSUE_URLS=
+# The issues whose state the post-merge read is entitled to explain, which the
+# body read narrows to the ones the body actually asks the forge to close.
+VERIFY_ISSUE_URLS=()
+# Whether the forge's close-on-merge has already had its whole chance at those
+# issues: the merge landed before this run AND the body read proved it asked for
+# the close. Both halves are needed, so the gate settles it once rather than
+# leaving the report to rebuild it out of parts it can no longer see.
+FORGE_CLOSE_CHANCE_SPENT=0
+
+# Owner and repository names admit "." and nothing else an ERE reads specially.
+ere_escape() {  # <text>
+  printf '%s' "$1" | sed 's/\./\\./g'
+}
+
+# Sets TASK_ISSUE_URLS to the issue URLs this task's own record names, one per
+# line, and answers in the three states a backlog read really has. Collapsing
+# them reports a missed check over an answer that was determinate: a task never
+# filed as a backlog item names no issue just as plainly as a filed one whose row
+# links none, or one whose record carries no links field at all, and that is the
+# common firstmate-repo case.
+# config/backlog-backend=manual routes routine backlog MUTATIONS to hand-editing
+# and leaves this read unaffected.
+#   0 the record names issues     1 determinate, it names none
+#   2 indeterminate, by any of the ways a backlog read can come up short
+read_task_issue_urls() {
+  local rc=0
+  TASK_ISSUE_URLS=
+  fm_backlog_item_read "$ID" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  TASK_ISSUE_URLS=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" links |
+    grep -Eo 'https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]*' |
+    awk '!seen[$0]++' || true)
+}
+
+# A bare "#N" resolves against the PR's own repository, so it names this issue
+# only when the issue lives there. The form check and the spelling the warning
+# names both turn on that, and they must turn on it identically or the warning
+# names a form the check would not accept. GitHub resolves owner and repository
+# case-insensitively, so
+# a hand-typed "Firstmate" in a backlog row is the same repository as "firstmate"
+# in the PR URL and must not read as another one.
+PR_REPO_PATH_LC=$(printf '%s' "$PR_OWNER/$PR_REPO" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+issue_is_in_pr_repo() {  # <owner> <repo>
+  [ "$(printf '%s' "$1/$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$PR_REPO_PATH_LC" ]
+}
+
+# The reference a closing keyword must immediately precede, in the spelling this
+# PR's own repository makes valid.
+issue_reference() {  # <owner> <repo> <number>
+  if issue_is_in_pr_repo "$1" "$2"; then
+    printf '#%s\n' "$3"
+  else
+    printf '%s/%s#%s\n' "$1" "$2" "$3"
+  fi
+}
+
+# Whether a closing keyword directly precedes a reference to this issue. The
+# reference has to end on a word boundary the way GitHub's own parser ends it:
+# that keeps "#1" from matching inside "#14", and keeps "#117x" from reading as
+# a reference to 117, which GitHub parses as no reference at all.
+body_closes_issue() {  # <body-file> <owner> <repo> <number>
+  local body=$1 path number=$4 refs
+  path=$(ere_escape "$2/$3")
+  refs="$path#$number|https://github\.com/$path/issues/$number"
+  if issue_is_in_pr_repo "$2" "$3"; then
+    refs="#$number|$refs"
+  fi
+  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}[[:space:]]+($refs)([^[:alnum:]_]|\$)" "$body"
 }
 
 reject_repo_overrides() {
@@ -197,6 +335,117 @@ grep -qxF "pr=$URL" "$META" || {
   exit 1
 }
 
+# One cleanup for every scratch file this run can create, because a second trap
+# later would replace this one and leak whatever it did not name.
+GH_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-gh-stderr.XXXXXX")
+PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-pr-body.XXXXXX")
+SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
+trap 'rm -f "$GH_STDERR_FILE" "$PR_BODY_FILE" "$SQUASH_BODY_FILE"' EXIT
+
+check_could_not_run() {  # <why>
+  echo "warning: the closing-keyword check did not run: $1" >&2
+}
+
+# Runs before any merge argument is composed, so a PR with nothing to check
+# costs no forge round trip. Every answer it can reach is a report: the links:
+# entry it reads cannot establish that this work owns an issue, and a refusal
+# built on it would hand that same guess to whoever had to satisfy the refusal.
+closing_keyword_gate() {
+  local url owner repo number ref rc=0
+  local -a issues=() missing=() closing=()
+
+  read_task_issue_urls || rc=$?
+  case "$rc" in
+    0|1) : ;;
+    *) check_could_not_run "$FM_BACKLOG_ITEM_ERROR" ; return 0 ;;
+  esac
+  [ -n "$TASK_ISSUE_URLS" ] || return 0
+
+  while IFS= read -r url; do
+    if [ -n "$url" ]; then
+      issues+=("$url")
+    fi
+  done <<< "$TASK_ISSUE_URLS"
+  # Every named issue, until the body read below establishes a narrower set.
+  VERIFY_ISSUE_URLS=("${issues[@]}")
+
+  if ! command -v gh >/dev/null 2>&1; then
+    check_could_not_run "the forge CLI needed to read the PR body is unavailable"
+    return 0
+  fi
+  if ! gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE"; then
+    check_could_not_run "the PR body could not be read"
+    if [ -s "$GH_STDERR_FILE" ]; then
+      echo "warning: the forge CLI reported:" >&2
+      cat "$GH_STDERR_FILE" >&2
+    fi
+    return 0
+  fi
+
+  for url in "${issues[@]}"; do
+    owner=${url#https://github.com/}
+    repo=${owner#*/}
+    number=${repo##*/issues/}
+    repo=${repo%%/issues/*}
+    owner=${owner%%/*}
+    if body_closes_issue "$PR_BODY_FILE" "$owner" "$repo" "$number"; then
+      closing+=("$url")
+    else
+      missing+=("$(issue_reference "$owner" "$repo" "$number") ($url)")
+    fi
+  done
+  VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
+  # Only a set this read narrowed can carry that claim: it is the read that
+  # established the body asks the forge to close these at all.
+  if pr_is_already_merged; then
+    FORGE_CLOSE_CHANCE_SPENT=1
+  fi
+  [ "${#missing[@]}" -eq 0 ] && return 0
+
+  for ref in "${missing[@]}"; do
+    echo "warning: this PR's body does not close $ref, which task $ID's record mentions" >&2
+  done
+  # No edit is prescribed here on purpose. The record cannot establish that this
+  # work owns the issue, so only a reader can tell which of these two it is.
+  echo "warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong" >&2
+}
+
+# The one check no keyword form can fool, and the reason it runs after the merge
+# rather than instead of the body read. It speaks of the merge call this run
+# made rather than of a merge this run performed, because the call is a no-op
+# against a PR that had already landed.
+#
+# An open issue means two different things, so it gets two reports. When this
+# run just asked the forge to merge, the close job may still be in flight and an
+# open state settles nothing. When the merge landed earlier and the body read
+# proved the body asked for the close, that job has had its whole chance, so an
+# open issue is the miss this whole check exists to catch and saying it may
+# resolve itself would be the one wrong thing to say. Anything short of both -
+# including a set no body read narrowed - keeps the first wording, because
+# nothing established the forge was ever asked. A read that could not answer
+# settles nothing either way, on every path alike.
+report_unclosed_issues() {
+  local url state
+  [ "${#VERIFY_ISSUE_URLS[@]}" -gt 0 ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  for url in "${VERIFY_ISSUE_URLS[@]}"; do
+    state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
+    case "$state" in
+      CLOSED) : ;;
+      '') echo "warning: $url could not be read, so whether it closed is unknown" >&2 ;;
+      *)
+        if [ "$FORGE_CLOSE_CHANCE_SPENT" = 1 ]; then
+          echo "warning: $url is still open and this PR landed before this run, so the forge has already had its chance to close it and will not now; close it by hand" >&2
+        else
+          echo "warning: $url was not observed closed when read just after the merge call; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2
+        fi
+        ;;
+    esac
+  done
+}
+
+closing_keyword_gate
+
 merge_args=()
 if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
@@ -214,9 +463,6 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_body "$@"; then
     echo "error: the forge CLI needed to read the default squash message is unavailable" >&2
     exit 1
   fi
-  SQUASH_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-body.XXXXXX")
-  GH_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-gh-stderr.XXXXXX")
-  trap 'rm -f "$SQUASH_BODY_FILE" "$GH_STDERR_FILE"' EXIT
   if ! pr_is_already_merged; then
     if caller_arms_auto_merge "$@"; then
       echo "error: --auto would freeze this squash message: the forge stores the message when auto-merge is armed and lands it whenever the merge later fires, so commits pushed in between would be missing from it" >&2
@@ -254,3 +500,7 @@ if [ "$squashing" = 1 ] && ! caller_writes_squash_body "$@"; then
 fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
+
+# --auto arms the merge for the forge to land later, so there is no post-merge
+# state to read yet and an issue still open here says nothing.
+caller_arms_auto_merge "$@" || report_unclosed_issues
