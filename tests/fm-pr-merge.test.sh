@@ -54,8 +54,11 @@
 #  (ii) a home with no tasks-axi merges, with one warning that the check was skipped
 #  (jj) a repository name differing only in case is still the PR's own repository
 #  (kk) an issue not observed closed is reported as that, not as a defect
-#  (ll) an issue that could not be read is reported as unknown
-#  (mm) an armed --auto merge skips the post-merge read, which has nothing to see
+#  (ll) an issue the body does not close is not read back at all, because the
+#       lagging-background-job explanation cannot apply to it
+#  (mm) every named issue is read back when the body read could not run
+#  (nn) an issue that could not be read is reported as unknown
+#  (oo) an armed --auto merge skips the post-merge read, which has nothing to see
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -64,6 +67,12 @@ fm_git_identity fmtest fmtest@example.invalid
 
 PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-merge-tests)
+
+# assert_no_ere <ere> <file> <msg>: case-insensitive ERE must NOT match. The
+# wordings these cases pin are prose shapes, which a fixed string cannot bound.
+assert_no_ere() {
+  ! grep -Eiq -- "$1" "$2" || fail "$3"
+}
 
 # System directories only, so a tool a case does not mock is genuinely absent
 # from the sandbox rather than picked up from the developer's own PATH.
@@ -829,7 +838,7 @@ test_keyword_not_adjacent_to_reference_warns() {
     "keyword-not-adjacent: the warning did not name the issue the body fails to close"
   assert_grep 'if the record only mentions it for context, nothing is wrong' "$case_dir/stderr" \
     "keyword-not-adjacent: the warning did not leave the judgment to a reader"
-  assert_no_grep 'Closes <reference>' "$case_dir/stderr" \
+  assert_no_ere 'add .*(clos|fix|resolv)e?[sd]? .*#' "$case_dir/stderr" \
     "keyword-not-adjacent: the warning prescribed an edit the record cannot justify"
   assert_no_grep 'pr edit' "$case_dir/gh-axi.log" \
     "keyword-not-adjacent: the check rewrote the PR body"
@@ -1156,7 +1165,7 @@ SH
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "issue-unreadable: fm-pr-merge failed a merge whose body was well formed"
 
-  assert_grep 'issues/80 could not be read, so whether this merge closed it is unknown' "$case_dir/stderr" \
+  assert_grep 'issues/80 could not be read, so whether it closed is unknown' "$case_dir/stderr" \
     "issue-unreadable: an unreadable issue was not reported as unknown"
   assert_no_grep 'was not observed closed' "$case_dir/stderr" \
     "issue-unreadable: an unconfirmed read was reported as a state that was observed"
@@ -1176,13 +1185,75 @@ test_issue_not_observed_closed_after_merge_is_reported() {
 
   grep -qF 'pr merge 47 --repo example/repo' "$case_dir/gh-axi.log" \
     || fail "issue-left-open: the merge did not run"
-  assert_grep 'issues/77 was not observed closed immediately after this merge' "$case_dir/stderr" \
+  assert_grep 'issues/77 was not observed closed when read just after the merge call' "$case_dir/stderr" \
     "issue-left-open: an issue that did not read CLOSED went unreported"
   assert_grep 'background job' "$case_dir/stderr" \
     "issue-left-open: the report asserted a defect instead of naming why the read can be early"
-  assert_no_grep 'close it by hand' "$case_dir/stderr" \
-    "issue-left-open: the report prescribed a hand-close for a state it cannot call final"
+  assert_no_ere '(still open|left open|open) after this merge' "$case_dir/stderr" \
+    "issue-left-open: the report called an early read a settled open state"
   pass "fm-pr-merge reports an issue it did not observe closed without calling it a defect"
+}
+
+# An issue the body does not close will never close on its own, so the
+# background-job explanation is never the right one for it. The hedged pre-merge
+# warning already said what can be said, and the post-merge read skips it.
+test_issue_the_body_does_not_close_is_not_read_back() {
+  local case_dir
+  case_dir=$(make_issue_case context-only-link 4444bbbb22223333444455556666777788889999 \
+    'No keyword here at all' \
+    'doc:https://github.com/example/repo/issues/200')
+  printf 'OPEN\n' > "$case_dir/issue-state"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "context-only-link: the closing-keyword check blocked a merge"
+
+  grep -qF 'pr merge 58 --repo example/repo' "$case_dir/gh-axi.log" \
+    || fail "context-only-link: the merge did not run"
+  assert_grep 'does not close #200 (https://github.com/example/repo/issues/200)' "$case_dir/stderr" \
+    "context-only-link: the pre-merge warning did not name the issue the body fails to close"
+  assert_no_grep 'issue view' "$case_dir/gh.log" \
+    "context-only-link: an issue the body does not close was read back after the merge"
+  assert_no_grep 'was not observed closed' "$case_dir/stderr" \
+    "context-only-link: an issue the body never asked to close was blamed on a lagging background job"
+  pass "fm-pr-merge does not read back an issue its body does not close"
+}
+
+# The narrowing needs the body read to have happened. An already-merged PR skips
+# that read, so no narrower set is known and every named issue is read back.
+test_already_merged_pr_reads_back_every_named_issue() {
+  local case_dir
+  case_dir=$(make_issue_case merged-fallback 5555bbbb22223333444455556666777788889999 \
+    'No keyword here at all' \
+    'doc:https://github.com/example/repo/issues/201')
+  printf 'OPEN\n' > "$case_dir/issue-state"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json state"*) printf '%s\n' MERGED ; exit 0 ;;
+      *"--json body"*) cat "\$FM_TEST_PR_BODY" ; exit 0 ;;
+    esac
+    ;;
+  "issue view") cat "\$FM_TEST_ISSUE_STATE" ; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "merged-fallback: fm-pr-merge refused a pull request that had already merged"
+
+  assert_no_grep '--json body' "$case_dir/gh.log" \
+    "merged-fallback: an already-merged PR still paid for the body read"
+  assert_grep 'issues/201 was not observed closed' "$case_dir/stderr" \
+    "merged-fallback: no narrower set was known, so every named issue should have been read back"
+  assert_no_ere 'after this merge' "$case_dir/stderr" \
+    "merged-fallback: the report claimed a merge this run did not perform"
+  pass "fm-pr-merge reads back every named issue when the body read could not run"
 }
 
 test_armed_auto_merge_reports_no_open_issue() {
@@ -1423,5 +1494,7 @@ test_determinate_not_found_merges_unchanged
 test_missing_tasks_axi_merges_with_a_warning
 test_repository_case_difference_is_still_the_same_repo
 test_issue_not_observed_closed_after_merge_is_reported
+test_issue_the_body_does_not_close_is_not_read_back
+test_already_merged_pr_reads_back_every_named_issue
 test_unreadable_issue_is_reported_as_unknown
 test_armed_auto_merge_reports_no_open_issue

@@ -70,14 +70,20 @@
 # names no issue at all. Keywords are matched case-insensitively, and "#N",
 # "owner/repo#N", and the full issue URL all count as the reference.
 #
-# After the merge, every named issue is read back. One that did not read CLOSED
-# is reported as not observed closed rather than as a defect, because the forge
-# acts on a closing keyword in a background job that can land after this read
-# returns. One the read could not answer for at all is reported as unknown,
-# because a token that cannot see the issue has not established anything about
-# it. That check is the only one no keyword form can fool, so it runs even when
-# the body passed the pre-merge read. An armed --auto merge has not landed yet,
-# so it has no post-merge state to read and the report is skipped there.
+# After the merge, the issues the body read found a well-formed keyword for are
+# read back. That check is the only one no keyword form can fool, which is why it
+# runs even though the body already passed. It covers only those issues because
+# its one explanation for a state of OPEN is a forge background job that can
+# finish after the read returns, and that explanation holds only where the body
+# asked the forge to close the issue at all: an issue the body does not close
+# will never close on its own, and the body read has already said so with the
+# hedge that case needs. When the body read could not run, no narrower set is
+# known and every named issue is read back instead.
+#
+# An issue the read could not answer for is reported as unknown, because a token
+# that cannot see the issue has not established anything about it. An armed
+# --auto merge has not landed yet, so it has no post-merge state to read and the
+# report is skipped there.
 #
 # The guarantee is squash-only by construction: a merge-commit or rebase merge
 # replays the branch commits onto the default branch untouched, so it carries
@@ -220,6 +226,9 @@ refuse_unreadable_default_message() {
 # GitHub's closing keywords, which it matches case-insensitively.
 CLOSING_KEYWORD_RE='(close[sd]?|fix|fixe[sd]|resolve[sd]?)'
 TASK_ISSUE_URLS=
+# The issues whose state the post-merge read is entitled to explain, which the
+# body read narrows to the ones the body actually asks the forge to close.
+VERIFY_ISSUE_URLS=()
 
 # Owner and repository names admit "." and nothing else an ERE reads specially.
 ere_escape() {  # <text>
@@ -325,7 +334,7 @@ check_could_not_run() {  # <why>
 # built on it would hand that same guess to whoever had to satisfy the refusal.
 closing_keyword_gate() {
   local url owner repo number ref rc=0
-  local -a issues=() missing=()
+  local -a issues=() missing=() closing=()
 
   read_task_issue_urls || rc=$?
   case "$rc" in
@@ -339,6 +348,8 @@ closing_keyword_gate() {
       issues+=("$url")
     fi
   done <<< "$TASK_ISSUE_URLS"
+  # Every named issue, until the body read below establishes a narrower set.
+  VERIFY_ISSUE_URLS=("${issues[@]}")
 
   if ! command -v gh >/dev/null 2>&1; then
     check_could_not_run "the forge CLI needed to read the PR body is unavailable"
@@ -362,10 +373,13 @@ closing_keyword_gate() {
     number=${repo##*/issues/}
     repo=${repo%%/issues/*}
     owner=${owner%%/*}
-    if ! body_closes_issue "$PR_BODY_FILE" "$owner" "$repo" "$number"; then
+    if body_closes_issue "$PR_BODY_FILE" "$owner" "$repo" "$number"; then
+      closing+=("$url")
+    else
       missing+=("$(issue_reference "$owner" "$repo" "$number") ($url)")
     fi
   done
+  VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
   [ "${#missing[@]}" -eq 0 ] && return 0
 
   for ref in "${missing[@]}"; do
@@ -379,23 +393,23 @@ closing_keyword_gate() {
 # The one check no keyword form can fool, and the reason it runs after the merge
 # rather than instead of the body read. Every outcome it reports is an
 # observation rather than a verdict, because neither a state it read nor a state
-# it failed to read establishes what the merge did.
+# it failed to read establishes what the merge did. It speaks of the merge call
+# this run made rather than of a merge this run performed, because the call is a
+# no-op against a PR that had already landed.
 report_unclosed_issues() {
   local url state
-  [ -n "$TASK_ISSUE_URLS" ] || return 0
+  [ "${#VERIFY_ISSUE_URLS[@]}" -gt 0 ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
-  while IFS= read -r url; do
-    if [ -n "$url" ]; then
-      state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
-      case "$state" in
-        CLOSED) : ;;
-        '') echo "warning: $url could not be read, so whether this merge closed it is unknown" >&2 ;;
-        # The forge acts on a closing keyword in a background job that can land
-        # after this read returns, so a state of OPEN here is not yet a defect.
-        *) echo "warning: $url was not observed closed immediately after this merge; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2 ;;
-      esac
-    fi
-  done <<< "$TASK_ISSUE_URLS"
+  for url in "${VERIFY_ISSUE_URLS[@]}"; do
+    state=$(gh issue view "$url" --json state -q .state 2>/dev/null) || state=
+    case "$state" in
+      CLOSED) : ;;
+      '') echo "warning: $url could not be read, so whether it closed is unknown" >&2 ;;
+      # The forge acts on a closing keyword in a background job that can land
+      # after this read returns, so a state of OPEN here is not yet a defect.
+      *) echo "warning: $url was not observed closed when read just after the merge call; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2 ;;
+    esac
+  done
 }
 
 closing_keyword_gate
