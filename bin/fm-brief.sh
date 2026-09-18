@@ -38,6 +38,10 @@
 #                captain approves, firstmate merges to local main
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
+# Both PR-producing modes carry the closing-keyword rule in their definition of
+# done, each naming the one place that mode's worker writes the PR body, so a
+# worker is never told to hand-edit a PR the pipeline still owns; local-only
+# stays silent because that mode opens no PR.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,

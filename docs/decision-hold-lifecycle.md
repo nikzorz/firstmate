@@ -60,7 +60,7 @@ That note is read before the owed predicate rather than inside it, because `task
 Accepted residual of that ordering: a deliberate re-link of the same origin and key on that same reopened item is reported as already recorded and nothing is written, which is a missing record rather than a false one.
 `gate-not-raised` removes the link and writes nothing anywhere.
 An item read that could not be established refuses and keeps the link, so cleanup keeps refusing and a retry after repair still lands.
-tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so `gate-link` and `gate-answered` trust absence only once the store the active home is configured to read is itself a readable regular file.
+tasks-axi answers with the same not-found code for an id absent from a readable store and for a store it could not open at all, so the shared item read in `bin/fm-tasks-axi-lib.sh` that `gate-link` and `gate-answered` call trusts absence only once the store the active home is configured to read is itself a readable regular file.
 That store is the `[markdown] path` key of the home's `.tasks.toml`, resolved against the home.
 With no key, tasks-axi discovers its store rather than defaulting to a fixed one, reading `backlog.md` in the home root when one is there and `data/backlog.md` otherwise, and the guard follows that same order.
 Where a store exists the guard therefore names the file the tool opens; where neither candidate exists it names the last one it looked for, which is the one case the two can differ, and both refuse.
