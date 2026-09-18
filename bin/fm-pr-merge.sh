@@ -79,17 +79,17 @@
 # read could not run at all, no narrower set is knowable and every named issue is
 # read back instead.
 #
-# A PR that had already landed before this run still gets that body read, because
-# the narrowing is about which issues this report may explain and that does not
-# change with who merged. What it does not get is the advice: the body the forge
-# acted on is already the merged one, so there is nothing left to tell a reader
-# to fix, and the pre-merge warnings stay silent on that path.
+# A PR that had already landed before this run is read exactly the same way. No
+# edit will change what that merge did, but the issue is still sitting open and
+# someone has to close it, so the notice is owed there most of all: it is the
+# one path where no earlier run ever gave it.
 #
-# What an open issue means there depends on whether this run's merge call did
-# anything. Right after a merge this run asked for, the forge's close job may
-# still be in flight, so an open state is reported as not yet observed closed.
-# On a PR that landed in an earlier run that job is long done, so an open issue
-# is reported plainly as one the merge left open for a reader to close.
+# What an open issue means afterwards depends on whether anything established
+# that the body asked for the close. Right after a merge this run called, the
+# forge's close job may still be in flight, so an open state is reported as not
+# yet observed closed. When the merge landed earlier and the body read proved
+# the keyword, that job is long done, so an open issue is reported plainly as
+# one the merge left open for a reader to close.
 #
 # An issue the read could not answer for is reported as unknown on either path,
 # because a token that cannot see the issue has not established anything about
@@ -241,6 +241,11 @@ TASK_ISSUE_URLS=
 # The issues whose state the post-merge read is entitled to explain, which the
 # body read narrows to the ones the body actually asks the forge to close.
 VERIFY_ISSUE_URLS=()
+# Whether the forge's close-on-merge has already had its whole chance at those
+# issues: the merge landed before this run AND the body read proved it asked for
+# the close. Both halves are needed, so the gate settles it once rather than
+# leaving the report to rebuild it out of parts it can no longer see.
+FORGE_CLOSE_CHANCE_SPENT=0
 
 # Owner and repository names admit "." and nothing else an ERE reads specially.
 ere_escape() {  # <text>
@@ -346,7 +351,7 @@ check_could_not_run() {  # <why>
 # entry it reads cannot establish that this work owns an issue, and a refusal
 # built on it would hand that same guess to whoever had to satisfy the refusal.
 closing_keyword_gate() {
-  local url owner repo number ref rc=0 advise=1
+  local url owner repo number ref rc=0
   local -a issues=() missing=() closing=()
 
   read_task_issue_urls || rc=$?
@@ -367,13 +372,6 @@ closing_keyword_gate() {
   if ! command -v gh >/dev/null 2>&1; then
     check_could_not_run "the forge CLI needed to read the PR body is unavailable"
     return 0
-  fi
-  # A PR that already landed is past advising: the body the forge acted on is
-  # the one it merged with, and nothing said here could change it. Its body is
-  # still read, because which issues it asked the forge to close is exactly what
-  # the post-merge read is entitled to explain.
-  if pr_is_already_merged; then
-    advise=0
   fi
   if ! gh pr view "$URL" --json body -q .body > "$PR_BODY_FILE" 2>"$GH_STDERR_FILE"; then
     check_could_not_run "the PR body could not be read"
@@ -397,7 +395,11 @@ closing_keyword_gate() {
     fi
   done
   VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
-  [ "$advise" = 1 ] || return 0
+  # Only a set this read narrowed can carry that claim: it is the read that
+  # established the body asks the forge to close these at all.
+  if pr_is_already_merged; then
+    FORGE_CLOSE_CHANCE_SPENT=1
+  fi
   [ "${#missing[@]}" -eq 0 ] && return 0
 
   for ref in "${missing[@]}"; do
@@ -413,13 +415,15 @@ closing_keyword_gate() {
 # made rather than of a merge this run performed, because the call is a no-op
 # against a PR that had already landed.
 #
-# An open issue means two different things on the two paths, so it gets two
-# reports. When this run just asked the forge to merge, the close job may still
-# be in flight and an open state settles nothing. When the PR landed in an
-# earlier run, that job has had its whole chance, so an open issue is the miss
-# this whole check exists to catch and saying it may resolve itself would be the
-# one wrong thing to say. A read that could not answer settles nothing either
-# way, on both paths alike.
+# An open issue means two different things, so it gets two reports. When this
+# run just asked the forge to merge, the close job may still be in flight and an
+# open state settles nothing. When the merge landed earlier and the body read
+# proved the body asked for the close, that job has had its whole chance, so an
+# open issue is the miss this whole check exists to catch and saying it may
+# resolve itself would be the one wrong thing to say. Anything short of both -
+# including a set no body read narrowed - keeps the first wording, because
+# nothing established the forge was ever asked. A read that could not answer
+# settles nothing either way, on every path alike.
 report_unclosed_issues() {
   local url state
   [ "${#VERIFY_ISSUE_URLS[@]}" -gt 0 ] || return 0
@@ -430,7 +434,7 @@ report_unclosed_issues() {
       CLOSED) : ;;
       '') echo "warning: $url could not be read, so whether it closed is unknown" >&2 ;;
       *)
-        if pr_is_already_merged; then
+        if [ "$FORGE_CLOSE_CHANCE_SPENT" = 1 ]; then
           echo "warning: $url is still open and this PR landed before this run, so the forge has already had its chance to close it and will not now; close it by hand" >&2
         else
           echo "warning: $url was not observed closed when read just after the merge call; the forge closes on a keyword in a background job that can finish after this read, so it may still close on its own" >&2

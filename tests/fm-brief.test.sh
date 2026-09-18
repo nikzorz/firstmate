@@ -749,10 +749,10 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-# Every PR-producing mode must state the closing-keyword rule, and the
-# no-mistakes variant must state the timing too: the pipeline composes the PR
-# body from its own step results, so a keyword written before its PR step is
-# replaced. A silent brief is one of the two causes this rule exists for.
+# Every PR-producing mode must state the closing-keyword rule, and each must
+# name the one place that mode's worker writes the body, so the rule never reads
+# as licence to hand-edit a PR mid-run. A silent brief is one of the two causes
+# this rule exists for.
 test_pr_modes_carry_the_closing_keyword_rule() {
   local home brief
   home="$TMP_ROOT/closing-keyword-home"
@@ -765,18 +765,22 @@ test_pr_modes_carry_the_closing_keyword_rule() {
     "no-mistakes brief does not state the closing-keyword form"
   assert_grep "Closes #{issue}" "$brief" \
     "no-mistakes brief does not show the closing-keyword line to write"
-  assert_grep "Put the closing keyword in AFTER that step" "$brief" \
-    "no-mistakes brief does not state the after-the-PR-step timing"
-  assert_grep "confirm the line is still there before you report the PR green" "$brief" \
-    "no-mistakes brief does not require re-verifying the keyword at green"
+  assert_grep "your intent is where that line has to be" "$brief" \
+    "no-mistakes brief does not name the intent as where the keyword goes"
+  assert_no_grep "gh-axi pr edit" "$brief" \
+    "no-mistakes brief tells the worker to hand-edit the PR the no-hand-edit rule forbids"
+  assert_grep "firstmate's merge step reports any issue the body does not close" "$brief" \
+    "no-mistakes brief does not say who reports a keyword that is missing anyway"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-dpr-ck-a8 direct-proj >/dev/null 2>&1 \
     || fail "closing-keyword: direct-PR scaffold exited non-zero"
   brief="$home/data/brief-dpr-ck-a8/brief.md"
   assert_grep "immediately precedes the reference" "$brief" \
     "direct-PR brief does not state the closing-keyword form"
-  assert_grep "Include the line in the body when you open the PR" "$brief" \
+  assert_grep "include the line when you open the PR" "$brief" \
     "direct-PR brief does not say when to write the keyword"
+  assert_no_grep "gh-axi pr edit" "$brief" \
+    "direct-PR brief routes the keyword through an edit rather than the body it writes"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lo-ck-a9 local-proj >/dev/null 2>&1 \
     || fail "closing-keyword: local-only scaffold exited non-zero"

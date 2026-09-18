@@ -315,21 +315,21 @@ EOF
 PROJECT_MEMORY=$("$FM_ROOT/bin/fm-project-mode.sh" --project-memory "$REPO" 2>/dev/null || echo agents-md)
 
 # Every PR-producing mode carries the closing-keyword rule, because a generated
-# brief that stays silent about it is how a merged PR leaves its issue open. The
-# no-mistakes variant additionally states the timing: the pipeline composes the
-# PR body from its own step results, so a keyword written before its PR step is
-# replaced by it, and only a keyword written afterwards survives to the merge.
+# brief that stays silent about it is how a merged PR leaves its issue open.
+# Each variant names the one place that mode's worker actually writes the body,
+# so the rule never reads as licence to hand-edit a PR mid-run: under the
+# pipeline that place is the intent, and under direct-PR it is the body itself.
 CLOSING_KEYWORD_RULE="If this task owns an issue, the PR body must close it, and the form is exact: GitHub acts only when a closing keyword immediately precedes the reference.
 Write one \`Closes #{issue}\` line per issue.
 \`Close issues #12 and #13\` closes nothing, because the words between the keyword and the reference break it."
 
 CLOSING_KEYWORD_SECTION_PIPELINE="$CLOSING_KEYWORD_RULE
-The pipeline composes the PR body from its own step results, so anything you write into the body before its PR step is replaced.
-Put the closing keyword in AFTER that step, with \`gh-axi pr edit {number} --body-file {file}\`, keeping the body the pipeline wrote and adding the line.
-Re-read the body and confirm the line is still there before you report the PR green."
+The pipeline composes the PR body from the intent you give it plus its own step results, so your intent is where that line has to be: put it there when you start the run.
+Do not edit the PR yourself to add it later - the no-hand-edit rule above covers the PR body too.
+If it is missing once the PR is open, leave it: firstmate's merge step reports any issue the body does not close."
 
 CLOSING_KEYWORD_SECTION_DIRECT="$CLOSING_KEYWORD_RULE
-Include the line in the body when you open the PR, then re-read the body and confirm it is there before you report the PR."
+You write this body yourself, so include the line when you open the PR, then re-read the body and confirm it is there before you report the PR."
 
 case "$MODE" in
   direct-PR)

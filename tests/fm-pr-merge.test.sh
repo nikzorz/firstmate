@@ -59,7 +59,11 @@
 #  (ll) an issue the body does not close is not read back at all, because the
 #       lagging-background-job explanation cannot apply to it
 #  (mm) every named issue is read back only when the body read could not run,
-#       and an already-merged PR narrows the same way while advising nothing
+#       and a set no body read narrowed keeps the hedged wording
+#  (nn) an already-merged PR narrows the same way, and one whose body closes
+#       nothing still gets the hedged notice naming the issue
+#  (oo) a landed PR whose body could not be read keeps the hedged wording,
+#       because nothing established what that body asked the forge to do
 #  (nn) an issue that could not be read is reported as unknown
 #  (oo) an armed --auto merge skips the post-merge read, which has nothing to see
 set -u
@@ -959,6 +963,8 @@ SH
     || fail "body-unreadable: the merge did not run"
   assert_grep 'issues/81 was not observed closed' "$case_dir/stderr" \
     "body-unreadable: no narrower set was knowable, so every named issue should have been read back"
+  assert_no_grep 'close it by hand' "$case_dir/stderr" \
+    "body-unreadable: a set no body read narrowed was reported as a settled miss"
   pass "fm-pr-merge warns and still merges when the PR body cannot be read"
 }
 
@@ -1227,12 +1233,87 @@ test_issue_the_body_does_not_close_is_not_read_back() {
   pass "fm-pr-merge does not read back an issue its body does not close"
 }
 
+# A landed PR whose body could not be read proves nothing about what that body
+# asked for, so the blunt already-had-its-chance wording is not available here
+# even though the merge did land earlier.
+test_already_merged_pr_with_unreadable_body_stays_hedged() {
+  local case_dir
+  case_dir=$(make_issue_case merged-body-unreadable 7777bbbb22223333444455556666777788889999 \
+    'Closes #204' \
+    'doc:https://github.com/example/repo/issues/204')
+  printf 'OPEN\n' > "$case_dir/issue-state"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json state"*) printf '%s\n' MERGED ; exit 0 ;;
+      *"--json body"*) echo "gh: HTTP 502: Bad gateway" >&2 ; exit 1 ;;
+    esac
+    ;;
+  "issue view") cat "\$FM_TEST_ISSUE_STATE" ; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/61 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "merged-body-unreadable: an unreadable body blocked a merge"
+
+  assert_grep 'the closing-keyword check did not run: the PR body could not be read' "$case_dir/stderr" \
+    "merged-body-unreadable: an unreadable PR body passed silently"
+  assert_grep 'issues/204 was not observed closed' "$case_dir/stderr" \
+    "merged-body-unreadable: no narrower set was knowable, so the named issue should have been read back"
+  assert_no_grep 'close it by hand' "$case_dir/stderr" \
+    "merged-body-unreadable: an issue no body read vouched for was reported as a settled miss"
+  pass "fm-pr-merge keeps the hedged wording when a landed PR's body could not be read"
+}
+
+# The case the whole task exists for: a PR merged by hand with no closing
+# keyword in its body. No earlier run ever warned about it, so this is the only
+# notice the issue will get.
+test_already_merged_pr_with_no_keyword_still_reports() {
+  local case_dir
+  case_dir=$(make_issue_case merged-no-keyword 6666bbbb22223333444455556666777788889999 \
+    'Shipped the thing.' \
+    'doc:https://github.com/example/repo/issues/203')
+  printf 'OPEN\n' > "$case_dir/issue-state"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"--json state"*) printf '%s\n' MERGED ; exit 0 ;;
+      *"--json body"*) cat "\$FM_TEST_PR_BODY" ; exit 0 ;;
+    esac
+    ;;
+  "issue view") cat "\$FM_TEST_ISSUE_STATE" ; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/60 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "merged-no-keyword: fm-pr-merge refused a pull request that had already merged"
+
+  assert_grep 'does not close #203 (https://github.com/example/repo/issues/203)' "$case_dir/stderr" \
+    "merged-no-keyword: a landed PR that closed nothing went entirely unreported"
+  assert_grep 'if the record only mentions it for context, nothing is wrong' "$case_dir/stderr" \
+    "merged-no-keyword: the notice dropped the hedge that leaves the judgment to a reader"
+  assert_no_ere 'add .*(clos|fix|resolv)e?[sd]? .*#' "$case_dir/stderr" \
+    "merged-no-keyword: the notice prescribed an edit to a body that has already merged"
+  pass "fm-pr-merge reports a landed PR whose body closes nothing"
+}
+
 # An already-merged PR still gets its body read, so the post-merge report covers
-# only the issues that body asks the forge to close. The advice is what the
-# landed PR is past: nothing said now could change the body it merged with. Its
-# close job has also had its whole chance, so an open issue there is a real miss
-# rather than a read that arrived early.
-test_already_merged_pr_narrows_without_advising() {
+# only the issues that body asks the forge to close, while the hedged notice
+# still names the ones it does not. Its close job has also had its whole chance,
+# so an open issue it was asked to close is a real miss rather than an early read.
+test_already_merged_pr_narrows_and_still_notices() {
   local case_dir
   case_dir=$(make_issue_case merged-narrowing 5555bbbb22223333444455556666777788889999 \
     'Closes #201' \
@@ -1262,10 +1343,10 @@ SH
     "merged-narrowing: an issue a landed PR left open was not reported as a real finding"
   assert_no_grep 'may still close on its own' "$case_dir/stderr" \
     "merged-narrowing: a miss the forge has already had its chance at was hedged as still pending"
-  assert_no_grep 'issues/202' "$case_dir/stderr" \
-    "merged-narrowing: an issue the body never asked to close was reported after the merge"
-  assert_no_grep "does not close" "$case_dir/stderr" \
-    "merged-narrowing: a landed PR was advised to fix the body it already merged with"
+  assert_no_grep 'issues/202 is still open' "$case_dir/stderr" \
+    "merged-narrowing: an issue the body never asked to close was read back after the merge"
+  assert_grep 'does not close #202 (https://github.com/example/repo/issues/202)' "$case_dir/stderr" \
+    "merged-narrowing: the issue the landed body closes nothing for went unnamed"
   assert_no_ere 'after this merge' "$case_dir/stderr" \
     "merged-narrowing: the report claimed a merge this run did not perform"
   pass "fm-pr-merge narrows the post-merge read on an already-merged PR without advising"
@@ -1510,6 +1591,8 @@ test_missing_tasks_axi_merges_with_a_warning
 test_repository_case_difference_is_still_the_same_repo
 test_issue_not_observed_closed_after_merge_is_reported
 test_issue_the_body_does_not_close_is_not_read_back
-test_already_merged_pr_narrows_without_advising
+test_already_merged_pr_narrows_and_still_notices
+test_already_merged_pr_with_no_keyword_still_reports
+test_already_merged_pr_with_unreadable_body_stays_hedged
 test_unreadable_issue_is_reported_as_unknown
 test_armed_auto_merge_reports_no_open_issue
