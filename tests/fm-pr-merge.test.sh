@@ -36,7 +36,8 @@
 #
 # The closing-keyword check is advisory: it reports and never blocks a merge, so
 # every case below that finds a fault also proves the merge still ran.
-#   (v) a task whose record names no issue merges with no PR-body read at all
+#   (v) a task whose record names no issue merges with no PR-body read at all,
+#       whether the row renders "links: none" or carries no links field at all
 #   (w) a keyword the reference does not immediately follow warns, and merges
 #   (x) a lowercase keyword is accepted, because the forge matches them case-insensitively
 #   (y) every keyword spelling the forge acts on is accepted
@@ -96,7 +97,9 @@ if [ "${1:-}" = show ]; then
     printf 'error: "Task \\"%s\\" not found in this backlog"\ncode: NOT_FOUND\n' "${2:-}" >&2
     exit 1
   fi
-  if [ "$links" = none ]; then
+  if [ "$links" = NO_LINKS_FIELD ]; then
+    printf '  id: %s\n' "${2:-}"
+  elif [ "$links" = none ]; then
     printf '  id: %s\n  links: none\n' "${2:-}"
   else
     printf '  id: %s\n  links: "%s"\n' "${2:-}" "$links"
@@ -789,6 +792,29 @@ test_task_without_an_issue_merges_unchanged() {
   pass "fm-pr-merge merges a task that owns no issue without reading the PR body"
 }
 
+# A hand-edited backlog is a supported configuration, and a row written without
+# a links field names no issue exactly as plainly as a rendered "links: none".
+# Both belong on the silent path, so neither reports a missed check.
+test_record_without_a_links_field_merges_silently() {
+  local case_dir
+  case_dir=$(make_issue_case no-links-field abcd333344445555666677778888999900001111 \
+    '' NO_LINKS_FIELD)
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/57 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "no-links-field: a record with no links field blocked a merge"
+
+  grep -qF 'pr merge 57 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "no-links-field: the merge did not run"
+  assert_no_grep 'the closing-keyword check did not run' "$case_dir/stderr" \
+    "no-links-field: a determinate no-issue answer reported a missed check"
+  assert_no_grep 'does not close' "$case_dir/stderr" \
+    "no-links-field: a record naming no issue produced a keyword warning"
+  assert_no_grep '--json body' "$case_dir/gh.log" \
+    "no-links-field: the PR body was read for a record that names no issue"
+  pass "fm-pr-merge merges silently when the backlog record carries no links field"
+}
+
 test_keyword_not_adjacent_to_reference_warns() {
   local case_dir
   case_dir=$(make_issue_case keyword-not-adjacent bbbb111122223333444455556666777788889999 \
@@ -1381,6 +1407,7 @@ test_unreadable_merged_state_takes_the_ordinary_path
 test_auto_merge_refused_when_message_would_be_supplied
 test_auto_merge_allowed_when_caller_owns_the_body
 test_task_without_an_issue_merges_unchanged
+test_record_without_a_links_field_merges_silently
 test_keyword_not_adjacent_to_reference_warns
 test_lowercase_keyword_is_accepted
 test_every_acting_keyword_spelling_is_accepted

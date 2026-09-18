@@ -230,22 +230,18 @@ ere_escape() {  # <text>
 # line, and answers in the three states a backlog read really has. Collapsing
 # them reports a missed check over an answer that was determinate: a task never
 # filed as a backlog item names no issue just as plainly as a filed one whose row
-# links none, and that is the common firstmate-repo case.
+# links none, or one whose record carries no links field at all, and that is the
+# common firstmate-repo case.
 # config/backlog-backend=manual routes routine backlog MUTATIONS to hand-editing
 # and leaves this read unaffected.
 #   0 the record names issues     1 determinate, it names none
 #   2 indeterminate               3 no answer this check can read
 read_task_issue_urls() {
-  local links rc=0
+  local rc=0
   TASK_ISSUE_URLS=
   fm_backlog_item_read "$ID" || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
-  links=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" links)
-  if [ -z "$links" ]; then
-    FM_BACKLOG_ITEM_ERROR="the backlog record for $ID names no links field, so this tasks-axi cannot answer which issue the task owns"
-    return 3
-  fi
-  TASK_ISSUE_URLS=$(printf '%s\n' "$links" |
+  TASK_ISSUE_URLS=$(fm_backlog_show_field "$FM_BACKLOG_ITEM_SHOW" links |
     grep -Eo 'https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]*' |
     awk '!seen[$0]++' || true)
 }
