@@ -21,6 +21,43 @@ mkdir -p "$BRIEF_HOME/data"
 # The script itself must always parse. This is the direct regression test for
 # issue #166: a stray apostrophe in any of the three DOD heredoc bodies
 # (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
+# Every missing-required-argument path must name the missing argument and print
+# the usage, rather than aborting on an unbound positional under `set -u`.
+test_missing_required_arguments_print_usage() {
+  local home out rc
+  home="$TMP_ROOT/missing-args-home"
+  mkdir -p "$home/data"
+
+  check_missing() {
+    local label=$1 needle=$2; shift 2
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$@" 2>&1); rc=$?
+    [ "$rc" -ne 0 ] || fail "fm-brief.sh $label exited 0 on a missing argument"
+    assert_contains "$out" "$needle" "fm-brief.sh $label did not name the missing argument"
+    assert_contains "$out" "Usage: fm-brief.sh" "fm-brief.sh $label did not print the usage"
+    assert_contains "$out" "missing required argument" "fm-brief.sh $label did not report a missing argument"
+    case "$out" in
+      *"unbound variable"*) fail "fm-brief.sh $label aborted on an unbound variable" ;;
+    esac
+  }
+
+  check_missing "with no arguments" "<task-id>"
+  check_missing "--scout with no task id" "<task-id>" --scout
+  check_missing "--secondmate with no task id" "<task-id>" --secondmate
+  check_missing "--herdr-lab with no task id" "<task-id>" --herdr-lab
+  check_missing "ship without a repo" "<repo-name>" brief-missing-repo-b1
+  check_missing "--scout without a repo" "<repo-name>" brief-missing-repo-b2 --scout
+  check_missing "--herdr-lab without a repo" "<repo-name>" brief-missing-repo-b3 --herdr-lab
+  check_missing "--secondmate without a project" "<project>" brief-missing-proj-b4 --secondmate
+
+  # A usage refusal must not leave a half-created brief directory behind.
+  [ ! -e "$home/data/brief-missing-repo-b1" ] \
+    || fail "fm-brief.sh created a brief directory while refusing a missing repo argument"
+  [ ! -e "$home/data/brief-missing-proj-b4" ] \
+    || fail "fm-brief.sh created a brief directory while refusing a missing project argument"
+
+  pass "fm-brief.sh: every missing-argument path names the argument and prints usage"
+}
+
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
@@ -813,3 +850,4 @@ test_scout_and_secondmate_scaffold
 test_task_placeholder_appears_only_as_a_fill_site
 test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate
 test_pr_modes_carry_the_closing_keyword_rule
+test_missing_required_arguments_print_usage
