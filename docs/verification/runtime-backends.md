@@ -46,7 +46,7 @@ Expected submit matrix: proven pending plus busy is accepted as queued; proven p
 ## Herdr
 
 The compatibility floor is protocol 14.
-The latest active verification uses Herdr 0.8.2 protocol 20 on Linux x86_64, with earlier 0.7.5, 0.7.4, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
+The latest active verification uses Herdr 0.8.2 protocol 20 on Linux x86_64, with earlier 0.7.5 protocol-17, 0.7.4 protocol-16, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
 
 Core read-only probes:
 
@@ -64,7 +64,7 @@ herdr 0.8.2
 ["pane.output_matched","pane.agent_status_changed","pane.scroll_changed"]
 ```
 
-The CLI matrix was checked directly on the earlier 0.7.x line, most recently on Herdr 0.7.5 protocol 16 on macOS aarch64, and it was not re-run as a whole on the verified pair:
+The CLI matrix was checked directly on the earlier 0.7.x line, most recently on Herdr 0.7.5 protocol 17 on macOS aarch64, and it was not re-run as a whole on the verified pair:
 
 | Guarantee | Command shape | Result |
 | --- | --- | --- |
@@ -155,7 +155,7 @@ ok - real Herdr lab validation completed on Herdr 0.7.4 with the default-session
 
 The suite also covers lost or failed move responses, active-tab refusal, restart husks, missing and duplicate tokens, manual renames, concurrent cleanup, and exact focus restoration.
 
-The mandatory projection suite ran again on 2026-07-24 against Herdr 0.7.5 protocol 16:
+The mandatory projection suite ran again on 2026-07-24 against Herdr 0.7.5 protocol 17:
 
 ```sh
 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
