@@ -20,8 +20,9 @@
 #     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids,
 #     captain_owed, and captain_actionable fields. captain_owed is a captain hold
 #     with a reason on any unfinished item, whatever its kind; captain_actionable
-#     is an owed decision whose blockers are all Done. Repeated blocker tokens remain ordered; a blocker
-#     resolves only when its structured record is Done, and missing ids stay open.
+#     is an owed decision whose blockers are all Done. Repeated blocker tokens
+#     remain ordered; a blocker resolves only when its structured record is
+#     Done, and missing ids stay open.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
