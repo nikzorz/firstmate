@@ -1,0 +1,29 @@
+$ FM_HOME=$H bin/fm-x-link.sh --help | head -3; ls $H
+usage: fm-x-link.sh <task-id> <request_id> [--carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]]
+exit=0
+contents of FM_HOME after --help: []
+
+$ bin/fm-branch-prompt.sh --help | head -3
+fm-branch-prompt.sh - emit the supervision branch's system prompt
+(docs/pi-supervision-branch.md; the same bytes run off Pi under the
+supervision host, docs/supervision-host.md) to stdout.
+exit=0
+
+$ bin/fm-branch-prompt.sh -h | wc -l  vs  bin/fm-branch-prompt.sh | wc -l
+24
+261
+
+$ bin/fm-turnend-guard.sh --help | head -2
+Turn-end guard for any firstmate PRIMARY session: the main home OR a
+secondmate's own home. A secondmate runs its own primary firstmate session and
+exit=0
+
+$ bin/fm-herdr-session-cleanup.sh --help | head -2
+Retire stale restored-shell Herdr presentation children at locked session start.
+
+exit=0
+
+$ bin/fm-remote-doctor.sh sha256 vs pinned DOCTOR_SHA256
+cb508986817d5363c8cd5ee14647c74c53c01239874a2d175dffb5f8488f8f2c
+DOCTOR_SHA256=cb508986817d5363c8cd5ee14647c74c53c01239874a2d175dffb5f8488f8f2c
+DOCTOR_SHA256=$(sha256_file

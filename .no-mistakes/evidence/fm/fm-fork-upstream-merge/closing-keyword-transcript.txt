@@ -1,0 +1,9 @@
+# body_closes_issue <body> example repo 117 (functions loaded from bin/fm-pr-merge.sh)
+"Fixes: #117"                -> closes
+"Closes #117"                -> closes
+"fixes:#117"                 -> closes
+"Resolves: example/repo#117" -> closes
+"Fixes: #1170"               -> does not close
+"Fixes #11"                  -> does not close
+"Fixes the #117 bug"         -> does not close
+"Related: #117"              -> does not close

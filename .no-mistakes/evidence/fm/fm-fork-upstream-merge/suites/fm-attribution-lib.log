@@ -1,0 +1,11 @@
+ok - fm_attribution_strip removes a claude co-author trailer and its session link
+ok - fm_attribution_strip removes a codex co-author trailer
+ok - fm_attribution_strip keeps human co-authors and matches agents by address, not name
+ok - fm_attribution_strip passes a message with no agent attribution through unchanged
+ok - fm_attribution_strip drops a separator whose whole co-author block was agents
+ok - fm_attribution_strip keeps a separator that still introduces a human co-author
+ok - fm_attribution_strip keeps a trailing separator no removal emptied
+ok - fm_attribution_strip keeps an author's rule with an agent trailer under it
+ok - fm_attribution_strip drops leading and trailing blank lines with no removal
+ok - fm_attribution_strip collapses the blank run a removal created into a single gap
+ok - fm_attribution_strip strips a trailer and its emptied separator from a CRLF body

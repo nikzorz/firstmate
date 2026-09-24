@@ -1,0 +1,29 @@
+ok - the observed claude usage-limit prompt matches the signature
+ok - ordinary worker output never matches, quoted prompt text included
+ok - the signature requires all three anchors, in order, owning the bottom of the pane
+ok - the signature tolerates the plain selection marker and ANSI styling
+ok - the signature reads Unicode space padding as blank
+ok - the quota window reads reset above the margin and exhausted below it
+ok - every unreadable or unmarked quota input fails closed to unknown
+ok - the quota read admits only a valid snapshot and binds the default claude account
+ok - reset timestamps parse to fixed epochs on any platform, and fail closed to nothing
+ok - an exhausted window reports when it resets, from the last short bounding window
+ok - absent, malformed, or unreadable reset data leaves the existing cadence in charge
+ok - the recorded wait carries an until time only for a future reset
+ok - an elapsed standing wait is restated as an open wait when no reset time is reported
+ok - recovery refuses a task whose recorded harness is not claude
+ok - recovery refuses, with a diagnostic, when the task or its endpoint cannot be resolved
+ok - recovery refuses unless the live pane proves the prompt is showing
+ok - recovery refuses when the quota window cannot be read
+ok - a still-exhausted window records one bounded external wait and sends nothing
+ok - a reset window is recovered with one Escape plus a re-check-your-state instruction
+ok - a prompt that survives Escape stops the run instead of escalating keys
+ok - recovery closes the bounded wait it opened, returning the crew to the wedge cadence
+ok - recovery writes nothing when there is no wait of its own, and never closes the crew's
+ok - an unreadable pane after Escape refuses instead of steering on unproven dismissal
+ok - a malformed settle value falls back to the default instead of aborting mid-recovery
+ok - a resume instruction that does not land is reported, not swallowed
+ok - a refusal that dismissed or sent nothing leaves the quota wait exactly as it found it
+ok - the recorded wait names its end from the reported reset, follows a changed reset, and closes on recovery
+ok - --check reports the verdict without sending or recording anything
+all fm-limit-resume tests passed

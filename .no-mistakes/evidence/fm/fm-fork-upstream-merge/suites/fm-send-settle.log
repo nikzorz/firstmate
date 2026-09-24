@@ -1,0 +1,7 @@
+ok - fm-send: a successful text send pauses the default 1s after submit
+ok - fm-send: FM_SEND_SETTLE=0 produces no settle pause
+ok - fm-send: the settle pause is tunable via FM_SEND_SETTLE
+ok - fm-send: the --key path never pauses (settle scoped to text submit)
+ok - fm-send: an unusable FM_SEND_SETTLE is reported, never charged against the delivery
+ok - fm-send: FM_SEND_SETTLE accepts the leading-dot fractional form sleep takes
+ok - fm-send: a successful Claude Escape records the interrupt lifecycle edge

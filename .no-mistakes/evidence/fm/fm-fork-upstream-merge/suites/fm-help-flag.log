@@ -1,0 +1,10 @@
+ok - a write made before the flag check lands in the sandbox home
+ok - every bin entrypoint answers --help and -h with output and exits zero
+ok - fm-pr-merge.sh and fm-promote.sh answer --help with their usage line
+ok - the helpers that share usage() with their error path send help to stdout and errors to stderr
+ok - every permanent exemption still names a real helper
+not ok - the set of paths under /home/nik/.no-mistakes/worktrees/50866b63a668/01M3AV462AHVEEDNDSEKCS5XJN/state differs from before the sweep: either a helper resolved the live home instead of the sandbox, or ordinary fleet activity wrote to this live home while the suite ran
+added:
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M3AV462AHVEEDNDSEKCS5XJN/state
+removed:
+

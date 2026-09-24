@@ -1,0 +1,32 @@
+ok - empty fleet snapshot and view use explicit absence markers
+ok - fixture snapshot covers task rows, backlog rows, pointers, stable ordering, and emission-time event age
+ok - home-summary excludes kind=secondmate from unowned_current and terminal_in_flight
+ok - undated captain holds age after a configurable threshold, decided only from structured fields
+ok - captain-hold buckets are total, mutually exclusive, and never decided by prose
+ok - main_inventory discloses orphan/unstructured and clears when inventory is consistent
+ok - backlog normalization preserves strict roles and resolves every blocker compatibly
+ok - snapshot event hints follow reconciled current state
+ok - durable fold keeps an open decision past a later unrelated event
+ok - a live secondmate endpoint preserves unrelated open decisions
+ok - durable captain-held transfer closes the duplicate live status decision
+ok - durable fold clears a decision only on a keyed resolution
+ok - a completed scout's stale decision surfaces as a report pointer, not pending
+ok - a scout still parked at a decision stays pending (terminal clear does not over-fire)
+ok - snapshot includes durable scout reports after teardown
+ok - snapshot parses tasks-axi rows and respects operational overrides
+ok - fleet view renders the snapshot without secondmate peek guidance
+ok - fleet view renders secondmate agent liveness
+ok - a crew on the claude usage-limit prompt keeps its open decision and is named in the view
+ok - a home summary with a usage-limited child reads as externally held, not no-active-work
+ok - a home summary with a stalled child reads as active child work, not no-active-work
+ok - a home whose only child is unreadable does not claim no active child work
+ok - a decision request appended after a terminal run stays in the fleet view
+ok - a mid-run request the crew reported on past is still cleared by the finished run
+ok - resolving one post-run request leaves its unanswered sibling pending
+ok - a done read back as blocked narrows its open decisions like any other finish
+ok - a backlog past the single-argument limit is reported in full
+ok - a status line past the single-argument limit is reported in full
+ok - a current-state detail past the single-argument limit is reported in full
+ok - a PR URL past the single-argument limit is reported in full
+ok - a task payload that never arrived fails loudly instead of reading as null
+ok - a lost payload on a task the loop passes over early fails loudly

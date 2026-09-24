@@ -1,0 +1,19 @@
+ok - report leaves the measured home untouched
+ok - the read-only manifest detects an in-place file edit
+ok - report states bytes are a proxy and applies no token conversion
+ok - report prints no derived token count
+ok - every always-loaded and conditional note surface appears
+ok - measured sizes are real file sizes
+ok - each primary harness supervision block is measured
+ok - every generated brief variant is measured, ship modes named
+ok - the ship brief rows differ by delivery mode
+ok - every agent skill is measured
+ok - every skill carries a readable load trigger
+ok - the reported trigger is the real trigger, not the description opening
+ok - a description with no trigger clause reports (not detected)
+ok - absent records are reported as absent, not as zero bytes
+ok - an empty note is distinguished from a missing one
+ok - an unreadable record is reported honestly and does not abort the report
+ok - report never gates or warns on size
+ok - usage and unknown arguments behave
+all ok - fm-context-cost

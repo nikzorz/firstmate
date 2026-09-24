@@ -1,0 +1,6 @@
+ok - ship and scout spawns refuse a brief whose intent and spec are still placeholders
+ok - ship and scout spawns refuse a legacy brief whose Task body is only the placeholder line
+ok - ship and scout spawns refuse a leftover standalone placeholder line under filled intent
+ok - a filled brief spawns
+ok - a filled brief whose prose names the placeholder spawns
+# all fm-spawn-unfilled-brief tests passed

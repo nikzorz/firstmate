@@ -1,0 +1,5 @@
+ok - a default-posture brief is refused on a keep-claude-md project
+ok - a keep-claude-md brief on a keep-claude-md project passes the agreement check
+ok - a keep-claude-md brief is refused on a project that keeps agents-md
+ok - a brief with no project-memory section is not checked
+# all fm-spawn-project-memory tests passed

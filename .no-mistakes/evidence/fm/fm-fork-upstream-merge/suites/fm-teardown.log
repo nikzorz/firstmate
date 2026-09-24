@@ -1,0 +1,3 @@
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.QTDUgR/tasks-axi-close/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+not ok - teardown failed with a real backlog

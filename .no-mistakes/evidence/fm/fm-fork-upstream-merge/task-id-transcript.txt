@@ -1,0 +1,14 @@
+# fm-pr-lib task-id predicates (existing-task vs creation-only namespace rule)
+good-task: existing-task-valid=yes  fresh-spawn-namespace-safe=yes
+v1.2: existing-task-valid=yes  fresh-spawn-namespace-safe=no
+x-foo: existing-task-valid=yes  fresh-spawn-namespace-safe=no
+
+# fresh spawn of a dotted id is refused before any work
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+
+# fresh spawn of dotted / x- ids is refused (NO_MISTAKES_GATE unset, throwaway FM_HOME)
+error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/nik/.no-mistakes/repos/50866b63a668.git)
+exit=3
+error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/nik/.no-mistakes/repos/50866b63a668.git)
+exit=3

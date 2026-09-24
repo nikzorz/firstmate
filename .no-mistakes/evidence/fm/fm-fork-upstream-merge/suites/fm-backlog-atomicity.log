@@ -1,0 +1,6 @@
+ok - backend resolution preserves unreadable configuration errors for every caller
+ok - backend resolution preserves environment, project, user, and default precedence
+ok - backlog readers and mutations refuse unresolved backends without touching either backlog
+not ok - captain hold did not report its configuration error (missing: 'tasks-axi backend configuration cannot be read at /tmp/fm-backlog-atomicity.9X12A1/backend-hold-dangling/home/.tasks.toml')
+--- output ---
+fm-captain-hold: compatible tasks-axi is required
