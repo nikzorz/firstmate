@@ -107,14 +107,17 @@ fm_adopted_session_has_terminal() {
   return 0
 }
 
-# fm_adopted_pid_alive <pid>: 0 when the process still exists as a running one.
-# A zombie has already exited and holds no working directory, so it counts as
-# gone: a pid that is only waiting to be reaped can convict nobody of residency.
-fm_adopted_pid_alive() {
+# fm_adopted_session_leader_alive <sid>: 0 when the process <sid> still exists as
+# a running one AND still leads session <sid>. A zombie has already exited and
+# holds no working directory, so it counts as gone: a pid that is only waiting to
+# be reaped can convict nobody of residency. A live pid leading some other
+# session is a reuse of the number, not the leader that is gone.
+fm_adopted_session_leader_alive() {
   local pid=$1 state
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   state=$(fm_adopted_stat_field "$pid" 1) || return 1
-  [ -n "$state" ] && [ "$state" != Z ]
+  [ -n "$state" ] && [ "$state" != Z ] || return 1
+  [ "$(fm_adopted_session_of "$pid" 2>/dev/null)" = "$pid" ]
 }
 
 # fm_adopted_parent_of <pid>: print the process's parent pid, or nothing.
@@ -218,7 +221,7 @@ fm_adopted_processes() {
         # naming a process that has gone is the double-forked daemon's shape as
         # much as an orphaned crew process's, and nothing here can tell them
         # apart, so the whole answer is unknown rather than clear.
-        if fm_adopted_pid_alive "$sid"; then
+        if fm_adopted_session_leader_alive "$sid"; then
           continue
         fi
         fm_adopted_name_pid "$pid"

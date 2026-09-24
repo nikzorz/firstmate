@@ -455,6 +455,27 @@ test_recorded_wait_carries_only_a_future_until() {
   pass "the recorded wait carries an until time only for a future reset"
 }
 
+# A standing wait whose until time has passed reads to the supervisors as a wait
+# already over, so a later read that still finds the window exhausted but reports
+# no reset must restate the wait rather than leave the elapsed one in force.
+test_elapsed_standing_wait_is_restated_without_reset_data() {
+  local d bare last
+  d=$(make_case elapsed-standing)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  bare=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  printf '%s until %s\n' "$bare" "$(date -u -d "@$(( $(date +%s) - 600 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$(( $(date +%s) - 600 ))" +%Y-%m-%dT%H:%M:%SZ)" >> "$d/state/stalled.status"
+
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
+    run_resume "$d" stalled >/dev/null || fail "the recheck without reset data exited non-zero"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  [ "$last" = "$bare" ] || fail "an elapsed standing wait was left in force, last event was '$last'"
+  pass "an elapsed standing wait is restated as an open wait when no reset time is reported"
+}
+
 # --- (c)/(d) guarded recovery ----------------------------------------------
 #
 # Each case gets a private copy of bin/ so the real fm-limit-resume.sh runs
@@ -838,6 +859,7 @@ test_reset_time_parses_without_a_platform_date
 test_exhausted_window_reports_when_it_resets
 test_missing_or_unreadable_reset_time_falls_back
 test_recorded_wait_carries_only_a_future_until
+test_elapsed_standing_wait_is_restated_without_reset_data
 test_recovery_refuses_non_claude_harness
 test_recovery_refuses_unresolvable_targets
 test_recovery_refuses_without_a_live_match

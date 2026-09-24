@@ -125,10 +125,10 @@ FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT=3
 
 # The distinct current state bin/fm-crew-state.sh reports for a crew parked on
 # Claude Code's usage-limit prompt, and the token its detail carries for the
-# quota window. Both consumers of this library - the always-on watcher and the
-# away-mode daemon - read the state through crew_usage_limit_class below rather
-# than re-deriving it, so the vocabulary has one definition exactly like the
-# pause verb above. There is deliberately no per-home override: unlike the status
+# quota window. Its producer and every reader take the spelling from here, and
+# a supervisor asking which quota window a parked crew waits on reads it through
+# crew_usage_limit_class below rather than re-deriving it, so the vocabulary has
+# one definition exactly like the pause verb above. There is deliberately no per-home override: unlike the status
 # verbs a crew writes, this token is produced and consumed entirely inside
 # firstmate's own scripts, so a configurable spelling would only let the producer
 # and consumer drift.

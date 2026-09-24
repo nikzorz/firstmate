@@ -367,8 +367,7 @@ fm_composer_strip_ghost() {
 # exposes no stable ASCII busy token.
 # The harness-less default is the UNION of the per-harness tokens below, used
 # when a caller has no recorded harness for the pane (the submit cores read the
-# baseline and the post-Enter transition this way, and also for a recorded
-# harness with no verified signature of its own). cursor's `ctrl+c to stop` is
+# baseline and the post-Enter transition this way). cursor's `ctrl+c to stop` is
 # part of that union for the same reason the others are: without it a cursor
 # submit could never be acknowledged, because cursor parks its terminal cursor
 # outside its composer and the composer verdict is therefore always `unknown`.

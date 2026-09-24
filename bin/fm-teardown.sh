@@ -210,8 +210,8 @@
 # the task's own agent. Before either, and before the rm -rf that takes a directory
 # away just as finally, teardown refuses when the directory holds a process that
 # detached from whatever started it, and equally when a process living there cannot
-# be attributed at all. Fix 2 therefore only ever reaps what that scan attributed to
-# the lane's own live session; a leftover whose session leader is already gone - such
+# be attributed at all. On every backend but Orca, Fix 2 therefore only ever reaps
+# what that scan attributed to the lane's own live session; a leftover whose session leader is already gone - such
 # as the go test binaries Fix 2 describes, when the earlier pane that started them has
 # already closed - is named and refused rather than reaped, and ending it is the
 # operator's deliberate act.
@@ -258,8 +258,11 @@
 # the task's own at the end of this file, and an Orca child's inside the retirement
 # sweep - so an Orca worktree hosting a detached service loses its directory with no
 # refusal and no message. Whether that removal also terminates the processes living
-# there is UNESTABLISHED; the directory removal is the verifiable part. An operator must
-# not read the four paths above as covering Orca. The tasktmp root Fix 2 also reaps is
+# there is UNESTABLISHED; the directory removal is the verifiable part. Fix 2's reap
+# still runs on an Orca task's own worktree, unscanned, exactly as it did before this
+# guard existed, so there it terminates every process living in that worktree with no
+# refusal, a detached service included. An operator must not read the four paths
+# above as covering Orca. The tasktmp root Fix 2 also reaps is
 # never scanned, because it is created for this task alone and no service is started
 # there on another lane's behalf.
 #
@@ -381,10 +384,10 @@
 #     root via `lsof -a -d cwd` (cheap: bounded by process count, not by
 #     walking the worktree's file tree) and sends TERM, then KILL after a short
 #     grace period to any survivor whose process identity still matches. Both
-#     roots are unique per task, and the adopted-process refusal above has
-#     already stopped this run if the worktree held a service that detached
-#     into it or a process nothing could attribute, so this reaches only the
-#     lane's own processes. Idempotent: nothing left to find is a silent no-op.
+#     roots are unique per task, and off Orca the adopted-process refusal above
+#     has already stopped this run if the worktree held a service that detached
+#     into it or a process nothing could attribute, so there this reaches only
+#     the lane's own processes; on Orca it reaps unscanned (see NOT COVERED). Idempotent: nothing left to find is a silent no-op.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
 #     from a worktree's own bin/ outlives that worktree's removal without
 #     being reachable by Fix 2, because its working directory is wherever it

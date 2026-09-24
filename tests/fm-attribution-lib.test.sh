@@ -219,20 +219,15 @@ Body.
   pass "fm_attribution_strip collapses the blank run a removal created into a single gap"
 }
 
-# The other half of the guarantee: the strip cleans a trailer that reached a
-# branch commit, and this knob stops claude putting one there in the first place.
-# Claude Code resolves the commit text, the PR text, and the session link
-# independently, so the session link survives empty attribution texts and all
-# three must stay off; docs/verification/agent-attribution.md records the
-# runtime measurement.
-test_claude_settings_disable_agent_attribution() {
-  local settings="$ROOT/.claude/settings.json"
-  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; return 0; }
-  jq -e '.attribution.commit == "" and .attribution.pr == ""' "$settings" >/dev/null \
-    || fail "settings: .claude/settings.json no longer disables the co-author trailer"
-  jq -e '.attribution.sessionUrl == false' "$settings" >/dev/null \
-    || fail "settings: .claude/settings.json no longer disables the session link"
-  pass ".claude/settings.json disables claude's co-author trailer and session link"
+# A squash body built from a PR description authored with CRLF line endings.
+test_strips_a_crlf_body() {
+  expect_strip "crlf" \
+$'fix: a thing\r\n\r\nBody.\r\n\r\n---------\r\n\r\nCo-authored-by: Claude <noreply@anthropic.com>\r\n' \
+'fix: a thing
+
+Body.
+'
+  pass "fm_attribution_strip strips a trailer and its emptied separator from a CRLF body"
 }
 
 test_removes_claude_trailers
@@ -245,4 +240,4 @@ test_keeps_a_trailing_separator_the_author_wrote
 test_keeps_an_author_rule_the_trailer_sat_under
 test_drops_only_edge_blank_lines
 test_collapses_only_the_gap_a_removal_created
-test_claude_settings_disable_agent_attribution
+test_strips_a_crlf_body

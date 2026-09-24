@@ -3605,6 +3605,7 @@ Resolves example/repo#7|$ISSUE_7
 fix https://github.com/example/repo/issues/7|$ISSUE_7
 resolved Example/Repo#7|$ISSUE_7
 Closes #7|https://github.com/Example/Repo/issues/7
+Fixes: #7|$ISSUE_7
 ROWS
   pass "fm-pr-merge accepts every well-formed closing keyword spelling and reference form"
 }

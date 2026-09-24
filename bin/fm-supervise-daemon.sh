@@ -1465,9 +1465,6 @@ inject_msg() {  # <message> [state]
   # retype) via the shared submit primitive. Success = the backend confirms
   # submit. An unconfirmed/unknown pane does NOT count as delivered, so the
   # buffer is preserved (strict) rather than cleared.
-  # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh): for
-  # backend=tmux this calls fm_backend_tmux_send_text_submit, a verbatim
-  # re-export of fm_tmux_submit_core - byte-identical to calling it directly.
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
@@ -1562,7 +1559,8 @@ handle_wake() {  # <reason> <state>
               fi
               # An enriched wedge reason carries the watcher's own escalation count
               # and its "do not re-absorb on the run-step/pane state alone" demand,
-              # so it outranks this daemon's cheaper status-log absorption - EXCEPT
+              # and an advancing-run recheck is the watcher's own bounded cadence
+              # for a run it already absorbed, so either outranks this daemon's cheaper status-log absorption - EXCEPT
               # under a current declared wait. A `pause` verdict is not run-step or
               # pane state at all: it is the crew's own declaration that this pane
               # waits by design, which is the one question the wedge timer cannot
@@ -1573,7 +1571,7 @@ handle_wake() {  # <reason> <state>
               case "${decision%%|*}" in
                 pause) : ;;
                 *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
+                     idle\ *s,\ possible\ wedge,*|idle\ *s,\ run\ step\ still\ advancing\ *)
                        last=$(last_status_line "$state/$task.status")
                        status_is_paused_or_captain_held "$last" \
                          || decision="escalate|${reason#stale: }"

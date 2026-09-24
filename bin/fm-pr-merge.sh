@@ -1100,7 +1100,7 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   if issue_is_in_pr_repo "$2" "$3"; then
     refs="#$number|$refs"
   fi
-  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}[[:space:]]+($refs)([^[:alnum:]_]|\$)" "$body"
+  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)" "$body"
 }
 
 closing_check_did_not_run() {  # <why>

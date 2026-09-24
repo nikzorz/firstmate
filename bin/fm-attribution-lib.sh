@@ -50,6 +50,7 @@ fm_attribution_strip() {
       for (i = 1; i <= count; i++) agent[tolower(list[i])] = 1
     }
     {
+      sub(/\r$/, "")
       if (is_agent_coauthor($0) || is_session_trace($0)) {
         removed = 1
         next

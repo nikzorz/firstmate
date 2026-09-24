@@ -192,7 +192,7 @@ own_pause_line() {  # <line>
 }
 
 record_pause() {
-  local last line until_iso=''
+  local last line last_until until_iso=''
   case "$RECHECK_EPOCH" in
     ''|*[!0-9]*) ;;
     *) [ "$RECHECK_EPOCH" -gt "$(date +%s)" ] && until_iso=$(epoch_to_iso "$RECHECK_EPOCH") ;;
@@ -201,8 +201,11 @@ record_pause() {
   [ -z "$until_iso" ] || line="$line until $until_iso"
   last=$(last_status_line "$LOG")
   if own_pause_line "$last"; then
-    [ -n "$until_iso" ] || return 0
     [ "$last" != "$line" ] || return 0
+    if [ -z "$until_iso" ]; then
+      last_until=$(status_paused_until "$last") || return 0
+      [ "$last_until" -le "$(date +%s)" ] || return 0
+    fi
   fi
   printf '%s\n' "$line" >> "$LOG"
 }

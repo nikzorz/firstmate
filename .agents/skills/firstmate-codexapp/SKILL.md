@@ -74,7 +74,7 @@ Your brief is <absolute-firstmate-home>/data/<task-id>/launch-brief.md and your 
 Read the brief in full and follow it exactly; it is the authority on your role, your task, your rules, your status protocol, and your definition of done.
 If you cannot read it, append "blocked [at=<epoch>]: cannot read brief at <absolute-firstmate-home>/data/<task-id>/launch-brief.md" to that status file and stop; never proceed on guesswork about the task.
 Where the brief says "your pane", it means this visible thread, which firstmate reads with read_thread.
-Its report-sparingly bar has exactly one named exception, and it comes first: before any substantive work, append "working [at=<epoch>]: Codex Desktop thread started" to that status file, then reply here quoting your brief's definition of done.
+Its report-sparingly bar has exactly one named exception, and it comes right after your pwd and repository-root report, before any substantive work: append "working [at=<epoch>]: Codex Desktop thread started" to that status file, then reply here quoting your brief's definition of done.
 ```
 
 That quoted reply is the read receipt, and it is checkable rather than taken on faith: a worker that never opened the file cannot produce the gate its own delivery mode carries.

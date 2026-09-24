@@ -538,8 +538,10 @@ EOF
   fm_task_id_creation_valid _noncanonical \
     || fail "creation validator rejected a task ID after its reserved namespace moved"
   for id in task.a x-poll home-summary; do
-    ! fm_task_id_creation_valid "$id" \
-      || fail "creation validator accepted a task ID the state record namespace cannot separate"
+    fm_task_id_creation_valid "$id" \
+      || fail "creation validator refused an existing task ID it must still operate on"
+    ! fm_task_id_record_namespace_safe "$id" \
+      || fail "namespace validator accepted a task ID the state record namespace cannot separate"
   done
   id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   fm_pr_task_id_valid "$id" || fail "operational validator rejected a path-safe legacy task ID"

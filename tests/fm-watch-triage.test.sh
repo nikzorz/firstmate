@@ -2448,6 +2448,25 @@ test_absorbed_advancing_run_resurfaces_on_the_long_cadence() {
   pass "an absorbed advancing run stays quiet inside its window, then re-surfaces once as a recheck"
 }
 
+# A busy pane whose footer ticks rewrites its signature record on every poll, so
+# its idle age never grows past one wedge window. The absorb episode, anchored on
+# the first absorb and not on the signature, still reaches the recheck.
+test_advancing_recheck_ages_from_the_episode_not_the_pane_signature() {
+  local dir state fakebin out window key pid
+  window="test:fm-ticking"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  dir=$(advancing_fixture wedge-advancing-ticking "$window" ticking 'working: handed off to validation' 'harness=claude')
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  echo 0 > "$state/.advancing-absorbs-$key"
+  set_mtime "$(( $(date +%s) - 5000 ))" "$state/.advancing-absorbs-$key"
+  advancing_round "$state" "$fakebin" "$out" "$dir/pane.txt" "$window" \
+    FM_FAKE_CREW_STATE='state: working · source: run-step · validating (background run)' FM_PAUSE_RESURFACE_SECS=3600
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "an advancing absorb episode past its window never rechecked while the pane signature stayed fresh"
+  grep -F "still advancing" "$out" >/dev/null || fail "the episode recheck was not labeled a still-advancing recheck: $(cat "$out")"
+  [ "$(cat "$state/.advancing-absorbs-$key" 2>/dev/null)" = 1 ] || fail "the episode recheck did not advance the absorb cap count"
+  pass "an advancing absorb rechecks on the episode's age even when the pane signature keeps changing"
+}
+
 # The cadence spaces the rechecks; it does not bound how many there are. A crew
 # halted on an interactive prompt keeps a live endpoint and an unmeasurable
 # `working` run step, so it would earn that recheck forever and never be named a
@@ -6690,6 +6709,7 @@ test_demand_deep_inspection_outranks_the_advancing_absorb
 test_advancing_run_over_an_unconfirmed_endpoint_still_escalates
 test_busy_pane_verdict_over_a_live_endpoint_still_escalates
 test_absorbed_advancing_run_resurfaces_on_the_long_cadence
+test_advancing_recheck_ages_from_the_episode_not_the_pane_signature
 test_advancing_absorb_recheck_run_is_capped
 test_capped_absorb_keeps_triaging_an_overridden_terminal_status
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

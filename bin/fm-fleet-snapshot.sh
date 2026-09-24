@@ -854,10 +854,11 @@ task_json_lines() {
     # run-step source as an active one, so the narrower rule must claim it.
     # Secondmates are excluded from lifecycle clearing: they are persistent and
     # multiplex many concerns onto one stream, so activity on one concern must
-    # never clear another concern's keyed decision. A parked/blocked state, a crew
-    # parked on the claude usage-limit prompt (a pane read proving it STOPPED, not
-    # that it moved past its gate), or a non-authoritative status-log/none read on
-    # a still-live task, keeps the fold's open decision surfacing.
+    # never clear another concern's keyed decision. Any other read (parked,
+    # blocked, stalled, unknown, a crew parked on the claude usage-limit prompt, or
+    # a non-authoritative status-log/none read on a still-live task) proves the
+    # crew STOPPED rather than moved past its gate, so the open decision keeps
+    # surfacing.
     open_decisions_tsv=$(status_open_decisions "$status_log" "$kind")
     if [ "$kind" = secondmate ]; then
       :
@@ -866,8 +867,7 @@ task_json_lines() {
               && [ "$current_event_verb" = "done" ]; }; then
       open_decisions_tsv=$(status_trailing_open_decisions "$status_log" "$kind")
     elif { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
-         && [ "$current_state" != parked ] && [ "$current_state" != blocked ] \
-         && [ "$current_state" != "$FM_CLASSIFY_USAGE_LIMITED_STATE" ]; then
+         && [ "$current_state" = working ]; then
       open_decisions_tsv=""
     fi
     open_decisions_json=$(printf '%s' "$open_decisions_tsv" | jq -R -s '

@@ -1388,10 +1388,13 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
 # exists, so dropping it there would end triage for that hash after one
 # demand-inspection instead of repeating on the long cadence.
 # <idle-age> is the pane's true idle age, not the timer's: the timer restarts on
-# every absorb, so it could never age past the recheck cadence.
+# every absorb, so it could never age past the recheck cadence. A busy pane whose
+# footer ticks rewrites its signature on every poll, so its idle age never grows
+# either; the absorb count's own record, seeded on the first absorb of a run and
+# rewritten only by a recheck, is the episode anchor that still ages there.
 # Returns 0 when it has handled the window, 1 to escalate on the unchanged path.
 wedge_defer_advancing() {  # <window> <since-file> <triage-label> <idle-age> <escalation-number> <task>
-  local win=$1 since_file=$2 label=$3 idle_age=$4 n=$5 task=$6 key rf af absorbs reason
+  local win=$1 since_file=$2 label=$3 idle_age=$4 n=$5 task=$6 key rf af absorbs reason recheck_age
   [ "$n" -lt "$FM_WEDGE_DEMAND_INSPECT_COUNT" ] || return 1
   [ "$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null)" = alive ] || return 1
   crew_run_step_advancing "$task" || return 1
@@ -1400,7 +1403,10 @@ wedge_defer_advancing() {  # <window> <since-file> <triage-label> <idle-age> <es
   af="$STATE/.advancing-absorbs-$key"
   clear_write_tracking "$key"
   date +%s > "$since_file"
-  if [ "$idle_age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$(age_of "$rf")" -ge "$PAUSE_RESURFACE_SECS" ]; then
+  [ -e "$af" ] || echo 0 > "$af"
+  recheck_age=$(age_of "$af")
+  [ "$recheck_age" -ge "$idle_age" ] || recheck_age=$idle_age
+  if [ "$recheck_age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$(age_of "$rf")" -ge "$PAUSE_RESURFACE_SECS" ]; then
     absorbs=$(( $(cat "$af" 2>/dev/null || echo 0) + 1 ))
     if [ "$absorbs" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
       # Worded without a measured/assumed claim: the verdict this stands on

@@ -129,7 +129,7 @@ fm_task_id_record_namespace_safe() {
 
 fm_task_id_creation_valid() {
   local id=${1-}
-  fm_task_id_record_namespace_safe "$id" || return 1
+  fm_pr_task_id_valid "$id" || return 1
   [ "${#id}" -le 64 ]
 }
 
