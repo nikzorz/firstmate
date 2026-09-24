@@ -520,6 +520,9 @@ pause_marker_remove() {  # <window> <state>
 # with only ':/.' folded to '_', so hyphens survive, and one key can be a
 # hyphenated suffix of another ("fm_build" and "sub-fm_build"), which would let a
 # sweep for the first delete the second's records.
+# Clearing an episode is not the same thing as clearing a key for a new
+# occupant: that one is bin/fm-episode-records-lib.sh, and a family added here
+# belongs in its list too.
 watcher_episode_clear() {  # <state> <watcher_key>
   rm -f "$1/.paused-$2" "$1/.paused-rechecked-$2" "$1/.paused-resurfaced-$2" \
     "$1/.stale-$2" "$1/.stale-since-$2" "$1/.wedge-escalations-$2" \

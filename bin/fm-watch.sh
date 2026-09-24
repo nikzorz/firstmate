@@ -301,6 +301,10 @@ recorded_windows() {
 # absorbs; the escalation count deliberately survives one, because surviving is
 # how it counts. The away-mode daemon applies the same cap to the same absorb on
 # its own path (bin/fm-supervise-daemon.sh).
+#
+# Every record family keyed on the watcher key, these two included, must also be
+# listed in bin/fm-episode-records-lib.sh, which clears them when a task claims
+# the key. A family added here and missed there is one a later task inherits.
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-$FM_WEDGE_DEMAND_INSPECT_COUNT_DEFAULT}
 
 # The long-cadence recheck, shared by the two absorbs that can hold ONE unchanged
