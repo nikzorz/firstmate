@@ -8,6 +8,45 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-supervision-instructions)
 RENDER="$ROOT/bin/fm-supervision-instructions.sh"
 
+test_stale_beacon_advice_is_mode_aware() {
+  local home out h
+  home="$TMP_ROOT/advice-home"
+  mkdir -p "$home/state" "$home/config"
+
+  # Automation-owned continuity: the banner must not hand the model an arm
+  # command its own ordinary-wake instruction forbids.
+  for h in claude pi opencode; do
+    out=$(FM_HOME="$home" "$RENDER" --harness "$h" --stale-beacon-advice)
+    assert_contains "$out" "owns routine re-arm here" "$h advice line does not name the continuity owner"
+    assert_contains "$out" "do not arm from this banner" "$h advice line does not withhold the arm"
+    assert_contains "$out" "genuinely lapsed" "$h advice line dropped the real-lapse escalation"
+    assert_not_contains "$out" "bin/fm-watch-arm.sh" "$h advice line still hands the model an arm command"
+    assert_not_contains "$out" "fm_watch_arm_pi" "$h advice line still hands the model an arm tool"
+  done
+
+  # Model-owned continuity: arming IS the ordinary continuation, so the advice
+  # line stays exactly the repair instruction.
+  out=$(FM_HOME="$home" "$RENDER" --harness grok --stale-beacon-advice)
+  assert_contains "$out" "bin/fm-watch-arm.sh" "grok advice line lost the arm command the model owns"
+  [ "$out" = "$(FM_HOME="$home" "$RENDER" --harness grok --repair-line)" ] \
+    || fail "grok advice line diverged from its repair line: $out"
+
+  out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --stale-beacon-advice)
+  assert_contains "$out" "bin/fm-watch-checkpoint.sh --seconds 7" "codex advice line lost the checkpoint the model owns"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness not-real --stale-beacon-advice)
+  assert_contains "$out" "session-start block for this harness" "unknown-harness advice line lost its protocol pointer"
+
+  # Read-only and away mode keep answering with ownership, not with a command.
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --read-only 1 --stale-beacon-advice)
+  assert_contains "$out" "session holding the fleet lock" "read-only advice line lost the lock-ownership answer"
+  out=$(FM_HOME="$home" "$RENDER" --harness grok --afk 1 --stale-beacon-advice)
+  assert_contains "$out" "Away mode owns watcher supervision" "away-mode advice line lost the daemon-ownership answer"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" "away-mode advice line still hands the model an arm command"
+
+  pass "stale-beacon advice withholds the arm only where an automation owns re-arm"
+}
+
 test_selected_harness_block_only() {
   local out
   out=$("$RENDER" --harness codex)
@@ -163,3 +202,4 @@ test_cross_harness_ordinary_continuation_and_repair_matrix
 test_grok_is_background_notify
 test_grok_command_sources_effective_config
 test_pi_snippet_uses_effective_extension_path
+test_stale_beacon_advice_is_mode_aware

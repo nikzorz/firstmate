@@ -64,7 +64,7 @@ Grok's project hook requires the checkout to be trusted with `/hooks-trust` or l
 OpenCode's forced follow-up is supported for persistent TUI sessions and remains fail-open in headless `opencode run`.
 
 If a passive adapter cannot invoke its SDK, find `grok`, or recover a Grok session id, the next pull-based `fm-guard.sh` call reports the problem.
-That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it always points to the active harness protocol rather than embedding another repair command.
+That warning takes its advice from `bin/fm-supervision-instructions.sh --stale-beacon-advice`, so it always defers to the active harness protocol rather than embedding another repair command.
 
 ## Compatibility limits
 
