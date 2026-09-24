@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Render the primary-harness supervision operating block for session start and
-# the short repair line used by guards and turn-end hooks.
+# Render the primary-harness supervision operating block for session start, the
+# short repair line used by guards and turn-end hooks, and the stale-beacon
+# advice line used by the watcher-down banner.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,14 +16,20 @@ READ_ONLY=0
 AFK=0
 X_MODE=0
 REPAIR_LINE=0
+ADVICE_LINE=0
 QUEUE_PENDING=0
 
 usage() {
   cat <<'EOF'
-Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--x-mode 0|1] [--repair-line] [--queue-pending 0|1]
+Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--x-mode 0|1] [--repair-line] [--stale-beacon-advice] [--queue-pending 0|1]
 
 Print the current primary harness's supervision operating instructions.
 With --repair-line, print one concise repair instruction for guard and hook messages.
+With --stale-beacon-advice, print one line answering what to do about a stale watcher
+beacon. On a harness whose routine re-arm belongs to an out-of-model automation, that
+line names the owner and withholds the arm command, because a stale beacon there is as
+likely to be a turn that outran the grace as a genuine lapse. On a harness where the
+model itself arms, it is the --repair-line instruction.
 EOF
 }
 
@@ -62,6 +69,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --repair-line)
       REPAIR_LINE=1
+      shift
+      ;;
+    --stale-beacon-advice)
+      ADVICE_LINE=1
       shift
       ;;
     -h|--help)
@@ -154,6 +165,36 @@ repair_line() {
   esac
 }
 
+# Name the out-of-model automation that owns routine watcher re-arm on this
+# harness, or print nothing when the model itself owns it. A stale beacon means
+# different things in each case, which is why the watcher-down banner asks this
+# before it recommends anything: where an automation owns re-arm, the emitted
+# protocol forbids a model arm after an ordinary wake, so a banner that told the
+# model to arm would contradict its own operating instructions and build a
+# second cycle.
+continuity_owner() {
+  case "$HARNESS" in
+    claude) printf '%s\n' 'The Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh)' ;;
+    pi) printf '%s\n' 'The Pi watch extension' ;;
+    opencode) printf '%s\n' 'The OpenCode TUI plugin' ;;
+  esac
+}
+
+stale_beacon_advice() {
+  local owner
+  # Read-only and away mode already answer with ownership rather than a command.
+  if [ "$READ_ONLY" -eq 1 ] || [ "$AFK" -eq 1 ]; then
+    repair_line
+    return 0
+  fi
+  owner=$(continuity_owner)
+  if [ -z "$owner" ]; then
+    repair_line
+    return 0
+  fi
+  printf "%s owns routine re-arm here; do not arm from this banner. If the beacon is still stale after that owner's next arm opportunity, the cycle has genuinely lapsed - repair it through the emitted supervision protocol for this harness.\n" "$owner"
+}
+
 ordinary_wake_line() {
   case "$HARNESS" in
     claude)
@@ -176,6 +217,11 @@ ordinary_wake_line() {
       ;;
   esac
 }
+
+if [ "$ADVICE_LINE" -eq 1 ]; then
+  stale_beacon_advice
+  exit 0
+fi
 
 if [ "$REPAIR_LINE" -eq 1 ]; then
   repair_line

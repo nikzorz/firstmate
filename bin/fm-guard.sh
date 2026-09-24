@@ -9,9 +9,17 @@
 # liveness beacon (state/.last-watcher-beat, touched every poll cycle) is
 # missing or older than FM_GUARD_GRACE seconds, prints a loud, clearly delimited
 # banner so the agent cannot skim past it in the tool output of whatever it was
-# doing - the one channel every harness has. The full banner is emitted once per
-# distinct staleness episode in this FM_HOME (keyed to beacon mtime or absence);
-# later guarded commands in the same episode print a one-line reminder instead.
+# doing - the one channel every harness has.
+# The banner's closing advice comes from fm-supervision-instructions.sh
+# --stale-beacon-advice rather than from a fixed command here: a stale beacon
+# proves a lapse only on a harness where the model itself arms, and where an
+# out-of-model automation owns re-arm a turn that merely outran the grace looks
+# identical while that harness's own protocol forbids the model from arming.
+# The full banner is emitted once per distinct staleness episode in this FM_HOME
+# (keyed to beacon mtime or absence); later guarded commands in the same episode
+# print a one-line reminder instead. That reminder deliberately carries the
+# beacon figure and no repair command, so repeating it cannot contradict any
+# supervision mode and cannot soften a real lapse into silence.
 # Episode state lives only under state/.guard-watcher-stale-banner (volatile,
 # bounded). Independent alarms (queued wakes, worktree tangle) are never
 # suppressed by that dedup. Normal wake handling (watcher briefly down between a
@@ -195,7 +203,7 @@ if [ "$watcher_fresh" = false ]; then
       --afk "$afk" \
       --x-mode "$x_mode" \
       --queue-pending "$queue_arg" \
-      --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
+      --stale-beacon-advice 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
     rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     {
       printf '●%s\n' "$rule"

@@ -38,6 +38,28 @@ run_guard_case() {
     "$ROOT/bin/fm-guard.sh" 2>&1
 }
 
+# Pin the detected harness so the banner's advice line is exercised in both
+# supervision modes: an automation-owned one (claude) and a model-owned one
+# (grok). fm-harness.sh checks CLAUDECODE before GROK_AGENT, so grok needs the
+# claude marker unset even when this suite itself runs under Claude Code.
+run_guard_case_on_claude() {
+  local dir=$1
+  env -u PI_CODING_AGENT -u GROK_AGENT CLAUDECODE=1 \
+    FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$(case_home "$dir")" \
+    FM_GUARD_GRACE=999 \
+    "$ROOT/bin/fm-guard.sh" 2>&1
+}
+
+run_guard_case_on_grok() {
+  local dir=$1
+  env -u CLAUDECODE -u PI_CODING_AGENT GROK_AGENT=1 \
+    FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$(case_home "$dir")" \
+    FM_GUARD_GRACE=999 \
+    "$ROOT/bin/fm-guard.sh" 2>&1
+}
+
 run_guard_case_read_only() {
   local dir=$1
   FM_ROOT_OVERRIDE="$(case_root "$dir")" \
@@ -240,6 +262,40 @@ test_read_only_never_mutates_stale_banner_state_files() {
   pass "fm-guard stale banner: read-only never mutates stale-banner state files"
 }
 
+test_banner_advice_follows_hook_owned_supervision() {
+  local dir out
+  dir=$(make_guard_case advice-hook-owned)
+  out=$(run_guard_case_on_claude "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "hook-owned stale guard call did not print the full banner: $out"
+  assert_contains "$out" "last beat: never, grace 999s" \
+    "hook-owned banner lost the stale-beacon figure"
+  assert_contains "$out" "1 task(s) in flight" \
+    "hook-owned banner lost the in-flight count"
+  assert_contains "$out" "The Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) owns routine re-arm here" \
+    "hook-owned banner did not name the automation that owns re-arm"
+  assert_contains "$out" "do not arm from this banner" \
+    "hook-owned banner did not withhold the arm command"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" \
+    "hook-owned banner recommended an arm the emitted protocol forbids after an ordinary wake"
+  pass "fm-guard stale banner: hook-owned supervision gets no arm command"
+}
+
+test_banner_advice_keeps_arm_for_model_owned_supervision() {
+  local dir out
+  dir=$(make_guard_case advice-model-owned)
+  out=$(run_guard_case_on_grok "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "model-owned stale guard call did not print the full banner: $out"
+  assert_contains "$out" "last beat: never, grace 999s" \
+    "model-owned banner lost the stale-beacon figure"
+  assert_contains "$out" "bin/fm-watch-arm.sh" \
+    "model-owned banner lost the arm command the model itself owns"
+  assert_not_contains "$out" "do not arm from this banner" \
+    "model-owned banner withheld an arm that is its ordinary continuation"
+  pass "fm-guard stale banner: a genuinely lapsed model-owned cycle still gets its repair command"
+}
+
 test_first_stale_call_prints_full_banner
 test_repeated_same_episode_prints_reminder_only
 test_healthy_recovery_rearms_next_stale_episode
@@ -250,3 +306,5 @@ test_read_only_before_writable_does_not_consume_full_banner
 test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
+test_banner_advice_follows_hook_owned_supervision
+test_banner_advice_keeps_arm_for_model_owned_supervision
