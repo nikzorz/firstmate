@@ -18,9 +18,6 @@ TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
 
-# The script itself must always parse. This is the direct regression test for
-# issue #166: a stray apostrophe in any of the three DOD heredoc bodies
-# (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
 # Every missing-required-argument path must name the missing argument and print
 # the usage, rather than aborting on an unbound positional under `set -u`.
 test_missing_required_arguments_print_usage() {
@@ -58,6 +55,9 @@ test_missing_required_arguments_print_usage() {
   pass "fm-brief.sh: every missing-argument path names the argument and prints usage"
 }
 
+# The script itself must always parse. This is the direct regression test for
+# issue #166: a stray apostrophe in any of the three DOD heredoc bodies
+# (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
