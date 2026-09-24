@@ -169,7 +169,7 @@ state/               runtime records and signals; gitignored
 ```
 
 A `state/<id>.status` line is a wake event, not current-state truth; `bin/fm-crew-state.sh` owns current-state reconciliation.
-A task id may carry neither a dot nor the reserved `x-` prefix, nor the name of a home-level `state/` record (reserved in `bin/fm-pr-lib.sh`), because `state/<id>.<suffix>` is one flat namespace and a secondmate retirement clears its home's leftover task records by sweeping `state/<id>.*`.
+A fresh spawn refuses a task id carrying a dot, the reserved `x-` prefix, or the name of a home-level `state/` record (reserved in `bin/fm-pr-lib.sh`), while a relaunch and other commands on an existing task still accept such an id, because `state/<id>.<suffix>` is one flat namespace and a secondmate retirement clears its home's leftover task records by sweeping `state/<id>.*`.
 Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for secondmate inheritance, and `data/learnings.md` as curated home-local knowledge, regardless of harness memory.
 
 ## 3. Session start (run once at every session start)
