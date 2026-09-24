@@ -1970,6 +1970,35 @@ EOF
   pass "main and secondmate captain actionability use the same blocker readiness"
 }
 
+# A hand-filed captain hold keeps kind ship. Bearings must still list it as an
+# open decision, capped or not, and must stop listing it once it is Done.
+test_captain_hold_on_ship_item_reaches_decisions_open() {
+  local home fakebin json
+  home=$(make_home captain-hold-kind-ship)
+  : > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] parked-ship - Parked ship awaiting captain (repo: firstmate) (kind: ship) (hold: redesign or contain) (hold-kind: captain)
+
+## Queued
+- [ ] hand-filed - Hand-filed captain decision (repo: firstmate) (kind: ship) (hold: choose the redesign) (hold-kind: captain)
+- [ ] labelled - Captain decision (repo: firstmate) (kind: captain) (hold: choose the label) (hold-kind: captain)
+
+## Done
+- [x] answered-ship - Answered captain decision (repo: firstmate) (kind: ship) (done 2026-07-22) (hold: already answered) (hold-kind: captain)
+EOF
+  fakebin=$(make_fakebin "$home")
+  for flag in --json --all-decisions; do
+    json=$(run "$home" "$fakebin" --json "$flag")
+    printf '%s' "$json" | jq -e '
+      ([.decisions_open[] | select(.verb == "captain-hold") | .id] | sort)
+        == ["hand-filed", "labelled", "parked-ship"]
+        and (.gates | any(.id == "hand-filed" or .id == "parked-ship") | not)
+    ' >/dev/null || fail "a captain hold on a ship item was missing from decisions_open ($flag): $json"
+  done
+  pass "a captain hold on a ship item reaches decisions_open until it is Done"
+}
+
 # The /bearings skill is the one owner of the four-section chat-response contract.
 # Assert it states exactly the four fixed sections in order, each with its explicit
 # empty-state sentence, documents the At Anchor exclusion, and mandates a chat that is
@@ -2030,6 +2059,7 @@ test_main_unstructured_current_is_disclosed_with_structured_sibling
 test_main_orphan_counterfactual_meta_clears_inventory_warning
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
+test_captain_hold_on_ship_item_reaches_decisions_open
 test_chat_contract_four_sections
 test_completed_scout_report_not_pending
 test_open_decision_surfaces_end_to_end

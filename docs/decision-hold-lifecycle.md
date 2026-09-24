@@ -85,7 +85,9 @@ Teardown calls `gate-verify` for every non-secondmate task before destructive cl
 ## Structured read surfaces
 
 `bin/fm-fleet-snapshot.sh` parses canonical tasks-axi `(hold: ...)` and `(hold-kind: captain)` metadata alongside existing backlog fields.
-It resolves every repeated `blocked-by:` edge against structured Done records, keeps missing blockers unresolved, and classifies only an unblocked captain hold as actionable.
+It resolves every repeated `blocked-by:` edge against structured Done records and keeps missing blockers unresolved.
+It reads a captain decision as owed when an unfinished item carries a captain hold with a reason, the same test `bin/fm-decision-hold.sh` applies, and it classifies only an owed decision with no unresolved blocker as actionable.
+The item's `kind` is not part of that test, so a captain hold filed by hand on a ship item, in flight or queued, is still owed.
 Its secondmate-home summary classifies an actionable captain hold as `captain_decision` and preserves blocked captain holds as queued work in the owning home.
 
 `bin/fm-bearings-snapshot.sh` projects actionable captain holds into `decisions_open` and leaves blocked captain holds in ordinary queued gates.
