@@ -40,7 +40,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 fi
 
 PROTOCOL=1
-DOCTOR_SHA256=78efccd6cb7a0123400e49fa323292a64c8e3c7ebd3717151be69f87735302fb
+DOCTOR_SHA256=cb508986817d5363c8cd5ee14647c74c53c01239874a2d175dffb5f8488f8f2c
 REAL_SOURCE=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null) ||
   REAL_SOURCE=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null) ||
   REAL_SOURCE=${BASH_SOURCE[0]}

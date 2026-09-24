@@ -388,6 +388,7 @@ unit_mode_fresh_defaults_away() {
   rm -rf "$st"
 }
 
+# shellcheck disable=SC2031 # st is assigned once in this shell; no subshell reassigns it.
 unit_mode_refresh_preserves_quiet() {
   local st sleep_pid lock out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-mode-preserve.XXXXXX")
