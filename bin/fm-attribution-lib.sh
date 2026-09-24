@@ -21,12 +21,12 @@
 # strip may delete. A rule of any other width is the author's, and survives even
 # when an agent trailer sat directly under it.
 
-# Claude and codex are the whole of the measured set. The repo's other verified
-# harnesses - opencode, pi, grok, and kimi - are not installed on this machine,
-# so whether they inject a trailer, and under which address, is unknown rather
-# than known to be nothing. Covering one means first measuring the trailer that
-# runtime actually emits and then adding the address it uses; never add a
-# guessed address, because a wrong one silently strips a human co-author.
+# Claude and codex are the whole of the measured set. Every other harness's
+# trailer is unmeasured, so whether it injects one, and under which address, is
+# unknown rather than known to be nothing. Covering one means first measuring
+# the trailer that runtime actually emits and then adding the address it uses;
+# never add a guessed address, because a wrong one silently strips a human
+# co-author.
 FM_ATTRIBUTION_AGENT_EMAILS='noreply@anthropic.com noreply@openai.com'
 
 fm_attribution_strip() {
@@ -50,6 +50,7 @@ fm_attribution_strip() {
       for (i = 1; i <= count; i++) agent[tolower(list[i])] = 1
     }
     {
+      sub(/\r$/, "")
       if (is_agent_coauthor($0) || is_session_trace($0)) {
         removed = 1
         next

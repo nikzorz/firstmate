@@ -23,17 +23,12 @@
 # success so session startup continues conservatively.
 set -u
 
-usage() {
-  awk '
-    NR == 1 { next }
-    /^#/ { sub(/^# ?/, ""); print; next }
-    { exit }
-  ' "$0"
-}
-
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-esac
+# Skipped when sourced, where $1 belongs to the caller.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
+  esac
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -72,14 +67,6 @@ fm_herdr_cleanup_title_token() { # <workspace-title>
 fm_herdr_cleanup_home_identity() {
   [ -d "$FM_HOME" ] && [ ! -L "$FM_HOME" ] || return 1
   (cd "$FM_HOME" 2>/dev/null && pwd -P)
-}
-
-fm_herdr_cleanup_process_argv0() { # <process-info-json>
-  printf '%s' "$1" | jq -er '
-    .result.process_info.foreground_processes[0] as $process
-    | ($process.argv0 // $process.argv[0])
-    | select(type == "string" and length > 0)
-  ' 2>/dev/null
 }
 
 fm_herdr_cleanup_journal_matches() { # <title> <session> <home-real>
@@ -132,46 +119,6 @@ fm_herdr_cleanup_unique_match() { # <title> <session> <home-real>
     FM_HERDR_CLEANUP_BOUND_TAB=$FM_BACKEND_HERDR_JOURNAL_TAB_ID
     FM_HERDR_CLEANUP_BOUND_PANE=$FM_BACKEND_HERDR_JOURNAL_PANE_ID
   fi
-}
-
-fm_herdr_cleanup_process_is_idle_shell() { # <session> <pane-id>
-  local session=$1 pane=$2 info shell_pid foreground_pgid count
-  local process_pid name argv0 shell_name rows stat ps_bin
-  info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
-  printf '%s' "$info" | jq -e --arg pane "$pane" '
-    .result.type == "pane_process_info"
-    and .result.process_info.pane_id == $pane
-  ' >/dev/null 2>&1 || return 1
-  shell_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
-  foreground_pgid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_process_group_id | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
-  [ "$foreground_pgid" = "$shell_pid" ] || return 1
-  count=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes | select(type == "array") | length' 2>/dev/null) || return 1
-  [ "$count" -eq 1 ] || return 1
-  process_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes[0].pid | select(type == "number") | floor' 2>/dev/null) || return 1
-  [ "$process_pid" = "$shell_pid" ] || return 1
-  name=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes[0].name | select(type == "string" and length > 0)' 2>/dev/null) || return 1
-  argv0=$(fm_herdr_cleanup_process_argv0 "$info") || return 1
-  shell_name=${name##*/}
-  argv0=${argv0#-}
-  argv0=${argv0##*/}
-  [ "$argv0" = "$shell_name" ] || return 1
-  case "$shell_name" in sh|bash|zsh|dash|ksh|fish) ;; *) return 1 ;; esac
-
-  ps_bin=${FM_HERDR_PS_BIN:-ps}
-  command -v "$ps_bin" >/dev/null 2>&1 || return 1
-  rows=$("$ps_bin" -axo pid=,ppid= 2>/dev/null) || return 1
-  printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
-    $1 == shell { found++ }
-    $2 == shell { child++ }
-    END { exit(found == 1 && child == 0 ? 0 : 1) }
-  ' || return 1
-  stat=$("$ps_bin" -p "$shell_pid" -o stat= 2>/dev/null | tr -d '[:space:]') || return 1
-  case "$stat" in S*|I*) ;; *) return 1 ;; esac
 }
 
 fm_herdr_cleanup_snapshot_candidate() { # <snapshot> <workspace> <title> <token> <bound-workspace> <bound-tab> <bound-pane>
@@ -254,7 +201,7 @@ fm_herdr_cleanup_revalidate() { # <session> <workspace> <tab> <pane> <title> <to
     and .result.panes[0].pane_id == $pane
   ' >/dev/null 2>&1 || return 1
   [ "$(fm_backend_herdr_pane_agent_state "$session" "$pane")" = no-agent ] || return 1
-  fm_herdr_cleanup_process_is_idle_shell "$session" "$pane" || return 1
+  fm_backend_herdr_pane_idle_shell_pid "$session" "$pane" >/dev/null || return 1
   focus=$(fm_backend_herdr_projection_focus_snapshot "$session") || return 1
   [ "${focus#*$'\t'}" != "$tab" ]
 }
@@ -308,7 +255,7 @@ fm_herdr_cleanup_one() { # <session> <workspace> <title> <home-real>
   tab=$FM_HERDR_CLEANUP_TAB
   pane=$FM_HERDR_CLEANUP_PANE
   if [ "$(fm_backend_herdr_pane_agent_state "$session" "$pane")" != no-agent ] \
-    || ! fm_herdr_cleanup_process_is_idle_shell "$session" "$pane"; then
+    || ! fm_backend_herdr_pane_idle_shell_pid "$session" "$pane" >/dev/null; then
     fm_herdr_cleanup_warn "$id preserved because its pane is not a provably idle childless shell"
     fm_lock_release "$presentation_lock" || true
     fm_lock_release "$task_lock" || true
@@ -323,6 +270,8 @@ fm_herdr_cleanup_one() { # <session> <workspace> <title> <home-real>
     return 0
   fi
 
+  # This unconditional retirement is the authorized containment documented
+  # with the presentation floor ownership in bin/backends/herdr.sh.
   fm_backend_herdr_projection_close_pane_focus_preserving \
     "$session" "$pane" no-agent || close_status=$?
   state=$(fm_backend_herdr_pane_agent_state "$session" "$pane")

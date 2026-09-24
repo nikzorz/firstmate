@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# fm-send post-submit settle pause (FM_SEND_SETTLE).
+# fm-send typed-plane post-submit settle pause (FM_SEND_SETTLE).
 #
-# fm-send's success only proves the composer cleared - the Enter landed and the
-# text was submitted. The harness then takes a beat to spin up the turn before its
-# busy footer appears, so an immediate peek after fm-send returns would see the
-# stale idle pane. fm-send therefore pauses FM_SEND_SETTLE seconds (default 1, 0
-# disables) after a successful text submit, so the receiving turn has time to
-# visibly start. These tests pin that behavior hermetically (stubbed tmux + sleep,
-# no real agent):
-#   1. A successful text send pauses for the FM_SEND_SETTLE value (default 1).
+# A typed-plane fm-send success only proves the composer cleared - the Enter
+# landed and the text was submitted. The harness then takes a beat to spin up the
+# turn before its busy footer appears, so an immediate peek after fm-send returns
+# would see the stale idle pane. fm-send therefore pauses FM_SEND_SETTLE seconds
+# (default 1, 0 disables) after a successful typed submit, so the receiving turn
+# has time to visibly start. These tests use an explicit backend target to stay on
+# that plane and pin the behavior hermetically (stubbed tmux + sleep, no real
+# agent):
+#   1. A successful typed text send pauses for the FM_SEND_SETTLE value (default 1).
 #   2. FM_SEND_SETTLE=0 produces no pause at all (sleep is never invoked for it).
 #   3. The pause is tunable (FM_SEND_SETTLE=7 pauses 7).
 #   4. The --key path never pauses (it bypasses the submit/settle path entirely).
@@ -20,6 +21,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-busy-lib.sh"
 
 SEND="$ROOT/bin/fm-send.sh"
 
@@ -167,9 +170,31 @@ test_leading_dot_fraction_is_accepted() {
   pass "fm-send: FM_SEND_SETTLE accepts the leading-dot fractional form sleep takes"
 }
 
+test_claude_escape_records_interrupt_idle() {
+  local dir fb log rc home gen out
+  dir="$TMP_ROOT/claude-interrupt"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/sleep.log"
+  home="$dir/home"; mkdir -p "$home/state"
+  fm_write_meta "$home/state/task.meta" \
+    "window=sess:win" "worktree=$home/wt" "project=$home/project" \
+    "harness=claude" "kind=ship" "mode=no-mistakes" "yolo=off"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task)
+  printf 'busy_gen=%s\n' "$gen" >> "$home/state/task.meta"
+  : > "$log"
+
+  env PATH="$fb:$PATH" FM_HOME="$home" FM_SLEEP_LOG="$log" \
+    "$SEND" task --key Escape 2>/dev/null; rc=$?
+  expect_code 0 "$rc" "Claude Escape send should succeed"
+  out=$(fm_busy_classify tmux sess:win claude task "$home/state")
+  [ "$out" = "idle fm-interrupt" ] \
+    || fail "Claude Escape must classify idle/fm-interrupt, got '$out'"
+  pass "fm-send: a successful Claude Escape records the interrupt lifecycle edge"
+}
+
 test_default_send_pauses_one_second
 test_zero_disables_pause
 test_pause_is_tunable
 test_key_path_never_pauses
 test_unusable_value_reports_itself_without_failing_the_send
 test_leading_dot_fraction_is_accepted
+test_claude_escape_records_interrupt_idle

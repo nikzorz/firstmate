@@ -9,11 +9,9 @@
 #
 # Exit codes: 0 recovered, the bounded wait was recorded, or --check reported a
 #               verdict it could establish.
-#             1 refused - the condition is not proven, a step did not land, or
-#               the resume steer was submitted and its delivery could not be
-#               confirmed.
-#               The stderr line says which, so exit 1 alone never establishes
-#               that nothing reached the crewmate.
+#             1 refused - the condition is not proven or a step did not land.
+#               The stderr line says which; a refusal after Escape says the
+#               prompt was dismissed but the resume instruction was not sent.
 #             2 usage error.
 #
 # WHY (incident 2026-07-29): a crew that exhausts the account usage limit
@@ -52,26 +50,21 @@
 # recheck does not stack duplicate lines.
 #
 # That pause also carries WHEN it is worth rechecking. The same quota read that
-# proves the window is still exhausted reports when it resets, so this records a
-# one-shot recheck deadline (bin/fm-classify-lib.sh's pause_deadline_set) and the
-# supervisors recheck at the reset instead of purely on FM_PAUSE_RESURFACE_SECS.
-# Without it the recheck was up to a full hour late for a window that had already
-# rolled - correct recovery, but late enough on a short window to read as none.
-# A reset time the provider does not report simply is not recorded, which leaves
-# the fixed cadence in charge exactly as before.
+# proves the window is still exhausted reports when it resets, so a future reset
+# is written into the pause line itself as ` until <YYYY-MM-DDTHH:MM:SSZ>` - the
+# declared-wait grammar bin/fm-classify-lib.sh's status_paused_until reads - and
+# both supervisors recheck at that time instead of purely on the fixed cadence.
+# A reset time the provider does not report is simply left off, which leaves the
+# fixed cadence in charge. A changed reset time appends one new pause line.
 #
 # That wait is OPENED and CLOSED here, as one contract. Unlike an ordinary pause,
 # the crew never learns this line exists, so nothing else would ever close it: a
 # `paused:` line left standing keeps a recovered crew on the hour-long pause
 # recheck when it should be back on the wedge cadence, and this feature exists
 # because crews sat frozen for hours unnoticed. So the recover path closes it,
-# and only its OWN line, identified exactly as the idempotent open identifies it.
-# The close follows what the run proved BEFORE it steered - a reset window and a
-# dismissed prompt - so an unconfirmed steer closes the wait too, while a refusal
-# that dismissed or sent nothing leaves it standing.
-# What it RECORDS follows the same rule: the unconfirmed path writes that the
-# instruction was submitted with its delivery unconfirmed, never that the crew
-# was re-steered.
+# and only its OWN line, identified by the same note prefix the idempotent open
+# uses. It closes only once bin/fm-send.sh has durably recorded the resume
+# steer; a refusal that dismissed or sent nothing leaves the wait standing.
 #
 # THE STEER deliberately does not assert where the crew stopped. In the live
 # incident the interrupted validation run had lost custody and the crew correctly
@@ -115,8 +108,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-claude-limit-lib.sh
 . "$SCRIPT_DIR/fm-claude-limit-lib.sh"
-# shellcheck source=bin/fm-send-result-lib.sh
-. "$SCRIPT_DIR/fm-send-result-lib.sh"
 
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
@@ -178,51 +169,59 @@ WINDOW=${WINDOW_READ%%$'\t'*}
 RECHECK_EPOCH=${WINDOW_READ#*$'\t'}
 
 # Record the bounded external wait once, using the fleet's own pause vocabulary.
-# Idempotent: a status stream whose last event is already this pause is left
-# alone, so repeated rechecks add no duplicate wake-triggering lines.
-# The recheck deadline is refreshed on every recheck rather than only on the
-# first append, because the window that will actually clear the wait can change
-# between reads - and an elapsed deadline is dropped rather than re-recorded, so
-# a recheck that finds the window still exhausted returns to the fixed cadence
-# instead of scheduling itself again for a time that has already passed.
+# Idempotent: a status stream whose last event is already this pause, with the
+# same reset time or none newly known, is left alone, so repeated rechecks add no
+# duplicate wake-triggering lines. Only a FUTURE reset is written as `until`: an
+# elapsed one would make the supervisors recheck immediately, so a recheck that
+# still finds the window exhausted returns to the fixed cadence instead of
+# scheduling itself for a time that has already passed.
+PAUSE_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 PAUSE_NOTE="claude usage limit reached; waiting for the account window to reset"
-record_pause() {
-  local last
-  pause_deadline_set "$STATE" "$ID" "$RECHECK_EPOCH"
-  last=$(last_status_line "$LOG")
-  case "$last" in
-    "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") return 0 ;;
+PAUSE_LINE="$PAUSE_VERB: $PAUSE_NOTE"
+
+epoch_to_iso() {  # <epoch>
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+}
+
+# 0 when <line> is this script's own pause, with or without an `until` suffix.
+own_pause_line() {  # <line>
+  case "$1" in
+    "$PAUSE_LINE"|"$PAUSE_LINE until "*) return 0 ;;
   esac
-  printf '%s: %s\n' "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" "$PAUSE_NOTE" >> "$LOG"
+  return 1
+}
+
+record_pause() {
+  local last line last_until until_iso=''
+  case "$RECHECK_EPOCH" in
+    ''|*[!0-9]*) ;;
+    *) [ "$RECHECK_EPOCH" -gt "$(date +%s)" ] && until_iso=$(epoch_to_iso "$RECHECK_EPOCH") ;;
+  esac
+  line=$PAUSE_LINE
+  [ -z "$until_iso" ] || line="$line until $until_iso"
+  last=$(last_status_line "$LOG")
+  if own_pause_line "$last"; then
+    [ "$last" != "$line" ] || return 0
+    if [ -z "$until_iso" ]; then
+      last_until=$(status_paused_until "$last") || return 0
+      [ "$last_until" -le "$(date +%s)" ] || return 0
+    fi
+  fi
+  printf '%s\n' "$line" >> "$LOG"
 }
 
 # Close that wait once recovery has landed, by appending the fleet's ordinary
 # non-paused progress verb so the crew's last event stops satisfying
-# status_is_paused and the daemon's wedge branch is reachable again.
-# Ownership is the same exact-match identity record_pause uses: a `paused:` line
+# status_is_paused and the wedge path is reachable again.
+# Ownership is the same note-prefix identity record_pause uses: a `paused:` line
 # the CREW wrote for its own reason still means what it says and is left alone,
 # because closing a wait firstmate does not own would silence it. Nothing to
 # close - never opened, no status file, or someone else's pause - is a no-op, and
 # a close can never fail the recovery it follows.
-# The recheck deadline is dropped unconditionally here, unlike the status line:
-# it is firstmate's own artifact with no other writer, so recovery through this
-# path leaves nothing behind. It is not the guarantee, though - recovery can also
-# happen without this script running at all, e.g. a human dismissing the prompt in
-# the pane. What actually bounds the deadline's life to the pause it was written
-# for is each supervisor's clear_pause_tracking (bin/fm-watch.sh,
-# bin/fm-supervise-daemon.sh), which drops it alongside every other pause artifact
-# the moment the crew stops declaring the pause.
 RESUME_NOTE="claude usage limit window reset; prompt dismissed and the crew re-steered"
-RESUME_NOTE_UNCONFIRMED="claude usage limit window reset; prompt dismissed and the resume instruction submitted, delivery unconfirmed"
-close_pause() {  # [note]
-  local last note=${1:-$RESUME_NOTE}
-  pause_deadline_clear "$STATE" "$ID"
-  last=$(last_status_line "$LOG")
-  case "$last" in
-    "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}: $PAUSE_NOTE") ;;
-    *) return 0 ;;
-  esac
-  printf 'working: %s\n' "$note" >> "$LOG" 2>/dev/null || true
+close_pause() {
+  own_pause_line "$(last_status_line "$LOG")" || return 0
+  printf 'working: %s\n' "$RESUME_NOTE" >> "$LOG" 2>/dev/null || true
   return 0
 }
 
@@ -277,22 +276,12 @@ esac
 
 STEER=${FM_LIMIT_RESUME_STEER:-"The claude usage limit that stalled you has reset. Do not assume where you stopped: re-read your own current state first, including whether your validation run still exists and belongs to your current commit, then continue from what you actually find."}
 
-# Only a refusal proves the instruction did not land, so ask fm_send_result what
-# happened rather than treating every non-zero status as non-delivery.
-send_status=0
-FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER" || send_status=$?
-case "$(fm_send_result "$send_status")" in
-  delivered|delivered-uncommitted) ;;
-  unconfirmed)
-    close_pause "$RESUME_NOTE_UNCONFIRMED"
-    echo "refused: dismissed the prompt on $ID and submitted the resume instruction, but its delivery is unconfirmed; inspect $ID before steering it by hand, because a second steer repeats the instruction" >&2
-    exit 1
-    ;;
-  *)
-    echo "refused: dismissed the prompt on $ID but the resume instruction did not land; steer it by hand" >&2
-    exit 1
-    ;;
-esac
+# bin/fm-send.sh exits 0 only once the steer is durably recorded for the crew;
+# any nonzero status means nothing was confirmed sent.
+if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$ID" "$STEER"; then
+  echo "refused: dismissed the prompt on $ID but the resume instruction was not sent; steer it by hand" >&2
+  exit 1
+fi
 
 close_pause
 

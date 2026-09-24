@@ -56,6 +56,15 @@
 # (b) and (c) are both resolved the same way, by ending the named process and
 # running cleanup again.
 #
+# A caller that already knows a session belongs to the directory's own owner may
+# name it as exempt, and every process in that session is then left out of the
+# answer. The one caller that does is a home retirement naming the sessions its
+# own process-event runners live in: those runners detach into a process group
+# of their own but keep their launcher's session, so once the launcher's window
+# is gone they read exactly like limit (c) below, while the home's removal is
+# already the owner that retires them. An exemption widens nothing else: a
+# service that detached calls setsid and so never shares an exempt session.
+#
 # Exit codes: 0 when at least one process was found that this test convicts or
 # cannot attribute (those processes are the printed lines), 1 when the directory
 # is clear, 2 when a resident process's ownership could not be established, 3 when
@@ -98,14 +107,17 @@ fm_adopted_session_has_terminal() {
   return 0
 }
 
-# fm_adopted_pid_alive <pid>: 0 when the process still exists as a running one.
-# A zombie has already exited and holds no working directory, so it counts as
-# gone: a pid that is only waiting to be reaped can convict nobody of residency.
-fm_adopted_pid_alive() {
+# fm_adopted_session_leader_alive <sid>: 0 when the process <sid> still exists as
+# a running one AND still leads session <sid>. A zombie has already exited and
+# holds no working directory, so it counts as gone: a pid that is only waiting to
+# be reaped can convict nobody of residency. A live pid leading some other
+# session is a reuse of the number, not the leader that is gone.
+fm_adopted_session_leader_alive() {
   local pid=$1 state
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   state=$(fm_adopted_stat_field "$pid" 1) || return 1
-  [ -n "$state" ] && [ "$state" != Z ]
+  [ -n "$state" ] && [ "$state" != Z ] || return 1
+  [ "$(fm_adopted_session_of "$pid" 2>/dev/null)" = "$pid" ]
 }
 
 # fm_adopted_parent_of <pid>: print the process's parent pid, or nothing.
@@ -163,10 +175,13 @@ fm_adopted_name_pid() {
   printf '%s\t%s\n' "$1" "$(fm_adopted_command_of "$1")"
 }
 
-# fm_adopted_processes <dir>: print "<pid>\t<command>" for each process living in
-# dir that this test convicts or cannot attribute. See the exit codes above.
+# fm_adopted_processes <dir> [<exempt-session>...]: print "<pid>\t<command>" for
+# each process living in dir that this test convicts or cannot attribute. See the
+# exit codes above.
 fm_adopted_processes() {
-  local dir=$1 resolved pids resident pid sid sid_rc lineage found=0
+  local dir=$1 resolved pids resident pid sid sid_rc lineage exempt found=0
+  shift
+  exempt=" $* "
   fm_adopted_scan_supported || return 3
   # Every cwd this is compared against comes back fully resolved, so a recorded
   # path reached through a symlinked pool, home or TMPDIR has to be resolved too
@@ -189,6 +204,7 @@ fm_adopted_processes() {
       fm_adopted_name_pid "$pid"
       return 2
     fi
+    case "$exempt" in *" $sid "*) continue ;; esac
     case "$resident" in
       *" $sid "*)
         # A session led from inside the directory is a detached service only when
@@ -205,7 +221,7 @@ fm_adopted_processes() {
         # naming a process that has gone is the double-forked daemon's shape as
         # much as an orphaned crew process's, and nothing here can tell them
         # apart, so the whole answer is unknown rather than clear.
-        if fm_adopted_pid_alive "$sid"; then
+        if fm_adopted_session_leader_alive "$sid"; then
           continue
         fi
         fm_adopted_name_pid "$pid"

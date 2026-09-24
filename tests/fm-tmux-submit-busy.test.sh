@@ -30,7 +30,17 @@ case "${1:-}" in
       case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac
     done
     exit 0 ;;
-  capture-pane) cat "$COMPOSER" 2>/dev/null; exit 0 ;;
+  capture-pane)
+    if [ -n "${FM_FAKE_CAPTURE_COUNT:-}" ]; then
+      count=0
+      [ ! -f "$FM_FAKE_CAPTURE_COUNT" ] || count=$(cat "$FM_FAKE_CAPTURE_COUNT")
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$FM_FAKE_CAPTURE_COUNT"
+      if [ "${FM_FAKE_FAIL_FIRST_CAPTURE:-0}" = 1 ] && [ "$count" -eq 1 ]; then
+        exit 1
+      fi
+    fi
+    cat "$COMPOSER" 2>/dev/null; exit 0 ;;
   send-keys)
     shift; is_enter=0
     while [ "$#" -gt 0 ]; do
@@ -40,6 +50,7 @@ case "${1:-}" in
       [ -z "${FM_FAKE_SENT:-}" ] || printf 'Enter\n' >> "$FM_FAKE_SENT"
       if [ -n "${FM_FAKE_SWALLOW:-}" ] && [ -f "$FM_FAKE_SWALLOW" ]; then
         [ "${FM_FAKE_PERSIST_SWALLOW:-0}" = 1 ] || rm -f "$FM_FAKE_SWALLOW"
+        [ "${FM_FAKE_APPEND_BUSY:-0}" != 1 ] || printf '%s\n' "${FM_FAKE_BUSY_LINE:-✻ Working…}" >> "$COMPOSER"
       else
         printf '╭─────╮\n│ >   │\n╰─────╯\n' > "$COMPOSER"
       fi
@@ -93,6 +104,46 @@ test_idle_pane_pending_returns_pending() {
   pass "fm_tmux_submit_enter_core: idle pane + pending composer stays pending (genuine swallow preserved)"
 }
 
+test_wrapped_continuation_retries_swallowed_enter() {
+  local dir fakebin composer sent vfile
+  dir="$TMP_ROOT/wrapped-continuation-swallow"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  sent="$dir/sent.log"
+  vfile="$dir/verdict"
+  printf '❯ wrapped typed input\ncontinues on the next terminal row\n' > "$composer"
+  : > "$sent"
+  touch "$dir/.swallow"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
+    FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_FAKE_PANE_BUSY=0 \
+    fm_tmux_submit_enter_core "win" 3 0.05 > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "wrapped input must remain pending after swallowed Enter, got '$(cat "$vfile")'"
+  [ "$(grep -c '^Enter$' "$sent" 2>/dev/null || true)" -eq 3 ] \
+    || fail "wrapped input should consume the Enter retry budget"
+  pass "fm_tmux_submit_enter_core: wrapped input retains swallowed-Enter retries"
+}
+
+test_placeholder_like_bare_input_retries_swallowed_enter() {
+  local dir fakebin composer sent vfile
+  dir="$TMP_ROOT/placeholder-like-swallow"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  sent="$dir/sent.log"
+  vfile="$dir/verdict"
+  printf 'transcript\n❯ Type a message...\n' > "$composer"
+  : > "$sent"
+  touch "$dir/.swallow"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
+    FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_FAKE_PANE_BUSY=0 \
+    fm_tmux_submit_enter_core "win" 3 0.05 > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "placeholder-like bare input must remain pending after swallowed Enter, got '$(cat "$vfile")'"
+  [ "$(grep -c '^Enter$' "$sent" 2>/dev/null || true)" -eq 3 ] \
+    || fail "placeholder-like bare input should consume the Enter retry budget"
+  pass "fm_tmux_submit_enter_core: placeholder-like bare input retains swallowed-Enter retries"
+}
+
 test_busy_pane_composer_clears_first_try() {
   local dir fakebin composer sent vfile
   dir="$TMP_ROOT/busy-clear"
@@ -137,6 +188,25 @@ test_busy_pane_unknown_stays_unknown() {
   [ "$(cat "$vfile")" = unknown ] \
     || fail "a busy pane must not convert an unsafe composer to empty, got '$(cat "$vfile")'"
   pass "fm_tmux_submit_enter_core: busy conversion is limited to proven pending input"
+}
+
+test_failed_baseline_capture_keeps_busy_unknown_unconfirmed() {
+  local dir fakebin composer vfile
+  dir="$TMP_ROOT/failed-baseline"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  vfile="$dir/verdict"
+  printf '│ > unbounded\n' > "$composer"
+  touch "$dir/.swallow"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" \
+    FM_FAKE_CAPTURE_COUNT="$dir/captures" FM_FAKE_FAIL_FIRST_CAPTURE=1 \
+    FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_FAKE_APPEND_BUSY=1 \
+    fm_tmux_submit_core "win" "fix" 3 0.05 0.05 > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = unknown ] \
+    || fail "a failed idle-baseline capture must not let a later busy footer confirm delivery, got '$(cat "$vfile")'"
+  grep -q 'Working' "$composer" \
+    || fail "failed-baseline regression did not render the post-Enter busy footer"
+  pass "fm_tmux_submit_core: failed baseline capture disables busy unknown conversion"
 }
 
 test_busy_pane_ambiguous_pending_retries_without_conversion() {
@@ -251,6 +321,22 @@ test_claude_busy_signature_uses_real_capture_shapes() {
   pane_busy old-claude claude || fail "older Claude escape footer should be busy"
   printf 'Working...\n' > "$composer"
   pane_busy pi pi || fail "Pi Working footer should be busy"
+  pane_busy pi-signed pi-signed || fail "pi-signed should share Pi's exact Working footer"
+  # omp (Oh My Pi) renders its TUI line with U+2026; Pi's three-dot footer is
+  # not omp's signature, and neither Pi nor Codex may borrow the ellipsis form.
+  # The status-row spinner cell is its second, independent signal, and an idle
+  # status row (identity glyph, no elapsed time) is not busy.
+  pane_busy omp-three-dots omp && fail "omp must not read Pi's three-dot Working... footer as busy"
+  printf ' \xf3\xb1\x8a\xb7 Working\xe2\x80\xa6\n' > "$composer"
+  pane_busy omp omp || fail "omp TUI Working… footer should be busy"
+  pane_busy omp-ellipsis-pi pi && fail "Pi must not borrow omp's Working… footer"
+  pane_busy omp-ellipsis-codex codex && fail "Codex must not borrow omp's Working… footer"
+  printf ' \xe2\xa0\xa7 11s  \xc2\xb7 gpt-6-astra\n' > "$composer"
+  pane_busy omp-spinner omp || fail "omp braille spinner plus elapsed cell should be busy"
+  printf ' \xf3\xb0\xb5\x97  \xc2\xb7 gpt-6-astra \xc2\xb7 36.7%%/41K\n' > "$composer"
+  pane_busy omp-idle omp && fail "omp idle status row must not read busy"
+  printf 'esc interrupt\n' > "$composer"
+  pane_busy omp-cross omp && fail "omp must ignore OpenCode's interrupt footer"
   printf 'Ctrl+c:cancel\n' > "$composer"
   pane_busy grok grok || fail "Grok cancel footer should be busy"
   pass "fm_pane_is_busy: Claude spinner is scoped, multi-frame, and backward-compatible"
@@ -266,7 +352,6 @@ test_submit_core_scopes_the_busy_check_to_the_target_harness() {
   composer="$dir/composer"
   sent="$dir/sent.log"
   vfile="$dir/verdict"
-  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$composer"
   : > "$sent"
   touch "$dir/.swallow"
   # A real busy-Claude tail beside the still-pending composer, read through the
@@ -274,7 +359,7 @@ test_submit_core_scopes_the_busy_check_to_the_target_harness() {
   run_core() {  # <harness> -> verdict
     PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
       FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 \
-      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "$2"' \
+      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "" "$2"' \
       _ "$ROOT" "$1" 2>/dev/null
   }
   printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n✢ Pollinating… (16s · ↓ 1.1k tokens)\n' > "$composer"
@@ -288,11 +373,11 @@ test_submit_core_scopes_the_busy_check_to_the_target_harness() {
 }
 
 test_submit_core_falls_back_for_an_unregistered_harness() {
-  # bin/fm-spawn.sh's raw-launch escape hatch records the launch command's
-  # basename as the harness, so meta can hold a name with no verified signature.
-  # "Not busy" is an assertion, and the confirmation read has no basis for it
-  # there: it must fall back to the generic signature rather than report a
-  # delivered message as a swallow.
+  # A recorded harness with no verified busy signature (the raw-launch escape
+  # hatch records its launch command's basename) cannot be classified, and "not
+  # busy" is an assertion the confirmation read has no basis for there: it must
+  # fall back to the generic signature rather than report a delivered message
+  # as a swallow.
   local dir fakebin composer sent vfile
   dir="$TMP_ROOT/unregistered-harness-busy"
   fakebin=$(make_submit_mock "$dir")
@@ -304,7 +389,7 @@ test_submit_core_falls_back_for_an_unregistered_harness() {
   run_unregistered_core() {  # <harness> -> verdict
     PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
       FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 \
-      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "$2"' \
+      bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_submit_enter_core win 2 0.05 "" "$2"' \
       _ "$ROOT" "$1" 2>/dev/null
   }
   # A generic busy footer beside a still-pending composer: the queued Enter.
@@ -325,13 +410,49 @@ test_submit_core_falls_back_for_an_unregistered_harness() {
   pass "fm_tmux_submit_enter_core: an unregistered harness falls back to the generic signature"
 }
 
+test_tmux_adapter_scopes_the_turn_started_read_to_the_trailing_harness() {
+  # The backend dispatcher's trailing harness reaches the tmux submit core's
+  # pre-typing baseline and turn-started poll, and the expected-label argument
+  # before it is never mistaken for a harness.
+  local dir fakebin composer vfile
+  dir="$TMP_ROOT/adapter-harness"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  vfile="$dir/verdict"
+  run_adapter() {  # <expected-label> <harness> -> verdict
+    printf '│ > unbounded\n' > "$composer"
+    touch "$dir/.swallow"
+    PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 FM_FAKE_APPEND_BUSY=1 \
+      FM_FAKE_BUSY_LINE='✢ Pollinating… (16s · ↓ 1.1k tokens)' \
+      bash -c '. "$1/bin/fm-backend.sh"; fm_backend_send_text_submit tmux win fix 3 0.05 0.05 "$2" "$3"' \
+      _ "$ROOT" "$1" "$2" 2>/dev/null
+  }
+  run_adapter label claude > "$vfile"
+  [ "$(cat "$vfile")" = empty ] \
+    || fail "an idle-to-busy Claude transition must confirm the submit, got '$(cat "$vfile")'"
+  grep -q 'Pollinating' "$composer" \
+    || fail "adapter regression did not render the post-Enter Claude spinner"
+  run_adapter label '' > "$vfile"
+  [ "$(cat "$vfile")" = unknown ] \
+    || fail "without a harness the Claude spinner is invisible and the submit stays unconfirmed, got '$(cat "$vfile")'"
+  run_adapter claude '' > "$vfile"
+  [ "$(cat "$vfile")" = unknown ] \
+    || fail "the expected-label argument must never be read as the harness, got '$(cat "$vfile")'"
+  pass "fm_backend_send_text_submit tmux: the trailing harness scopes the turn-started read"
+}
+
 test_busy_pane_pending_returns_empty
 test_idle_pane_pending_returns_pending
+test_wrapped_continuation_retries_swallowed_enter
+test_placeholder_like_bare_input_retries_swallowed_enter
 test_busy_pane_composer_clears_first_try
 test_idle_pane_composer_clears_first_try
 test_busy_pane_unknown_stays_unknown
+test_failed_baseline_capture_keeps_busy_unknown_unconfirmed
 test_busy_pane_ambiguous_pending_retries_without_conversion
 test_unrecognized_state_skips_busy_conversion
 test_claude_busy_signature_uses_real_capture_shapes
 test_submit_core_scopes_the_busy_check_to_the_target_harness
 test_submit_core_falls_back_for_an_unregistered_harness
+test_tmux_adapter_scopes_the_turn_started_read_to_the_trailing_harness

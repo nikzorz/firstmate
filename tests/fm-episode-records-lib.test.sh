@@ -12,10 +12,14 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-episode-records-lib)
 
-KEY_FAMILIES=(hash count stale stale-since paused paused-rechecked paused-resurfaced
-  wedge-escalations advancing-resurfaced advancing-absorbs herdr-escalated)
-ID_FAMILIES=(subsuper-stale subsuper-paused subsuper-advancing
+KEY_FAMILIES=(hash count stale stale-since churn-since paused paused-rechecked
+  paused-resurfaced waiting-resurfaced writing-since writing-resurfaced wedge-escalations
+  dead-reported advancing-resurfaced advancing-absorbs herdr-escalated)
+ID_FAMILIES=(subsuper-stale subsuper-paused subsuper-pause-until-due subsuper-advancing
   subsuper-advancing-resurfaced subsuper-advancing-absorbs subsuper-seen-status hb-surfaced)
+# Keyed by the raw id rather than its folded spelling, as the secondmate wake-stall
+# writers key them; the receipts directory is counted as one more record.
+RAW_ID_FAMILIES=(secondmate-wake-progress secondmate-wake-ring secondmate-wake-stall)
 
 # seed_occupant <state> <target> <id> writes every record a supervisor keeps for
 # one task on one endpoint, spelled the way the writers spell them.
@@ -27,6 +31,9 @@ seed_occupant() {
   for f in "${ID_FAMILIES[@]}"; do printf '3\n' > "$state/.$f-$idkey"; done
   printf 'sig\n' > "$state/.seen-$(printf '%s.status' "$3" | tr '.' '_')"
   printf 'sig\n' > "$state/.seen-$(printf '%s.turn-ended' "$3" | tr '.' '_')"
+  for f in "${RAW_ID_FAMILIES[@]}"; do printf '3\n' > "$state/.$f-$3"; done
+  mkdir -p "$state/.secondmate-wake-stall-receipts/$3"
+  printf '1-1\n' > "$state/.secondmate-wake-stall-receipts/$3/1-1"
 }
 
 # count_occupant <state> <target> <id> prints how many of those records exist.
@@ -38,6 +45,8 @@ count_occupant() {
   for f in "${ID_FAMILIES[@]}"; do [ -e "$state/.$f-$idkey" ] && n=$((n + 1)); done
   [ -e "$state/.seen-$(printf '%s.status' "$3" | tr '.' '_')" ] && n=$((n + 1))
   [ -e "$state/.seen-$(printf '%s.turn-ended' "$3" | tr '.' '_')" ] && n=$((n + 1))
+  for f in "${RAW_ID_FAMILIES[@]}"; do [ -e "$state/.$f-$3" ] && n=$((n + 1)); done
+  [ -e "$state/.secondmate-wake-stall-receipts/$3" ] && n=$((n + 1))
   printf '%s\n' "$n"
 }
 
@@ -66,7 +75,7 @@ test_leaves_a_live_neighbor_and_home_records_alone() {
   printf 'x\n' > "$state/build.status"
   fm_episode_records_clear "$state" "firstmate:fm-build" "build" || fail "clear returned nonzero"
   expect_code 0 "$(count_occupant "$state" "firstmate:fm-build" "build")" "the target's own records survived"
-  total=$(( ${#KEY_FAMILIES[@]} + ${#ID_FAMILIES[@]} + 2 ))
+  total=$(( ${#KEY_FAMILIES[@]} + ${#ID_FAMILIES[@]} + ${#RAW_ID_FAMILIES[@]} + 3 ))
   expect_code "$total" "$(count_occupant "$state" "firstmate:sub-fm-build" "sub-build")" \
     "a hyphen-prefixed neighbor lost records as collateral"
   expect_code "$total" "$(count_occupant "$state" "firstmate:fm-build-2" "build-2")" \

@@ -125,7 +125,7 @@ done
 pass 'every agent skill is measured'
 
 trigger_lines=$(printf '%s\n' "$OUT" | grep -cE '^ +trigger: ' || true)
-skill_count=$(find "$ROOT/.agents/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+skill_count=$(find -L "$ROOT/.agents/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [ "$trigger_lines" = "$skill_count" ] ||
   fail "expected $skill_count skill triggers, got $trigger_lines"
 assert_not_contains "$OUT" 'trigger: >-' 'folded frontmatter descriptions are unfolded'

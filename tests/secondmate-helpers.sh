@@ -78,17 +78,20 @@ trap fm_test_herdr_guard_exit EXIT
 # refusal and its child record sweep. A fake herdr rides along because a child
 # recorded on the herdr backend is closed by pane, and the real CLI's close path
 # starts a live server for the recorded session first; its calls are logged as
-# `herdr <args>` to FM_FAKE_TMUX_LOG. Echoes the fakebin dir.
+# `herdr <args>` to FM_FAKE_TMUX_LOG, a pane it has closed reads as gone, and every
+# other pane reads as present. Echoes the fakebin dir.
 make_fake_tmux() {
   local dir=$1 fakebin capture
   fakebin=$(fm_fakebin "$dir")
   capture="$dir/pane.txt"
-  printf 'idle prompt\n' > "$capture"
+  # A real, positively identified empty agent composer. A blank capture is
+  # deliberately unknown under the fleet-wide strict blank-row posture.
+  printf '❯\n' > "$capture"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  has-session|new-session|new-window|kill-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     if [ "${1:-}" = kill-window ] && [ -n "${FM_FAKE_TMUX_KILL_WINDOW_LANDS_META:-}" ]; then
       printf 'window=firstmate:fm-late\nkind=ship\nmode=no-mistakes\n' \
@@ -96,10 +99,44 @@ case "${1:-}" in
     fi
     exit 0
     ;;
+  send-keys)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -l ]; then
+        case "$arg" in
+          ". '"*"'")
+            staged=${arg#". '"}
+            staged=${staged%"'"}
+            [ ! -f "$staged" ] || printf 'staged-launch %s\n' "$(cat "$staged")" >> "$FM_FAKE_TMUX_LOG"
+            ;;
+        esac
+      fi
+      prev=$arg
+    done
+    exit 0
+    ;;
   list-windows)
-    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-      printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
-    fi
+    session=
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -t ]; then session=$arg; break; fi
+      prev=$arg
+    done
+    while IFS= read -r recorded; do
+      [ -n "$recorded" ] || continue
+      if [ -z "$session" ]; then
+        printf '%s\n' "$recorded"
+        continue
+      fi
+      case "$recorded" in
+        "$session":*) printf '%s\n' "${recorded#*:}" ;;
+        *:*) ;;
+        *) printf '%s\n' "$recorded" ;;
+      esac
+    done <<EOF
+${FM_FAKE_TMUX_WINDOW:-}
+EOF
     exit 0
     ;;
   display-message)
@@ -167,13 +204,29 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  cat > "$fakebin/herdr" <<'SH'
+  cat > "$fakebin/herdr" <<SH
 #!/usr/bin/env bash
 set -u
-printf 'herdr %s\n' "$*" >> "${FM_FAKE_TMUX_LOG:-/dev/null}"
-case "${1:-} ${2:-}" in
-  'status --json') printf '{"server":{"running":true}}\n' ;;
-  'pane close') ;;
+printf 'herdr %s\\n' "\$*" >> "\${FM_FAKE_TMUX_LOG:-/dev/null}"
+session=
+prev=
+for arg in "\$@"; do
+  [ "\$prev" = --session ] && session=\$arg
+  prev=\$arg
+done
+case "\${1:-} \${2:-}" in
+  'status --json') printf '{"server":{"running":true}}\\n' ;;
+  'session list')
+    printf '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\\n' "\$session" '$dir/herdr.sock'
+    ;;
+  'pane close') printf '%s\\n' "\${3:-}" >> '$dir/herdr-closed' ;;
+  'pane get')
+    if grep -qxF -- "\${3:-}" '$dir/herdr-closed' 2>/dev/null; then
+      printf '%s\\n' '{"error":{"code":"pane_not_found"}}'
+      exit 1
+    fi
+    printf '{"result":{"pane":{"pane_id":"%s"}}}\\n' "\${3:-}"
+    ;;
   *) exit 1 ;;
 esac
 SH

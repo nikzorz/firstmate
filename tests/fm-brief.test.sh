@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-brief.sh.
 #
-# Regression coverage for the heredoc-in-command-substitution parse bug (issue
-# #166): each ship-mode branch builds its Definition-of-done text with
-# `VAR=$(cat <<EOF ... EOF)`. Bash's lexer tracks quote state through the
-# heredoc body while it scans for the matching `)` of the command
-# substitution, so a single unescaped apostrophe anywhere in that body breaks
-# parsing of the *entire rest of the script* - `bash -n` fails, not just the
-# generated brief. A plain `cat > file <<EOF ... EOF` (not wrapped in `$(...)`)
-# is unaffected, so the secondmate charter block does not need this guard.
+# Regression coverage for the heredoc-in-command-substitution parse bug (issues
+# #166, #958, #1069). Building a variable with `VAR=$(cat <<EOF ... EOF)` is
+# unsafe on Bash 3.2 (macOS /bin/bash): the lexer scans for the matching `)` of
+# the command substitution textually and tracks quote state through the heredoc
+# body, so a single apostrophe, unbalanced quote, or unbalanced paren anywhere
+# in that body breaks parsing of the *entire rest of the script* - `bash -n`
+# fails, not just the generated brief. The DOD and Herdr-section builders now
+# use `IFS= read -r -d '' VAR <<EOF || true` instead, which removes the `$(...)`
+# wrapper and eliminates the whole defect class regardless of future prose.
+# test_no_heredoc_in_command_substitution guards that structure directly.
+# Ambient `bash -n` here is Bash 5 and cannot see the bug, so the real
+# cross-version enforcement lives in the macos-stock-bash CI job.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -18,52 +22,152 @@ TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
 
-# Every missing-required-argument path must name the missing argument and print
-# the usage, rather than aborting on an unbound positional under `set -u`.
-test_missing_required_arguments_print_usage() {
-  local home out rc
-  home="$TMP_ROOT/missing-args-home"
-  mkdir -p "$home/data"
-
-  check_missing() {
-    local label=$1 needle=$2; shift 2
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$@" 2>&1); rc=$?
-    [ "$rc" -ne 0 ] || fail "fm-brief.sh $label exited 0 on a missing argument"
-    assert_contains "$out" "$needle" "fm-brief.sh $label did not name the missing argument"
-    assert_contains "$out" "Usage: fm-brief.sh" "fm-brief.sh $label did not print the usage"
-    assert_contains "$out" "missing required argument" "fm-brief.sh $label did not report a missing argument"
-    case "$out" in
-      *"unbound variable"*) fail "fm-brief.sh $label aborted on an unbound variable" ;;
-    esac
-  }
-
-  check_missing "with no arguments" "<task-id>"
-  check_missing "--scout with no task id" "<task-id>" --scout
-  check_missing "--secondmate with no task id" "<task-id>" --secondmate
-  check_missing "--herdr-lab with no task id" "<task-id>" --herdr-lab
-  check_missing "ship without a repo" "<repo-name>" brief-missing-repo-b1
-  check_missing "--scout without a repo" "<repo-name>" brief-missing-repo-b2 --scout
-  check_missing "--herdr-lab without a repo" "<repo-name>" brief-missing-repo-b3 --herdr-lab
-  check_missing "--secondmate without a project" "<project>" brief-missing-proj-b4 --secondmate
-
-  # A usage refusal must not leave a half-created brief directory behind.
-  [ ! -e "$home/data/brief-missing-repo-b1" ] \
-    || fail "fm-brief.sh created a brief directory while refusing a missing repo argument"
-  [ ! -e "$home/data/brief-missing-proj-b4" ] \
-    || fail "fm-brief.sh created a brief directory while refusing a missing project argument"
-
-  pass "fm-brief.sh: every missing-argument path names the argument and prints usage"
-}
-
-# The script itself must always parse. This is the direct regression test for
-# issue #166: a stray apostrophe in any of the three DOD heredoc bodies
-# (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
+# The script itself must always parse under the ambient bash. That is Bash 5 in
+# CI and locally, where the issue #958/#1069 parser bug does not fire, so this
+# is a weak guard on its own; test_no_heredoc_in_command_substitution and the
+# macos-stock-bash CI job carry the real cross-version enforcement.
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
   expect_code 0 "$rc" "bash -n bin/fm-brief.sh must parse cleanly (got: $out)"
   [ -z "$out" ] || fail "bash -n bin/fm-brief.sh emitted unexpected output: $out"
   pass "fm-brief.sh: bash -n succeeds"
+}
+
+# Structural class guard (issues #166, #958, #1069): never build a variable by
+# wrapping a heredoc in a command substitution (`VAR=$(cat <<EOF ... EOF)`).
+# That construct is what breaks Bash 3.2 parsing, and pinning one historical
+# apostrophe phrase (as the old test did) missed the #945 reintroduction. This
+# guards the *shape* directly against the whole file, so any future DOD or
+# section builder that reintroduces the class fails here regardless of prose.
+test_no_heredoc_in_command_substitution() {
+  local unsafe safe
+  unsafe="$TMP_ROOT/heredoc-in-substitution.sh"
+  safe="$TMP_ROOT/plain-heredoc.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(' '  cat <<EOF' 'body' 'EOF' ')' > "$unsafe"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'cat <<EOF' '$(' '  cat <<INNER' 'INNER' ')' 'EOF' > "$safe"
+  if no_heredoc_in_command_substitution "$unsafe"; then
+    fail "structural guard accepted a multiline heredoc nested in a command substitution"
+  fi
+  no_heredoc_in_command_substitution "$safe" \
+    || fail "structural guard treated heredoc body prose as shell structure"
+  no_heredoc_in_command_substitution "$ROOT/bin/fm-brief.sh" \
+    || fail "fm-brief.sh wraps a heredoc in a command substitution (breaks Bash 3.2 parsing)"
+  pass "fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)"
+}
+
+no_heredoc_in_command_substitution() {
+  perl - "$1" <<'PERL'
+use strict;
+use warnings;
+
+my $path = shift;
+open my $source, '<', $path or die "$path: $!\n";
+my @frames;
+my @heredocs;
+my $quote = '';
+my $line_number = 0;
+
+while (my $line = <$source>) {
+  $line_number++;
+  if (@heredocs) {
+    my $candidate = $line;
+    $candidate =~ s/\r?\n\z//;
+    $candidate =~ s/^\t+// if $heredocs[0]{strip_tabs};
+    shift @heredocs if $candidate eq $heredocs[0]{delimiter};
+    next;
+  }
+
+  my $length = length $line;
+  for (my $i = 0; $i < $length; $i++) {
+    my $char = substr($line, $i, 1);
+    if ($quote eq "'") {
+      $quote = '' if $char eq "'";
+      next;
+    }
+    if ($char eq '\\') {
+      $i++;
+      next;
+    }
+    if ($quote eq '"' && $char eq '"') {
+      $quote = '';
+      next;
+    }
+    if ($char eq "'" && $quote eq '') {
+      $quote = "'";
+      next;
+    }
+    if ($char eq '"' && $quote eq '') {
+      $quote = '"';
+      next;
+    }
+    if ($char eq '#' && $quote eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[\s;|&()]/)) {
+      last;
+    }
+    if ($char eq '$' && substr($line, $i + 1, 1) eq '(') {
+      push @frames, { depth => 1, quote => $quote };
+      $quote = '';
+      $i++;
+      next;
+    }
+    if (@frames && $quote eq '' && $char eq '(') {
+      $frames[-1]{depth}++;
+      next;
+    }
+    if (@frames && $quote eq '' && $char eq ')') {
+      $frames[-1]{depth}--;
+      if ($frames[-1]{depth} == 0) {
+        my $frame = pop @frames;
+        $quote = $frame->{quote};
+      }
+      next;
+    }
+    next unless $quote eq '' && $char eq '<' && substr($line, $i + 1, 1) eq '<';
+    if (@frames) {
+      print STDERR "$path:$line_number\n";
+      exit 1;
+    }
+
+    my $j = $i + 2;
+    my $strip_tabs = substr($line, $j, 1) eq '-';
+    $j++ if $strip_tabs;
+    $j++ while substr($line, $j, 1) =~ /[ \t]/;
+    my $delimiter = '';
+    my $delimiter_quote = '';
+    for (; $j < $length; $j++) {
+      my $token = substr($line, $j, 1);
+      if ($delimiter_quote) {
+        if ($token eq $delimiter_quote) {
+          $delimiter_quote = '';
+        } elsif ($token eq '\\' && $delimiter_quote eq '"') {
+          $j++;
+          $delimiter .= substr($line, $j, 1);
+        } else {
+          $delimiter .= $token;
+        }
+        next;
+      }
+      if ($token eq "'" || $token eq '"') {
+        $delimiter_quote = $token;
+        next;
+      }
+      if ($token eq '\\') {
+        $j++;
+        $delimiter .= substr($line, $j, 1);
+        next;
+      }
+      last if $token =~ /[\s;|&()<>]/;
+      $delimiter .= $token;
+    }
+    push @heredocs, { delimiter => $delimiter, strip_tabs => $strip_tabs };
+    $i = $j - 1;
+  }
+}
+
+exit 0;
+PERL
 }
 
 test_help_includes_entire_header() {
@@ -73,8 +177,9 @@ test_help_includes_entire_header() {
   pass "fm-brief.sh: --help renders the complete header"
 }
 
-# Registry with one project per delivery mode, so each ship-mode DOD branch is
-# exercised. A project absent from the registry defaults to no-mistakes.
+# Registry with one project per delivery mode. fm-brief.sh no longer reads it -
+# the ship mode arrives as an explicit flag - so this fixture exists to prove the
+# scaffold ignores the registered posture (test_ship_mode_is_explicit_not_registry).
 write_registry() {
   local home=$1
   mkdir -p "$home/data"
@@ -90,19 +195,25 @@ EOF
 # one of these DOD blocks, since a broken heredoc corrupts or empties the
 # generated brief content, not just the script's own syntax.
 test_ship_modes_generate_clean_briefs() {
-  local home id brief status
+  local home id mode brief status
   home="$TMP_ROOT/ship-home"
   write_registry "$home"
 
-  for id_proj in "brief-nomistakes-a1:no-registry-proj" "brief-directpr-a2:direct-proj" "brief-localonly-a3:local-proj"; do
-    id=${id_proj%%:*}
-    proj=${id_proj##*:}
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1; status=$?
-    expect_code 0 "$status" "fm-brief.sh $id $proj should exit 0"
+  for id_mode in "brief-nomistakes-a1:no-mistakes" "brief-directpr-a2:direct-PR" "brief-localonly-a3:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1; status=$?
+    expect_code 0 "$status" "fm-brief.sh $id --mode $mode should exit 0"
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
+    grep -qx "Delivery contract: mode=$mode" "$brief" \
+      || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
+    assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
+    assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
+    assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
+    assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
@@ -110,19 +221,92 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# A ship task's delivery mode is firstmate's per-task decision, so a missing or
+# unusable value must stop the scaffold instead of silently defaulting. The
+# no-mistakes-prod-only row is the conditional registry policy: it is never a task
+# mode, and its refusal must say to classify the task's surface first.
+test_ship_mode_is_required_and_closed_set() {
+  local home id out status label flag expect
+  home="$TMP_ROOT/mode-required-home"
+  mkdir -p "$home/data"
+  id=0
+  while IFS='|' read -r label flag expect; do
+    [ -n "$label" ] || continue
+    id=$((id + 1))
+    # shellcheck disable=SC2086  # flag is an intentional word-split arg list (may be empty)
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "brief-required-$id" some-proj $flag 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: expected a non-zero exit"
+    assert_contains "$out" "$expect" "$label: refusal did not explain the contract"
+    assert_absent "$home/data/brief-required-$id/brief.md" "$label: refused scaffold still wrote a brief"
+  done <<'ROWS'
+missing --mode||ship briefs require --mode
+empty --mode value|--mode|requires a value
+unknown mode value|--mode nope|must be one of no-mistakes, direct-PR, local-only
+conditional policy is not a task mode|--mode no-mistakes-prod-only|classify this task's surface
+ROWS
+  pass "fm-brief.sh: ship --mode is required and closed-set validated"
+}
+
+# The registry is the captain's standing posture, not this task's answer: the
+# scaffold must follow the explicit flag even when the project is registered
+# with a different mode, and must not consult the registry at all.
+test_ship_mode_is_explicit_not_registry() {
+  local home brief
+  home="$TMP_ROOT/explicit-over-registry-home"
+  write_registry "$home"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a5 direct-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "explicit no-mistakes brief on a direct-PR project should scaffold"
+  brief="$home/data/brief-explicit-a5/brief.md"
+  grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
+    || fail "registered direct-PR posture overrode the explicit --mode"
+  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+    "explicit no-mistakes brief did not render the pipeline definition of done"
+
+  # An unregistered project is not a blocker either, because nothing is looked up.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a6 never-registered --mode local-only >/dev/null 2>&1 \
+    || fail "unregistered project should still scaffold from the explicit mode"
+  grep -qx "Delivery contract: mode=local-only" "$home/data/brief-explicit-a6/brief.md" \
+    || fail "unregistered project did not honour the explicit --mode"
+  pass "fm-brief.sh: the explicit ship mode wins over the registered posture"
+}
+
+# yolo is firstmate's merge authority and never reaches the worker, and a scout
+# or charter carries no delivery contract. Each must refuse rather than accept and
+# discard the flag, which would look recorded but change nothing.
+test_delivery_flags_are_refused_where_they_do_not_apply() {
+  local home out status label args expect
+  home="$TMP_ROOT/refused-flags-home"
+  mkdir -p "$home/data"
+  while IFS='|' read -r label args expect; do
+    [ -n "$label" ] || continue
+    # shellcheck disable=SC2086  # args is an intentional word-split arg list
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: expected a non-zero exit"
+    assert_contains "$out" "$expect" "$label: refusal did not explain why"
+  done <<'ROWS'
+yolo on a ship brief|brief-refused-b1 some-proj --mode direct-PR --yolo on|--yolo is not a brief input
+yolo=value form on a ship brief|brief-refused-b2 some-proj --mode direct-PR --yolo=off|--yolo is not a brief input
+mode on a scout brief|brief-refused-b3 some-proj --scout --mode direct-PR|--mode applies only to ship briefs
+mode on a secondmate charter|brief-refused-b4 --secondmate --no-projects --mode no-mistakes|--mode applies only to ship briefs
+ROWS
+  pass "fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped"
+}
+
 test_faster_paths_use_configured_authority_without_stacked_review() {
   local home id brief
   home="$TMP_ROOT/configured-authority-home"
   write_registry "$home"
   id="brief-direct-authority-a4"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj --mode direct-PR >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_grep "The configured merge authority decides whether to merge the PR; firstmate relays the outcome." "$brief" \
     "direct-PR brief lost configured merge authority"
   assert_no_grep "The captain reviews and merges the PR" "$brief" \
     "direct-PR brief hard-coded captain-only authority"
   id="brief-local-authority-a4"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" local-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" local-proj --mode local-only >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_grep "The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path." "$brief" \
     "local-only brief lost configured merge authority and guarded landing"
@@ -130,20 +314,58 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
     "local-only brief hard-coded captain-only authority"
   assert_no_grep "Firstmate then reviews your branch diff" "$brief" \
     "local-only brief retained a personal review stacked on the selected delivery path"
+  assert_no_grep "pass \`--intent\` as only this brief's \`## Captain's intent\`" "$home/data/$id/brief.md" \
+    "local-only brief must not include the no-mistakes --intent contract"
+  id="brief-direct-intent-a4"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj --mode direct-PR >/dev/null 2>&1
+  assert_no_grep "pass \`--intent\` as only this brief's \`## Captain's intent\`" "$home/data/$id/brief.md" \
+    "direct-PR brief must not include the no-mistakes --intent contract"
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
+}
+
+# A PR-based ship must not report done on a draft, which cannot be merged; a
+# lane that deliberately holds a draft declares a wait instead. local-only opens
+# no PR, so it must not carry the requirement.
+test_pr_based_dod_requires_non_draft() {
+  local home mode id brief
+  home="$TMP_ROOT/draft-dod-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-draft-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$mode: brief was not scaffolded"
+    if [ "$mode" = local-only ]; then
+      assert_no_grep "isDraft" "$brief" "$mode: a branch-only delivery must not require a non-draft PR"
+      continue
+    fi
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'confirm it is not a draft (`gh pr view <url> --json isDraft` must print false)' "$brief" \
+      "$mode: done must require reading the PR back from the forge as non-draft"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'mark it ready with `gh-axi pr ready`' "$brief" \
+      "$mode: a draft must be marked ready before done"
+    assert_grep "If you deliberately keep the PR a draft, append \`paused" "$brief" \
+      "$mode: a deliberate draft must declare a wait instead of done"
+  done
+  pass "fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
 }
 
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
-  local home id brief
+  local home id brief spelling
   home="$TMP_ROOT/wording-home"
   mkdir -p "$home/data"
   id="brief-wording-b1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "the guidance no-mistakes itself provides" "$brief" \
+  for spelling in 'Captain:' "Captain's words:" "Captain's ask:" "Captain's intent:" 'Captain,'; do
+    assert_no_grep "$spelling" "$brief" "rendered intent contract still teaches operator-address labels"
+  done
+  assert_grep '[captain]' "$brief" "rendered intent contract must explain the neutral legacy provenance marker"
+  assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
@@ -151,204 +373,115 @@ test_no_mistakes_dod_wording() {
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`help`' "$brief" \
     "no-mistakes DOD must render literal backticks around help"
-  assert_no_grep "no-mistakes' own guidance" "$brief" \
-    "no-mistakes DOD regressed to the apostrophe form that breaks bash -n"
-  pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
+  assert_grep "pass \`--intent\` as only this brief's \`## Captain's intent\`" "$brief" \
+    "no-mistakes DOD must require --intent to be the Captain's intent subsection"
+  assert_grep "plus any later words the captain actually said" "$brief" \
+    "no-mistakes DOD must allow later captain words in --intent"
+  assert_grep "Do not include \`## Firstmate spec\`" "$brief" \
+    "no-mistakes DOD must keep Firstmate spec out of --intent"
+  assert_grep "or your own decisions and tradeoffs" "$brief" \
+    "no-mistakes DOD must keep worker tradeoffs out of --intent"
+  assert_grep "This replaces the no-mistakes skill's advice to enrich \`--intent\`" "$brief" \
+    "no-mistakes DOD must override the external skill's enrich-with-decisions guidance"
+  # A bare reference cannot preserve the captain's ask, so the rendered DOD states
+  # the self-sufficiency rule and requires referenced material to be resolved into
+  # its substance.
+  assert_grep "The \`--intent\` string you pass must be self-sufficient" "$brief" \
+    "no-mistakes DOD must require a self-sufficient --intent string"
+  assert_grep "write the substance of the referenced items into \`--intent\`" "$brief" \
+    "no-mistakes DOD must tell the worker to resolve report, decision, and PR references into substance"
+
+  # The --yes ban is a fleet-wide prohibition, not a preference, and it must not
+  # claim an enforcement the tool does not provide: this is instruction only.
+  assert_grep "NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide." "$brief" \
+    "no-mistakes DOD must state the --yes ban as a prohibition"
+  assert_grep "answering your own ask-user finding is a hard rule violation" "$brief" \
+    "no-mistakes DOD must say why --yes is banned"
+  assert_no_grep "Avoid \`--yes\`" "$brief" \
+    "no-mistakes DOD still states the --yes ban as a preference"
+  assert_no_grep "no-mistakes refuses" "$brief" \
+    "no-mistakes DOD must not claim the tool itself refuses --yes"
+  pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
 }
 
-# A worker idling between no-mistakes gates has a quiet pane, so an undeclared
-# wait is aged into a repeating possible-wedge escalation. The instruction has to
-# sit at the pipeline handoff itself; the passive definition in Rules is not enough.
-test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff() {
+# The green-PR report must not depend on a status poll: `axi status` never
+# reports `checks-passed` while the ci step monitors the PR for merge, so a
+# worker told to wait on it for the next gate or outcome never learned its PR
+# went green (2026-09-22, PR #5317). The rendered DOD must make the drive
+# call's own return the green signal and reattach after a bounded return.
+test_no_mistakes_dod_green_detection() {
   local home id brief
-  home="$TMP_ROOT/pipeline-pause-home"
+  home="$TMP_ROOT/green-detection-home"
   mkdir -p "$home/data"
-  id="brief-pipeline-pause-e1"
-  FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-    "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  id="brief-green-b1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "Before handing a long stretch back to the pipeline, append \`awaiting: {what you are waiting on}\`" "$brief" \
-    "no-mistakes DOD lost the declared pause at the pipeline handoff"
-  assert_grep "keeps firstmate from reading your quiet pane as a possible wedge" "$brief" \
-    "no-mistakes DOD lost the reason the pause declaration matters"
-  # The lifecycle itself belongs to shared rule 4 so every mode inherits it; the
-  # DOD only points at it. Restating it here would let the two copies drift.
-  assert_grep "then open and close that wait exactly as rule 4 requires" "$brief" \
-    "no-mistakes DOD lost the pointer to rule 4's pause lifecycle"
-  assert_grep "a fix round, re-review, or long test step you handed back to the no-mistakes pipeline" "$brief" \
-    "no-mistakes Rules did not name the pipeline wait as a pause case"
+  assert_grep "Only a drive call's return reports the green PR" "$brief" \
+    "no-mistakes DOD must make the drive call's return the green signal"
+  assert_grep "never reports \`checks-passed\` while the ci step is still monitoring the PR for merge" "$brief" \
+    "no-mistakes DOD must say axi status cannot show a green PR in merge monitoring"
+  assert_grep "never wait on a status poll for the next gate or outcome" "$brief" \
+    "no-mistakes DOD must forbid waiting on a status poll"
+  assert_grep "reattach at once by re-running \`no-mistakes axi run\` without flags" "$brief" \
+    "no-mistakes DOD must reattach the drive call after a bounded return"
+  assert_grep "once checks are green it returns \`checks-passed\` immediately" "$brief" \
+    "no-mistakes DOD must say a reattach reports an already-green PR"
+  assert_no_grep "poll \`no-mistakes axi status\` from a separate call" "$brief" \
+    "no-mistakes DOD still makes a status poll the wait for the next gate or outcome"
+  pass "fm-brief.sh: no-mistakes DOD detects a green PR from the drive call, not a status poll"
+}
 
-  # The faster paths run no pipeline, so their pause examples must not name one.
-  write_registry "$home"
-  id="brief-pipeline-pause-e2"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj >/dev/null 2>&1
+test_ask_user_escalation_format() {
+  local home id brief mode other_id other_brief
+  home="$TMP_ROOT/ask-user-home"
+  mkdir -p "$home/data"
+  id="brief-ask-user-d1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
-  assert_grep "a long test or build run you are waiting out" "$brief" \
-    "direct-PR brief lost a delivery-appropriate pause example"
-  assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
-    "direct-PR brief named a pipeline it never runs"
-  pass "fm-brief.sh: no-mistakes briefs declare a pause before each pipeline handoff"
-}
+  assert_present "$brief" "brief was not scaffolded"
 
-# The four crewmate variants - the three ship delivery modes plus scout - share
-# most of one contract, and several tests need the whole set. Scaffold one brief
-# per variant under <home> with the given id prefix and pause verb, and echo one
-# `<id>:<proj>:<kind>:<brief-path>` line per variant for the caller to iterate.
-scaffold_every_crewmate_variant() {
-  local home=$1 prefix=$2 verb=$3
-  local entry id proj kind
-  write_registry "$home"
-  for entry in "1:no-registry-proj:ship" "2:direct-proj:ship" "3:local-proj:ship" "4:scout-proj:scout"; do
-    id="$prefix${entry%%:*}"
-    proj=${entry#*:}
-    proj=${proj%%:*}
-    kind=${entry##*:}
-    if [ "$kind" = scout ]; then
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB="$verb" \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" --scout >/dev/null 2>&1
-    else
-      FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB="$verb" \
-        "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
-    fi
-    printf '%s:%s:%s:%s\n' "$id" "$proj" "$kind" "$home/data/$id/brief.md"
+  # A no-mistakes ask-user gate must escalate its ask-user findings as one status
+  # event plus one verbatim findings snapshot file, using that same shape even
+  # for a single finding, never paraphrased into the status line.
+  assert_grep "escalate all ask-user findings as one event plus one snapshot file" "$brief" \
+    "ship rule 6 lost the one-event-plus-snapshot-file ask-user contract"
+  assert_grep "using that same shape even when the gate holds only a single ask-user finding" "$brief" \
+    "ship rule 6 must require the same shape for a single finding"
+  assert_grep "write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$brief" \
+    "ship rule 6 must limit the verbatim axi slice to ask-user findings"
+  # shellcheck disable=SC2016  # single quotes are deliberate: backticks and the key/findings/file tokens must stay literal
+  assert_grep 'needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file='"$home/data/$id/nm-<run>-findings.txt" "$brief" \
+    "ship rule 6 must render the exact needs-decision ask-user status line"
+  assert_grep "$home/data/$id/nm-<run>-findings.txt" "$brief" \
+    "ship rule 6 must point the snapshot file under this task's own data directory"
+  assert_grep "The status line only points at the file; it never restates or summarizes a finding's content." "$brief" \
+    "ship rule 6 must forbid paraphrasing ask-user findings into the status line"
+
+  # The DOD's own ask-user paragraph must point back at rule 6's format
+  # (one-owner rule) rather than restating or bare-citing it.
+  assert_grep "escalate to firstmate using rule 6's ask-user format" "$brief" \
+    "no-mistakes DOD ask-user paragraph must point at rule 6's format instead of a bare citation"
+  assert_no_grep "escalate to firstmate (rule 6) and stop." "$brief" \
+    "no-mistakes DOD ask-user paragraph still uses the old bare rule-6 pointer"
+
+  other_id="brief-no-ask-user-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other_id" some-proj --scout >/dev/null 2>&1
+  other_brief="$home/data/$other_id/brief.md"
+  assert_no_grep "destructive actions, ask-user findings" "$other_brief" \
+    "scout brief received a no-mistakes-only decision case"
+
+  for mode in direct-PR local-only; do
+    other_id="brief-no-ask-user-$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other_id" some-proj --mode "$mode" >/dev/null 2>&1
+    other_brief="$home/data/$other_id/brief.md"
+    assert_no_grep "nm-<run>-findings.txt" "$other_brief" \
+      "$mode brief received a no-mistakes-only escalation format"
+    assert_no_grep "destructive actions, ask-user findings" "$other_brief" \
+      "$mode brief received a no-mistakes-only decision case"
   done
-}
 
-# A declared pause nobody closes stays the crew's last status event, so a worker
-# that later genuinely stalls is read as still waiting and gets the hour-long
-# recheck instead of the 240s wedge path. `working:` is what every consumer
-# already treats as ending a pause (bin/fm-classify-lib.sh map_log_state and the
-# open-activities fold). The lifecycle is one shared block rendered into rule 4 of
-# EVERY crewmate brief - the faster paths are nudged toward a pause by their own
-# "long test or build run" example and never see the pipeline DOD, and a scout is
-# taught the pause verb too, so each of them needs the whole lifecycle.
-test_every_crewmate_brief_carries_the_whole_pause_lifecycle() {
-  local home variants id proj kind brief
-  home="$TMP_ROOT/pause-lifecycle-home"
-  variants=$(scaffold_every_crewmate_variant "$home" brief-pause-life-f awaiting)
-
-  while IFS=: read -r id proj kind brief; do
-    assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "A \`awaiting:\` line is nonterminal: do not end the turn after it" "$brief" \
-      "$id: brief lost the nonterminal guard on the pause line"
-    assert_no_grep "nonterminal too" "$brief" \
-      "$id: shared pause block back-references a sentence its variant may not have"
-    assert_grep "close the wait with" "$brief" \
-      "$id: brief lost the instruction to close a declared pause"
-    assert_grep "\`working: {what you are doing next}\` the moment it ends" "$brief" \
-      "$id: brief lost the verb that actually ends a declared pause"
-    assert_grep "not an FYI progress line" "$brief" \
-      "$id: brief did not reconcile closing a pause with rule 4's no-FYI-lines bar"
-    assert_grep "a \`awaiting:\` line left standing keeps firstmate on the" "$brief" \
-      "$id: brief lost why a standing pause is dangerous"
-    assert_grep "Use \`blocked:\` when you are stuck and need help." "$brief" \
-      "$id: brief lost the paused-versus-blocked distinction"
-    # A scout has no branch, no push, and no PR, so it inherits the lifecycle
-    # without the handoff sentence, which would name an impossible wait.
-    if [ "$kind" = scout ]; then
-      assert_no_grep "handing a long stretch back to the pipeline" "$brief" \
-        "$id: scout brief named a pipeline handoff it can never make"
-      assert_no_grep "handed back to the no-mistakes pipeline" "$brief" \
-        "$id: scout brief named a pipeline wait it can never have"
-    fi
-  done <<< "$variants"
-  pass "fm-brief.sh: every crewmate brief carries the full pause lifecycle"
-}
-
-# The firstmate-codexapp skill does not excerpt this contract into a Codex Desktop
-# thread; it hands the worker this brief's absolute path and tells it to read the
-# whole file. Excerpting was tried and abandoned - every boundary left the brief's
-# own cross-references dangling on the far side of it - so what matters now is that
-# the file being pointed at is genuinely self-contained. A Desktop worker has no
-# second source: whatever is missing here is missing from its whole task.
-test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
-  local home variants id proj kind brief
-  home="$TMP_ROOT/pointed-worker-home"
-  variants=$(scaffold_every_crewmate_variant "$home" brief-pointed-g paused)
-
-  while IFS=: read -r id proj kind brief; do
-    assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "$home/state/$id.status" "$brief" \
-      "$id: brief lacks the absolute status path a pointed worker cannot infer"
-    assert_grep "4. Report status by appending one line:" "$brief" \
-      "$id: brief lost the status protocol rule"
-    assert_grep "States: working, needs-decision, blocked, paused, done, failed." "$brief" \
-      "$id: brief lost the state list"
-    assert_grep "close the wait with" "$brief" \
-      "$id: brief lost the pause lifecycle rule 4 owns"
-    assert_grep "5. If you hit the same obstacle twice" "$brief" \
-      "$id: brief lost the repeated-obstacle rule"
-    assert_grep "6. If a decision belongs" "$brief" \
-      "$id: brief lost the escalation rule the definition of done refers to"
-    # Rule 6 is the only place a worker is taught to CLOSE a decision or blocker
-    # it opened; without it a standing needs-decision masks later events exactly
-    # as a standing pause would.
-    assert_grep "append \`resolved: {how it was decided or unblocked}\`" "$brief" \
-      "$id: brief lost rule 6's closure for a decision or blocker it opens"
-    assert_grep "[key=<slug>]" "$brief" \
-      "$id: brief lost the correlation key that ties a closure to what it opened"
-    assert_grep "7. Never stop, restart, or update the shared" "$brief" \
-      "$id: brief lost the shared-daemon rule"
-    assert_grep "# Definition of done" "$brief" \
-      "$id: brief lost the done gate a pointed worker has no other source for"
-    case "$proj" in
-      direct-proj)
-        assert_grep "This project ships **direct-PR**" "$brief" \
-          "$id: brief lost the delivery mode its done gate belongs to"
-        assert_grep "push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\`" "$brief" \
-          "$id: a direct-PR worker would be left thinking it is finished at a local commit"
-        ;;
-      local-proj)
-        assert_grep "Keep your branch a clean fast-forward onto the current default branch" "$brief" \
-          "$id: brief lost the local-only fast-forward rebase requirement"
-        assert_grep "append \`done: ready in branch fm/$id\`" "$brief" \
-          "$id: brief lost the local-only ready-branch report"
-        ;;
-      scout-proj)
-        assert_grep "$home/data/$id/report.md" "$brief" \
-          "$id: brief lost the scout report deliverable"
-        assert_no_grep "committed on your branch" "$brief" \
-          "$id: a scout would be told to commit on a branch it never creates"
-        ;;
-      *)
-        assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
-          "$id: brief lost the no-mistakes pipeline handoff"
-        ;;
-    esac
-  done <<< "$variants"
-  pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
-}
-
-# A ship brief's safety contracts are prose, so a wording pass is the way they
-# get lost. Three of them have no other guard: the isolation assertion that
-# stops a worker launched in the primary checkout, the `--yes` prohibition that
-# keeps firstmate's authority check in the loop, and the CI-green return point.
-# That last one is a subject trap - `/no-mistakes` is what must not keep
-# monitoring, so a shortened form silently makes the WORKER the subject and
-# tells it to stop watching its own PR.
-test_ship_safety_contracts_survive_a_wording_pass() {
-  local home variants id proj kind brief
-  home="$TMP_ROOT/ship-safety-home"
-  variants=$(scaffold_every_crewmate_variant "$home" brief-ship-safety-r paused)
-
-  while IFS=: read -r id proj kind brief; do
-    [ "$kind" = ship ] || continue
-    assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "**Verify isolation before anything else.**" "$brief" \
-      "$id: ship brief lost the worktree-isolation assertion"
-    assert_grep "STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\`" "$brief" \
-      "$id: ship brief lost the stop instruction that follows a failed isolation check"
-  done <<< "$variants"
-
-  brief="$home/data/brief-ship-safety-r1/brief.md"
-  assert_grep "Avoid \`--yes\`: it would silently bypass firstmate" "$brief" \
-    "no-mistakes brief lost the --yes prohibition"
-  assert_grep "do not wait for it to keep monitoring in the background until merge" "$brief" \
-    "no-mistakes brief lost /no-mistakes as the subject of the CI-green monitoring clause"
-  assert_no_grep "point - do not keep monitoring" "$brief" \
-    "no-mistakes brief flipped the CI-green clause onto the worker"
-  pass "fm-brief.sh: ship safety contracts survive a brief wording pass"
+  pass "fm-brief.sh: no-mistakes ask-user findings use one event plus a verbatim snapshot"
 }
 
 test_ship_project_memory_wording() {
@@ -356,123 +489,16 @@ test_ship_project_memory_wording() {
   home="$TMP_ROOT/project-memory-home"
   mkdir -p "$home/data"
   id="brief-memory-c1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "Record only project knowledge useful to almost every future session." "$brief" \
     "project-memory contract lost the durable-knowledge bar"
   assert_grep "prefer a pointer to the authoritative file, command, or doc over copying the detail" "$brief" \
     "project-memory contract lost pointer-over-copy guidance"
-  assert_grep "lacks \`## Maintaining this file\`, add that short self-governance section" "$brief" \
-    "project-memory contract lost the self-governance add-in-same-pass rule"
+  assert_grep "follow \`$ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract" "$brief" \
+    "project-memory contract no longer defers to the ensure helper"
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
-}
-
-# A project whose captain decision keeps CLAUDE.md as the real file must not be
-# handled by dropping the default instruction: the scaffold has to ship the
-# prohibition in its place, or the worker is still told to create an AGENTS.md.
-# The registry marker is +keep-claude-md (bin/fm-project-mode.sh); data/projects.md
-# is gitignored, so the unmarked default must stay exactly what it was.
-test_keep_claude_md_project_gets_prohibition_not_omission() {
-  local home id brief default_brief out rc proj
-  home="$TMP_ROOT/keep-claude-md-home"
-  mkdir -p "$home/data"
-  cat > "$home/data/projects.md" <<'EOF'
-- keeper [no-mistakes +keep-claude-md] - fixture keeping CLAUDE.md (added 2026-08-21)
-- direct-keeper [direct-PR +yolo +keep-claude-md] - fixture with every flag (added 2026-08-21)
-- plain-proj [no-mistakes] - fixture without the marker (added 2026-08-21)
-EOF
-
-  for id_proj in "brief-keep-claude-g1:keeper" "brief-keep-claude-g2:direct-keeper"; do
-    id=${id_proj%%:*}
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "${id_proj##*:}" >/dev/null 2>&1
-    brief="$home/data/$id/brief.md"
-    assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "This project keeps its project memory in \`CLAUDE.md\` as the real file." "$brief" \
-      "$id: keep-claude-md brief lost the project-memory prohibition"
-    assert_grep "Do NOT create an \`AGENTS.md\` here" "$brief" \
-      "$id: keep-claude-md brief did not forbid creating AGENTS.md"
-    assert_no_grep "fm-ensure-agents-md.sh .\` in the worktree" "$brief" \
-      "$id: keep-claude-md brief still instructs the worker to run the helper"
-    assert_grep "If this task produced durable project-intrinsic knowledge, record it in \`CLAUDE.md\`." "$brief" \
-      "$id: keep-claude-md brief lost the durable-knowledge recording condition"
-    # The default variant's existence trigger fires a helper run; the prohibition
-    # variant has no such action, so carrying it over would leave a condition
-    # with nothing to condition.
-    assert_no_grep "already exists" "$brief" \
-      "$id: keep-claude-md brief kept an existence trigger with no action behind it"
-  done
-
-  # The marker must not leak into the delivery mode or autonomy posture, and a
-  # bracket holding only flags still resolves the default mode.
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" direct-keeper)" = "direct-PR on" ] \
-    || fail "+keep-claude-md changed the resolved delivery mode or yolo posture"
-  printf '%s\n' '- flags-only [+keep-claude-md] - fixture with no mode word (added 2026-08-21)' \
-    >> "$home/data/projects.md"
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" flags-only)" = "no-mistakes off" ] \
-    || fail "a flags-only bracket was read as a delivery mode"
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory flags-only)" = "keep-claude-md" ] \
-    || fail "--project-memory did not read a flags-only bracket"
-
-  # A misplaced flag must never resolve to a posture the captain decision
-  # forbids: answer the query wherever the flag sits, and refuse anything else
-  # loudly rather than defaulting to agents-md behind the caller's back.
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" keeper --project-memory)" = "keep-claude-md" ] \
-    || fail "--project-memory after the project name silently returned the wrong posture"
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" keeper)" = "no-mistakes off" ] \
-    || fail "the default two-word stdout contract changed"
-  for bad_args in "keeper --project-memry" "keeper extra-proj" "--project-memory" "-x keeper"; do
-    # shellcheck disable=SC2086
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" $bad_args 2>&1); rc=$?
-    [ "$rc" -ne 0 ] || fail "fm-project-mode.sh accepted bad arguments: $bad_args"
-    assert_contains "$out" "usage: fm-project-mode.sh" \
-      "fm-project-mode.sh did not report usage for: $bad_args"
-  done
-
-  # A one-character slip in this hand-edited, gitignored registry must not
-  # resolve to the default posture in silence, or the marked project quietly
-  # gets back the instruction its captain decision forbids.
-  cat >> "$home/data/projects.md" <<'EOF'
-- typo-flag [no-mistakes +keep-claudemd] - fixture with a mistyped marker (added 2026-08-21)
-- typo-only [+keep-claudemd] - fixture whose only bracket token is mistyped (added 2026-08-21)
-EOF
-  for proj in typo-flag typo-only; do
-    [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>/dev/null)" = "no-mistakes off" ] \
-      || fail "$proj: a mistyped bracket flag changed the resolved delivery posture"
-    [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>/dev/null)" = "agents-md" ] \
-      || fail "$proj: a mistyped bracket flag did not fall back to agents-md"
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>&1 >/dev/null)
-    assert_contains "$out" '+keep-claudemd' \
-      "$proj: a mistyped bracket flag resolved with no warning"
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
-    assert_contains "$out" '+keep-claudemd' \
-      "$proj: a mistyped bracket flag resolved with no warning under --project-memory"
-  done
-  for proj in keeper direct-keeper flags-only; do
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
-    [ -z "$out" ] || fail "$proj: a correctly spelled bracket flag warned: $out"
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" "$proj" 2>&1 >/dev/null)
-    [ -z "$out" ] || fail "$proj: a correctly spelled bracket flag warned: $out"
-  done
-
-  # data/projects.md is gitignored, so every absent-registry path must answer with
-  # the pre-existing behavior rather than a missing-value error.
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory plain-proj)" = "agents-md" ] \
-    || fail "--project-memory did not default an unmarked project to agents-md"
-  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory absent-proj 2>/dev/null)" = "agents-md" ] \
-    || fail "--project-memory did not default an unregistered project to agents-md"
-  [ "$(FM_HOME="$TMP_ROOT/no-registry-home" "$ROOT/bin/fm-project-mode.sh" --project-memory any 2>/dev/null)" = "agents-md" ] \
-    || fail "--project-memory did not default a missing registry to agents-md"
-
-  # Unmarked projects keep the pre-existing instruction verbatim.
-  id="brief-keep-claude-g3"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" plain-proj >/dev/null 2>&1
-  default_brief="$home/data/$id/brief.md"
-  assert_grep "run \`$ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree" "$default_brief" \
-    "unmarked project lost the default ensure-agents-md instruction"
-  assert_no_grep "Do NOT create an" "$default_brief" \
-    "unmarked project inherited the keep-claude-md prohibition"
-  pass "fm-brief.sh: +keep-claude-md replaces the ensure-agents-md instruction with its prohibition"
 }
 
 test_herdr_lab_contract_is_explicit_and_complete() {
@@ -480,7 +506,7 @@ test_herdr_lab_contract_is_explicit_and_complete() {
   home="$TMP_ROOT/herdr-lab-home"
   mkdir -p "$home/data"
   id="brief-herdr-lab-d1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --herdr-lab >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --herdr-lab >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "Herdr lab brief was not scaffolded"
   assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" \
@@ -493,8 +519,8 @@ test_herdr_lab_contract_is_explicit_and_complete() {
     "Herdr lab brief missing helper-owned provisioning"
   assert_grep "\"\$HERDR_LAB_HELPER\" teardown \"\$HERDR_LAB_SESSION\"" "$brief" \
     "Herdr lab brief missing helper-owned teardown"
-  assert_grep "required trailing \`--session \"\$HERDR_LAB_SESSION\"\`" "$brief" \
-    "Herdr lab brief missing the per-call trailing session contract"
+  assert_grep "required \`--session \"\$HERDR_LAB_SESSION\"\` as a Herdr option, before any \`--\` delimiter" "$brief" \
+    "Herdr lab brief missing the per-call session option contract"
   assert_grep "direct \`herdr server stop\`" "$brief" \
     "Herdr lab brief missing the forbidden server-global command list"
   assert_grep "records the live default session before provisioning" "$brief" \
@@ -532,7 +558,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
     if [ "$kind" = scout ]; then
       FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
     else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate >/dev/null 2>&1
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
     fi
     brief="$home/data/$id/brief.md"
     assert_grep "# Herdr lifecycle declaration - NOT ENABLED" "$brief" \
@@ -541,6 +567,49 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
       "$kind brief missing the fail-visible regeneration instruction"
   done
   pass "fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible"
+}
+
+# Regression (issue #2575): AGENTS.md section 11 and this script's own help tell
+# firstmate to fill `{TASK}` and `{FIRSTMATE_SPEC}`. The unguarded Herdr gate used
+# to quote `{TASK}` in its own prose, so that documented global replace spliced
+# the whole task body into the middle of the gate's sentence - silently
+# destroying the one contract that exists precisely because the scaffold cannot
+# see the task text. Each placeholder must exist only at its genuine fill site,
+# so the documented fill leaves the gate intact and each body appears once.
+test_documented_global_replace_leaves_the_herdr_gate_intact() {
+  local home id brief kind count content filled body spec
+  home="$TMP_ROOT/task-fill-site-home"
+  mkdir -p "$home/data"
+  body='Restart the herdr session, then profile it'
+  spec='Use the isolated lab helper for every lifecycle call'
+  for kind in ship scout; do
+    id="brief-fill-site-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$kind brief was not scaffolded"
+    count=$(grep -c -F '{TASK}' "$brief")
+    [ "$count" = 1 ] \
+      || fail "$kind brief must carry exactly one {TASK} fill site, found $count"
+    count=$(grep -c -F '{FIRSTMATE_SPEC}' "$brief")
+    [ "$count" = 1 ] \
+      || fail "$kind brief must carry exactly one {FIRSTMATE_SPEC} fill site, found $count"
+    content=$(cat "$brief")
+    filled=${content//'{TASK}'/$body}
+    filled=${filled//'{FIRSTMATE_SPEC}'/$spec}
+    count=$(printf '%s\n' "$filled" | grep -c -F "$body")
+    [ "$count" = 1 ] \
+      || fail "$kind brief: the documented {TASK} replace duplicated the intent body $count times"
+    count=$(printf '%s\n' "$filled" | grep -c -F "$spec")
+    [ "$count" = 1 ] \
+      || fail "$kind brief: the {FIRSTMATE_SPEC} replace duplicated the spec body $count times"
+    printf '%s\n' "$filled" | grep -qF 'this scaffold cannot inspect the task text' \
+      || fail "$kind brief: the Herdr safety gate did not survive the documented fill"
+  done
+  pass "fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills cannot corrupt the Herdr safety gate"
 }
 
 test_secondmate_no_projects_charter() {
@@ -563,6 +632,12 @@ test_secondmate_no_projects_charter() {
     "project-less charter operating model lost the pooled-worktree note"
   assert_no_grep "The projects above are local clones" "$brief" \
     "project-less charter kept the with-projects operating-model line"
+  assert_grep '# The captain and the parent channel' "$brief" \
+    "secondmate charter lost the parent-channel section"
+  assert_grep 'Nobody reads this chat' "$brief" \
+    "secondmate charter no longer says the chat is unread"
+  assert_grep 'in this home it IS the captain' "$brief" \
+    "secondmate charter no longer names the parent channel as the captain"
   assert_grep 'working [key=<work-slug>]' "$brief" \
     "secondmate charter did not key material routed-work phases"
   assert_grep 'resolved [key=<work-slug>]' "$brief" \
@@ -617,17 +692,116 @@ test_secondmate_marked_request_reporting_contract() {
 
   assert_grep 'include that exact token in your parent status reply' "$brief" \
     "secondmate charter lost correlated parent results"
+  assert_grep 'bin/fm-secondmate-report.sh <verb> <corr_id> <note>' "$brief" \
+    "secondmate charter lost the mechanical helper invocation"
+  assert_grep 'do not pass a status path' "$brief" \
+    "secondmate charter still tells the mate to pass a hand path to the helper"
   assert_grep 'For a terse result, a status line is the whole answer.' "$brief" \
     "secondmate charter lost terse result reporting"
   assert_grep 'append a status line that points to that doc' "$brief" \
     "secondmate charter lost detailed document pointers"
   assert_grep 'Report only true captain-relevant outcomes or a declared external wait' "$brief" \
     "secondmate charter lost declared external waits"
-  assert_grep 'a captain decision, a real blocker, a failure, or work ready for review' "$brief" \
-    "secondmate charter lost decisions, blockers, failures, or ready outcomes"
+  assert_grep 'a captain decision, a real blocker, a failure, work ready for review, or work you landed' "$brief" \
+    "secondmate charter lost decisions, blockers, failures, ready outcomes, or landed work"
+  # Under standing merge authority nothing is ever "ready for review", so the
+  # landed merge is the trigger a charter without this line silently omits.
+  assert_grep 'a merge you performed yourself under standing merge authority and one the captain merged on the forge' "$brief" \
+    "secondmate charter did not name a landed merge as a reporting trigger"
   assert_grep 'States: working, needs-decision, blocked, paused, done, failed.' "$brief" \
     "secondmate charter changed the preserved status vocabulary"
   pass "fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting"
+}
+
+test_secondmate_directory_paths_are_absolute_and_output_is_stable() {
+  local root home data_override state_override brief baseline err status
+  root="$TMP_ROOT/relative-directory-inputs"
+  mkdir -p "$root"
+  root=$(cd "$root" && pwd -P)
+  home="$root/home"
+  data_override="$root/data-override"
+  state_override="$root/state-override"
+  mkdir -p "$home/data" "$home/state" "$data_override" "$state_override" \
+    "$root/cdpath/home/data" "$root/cdpath/home/state" \
+    "$root/cdpath/data-override" "$root/cdpath/state-override"
+
+  brief="$home/data/relative-home/brief.md"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER=x \
+    "$ROOT/bin/fm-brief.sh" relative-home --secondmate --no-projects >/dev/null 2>&1
+  baseline="$root/absolute-home-charter"
+  cp "$brief" "$baseline"
+  rm -f "$brief"
+  (
+    cd "$root" || exit 1
+    CDPATH="$root/cdpath" FM_HOME=home FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" relative-home --secondmate --no-projects >/dev/null 2>&1
+  )
+  cmp -s "$baseline" "$brief" \
+    || fail "relative FM_HOME changed charter bytes compared with the same absolute home"
+  assert_grep ">> '$home/state/relative-home.status'" "$brief" \
+    "relative FM_HOME did not render an absolute secondmate status path"
+
+  brief="$home/data/relative-state/brief.md"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state_override" FM_SECONDMATE_CHARTER=x \
+    "$ROOT/bin/fm-brief.sh" relative-state --secondmate --no-projects >/dev/null 2>&1
+  baseline="$root/absolute-state-charter"
+  cp "$brief" "$baseline"
+  rm -f "$brief"
+  (
+    cd "$root" || exit 1
+    CDPATH="$root/cdpath" FM_HOME="$home" FM_STATE_OVERRIDE=state-override FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" relative-state --secondmate --no-projects >/dev/null 2>&1
+  )
+  cmp -s "$baseline" "$brief" \
+    || fail "relative FM_STATE_OVERRIDE changed charter bytes compared with the same absolute state directory"
+  assert_grep ">> '$state_override/relative-state.status'" "$brief" \
+    "relative FM_STATE_OVERRIDE did not render an absolute secondmate status path"
+
+  brief="$data_override/relative-data/brief.md"
+  FM_HOME="$home" FM_DATA_OVERRIDE="$data_override" FM_SECONDMATE_CHARTER=x \
+    "$ROOT/bin/fm-brief.sh" relative-data --secondmate --no-projects >/dev/null 2>&1
+  baseline="$root/absolute-data-charter"
+  cp "$brief" "$baseline"
+  rm -f "$brief"
+  (
+    cd "$root" || exit 1
+    CDPATH="$root/cdpath" FM_HOME="$home" FM_DATA_OVERRIDE=data-override FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" relative-data --secondmate --no-projects >/dev/null 2>&1
+  )
+  cmp -s "$baseline" "$brief" \
+    || fail "relative FM_DATA_OVERRIDE changed charter bytes compared with the same absolute data directory"
+  assert_grep ">> '$home/state/relative-data.status'" "$brief" \
+    "relative FM_DATA_OVERRIDE changed the absolute default status path"
+
+  err="$root/unresolved.err"
+  (
+    cd "$root" || exit 1
+    FM_HOME=missing-home FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" unresolved-home --secondmate --no-projects >/dev/null 2>"$err"
+  ); status=$?
+  expect_code 1 "$status" "an unresolved relative FM_HOME must fail"
+  assert_grep "FM_HOME directory cannot be resolved: missing-home" "$err" \
+    "unresolved relative FM_HOME did not fail loudly"
+
+  (
+    cd "$root" || exit 1
+    FM_HOME="$home" FM_STATE_OVERRIDE=missing-state FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" unresolved-state --secondmate --no-projects >/dev/null 2>"$err"
+  ); status=$?
+  expect_code 1 "$status" "an unresolved relative FM_STATE_OVERRIDE must fail"
+  assert_grep "FM_STATE_OVERRIDE directory cannot be resolved: missing-state" "$err" \
+    "unresolved relative FM_STATE_OVERRIDE did not fail loudly"
+
+  (
+    cd "$root" || exit 1
+    FM_HOME="$home" FM_DATA_OVERRIDE=missing-data FM_SECONDMATE_CHARTER=x \
+      "$ROOT/bin/fm-brief.sh" unresolved-data --secondmate --no-projects >/dev/null 2>"$err"
+  ); status=$?
+  expect_code 1 "$status" "an unresolved relative FM_DATA_OVERRIDE must fail"
+  assert_grep "FM_DATA_OVERRIDE directory cannot be resolved: missing-data" "$err" \
+    "unresolved relative FM_DATA_OVERRIDE did not fail loudly"
+
+  pass "fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly"
 }
 
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
@@ -647,16 +821,16 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
 }
 
 test_pause_verb_override_renders_all_brief_scaffolds() {
-  local home kind id brief
+  local home kind id brief append now epoch templates template line signals
   home="$TMP_ROOT/pause-verb-home"
   mkdir -p "$home/data"
 
-  for kind in ship scout secondmate; do
-    id="brief-pause-verb-$kind"
+  for kind in ship:no-mistakes ship:direct-PR ship:local-only scout secondmate; do
+    id="brief-pause-verb-${kind//:/-}"
     case "$kind" in
-      ship)
+      ship:*)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-          "$ROOT/bin/fm-brief.sh" "$id" firstmate >/dev/null 2>&1
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode "${kind#ship:}" >/dev/null 2>&1
         ;;
       scout)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
@@ -668,6 +842,55 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
         ;;
     esac
     brief="$home/data/$id/brief.md"
+    # Fill the scaffold's generated status-append command the way a worker does
+    # and run it. The stamp must be a value the worker supplies, so the command
+    # may not carry an unevaluated substitution that a file-write tool would
+    # copy through verbatim.
+    # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
+    append=$(sed -n '/`echo "{state}/s/.*`\(echo .*\)`.*/\1/p' "$brief")
+    now=$(date +%s)
+    append=${append//\{state\}/done}
+    append=${append//\{one short line\}/test event}
+    append=${append//<epoch>/$now}
+    case "$append" in
+      *"\$("*) fail "$kind scaffold left an unevaluated command in its status-append line" ;;
+    esac
+    mkdir -p "$home/state"
+    bash -c "$append" || fail "generated status command failed"
+    epoch=$(bash -c '. "$1"; status_line_at_epoch "$(cat "$2")"' _ \
+      "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status")
+    [ "$epoch" = "$now" ] || fail "$kind scaffold did not record the worker's event time"
+    # Every status signal the brief instructs a worker to append is a template
+    # the worker fills in and writes verbatim, with or without a shell, not only
+    # rule 4's echo: substitute each one's named placeholders and read the stamp
+    # back. Extracting by "append" as well as by the stamp means dropping a stamp
+    # from any instruction fails here rather than shrinking the set.
+    templates=$(grep -o -e "append \`[^\`]*: [^\`]*\`" \
+      -e "\`[^\`]*\[at=<epoch>\][^\`]*\`" "$brief" \
+      | sed 's/^append //' | tr -d '`' | sort -u)
+    signals=0
+    while IFS= read -r template; do
+      [ -n "$template" ] || continue
+      case "$template" in
+        'echo "'*) template=${template#echo \"}; template=${template%%\" >>*} ;;
+      esac
+      case "$template" in
+        *"\$("*) fail "$kind signal embeds an unevaluated command: $template" ;;
+      esac
+      now=$(date +%s)
+      line=${template//\{state\}/done}
+      line=${line//<epoch>/$now}
+      line=$(printf '%s' "$line" \
+        | sed -e 's/{[^}]*}/one short line/g' -e 's/<[^>]*>/slug/g')
+      epoch=$(bash -c '. "$1"; status_line_at_epoch "$2"' _ \
+        "$ROOT/bin/fm-classify-lib.sh" "$line")
+      [ "$epoch" = "$now" ] || fail "$kind signal carries no worker-written stamp: $template"
+      signals=$((signals + 1))
+    done <<SIGNALS
+$templates
+SIGNALS
+    [ "$signals" -ge 4 ] \
+      || fail "$kind brief instructed only $signals stamped status signals"
     assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
@@ -676,10 +899,31 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_no_grep '`paused: {why}`' "$brief" \
       "$kind brief still instructs the default paused status"
-    assert_grep 'or a blocker clears' "$brief" \
+    assert_grep 'a blocker or wait clears' "$brief" \
       "$kind brief did not require durable resolution when a blocker clears"
+    assert_grep 'even when the answer is what started that work' "$brief" \
+      "$kind brief did not warn that an answer-started done/working never closes a decision"
   done
   pass "fm-brief.sh: custom pause verb renders in every scaffold"
+}
+
+test_ship_and_scout_teach_validation_round_pause() {
+  local home kind id brief
+  home="$TMP_ROOT/validation-round-pause-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    id="brief-validation-round-pause-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_grep "your own validation round" "$brief" \
+      "$kind brief did not teach workers to declare their validation-round wait"
+  done
+  pass "fm-brief.sh: ship and scout scaffolds teach validation-round pauses"
 }
 
 test_scout_and_secondmate_load_decision_hold_policy() {
@@ -689,81 +933,51 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-brief.sh" sample-investigation sample --scout >/dev/null 2>&1
   scout="$home/data/sample-investigation/brief.md"
-  assert_grep "$ROOT/.agents/skills/decision-hold-lifecycle/SKILL.md" "$scout" \
-    "scout brief did not load the unresolved-decision policy before done"
+  assert_grep "$ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md" "$scout" \
+    "scout brief did not load the captain-call policy before done"
   assert_grep "pass its shared completion gate for the report and any visual review" "$scout" \
     "scout brief did not cross-reference visual-review completion"
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_SECONDMATE_CHARTER='sample reviews' \
     "$ROOT/bin/fm-brief.sh" sample-mate --secondmate --no-projects >/dev/null 2>&1
   charter="$home/data/sample-mate/brief.md"
-  assert_grep "load \`decision-hold-lifecycle\`" "$charter" \
-    "secondmate charter did not load the shared decision policy for detailed investigations"
+  assert_grep "load \`captain-hold-lifecycle\`" "$charter" \
+    "secondmate charter did not load the shared captain-call policy for detailed investigations"
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
-# The scaffold's only {TASK} occurrences must be standalone fill sites, never a
-# reference inside prose. AGENTS.md section 11 tells firstmate to replace every
-# {TASK} placeholder, so any prose that quotes the token is spliced full of task
-# text by that documented global fill.
-test_task_placeholder_appears_only_as_a_fill_site() {
-  local home brief id total standalone
-  home="$TMP_ROOT/placeholder-home"
-  mkdir -p "$home/data"
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-ship alpha >/dev/null 2>&1
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-lab alpha --herdr-lab >/dev/null 2>&1
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-scout alpha --scout >/dev/null 2>&1
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" ph-mate --secondmate --no-projects >/dev/null 2>&1
-
-  for id in ph-ship ph-lab ph-scout ph-mate; do
-    brief="$home/data/$id/brief.md"
-    assert_present "$brief" "$id: brief was not scaffolded"
-    total=$(grep -o -F '{TASK}' "$brief" | wc -l | tr -d ' ')
-    standalone=$(grep -c '^{TASK}$' "$brief" | tr -d ' ')
-    [ "$total" = "$standalone" ] \
-      || fail "$id: $total {TASK} occurrences but only $standalone standalone fill sites; prose must never quote the placeholder"
-  done
-  for id in ph-ship ph-lab ph-scout; do
-    standalone=$(grep -c '^{TASK}$' "$home/data/$id/brief.md" | tr -d ' ')
-    [ "$standalone" = 1 ] || fail "$id: expected exactly 1 {TASK} fill site, found $standalone"
-  done
-  pass "fm-brief.sh: {TASK} appears only as a standalone fill site"
-}
-
-# The documented global fill must land the task body exactly once and leave the
-# unguarded Herdr gate whole. This performs the fill AGENTS.md section 11
-# prescribes rather than trusting the scaffold by eye.
-test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate() {
-  local home id flag brief filled raw task_body
-  home="$TMP_ROOT/fill-home"
-  mkdir -p "$home/data"
-  task_body='Fix the widget.
-
-## Finish line for this task
-Commit on your branch and stop.'
-
-  for spec in "fill-ship:" "fill-scout:--scout"; do
-    id=${spec%%:*}
-    flag=${spec#*:}
-    # shellcheck disable=SC2086  # an empty flag must expand to no argument at all
-    FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-brief.sh" "$id" alpha $flag >/dev/null 2>&1 \
-      || fail "$id: scaffold exited non-zero"
-    brief="$home/data/$id/brief.md"
-    filled="$home/data/$id/filled.md"
-    raw=$(cat "$brief")
-    printf '%s\n' "${raw//\{TASK\}/$task_body}" > "$filled"
-
-    expect_code 1 "$(grep -c '^# Task$' "$filled")" \
-      "$id: the task heading must survive the fill exactly once"
-    expect_code 1 "$(grep -c '^## Finish line for this task$' "$filled")" \
-      "$id: the task body must land exactly once, not once per placeholder"
-    assert_grep '# Herdr lifecycle declaration - NOT ENABLED' "$filled" \
-      "$id: the fill destroyed the unguarded Herdr declaration heading"
-    assert_grep 'HARD SAFETY GATE' "$filled" "$id: the Herdr gate lost its safety marker"
-    grep -A3 '^# Herdr lifecycle declaration - NOT ENABLED$' "$filled" \
-      | grep -qF 'Do not add Herdr lifecycle commands to this unguarded brief by hand.' \
-      || fail "$id: the fill separated the Herdr gate body from its heading"
-  done
-  pass "fm-brief.sh: the documented {TASK} fill lands once and leaves the Herdr gate whole"
+# A scout brief offers the Lavish review loop only when bootstrap confirms the
+# supported lavish-axi floor at scaffold time; a missing or older build gets a
+# text-report instruction instead, so a scout never drives a below-floor Lavish.
+test_scout_lavish_line_follows_presentation_floor() {
+  local base label version expect case_dir fakebin brief n=0
+  local hosting='use the lavish-axi rule'
+  local text_only='deliver your findings as a text report without Lavish'
+  base=$(fm_test_base_path_sans "${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" lavish-axi)
+  while IFS='^' read -r label version expect; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/scout-lavish-$n"
+    mkdir -p "$case_dir/home/data"
+    fakebin=$(fm_fakebin "$case_dir")
+    [ "$version" = absent ] || fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION "$version"
+    PATH="$fakebin:$base" FM_HOME="$case_dir/home" \
+      "$ROOT/bin/fm-brief.sh" scout-lavish alpha --scout >/dev/null \
+      || fail "$label: scout scaffold failed"
+    brief="$case_dir/home/data/scout-lavish/brief.md"
+    if [ "$expect" = hosting ]; then
+      assert_grep "$hosting" "$brief" "$label: scout brief did not offer the Lavish review loop"
+      assert_no_grep "$text_only" "$brief" "$label: scout brief withheld Lavish from a compatible build"
+    else
+      assert_grep "$text_only" "$brief" "$label: scout brief did not ask for a text report"
+      assert_no_grep "$hosting" "$brief" "$label: scout brief offered a below-floor Lavish"
+    fi
+  done <<'ROWS'
+lavish-axi at the floor^0.1.77^hosting
+lavish-axi above the floor^0.2.0^hosting
+lavish-axi just below the floor^0.1.76^text
+absent lavish-axi^absent^text
+ROWS
+  pass "fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor"
 }
 
 # Scout and secondmate paths still scaffold well-formed briefs.
@@ -775,6 +989,9 @@ test_scout_and_secondmate_scaffold() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_grep "SCOUT task" "$brief" "scout brief must declare itself a scout task"
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
+  assert_grep "## Captain's intent" "$brief" "scout brief missing Captain's intent subsection"
+  assert_grep "## Firstmate spec" "$brief" "scout brief missing Firstmate spec subsection"
+  assert_grep "{FIRSTMATE_SPEC}" "$brief" "scout brief missing the spec placeholder"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-sm-q6 --secondmate alpha >/dev/null 2>&1 \
@@ -783,71 +1000,527 @@ test_scout_and_secondmate_scaffold() {
   assert_present "$brief" "secondmate charter was not scaffolded"
   assert_grep "persistent second mate" "$brief" \
     "secondmate charter must declare its role"
+  assert_no_grep "## Captain's intent" "$brief" \
+    "secondmate charter must not grow ship/scout Task subsections"
+  assert_no_grep "{FIRSTMATE_SPEC}" "$brief" \
+    "secondmate charter must not carry the Firstmate spec placeholder"
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-# Every PR-producing mode must state the closing-keyword rule, and each must
-# name the one place that mode's worker writes the body, so the rule never reads
-# as licence to hand-edit a PR mid-run. A silent brief is one of the two causes
-# this rule exists for.
-test_pr_modes_carry_the_closing_keyword_rule() {
+test_worker_role_scope() {
+  local kind home brief
+  home="$TMP_ROOT/worker-role"
+  for kind in no-mistakes direct-PR local-only scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" arbitrary-project-name --scout >/dev/null || fail "scout scaffold failed"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" arbitrary-project-name --mode "$kind" >/dev/null || fail "$kind scaffold failed"
+    fi
+    brief="$home/data/$kind/brief.md"
+    assert_no_grep '# Current worker role contract' "$brief" "$kind scaffolded a second owner of the role scope fm-spawn.sh delivers"
+  done
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" supervisor --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
+  brief="$home/data/supervisor/brief.md"
+  assert_no_grep '# Current worker role contract' "$brief" "secondmate received the worker exception"
+  assert_no_grep 'do not adopt the supervisor identity' "$brief" "secondmate received the worker exception"
+  assert_grep "The local \`AGENTS.md\` is your job description" "$brief" "secondmate lost its supervisor contract"
+  assert_grep 'That file is your parent channel' "$brief" "secondmate lost its parent channel"
+  pass "fm-brief: scaffolds leave the worker role scope to the launch boundary and keep the secondmate contract"
+}
+
+# A home can carry standing worker instructions in its gitignored
+# config/brief-include.md. The include must land last on ship and scout
+# scaffolds, stay out of charters, change nothing when absent or blank, and stop
+# the scaffold before anything is written when the path is unusable.
+test_home_brief_include_is_appended_last() {
+  local home config brief kind out rc last_heading task_count
+  home="$TMP_ROOT/include-home"
+  config="$home/config"
+  mkdir -p "$config"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-absent some-proj --scout >/dev/null || fail "scout scaffold failed without an include"
+  assert_no_grep '# Home brief additions' "$home/data/include-absent/brief.md" "an absent include still added a section"
+  printf ' \n\n' > "$config/brief-include.md"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-blank some-proj --scout >/dev/null || fail "scout scaffold failed with a blank include"
+  assert_no_grep '# Home brief additions' "$home/data/include-blank/brief.md" "a blank include still added a section"
+
+  # shellcheck disable=SC2016 # The include is literal text and must never expand at scaffold time.
+  printf '%s\n' '# Task' 'Run `house-tool $(id)` first.' > "$config/brief-include.md"
+  for kind in ship scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "include-$kind" some-proj --scout >/dev/null || fail "scout scaffold failed with an include"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "include-$kind" some-proj --mode no-mistakes >/dev/null || fail "ship scaffold failed with an include"
+    fi
+    brief="$home/data/include-$kind/brief.md"
+    # shellcheck disable=SC2016 # Literal include text.
+    assert_grep 'Run `house-tool $(id)` first.' "$brief" "$kind brief did not carry the include verbatim"
+    assert_grep 'every other section of this brief takes precedence' "$brief" "$kind include section lost its precedence line"
+    last_heading=$(grep -n '^# ' "$brief" | grep -v -x '[0-9]*:# Task' | tail -n 1)
+    [ "${last_heading#*:}" = '# Home brief additions' ] \
+      || fail "$kind include was not the last generated section (got: $last_heading)"
+    task_count=$(sed -n '/^# Home brief additions$/q;p' "$brief" | grep -c -x '# Task')
+    [ "$task_count" = 1 ] || fail "$kind scaffold lost its own # Task section ahead of the include"
+  done
+
+  printf '%s\n' 'Delivery contract: mode=local-only' > "$config/brief-include.md"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-contract some-proj --scout 2>&1); rc=$?
+  expect_code 1 "$rc" "an include carrying a delivery contract line must stop the scaffold"
+  assert_contains "$out" "must not carry a 'Delivery contract: mode=' line" "delivery-contract refusal did not explain itself"
+  assert_absent "$home/data/include-contract" "a refused include left a partial scaffold behind"
+  printf '%s\n' 'Prefer small commits.' > "$config/brief-include.md"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" include-mate --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed with an include"
+  assert_no_grep '# Home brief additions' "$home/data/include-mate/brief.md" "a secondmate charter took the brief include"
+
+  FM_HOME="$home" FM_CONFIG_OVERRIDE="$TMP_ROOT/include-empty-config" \
+    "$ROOT/bin/fm-brief.sh" include-override some-proj --scout >/dev/null || fail "scout scaffold failed under FM_CONFIG_OVERRIDE"
+  assert_no_grep '# Home brief additions' "$home/data/include-override/brief.md" "FM_CONFIG_OVERRIDE did not select the config directory"
+
+  rm -f "$config/brief-include.md"
+  mkdir "$config/brief-include.md"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-unusable some-proj --scout 2>&1); rc=$?
+  expect_code 1 "$rc" "an unusable include path must stop the scaffold"
+  assert_contains "$out" "brief-include.md must be a readable regular file" "unusable include refusal did not name the file"
+  assert_absent "$home/data/include-unusable" "an unusable include left a partial scaffold behind"
+  pass "fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"
+}
+
+# (a) An unregistered/default project - no --branch-prefix passed at all - must
+# keep every generated ship mode's branch on the legacy "fm/<task-id>" name, byte
+# for byte, so every existing firstmate installation is unaffected.
+test_ship_branch_prefix_defaults_to_legacy_fm() {
+  local home id mode brief
+  home="$TMP_ROOT/branch-prefix-default-home"
+  mkdir -p "$home/data"
+  for id_mode in "brief-branch-nm-e1:no-mistakes" "brief-branch-dp-e2:direct-PR" "brief-branch-lo-e3:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016  # literal backticks around the branch name must stay unexpanded
+    assert_grep "\`git checkout -b fm/$id --\`" "$brief" \
+      "$mode: omitting --branch-prefix must still create the legacy fm/<task-id> branch"
+  done
+  pass "fm-brief.sh: --branch-prefix omitted defaults every ship mode to fm/<task-id>"
+}
+
+# (b) + (c) A configured override must replace "fm/" everywhere the branch name is
+# rendered - the branch-creation command, the never-push rule text, the
+# definition-of-done text, and the status-message text - never partially.
+test_ship_branch_prefix_override_is_consistent_across_modes() {
+  local home id brief
+  home="$TMP_ROOT/branch-prefix-override-home"
+  mkdir -p "$home/data"
+
+  id="brief-branch-override-nm-e4"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --branch-prefix 'contrib/' >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016
+  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+    "no-mistakes: branch-creation command did not use the configured override"
+  assert_no_grep "fm/$id" "$brief" \
+    "no-mistakes: brief mixed the legacy fm/ prefix in with the configured override"
+
+  id="brief-branch-override-dp-e5"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR --branch-prefix 'contrib/' >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016
+  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+    "direct-PR: branch-creation command did not use the configured override"
+  # shellcheck disable=SC2016
+  assert_grep "push only your \`contrib/$id\` branch" "$brief" \
+    "direct-PR: never-push rule text did not use the configured override"
+  assert_no_grep "fm/$id" "$brief" \
+    "direct-PR: brief mixed the legacy fm/ prefix in with the configured override"
+
+  id="brief-branch-override-lo-e6"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --branch-prefix 'contrib/' >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016
+  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+    "local-only: branch-creation command did not use the configured override"
+  # shellcheck disable=SC2016
+  assert_grep "Work only on your \`contrib/$id\` branch" "$brief" \
+    "local-only: never-push rule text did not use the configured override"
+  # shellcheck disable=SC2016
+  assert_grep "committed on your branch \`contrib/$id\`" "$brief" \
+    "local-only: definition-of-done text did not use the configured override"
+  # shellcheck disable=SC2016
+  assert_grep "\`done [at=<epoch>]: ready in branch contrib/$id\`" "$brief" \
+    "local-only: status-message text did not use the configured override"
+  assert_no_grep "fm/$id" "$brief" \
+    "local-only: brief mixed the legacy fm/ prefix in with the configured override"
+  pass "fm-brief.sh: a --branch-prefix override renders identically across every generated section"
+}
+
+# An empty override must still resolve to a valid, sensible branch name: the bare
+# task id, never a leading slash and never an empty branch name.
+test_ship_branch_prefix_empty_override_yields_bare_task_id() {
+  local home id brief
+  home="$TMP_ROOT/branch-prefix-bare-home"
+  mkdir -p "$home/data"
+  id="brief-branch-bare-e7"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --branch-prefix '' >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016
+  assert_grep "\`git checkout -b $id --\`" "$brief" \
+    "an empty --branch-prefix must yield a bare <task-id> branch"
+  assert_no_grep "checkout -b /$id" "$brief" \
+    "an empty --branch-prefix produced a leading-slash branch name"
+  assert_no_grep "fm/$id" "$brief" \
+    "an empty --branch-prefix left the legacy fm/ prefix in place"
+  pass "fm-brief.sh: an empty --branch-prefix override resolves to a bare <task-id> branch"
+}
+
+test_branch_prefix_is_refused_where_it_does_not_apply() {
+  local home out status label args expect
+  home="$TMP_ROOT/branch-prefix-refused-home"
+  mkdir -p "$home/data"
+  while IFS='|' read -r label args expect; do
+    [ -n "$label" ] || continue
+    # shellcheck disable=SC2086  # args is an intentional word-split arg list
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: expected a non-zero exit"
+    assert_contains "$out" "$expect" "$label: refusal did not explain why"
+    assert_absent "$home/data/${args%% *}/brief.md" "$label: refused scaffold still wrote a brief"
+  done <<'ROWS'
+branch-prefix on a scout brief|brief-branchref-f1 some-proj --scout --branch-prefix fix/|--branch-prefix applies only to ship briefs
+branch-prefix on a secondmate charter|brief-branchref-f2 --secondmate --no-projects --branch-prefix fix/|--branch-prefix applies only to ship briefs
+ROWS
+  pass "fm-brief.sh: --branch-prefix is refused on scout and secondmate scaffolds"
+}
+
+# A branch prefix is embedded verbatim into a `git checkout -b` command in the
+# generated brief, so a space or a leading dash could corrupt or hijack that
+# command; both must be rejected loudly rather than silently accepted.
+test_branch_prefix_value_is_validated() {
+  local home out status
+  home="$TMP_ROOT/branch-prefix-validated-home"
+  mkdir -p "$home/data"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-branchval-g1 some-proj --mode no-mistakes --branch-prefix 'bad prefix/' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a space-containing --branch-prefix should be refused"
+  assert_contains "$out" "must not contain a space" "space-containing --branch-prefix did not explain why"
+  assert_absent "$home/data/brief-branchval-g1/brief.md" "refused space-containing --branch-prefix still wrote a brief"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-branchval-g2 some-proj --mode no-mistakes --branch-prefix=-oops 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a dash-leading --branch-prefix should be refused"
+  assert_contains "$out" "must not start with '-'" "dash-leading --branch-prefix did not explain why"
+  assert_absent "$home/data/brief-branchval-g2/brief.md" "refused dash-leading --branch-prefix still wrote a brief"
+
+  pass "fm-brief.sh: --branch-prefix value is validated against embedded spaces and a leading dash"
+}
+
+test_branch_prefix_command_is_shell_safe() {
+  local home id prefix marker brief command repo branch
+  home="$TMP_ROOT/branch-prefix-shell-safe-home"
+  marker="$TMP_ROOT/branch-prefix-shell-safe-marker"
+  id='brief-branch-safe-g3'
+  prefix="\$(touch\${IFS}$marker)"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --branch-prefix "$prefix" >/dev/null 2>&1 \
+    || fail "a ref-format-valid metacharacter prefix should scaffold safely"
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # The sed expression intentionally contains literal backticks.
+  command=$(sed -n 's/^1\. First action: create your branch: `\(.*\)`$/\1/p' "$brief")
+  [ -n "$command" ] || fail "generated brief exposed no branch-creation command"
+  repo="$TMP_ROOT/branch-prefix-shell-safe-repo"
+  git init -q "$repo" || fail "could not initialize shell-safety fixture repository"
+  ( cd "$repo" && eval "$command" ) || fail "generated branch-creation command did not run"
+  assert_absent "$marker" "generated branch command executed the prefix's command substitution"
+  branch=$(git -C "$repo" branch --show-current)
+  [ "$branch" = "$prefix$id" ] \
+    || fail "generated branch command did not create the literal configured branch (got '$branch')"
+  pass "fm-brief.sh: ref-format-valid shell metacharacters stay literal in generated branch commands"
+}
+
+# Every missing-required-argument path must name the missing argument and print
+# the usage, rather than aborting on an unbound positional under `set -u`, and a
+# refusal must leave no half-created brief directory behind.
+test_missing_required_arguments_print_usage() {
+  local home out rc
+  home="$TMP_ROOT/missing-args-home"
+  mkdir -p "$home/data"
+
+  check_missing() {
+    local label=$1 needle=$2; shift 2
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$@" 2>&1); rc=$?
+    [ "$rc" -ne 0 ] || fail "fm-brief.sh $label exited 0 on a missing argument"
+    assert_contains "$out" "$needle" "fm-brief.sh $label did not name the missing argument"
+    assert_contains "$out" "Usage: fm-brief.sh" "fm-brief.sh $label did not print the usage"
+    assert_contains "$out" "missing required argument" "fm-brief.sh $label did not report a missing argument"
+    case "$out" in
+      *"unbound variable"*) fail "fm-brief.sh $label aborted on an unbound variable" ;;
+    esac
+  }
+
+  check_missing "with no arguments" "<task-id>"
+  check_missing "--scout with no task id" "<task-id>" --scout
+  check_missing "--secondmate with no task id" "<task-id>" --secondmate
+  check_missing "--herdr-lab with no task id" "<task-id>" --herdr-lab
+  check_missing "ship without a repo or mode" "<repo-name>" brief-missing-repo-b1
+  check_missing "ship without a repo" "<repo-name>" brief-missing-repo-b5 --mode no-mistakes
+  check_missing "--scout without a repo" "<repo-name>" brief-missing-repo-b2 --scout
+  check_missing "--herdr-lab without a repo" "<repo-name>" brief-missing-repo-b3 --herdr-lab --mode no-mistakes
+  check_missing "--secondmate without a project" "<project>" brief-missing-proj-b4 --secondmate
+
+  local id
+  for id in brief-missing-repo-b1 brief-missing-repo-b2 brief-missing-repo-b3 brief-missing-proj-b4 brief-missing-repo-b5; do
+    assert_absent "$home/data/$id" "fm-brief.sh created $id's brief directory while refusing a missing argument"
+  done
+  pass "fm-brief.sh: every missing-argument path names the argument, prints usage, and writes nothing"
+}
+
+# A project whose recorded captain decision keeps CLAUDE.md as the real file
+# needs the prohibition in place of the default instruction: omitting the
+# default would still leave a worker free to create the AGENTS.md the decision
+# forbids. The posture is registered as +keep-claude-md, read at intake with
+# fm-project-mode.sh --project-memory, and passed to the scaffold explicitly.
+test_keep_claude_md_project_gets_prohibition_not_omission() {
+  local home id brief default_brief memory mode proj out rc
+  home="$TMP_ROOT/keep-claude-md-home"
+  mkdir -p "$home/data"
+  cat > "$home/data/projects.md" <<'EOF'
+- keeper [no-mistakes +keep-claude-md] - fixture keeping CLAUDE.md (added 2026-08-21)
+- direct-keeper [+keep-claude-md direct-PR +yolo] - fixture with every flag, mode last-but-one (added 2026-08-21)
+- flags-only [+keep-claude-md] - fixture with no mode word (added 2026-08-21)
+- plain-proj [no-mistakes] - fixture without the marker (added 2026-08-21)
+- typo-flag [no-mistakes +keep-claudemd] - fixture with a mistyped marker (added 2026-08-21)
+- typo-first [+keep-claudemd direct-PR] - fixture whose mistyped marker comes first (added 2026-08-21)
+EOF
+
+  # The registry query: the flag is order-independent, never leaks into the
+  # delivery posture, and a flags-only bracket still resolves the default mode.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory keeper)" = keep-claude-md ] \
+    || fail "--project-memory did not read the +keep-claude-md flag"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory direct-keeper)" = keep-claude-md ] \
+    || fail "--project-memory did not read the flag ahead of the mode"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" direct-keeper)" = "direct-PR on" ] \
+    || fail "+keep-claude-md changed the resolved delivery mode or yolo posture"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" flags-only)" = "no-mistakes off" ] \
+    || fail "a flags-only bracket was read as a delivery mode"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory flags-only)" = keep-claude-md ] \
+    || fail "--project-memory did not read a flags-only bracket"
+  for proj in keeper direct-keeper flags-only plain-proj; do
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
+    [ -z "$out" ] || fail "$proj: a correctly spelled registry entry warned: $out"
+  done
+
+  # A slip in this hand-edited, gitignored registry must warn rather than
+  # resolve in silence, and a misspelled flag must never swallow the mode.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" typo-first 2>/dev/null)" = "direct-PR off" ] \
+    || fail "a mistyped flag ahead of the mode was read as the mode"
+  for proj in typo-flag typo-first; do
+    [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>/dev/null)" = agents-md ] \
+      || fail "$proj: a mistyped flag did not fall back to agents-md"
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj" 2>&1 >/dev/null)
+    assert_contains "$out" '+keep-claudemd' "$proj: a mistyped flag resolved with no warning"
+  done
+
+  # Every absent-registry path answers with the posture every project had before
+  # the flag existed.
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory plain-proj)" = agents-md ] \
+    || fail "--project-memory did not default an unmarked project to agents-md"
+  [ "$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory absent-proj 2>/dev/null)" = agents-md ] \
+    || fail "--project-memory did not default an unregistered project to agents-md"
+  [ "$(FM_HOME="$TMP_ROOT/no-registry-home" "$ROOT/bin/fm-project-mode.sh" --project-memory any 2>/dev/null)" = agents-md ] \
+    || fail "--project-memory did not default a missing registry to agents-md"
+
+  # The brief: the resolved posture replaces the section in every ship mode.
+  for proj in keeper direct-keeper; do
+    memory=$(FM_HOME="$home" "$ROOT/bin/fm-project-mode.sh" --project-memory "$proj")
+    for mode in no-mistakes direct-PR local-only; do
+      id="brief-keep-claude-$proj-$mode"
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --mode "$mode" --project-memory "$memory" >/dev/null 2>&1 \
+        || fail "$id: keep-claude-md scaffold exited non-zero"
+      brief="$home/data/$id/brief.md"
+      assert_present "$brief" "$id: brief was not scaffolded"
+      grep -qx "Project memory posture: keep-claude-md" "$brief" \
+        || fail "$id: brief did not record its machine-readable project-memory posture"
+      assert_grep "This project keeps its project memory in \`CLAUDE.md\` as the real file." "$brief" \
+        "$id: keep-claude-md brief lost the project-memory prohibition"
+      assert_grep "Do NOT create an \`AGENTS.md\` here" "$brief" \
+        "$id: keep-claude-md brief did not forbid creating AGENTS.md"
+      assert_no_grep "fm-ensure-agents-md.sh .\` in the worktree" "$brief" \
+        "$id: keep-claude-md brief still instructs the worker to run the helper"
+      assert_grep "If this task produced durable project-intrinsic knowledge, record it in \`CLAUDE.md\`." "$brief" \
+        "$id: keep-claude-md brief lost the durable-knowledge recording condition"
+      assert_no_grep "already exists" "$brief" \
+        "$id: keep-claude-md brief kept an existence trigger with no action behind it"
+    done
+  done
+
+  # Unmarked projects, and a scaffold that omits the flag, keep the default
+  # instruction and carry no posture line.
+  for id in brief-keep-claude-default brief-keep-claude-explicit; do
+    if [ "$id" = brief-keep-claude-default ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" plain-proj --mode no-mistakes >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" plain-proj --mode no-mistakes --project-memory agents-md >/dev/null 2>&1
+    fi
+    default_brief="$home/data/$id/brief.md"
+    assert_grep "run \`$ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree" "$default_brief" \
+      "$id: unmarked project lost the default ensure-agents-md instruction"
+    assert_no_grep "Do NOT create an" "$default_brief" \
+      "$id: unmarked project inherited the keep-claude-md prohibition"
+    assert_no_grep "Project memory posture:" "$default_brief" \
+      "$id: the default posture grew a posture line"
+  done
+
+  # The flag is closed-set, and refused where no project-memory section exists.
+  while IFS='|' read -r label args expect; do
+    [ -n "$label" ] || continue
+    # shellcheck disable=SC2086  # args is an intentional word-split arg list
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1); rc=$?
+    [ "$rc" -ne 0 ] || fail "$label: expected a non-zero exit"
+    assert_contains "$out" "$expect" "$label: refusal did not explain why"
+  done <<'ROWS'
+unknown posture|brief-memory-refused-m1 keeper --mode no-mistakes --project-memory claude-md|--project-memory must be agents-md or keep-claude-md
+empty posture|brief-memory-refused-m2 keeper --mode no-mistakes --project-memory|--project-memory requires a value
+posture on a scout|brief-memory-refused-m3 keeper --scout --project-memory keep-claude-md|--project-memory applies only to ship briefs
+posture on a secondmate|brief-memory-refused-m4 --secondmate --no-projects --project-memory keep-claude-md|--project-memory applies only to ship briefs
+ROWS
+  for id in brief-memory-refused-m1 brief-memory-refused-m2 brief-memory-refused-m3 brief-memory-refused-m4; do
+    assert_absent "$home/data/$id" "$id: a refused project-memory flag still created a brief directory"
+  done
+  pass "fm-brief.sh: +keep-claude-md resolves to --project-memory and replaces the ensure-agents-md instruction with its prohibition"
+}
+
+# A direct-PR worker writes the PR body itself, so its definition of done must
+# state the closing-keyword form: a merged PR whose body has no well-formed
+# keyword leaves its issue open. local-only opens no PR and stays silent.
+test_direct_pr_carries_the_closing_keyword_rule() {
   local home brief
   home="$TMP_ROOT/closing-keyword-home"
-  write_registry "$home"
+  mkdir -p "$home/data"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-nm-ck-a7 no-registry-proj >/dev/null 2>&1 \
-    || fail "closing-keyword: no-mistakes scaffold exited non-zero"
-  brief="$home/data/brief-nm-ck-a7/brief.md"
-  assert_grep "immediately precedes the reference" "$brief" \
-    "no-mistakes brief does not state the closing-keyword form"
-  assert_grep "Closes #{issue}" "$brief" \
-    "no-mistakes brief does not show the closing-keyword line to write"
-  assert_grep "your intent is where that line has to be" "$brief" \
-    "no-mistakes brief does not name the intent as where the keyword goes"
-  assert_no_grep "gh-axi pr edit" "$brief" \
-    "no-mistakes brief tells the worker to hand-edit the PR the no-hand-edit rule forbids"
-  assert_grep "firstmate's merge step reports any issue the body does not close" "$brief" \
-    "no-mistakes brief does not say who reports a keyword that is missing anyway"
-
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-dpr-ck-a8 direct-proj >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-dpr-ck-a8 some-proj --mode direct-PR >/dev/null 2>&1 \
     || fail "closing-keyword: direct-PR scaffold exited non-zero"
   brief="$home/data/brief-dpr-ck-a8/brief.md"
   assert_grep "immediately precedes the reference" "$brief" \
     "direct-PR brief does not state the closing-keyword form"
+  assert_grep "Closes #{issue}" "$brief" \
+    "direct-PR brief does not show the closing-keyword line to write"
   assert_grep "include the line when you open the PR" "$brief" \
     "direct-PR brief does not say when to write the keyword"
   assert_no_grep "gh-axi pr edit" "$brief" \
     "direct-PR brief routes the keyword through an edit rather than the body it writes"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lo-ck-a9 local-proj >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lo-ck-a9 some-proj --mode local-only >/dev/null 2>&1 \
     || fail "closing-keyword: local-only scaffold exited non-zero"
   brief="$home/data/brief-lo-ck-a9/brief.md"
   assert_no_grep "closing keyword" "$brief" \
     "local-only brief carries a closing-keyword rule for a mode that opens no PR"
-  pass "fm-brief.sh: PR-producing briefs carry the closing-keyword rule and its timing"
+  pass "fm-brief.sh: the direct-PR brief carries the closing-keyword rule and its timing"
 }
 
+# The firstmate-codexapp skill points a Codex Desktop thread at a launch brief
+# built on this scaffold instead of excerpting it into the thread message, so the
+# scaffold must stand alone: a worker pointed at its path has no second source.
+test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
+  local home kind id brief
+  home="$TMP_ROOT/pointed-worker-home"
+  mkdir -p "$home/data"
+  for kind in no-mistakes direct-PR local-only scout; do
+    id="brief-pointed-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$kind" >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "$home/state/$id.status" "$brief" \
+      "$id: brief lacks the absolute status path a pointed worker cannot infer"
+    assert_grep "4. Report status by appending one line:" "$brief" \
+      "$id: brief lost the status protocol rule"
+    assert_grep "States: working, needs-decision, blocked, paused, done, failed." "$brief" \
+      "$id: brief lost the state list"
+    assert_grep "5. If you hit the same obstacle twice" "$brief" \
+      "$id: brief lost the repeated-obstacle rule"
+    assert_grep "6. If a decision belongs" "$brief" \
+      "$id: brief lost the escalation rule the definition of done refers to"
+    assert_grep "append \`resolved [at=<epoch>]: {how it cleared}\` yourself" "$brief" \
+      "$id: brief lost rule 6's closure for a decision or blocker it opens"
+    assert_grep "[key=<slug>]" "$brief" \
+      "$id: brief lost the correlation key that ties a closure to what it opened"
+    assert_grep "7. Never stop, restart, or update the shared" "$brief" \
+      "$id: brief lost the shared-daemon rule"
+    assert_grep "# Definition of done" "$brief" \
+      "$id: brief lost the done gate a pointed worker has no other source for"
+    case "$kind" in
+      direct-PR)
+        assert_grep "This task ships **direct-PR**" "$brief" \
+          "$id: brief lost the delivery mode its done gate belongs to"
+        assert_grep "append \`done [at=<epoch>]: PR {url}\` to the status file and stop" "$brief" \
+          "$id: a direct-PR worker would be left thinking it is finished at a local commit"
+        ;;
+      local-only)
+        assert_grep "Keep your branch a clean fast-forward onto the current default branch" "$brief" \
+          "$id: brief lost the local-only fast-forward rebase requirement"
+        assert_grep "append \`done [at=<epoch>]: ready in branch fm/$id\`" "$brief" \
+          "$id: brief lost the local-only ready-branch report"
+        ;;
+      scout)
+        assert_grep "$home/data/$id/report.md" "$brief" \
+          "$id: brief lost the scout report deliverable"
+        assert_grep "append \`done [at=<epoch>]: {one-line conclusion}\`" "$brief" \
+          "$id: brief lost the scout's done report"
+        assert_no_grep "committed on your branch" "$brief" \
+          "$id: a scout would be told to commit on a branch it never creates"
+        ;;
+      *)
+        assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+          "$id: brief lost the no-mistakes pipeline handoff"
+        assert_grep "append \`done [at=<epoch>]: PR {url} checks green\`" "$brief" \
+          "$id: brief lost the no-mistakes ready report"
+        ;;
+    esac
+  done
+  pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
+}
+
+test_worker_role_scope
 test_script_parses
+test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_ship_mode_is_required_and_closed_set
+test_ship_mode_is_explicit_not_registry
+test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
-test_no_mistakes_dod_requires_declared_pause_before_pipeline_handoff
-test_every_crewmate_brief_carries_the_whole_pause_lifecycle
-test_every_crewmate_brief_is_complete_for_a_pointed_worker
+test_no_mistakes_dod_green_detection
+test_pr_based_dod_requires_non_draft
+test_ask_user_escalation_format
 test_ship_project_memory_wording
-test_ship_safety_contracts_survive_a_wording_pass
-test_keep_claude_md_project_gets_prohibition_not_omission
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
+test_documented_global_replace_leaves_the_herdr_gate_intact
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
+test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
+test_ship_and_scout_teach_validation_round_pause
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
-test_task_placeholder_appears_only_as_a_fill_site
-test_documented_fill_lands_the_task_once_and_spares_the_herdr_gate
-test_pr_modes_carry_the_closing_keyword_rule
+test_scout_lavish_line_follows_presentation_floor
+test_home_brief_include_is_appended_last
+test_ship_branch_prefix_defaults_to_legacy_fm
+test_ship_branch_prefix_override_is_consistent_across_modes
+test_ship_branch_prefix_empty_override_yields_bare_task_id
+test_branch_prefix_is_refused_where_it_does_not_apply
+test_branch_prefix_value_is_validated
+test_branch_prefix_command_is_shell_safe
 test_missing_required_arguments_print_usage
+test_keep_claude_md_project_gets_prohibition_not_omission
+test_every_crewmate_brief_is_complete_for_a_pointed_worker
+test_direct_pr_carries_the_closing_keyword_rule

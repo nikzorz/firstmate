@@ -65,6 +65,14 @@
 # harness starts the daemon, so a brand-new holder must tolerate a not-yet-live
 # daemon without releasing.
 #
+# Supported limit: state/.afk plus a live away-mode daemon is the only evidence
+# of an armed posture this script trusts, so it holds for any DAEMON-backed
+# posture, away or quiet alike, and for nothing else. A posture that runs no
+# away-mode daemon (the Pi supervision branch, or away mode run by the
+# supervision host on a home with config/supervision-host) never arms it, and a
+# holder started there by hand releases itself once the grace window lapses.
+# On such a home the machine can still sleep while the captain is away.
+#
 # A holder killed outright (SIGKILL, an OOM kill, VM teardown) never runs its
 # release, so the Windows process it owned is left LEAKED: still holding, with
 # nothing left to exit and drop the request. The record therefore carries the
@@ -89,6 +97,16 @@
 #   FM_KEEP_AWAKE_POLL_SECS   holder poll interval (default 10)
 #   FM_KEEP_AWAKE_GRACE_SECS  daemon-absence tolerance (default 180)
 set -u
+
+# Answered before the home is resolved or any helper is sourced.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  case "${1:-}" in
+    -h|--help)
+      awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+      exit 0
+      ;;
+  esac
+fi
 
 FM_KEEP_AWAKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$FM_KEEP_AWAKE_DIR/.." && pwd)}"
@@ -117,7 +135,7 @@ set +e
 fm_keepawake_log() { printf 'fm-keep-awake: %s\n' "$*" >&2; }
 
 fm_keepawake_usage() {
-  sed -n '2,90p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 # Opt-in gate. Absent file means off. A present file may be empty or hold "auto";
