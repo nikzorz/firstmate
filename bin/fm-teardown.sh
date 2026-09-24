@@ -55,7 +55,13 @@
 # bin/fm-episode-records-lib.sh; that file owns why clearing them here is
 # reclamation and why the guarantee that no task inherits them lives at the
 # claim in bin/fm-spawn.sh instead. A new record needs no declaration and
-# no second list to keep in step: the glob already reaches it on both paths. That
+# no second list to keep in step: the glob already reaches it on both paths.
+# A record that is not named for its task at all is reached by asking the
+# library that owns its location who owns it, never by a list of such records
+# here: the quarantine by id prefix below, and state/pending-replies/ through
+# bin/fm-pending-reply-lib.sh's owner readers, which firstmate_home_child_ids
+# and remove_task_state_records both call. A new location of that kind adds its
+# reader to those same two places. That
 # glob attributes a record by its id prefix, so teardown refuses rather than sweep
 # when a task that still has a meta carries an id the record namespace cannot
 # separate. Only ids that still have a meta are visible to that check.
@@ -234,6 +240,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-episode-records-lib.sh
 . "$SCRIPT_DIR/fm-episode-records-lib.sh"
+# shellcheck source=bin/fm-pending-reply-lib.sh
+. "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -465,6 +473,7 @@ remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
   # is reclamation, not the inheritance guarantee: bin/fm-episode-records-lib.sh
   # owns why the guarantee lives at the claim instead.
   fm_episode_records_clear "$state_dir" "$(fm_backend_target_of_meta "$state_dir/$id.meta")" "$id" || return 1
+  fm_pending_reply_clear_task "$state_dir" "$id" || return 1
   remove_grok_turnend_auth "$state_dir" "$id" || return 1
   remove_kimi_turnend_auth "$state_dir" "$id" || return 1
   remove_pr_poll_artifacts "$state_dir" "$id" || return 1
@@ -1540,6 +1549,10 @@ firstmate_home_child_ids() {  # <sub_state>
         print_quarantine_record_owner_id "$entry"
       done
     fi
+    fm_pending_reply_owner_ids "$sub_state" | while IFS= read -r name; do
+      fm_task_id_record_namespace_safe "$name" || continue
+      printf '%s\n' "$name"
+    done
   } | LC_ALL=C sort -u
 }
 

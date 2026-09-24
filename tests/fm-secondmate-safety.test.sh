@@ -1801,6 +1801,105 @@ EOF
   pass "secondmate retirement clears a child whose only surviving record is quarantined"
 }
 
+# A pending-reply record is named for its correlation id and names its secondmate
+# only in a field, so no state/<id>.* sweep reaches it. Retirement must still clear
+# it from the parent, or a later secondmate reusing the id inherits an unanswered
+# request it was never sent, with the recovery and escalation that follow from it.
+test_secondmate_teardown_clears_the_parents_pending_replies_for_it() {
+  local home subhome fakebin log lease fmroot pending
+  home="$TMP_ROOT/pending-parent-home"
+  subhome="$TMP_ROOT/pending-parent-subhome"
+  fmroot="$TMP_ROOT/pending-parent-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  pending="$home/state/pending-replies"
+  mkdir -p "$pending"
+  printf 'corr_id=0123456789abcdef\ntask_id=domain\nphase=awaiting_report\n' > "$pending/0123456789abcdef"
+  printf 'confirmed=1\n' > "$pending/.delivery-confirmed-0123456789abcdef"
+  printf 'corr_id=fedcba9876543210\ntask_id=domain\nphase=resolved\n' > "$pending/fedcba9876543210"
+  # Another secondmate's expectation, including one whose id extends this one's.
+  printf 'corr_id=aaaaaaaaaaaaaaaa\ntask_id=domain2\nphase=awaiting_report\n' > "$pending/aaaaaaaaaaaaaaaa"
+  printf 'confirmed=1\n' > "$pending/.delivery-confirmed-aaaaaaaaaaaaaaaa"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/pending-parent-fake")
+  log="$TMP_ROOT/pending-parent-fake/tmux.log"
+  lease="$TMP_ROOT/pending-parent-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/pending-parent-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "teardown failed to retire a secondmate with pending replies in the parent"
+
+  [ ! -e "$pending/0123456789abcdef" ] \
+    || fail "the retired secondmate's open pending reply survived in the parent"
+  [ ! -e "$pending/.delivery-confirmed-0123456789abcdef" ] \
+    || fail "the retired secondmate's delivery marker survived in the parent"
+  [ ! -e "$pending/fedcba9876543210" ] \
+    || fail "the retired secondmate's resolved pending reply survived in the parent"
+  [ -e "$pending/aaaaaaaaaaaaaaaa" ] && [ -e "$pending/.delivery-confirmed-aaaaaaaaaaaaaaaa" ] \
+    || fail "another secondmate's pending reply was cleared as collateral"
+  pass "secondmate retirement clears the parent's pending replies for it and spares another's"
+}
+
+# The same records inside a retired home are attributed by their task_id field, so
+# a child whose only surviving record is a pending reply is still visited and
+# cleared before a returned slot is handed to its next occupant.
+test_secondmate_teardown_clears_a_child_whose_only_record_is_a_pending_reply() {
+  local home subhome fakebin log lease fmroot pending
+  home="$TMP_ROOT/pending-child-home"
+  subhome="$TMP_ROOT/pending-child-subhome"
+  fmroot="$TMP_ROOT/pending-child-fmroot"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  pending="$subhome/state/pending-replies"
+  mkdir -p "$pending"
+  printf 'corr_id=0123456789abcdef\ntask_id=cm1\nphase=escalated\n' > "$pending/0123456789abcdef"
+
+  fakebin=$(make_fake_tmux "$TMP_ROOT/pending-child-fake")
+  log="$TMP_ROOT/pending-child-fake/tmux.log"
+  lease="$TMP_ROOT/pending-child-fake/lease"
+  printf 'domain\n' > "$lease"
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/pending-child-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_RETURN_KEEPS_DIR=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "teardown failed to retire a secondmate holding a child's pending reply"
+
+  [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
+  [ ! -e "$pending/0123456789abcdef" ] \
+    || fail "a child's pending reply survived retirement into the returned home"
+  pass "secondmate retirement clears a child whose only surviving record is a pending reply"
+}
+
 test_secondmate_force_teardown_refuses_failed_child_home_return() {
   local home subhome grandhome grandhome_abs fakebin log fmroot err rc
   home="$TMP_ROOT/child-return-fail-home"
@@ -2733,6 +2832,8 @@ test_secondmate_teardown_prevalidates_every_child_before_clearing_any
 test_secondmate_teardown_refuses_a_child_meta_that_lands_mid_retirement
 test_secondmate_teardown_refuses_late_child_meta_before_sweeping_a_sibling
 test_secondmate_teardown_clears_a_child_whose_only_record_is_quarantined
+test_secondmate_teardown_clears_the_parents_pending_replies_for_it
+test_secondmate_teardown_clears_a_child_whose_only_record_is_a_pending_reply
 test_secondmate_force_teardown_refuses_failed_child_home_return
 test_secondmate_teardown_is_not_blocked_by_a_legacy_quarantine_marker
 test_secondmate_teardown_clears_a_child_named_like_the_quarantine_marker
