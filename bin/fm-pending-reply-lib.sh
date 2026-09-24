@@ -56,7 +56,8 @@
 #   wrong_home_scan_signature=
 #   grace_secs=             bounded grace before recovery is eligible
 #
-# Sourced by bin/fm-send.sh, bin/fm-watch.sh, bin/fm-secondmate-report.sh, and
+# Sourced by bin/fm-send.sh, bin/fm-watch.sh, bin/fm-secondmate-report.sh,
+# bin/fm-teardown.sh, and
 # tests. No side effects on source. set -u / set -e safe.
 #
 # Tunables (env):
@@ -97,6 +98,11 @@ fm_pending_reply_grace_secs() {
   printf '%s' "$g"
 }
 
+# Where a home keeps its pending-reply records, ignoring the test override.
+fm_pending_reply_home_dir() {  # <state-dir>
+  printf '%s/pending-replies' "$1"
+}
+
 # Directory holding durable pending-reply records for <state-dir>.
 fm_pending_reply_dir() {  # <state-dir>
   local state=$1
@@ -104,7 +110,7 @@ fm_pending_reply_dir() {  # <state-dir>
     printf '%s' "$FM_PENDING_REPLY_DIR_OVERRIDE"
     return 0
   fi
-  printf '%s/pending-replies' "$state"
+  fm_pending_reply_home_dir "$state"
 }
 
 fm_pending_reply_path() {  # <state-dir> <corr_id>
@@ -1052,4 +1058,47 @@ fm_pending_reply_task_has_open() {  # <state-dir> <task_id>
     return 0
   done
   return 1
+}
+
+# A record is named for its correlation id and names its task only in its
+# task_id field, so a sweep of state/<id>.* never reaches it, and a record left
+# behind by a retired secondmate would be read as a live expectation of the next
+# task that reuses the id: an unanswered request it was never sent, a recovery
+# request aimed at it, and an escalation on its behalf.
+# These two readers are how bin/fm-teardown.sh attributes and removes them. They
+# read the home's own directory rather than the test override, because teardown
+# also sweeps homes other than the one whose override the environment carries.
+# Retirement is the only place a record may go: a secondmate relaunch reuses its
+# id through the same spawn claim a new task does, and the expectations of the
+# secondmate being relaunched are still owed.
+
+# Print the task id of every pending-reply record under <state-dir>, one per line.
+fm_pending_reply_owner_ids() {  # <state-dir>
+  local dir rec
+  dir=$(fm_pending_reply_home_dir "$1")
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 0
+  for rec in "$dir"/*; do
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    fm_pending_reply_get "$rec" task_id
+  done
+}
+
+# Remove every pending-reply record owned by <task_id> under <state-dir>, with
+# its delivery-confirmation marker and any temporary file a crashed write left.
+fm_pending_reply_clear_task() {  # <state-dir> <task_id>
+  local dir task_id=${2-} rec corr base
+  [ -n "$task_id" ] || return 0
+  dir=$(fm_pending_reply_home_dir "$1")
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 0
+  for rec in "$dir"/*; do
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    [ "$(fm_pending_reply_get "$rec" task_id)" = "$task_id" ] || continue
+    base=$(basename "$rec")
+    corr=$(fm_pending_reply_get "$rec" corr_id)
+    [ -n "$corr" ] || corr=$base
+    rm -f -- "$dir/.delivery-confirmed-$corr" "$dir/.delivery-confirmed-$base" \
+      "$dir/.delivery-confirmed-$corr.tmp."* || return 1
+    rm -f -- "$dir/.$base.tmp."* || return 1
+    rm -f -- "$rec" || return 1
+  done
 }

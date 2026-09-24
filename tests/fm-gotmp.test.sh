@@ -70,6 +70,11 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
   # fm-episode-records-lib.sh: teardown clears endpoint-keyed supervision records through it.
   ln -s "$ROOT/bin/fm-episode-records-lib.sh" "$fake/bin/fm-episode-records-lib.sh"
+  # fm-pending-reply-lib.sh and the libs it sources: teardown clears a retired
+  # task's pending-reply records through it.
+  for lib in fm-pending-reply-lib.sh fm-marker-lib.sh fm-operational-input.sh fm-send-result-lib.sh; do
+    ln -s "$ROOT/bin/$lib" "$fake/bin/$lib"
+  done
   # fm-decision-hold.sh + fm-classify-lib.sh: teardown runs its read-only
   # captain-gated link check before any destructive cleanup. Never symlink
   # fm-tasks-axi-lib.sh here: the stub below is written with `cat >`, which
@@ -179,6 +184,11 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
   # fm-episode-records-lib.sh: teardown clears endpoint-keyed supervision records through it.
   ln -s "$ROOT/bin/fm-episode-records-lib.sh" "$fake/bin/fm-episode-records-lib.sh"
+  # fm-pending-reply-lib.sh and the libs it sources: teardown clears a retired
+  # task's pending-reply records through it.
+  for lib in fm-pending-reply-lib.sh fm-marker-lib.sh fm-operational-input.sh fm-send-result-lib.sh; do
+    ln -s "$ROOT/bin/$lib" "$fake/bin/$lib"
+  done
   # See make_fake_root: the same two siblings, and the same reason not to
   # symlink fm-tasks-axi-lib.sh over the stub written below.
   ln -s "$ROOT/bin/fm-decision-hold.sh" "$fake/bin/fm-decision-hold.sh"
