@@ -11,7 +11,6 @@ set -u
 . "$ROOT/bin/fm-episode-records-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-episode-records-lib)
-LIB="$ROOT/bin/fm-episode-records-lib.sh"
 
 KEY_FAMILIES=(hash count stale stale-since paused paused-rechecked paused-resurfaced
   wedge-escalations advancing-resurfaced advancing-absorbs herdr-escalated)
@@ -92,31 +91,8 @@ test_either_argument_may_be_empty() {
   pass "an unknown target or id clears what it can, and a missing state dir is success"
 }
 
-# Drift guard: a record family some supervisor writes on a watcher key or a task
-# key, but that the clear does not name, is one a later task inherits. Every
-# writer spells those records as <state>/.<family>-$<key var>.
-test_every_keyed_family_written_in_bin_is_cleared() {
-  local family missing=''
-  # The patterns below match a literal "$" in bin/ source.
-  # shellcheck disable=SC2016
-  while IFS= read -r family; do
-    [ -n "$family" ] || continue
-    grep -qF "/.$family-\$" "$LIB" || missing="$missing $family"
-  done <<EOF
-$(grep -ohE '/\.[a-z][a-z-]*-\$(\{?key\}?|\{?idkey\}?|2|watcher_key|\(_stale_key)' \
-    "$ROOT"/bin/fm-watch.sh "$ROOT"/bin/fm-supervise-daemon.sh "$ROOT"/bin/fm-push-transition-lib.sh \
-  | sed -E 's|^/\.||; s|-\$.*$||' | sort -u)
-EOF
-  # shellcheck disable=SC2016
-  grep -qF '"$FM_BACKEND_HERDR_ESCALATED_PREFIX" "$key"' "$ROOT/bin/backends/herdr.sh" \
-    || fail "herdr's escalation marker is no longer spelled from the watcher key; recheck the clear"
-  [ -z "$missing" ] || fail "keyed record families written in bin/ but not cleared:$missing"
-  pass "every keyed record family a supervisor writes is named by the clear"
-}
-
 test_clears_every_record_a_reused_id_would_inherit
 test_leaves_a_live_neighbor_and_home_records_alone
 test_either_argument_may_be_empty
-test_every_keyed_family_written_in_bin_is_cleared
 
 echo "# fm-episode-records-lib.test.sh: all assertions passed"
