@@ -10,6 +10,63 @@
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# These suites drive teardown and spawn paths that reach a backend CLI, and an
+# unstubbed herdr call there starts a live server on the host that outlives the
+# suite. Every herdr reached without a test's own fake therefore hits a refusing
+# shim, and the suite fails at exit if that shim was called or if a herdr process
+# carrying this suite's token is still running; such a process is reaped before
+# the failure is reported. The token is what attributes a process to this suite,
+# so a herdr the operator or a sibling suite runs is never touched.
+FM_TEST_HERDR_GUARD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-herdr-guard.XXXXXX")
+FM_TEST_HERDR_GUARD_TOKEN=$(basename "$FM_TEST_HERDR_GUARD_DIR")
+export FM_TEST_HERDR_GUARD_TOKEN
+mkdir -p "$FM_TEST_HERDR_GUARD_DIR/bin"
+cat > "$FM_TEST_HERDR_GUARD_DIR/bin/herdr" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$FM_TEST_HERDR_GUARD_DIR/calls.log'
+echo "refused: unstubbed herdr call from a secondmate suite: herdr \$*" >&2
+exit 97
+SH
+chmod +x "$FM_TEST_HERDR_GUARD_DIR/bin/herdr"
+PATH="$FM_TEST_HERDR_GUARD_DIR/bin:$PATH"
+
+# Echo the pid of every running herdr process that inherited this suite's token.
+fm_test_herdr_guard_leaked_pids() {
+  local pid
+  [ -d /proc ] || return 0
+  command -v pgrep >/dev/null 2>&1 || return 0
+  for pid in $(pgrep -x herdr 2>/dev/null); do
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+      | grep -qxF "FM_TEST_HERDR_GUARD_TOKEN=$FM_TEST_HERDR_GUARD_TOKEN" \
+      && printf '%s\n' "$pid"
+  done
+  return 0
+}
+
+fm_test_herdr_guard_exit() {
+  local status=$? leaked pid
+  # A test may leave errexit on, and a failing check here must still report.
+  set +e
+  leaked=$(fm_test_herdr_guard_leaked_pids)
+  if [ -n "$leaked" ]; then
+    for pid in $leaked; do
+      printf 'not ok - a herdr process started by this suite outlived it: %s\n' \
+        "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" >&2
+      kill "$pid" 2>/dev/null
+    done
+    status=1
+  fi
+  if [ -s "$FM_TEST_HERDR_GUARD_DIR/calls.log" ]; then
+    printf 'not ok - unstubbed herdr calls reached the real CLI path:\n' >&2
+    sed 's/^/  herdr /' "$FM_TEST_HERDR_GUARD_DIR/calls.log" >&2
+    status=1
+  fi
+  rm -rf "$FM_TEST_HERDR_GUARD_DIR"
+  fm_test_cleanup
+  exit "$status"
+}
+trap fm_test_herdr_guard_exit EXIT
+
 # A fake tmux (window ops are logged to FM_FAKE_TMUX_LOG, list-windows returns
 # FM_FAKE_TMUX_WINDOW, capture-pane echoes FM_FAKE_TMUX_CAPTURE) plus a fake
 # treehouse (durable lease of FM_FAKE_TREEHOUSE_HOME, recording the lease holder
@@ -18,7 +75,10 @@
 # models the production slot return that keeps the pooled directory).
 # FM_FAKE_TMUX_KILL_WINDOW_LANDS_META names a child meta the fake writes while it
 # kills a window, which is how a test lands one between a teardown's in-flight
-# refusal and its child record sweep. Echoes the fakebin dir.
+# refusal and its child record sweep. A fake herdr rides along because a child
+# recorded on the herdr backend is closed by pane, and the real CLI's close path
+# starts a live server for the recorded session first; its calls are logged as
+# `herdr <args>` to FM_FAKE_TMUX_LOG. Echoes the fakebin dir.
 make_fake_tmux() {
   local dir=$1 fakebin capture
   fakebin=$(fm_fakebin "$dir")
@@ -107,8 +167,19 @@ case "${1:-}" in
 esac
 exit 0
 SH
+  cat > "$fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf 'herdr %s\n' "$*" >> "${FM_FAKE_TMUX_LOG:-/dev/null}"
+case "${1:-} ${2:-}" in
+  'status --json') printf '{"server":{"running":true}}\n' ;;
+  'pane close') ;;
+  *) exit 1 ;;
+esac
+SH
   chmod +x "$fakebin/tmux"
   chmod +x "$fakebin/treehouse"
+  chmod +x "$fakebin/herdr"
   : > "$dir/tmux.log"
   printf '%s\n' "$fakebin"
 }
