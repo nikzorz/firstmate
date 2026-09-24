@@ -17,8 +17,10 @@
 #     those sections are preserved as unstructured records.
 #     Structured rows preserve captain-hold metadata such as hold_kind and
 #     hold_reason when tasks-axi emits it. They also carry normalized current_role,
-#     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, and
-#     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
+#     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids,
+#     captain_owed, and captain_actionable fields. captain_owed is a captain hold
+#     with a reason on any unfinished item, whatever its kind; captain_actionable
+#     is an owed decision whose blockers are all Done. Repeated blocker tokens remain ordered; a blocker
 #     resolves only when its structured record is Done, and missing ids stay open.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
@@ -154,7 +156,8 @@ An unreadable child costs strict validity but keeps every state word the readabl
 children positively support; it never lets the home claim no active child work.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, and plural blocker fields for downstream
-projections. A captain hold is actionable only when every blocker is Done.
+projections. A captain hold is owed on any unfinished item whatever its kind,
+and actionable only when every blocker is Done.
 Cross-home reads use FM_SNAPSHOT_SECONDMATES (default 20, 0 lifts the count
 bound), FM_SNAPSHOT_SECONDMATE_TIMEOUT, and FM_SNAPSHOT_SECONDMATE_MAX_BYTES.
 Terminal contradiction evidence uses
@@ -437,9 +440,13 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .state == "queued" then "queued"
                else "done" end)
           | .requires_child_metadata = (.current_role == "worker")
-          | .captain_actionable =
-              (.state == "queued" and .kind == "captain" and .hold_kind == "captain"
-               and .hold_reason != null and (.unresolved_blocker_ids | length) == 0)
+          # The settled owed-decision predicate, the same test bin/fm-decision-hold.sh
+          # applies without sharing its code. `kind` is deliberately absent: a
+          # hand-filed captain hold on a ship item is still owed, and
+          # `tasks-axi update --kind` leaves the hold fields intact.
+          | .captain_owed =
+              (.hold_kind == "captain" and .hold_reason != null and .state != "done")
+          | .captain_actionable = (.captain_owed and (.unresolved_blocker_ids | length) == 0)
         else . end)
     | del(.section,.order)
   ' < "$backlog"
@@ -700,8 +707,8 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
                     | any($tasks[]; .id == $id and (.current_state.state | is_active)) | not)))) ]) as $queued_all
-    | ([ $queued_all[]
-         | select(.captain_actionable == true)
+    | ([ $backlog.records[]?
+         | select(.structured and .captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(.state == "done" and .structured and .kind != "captain")

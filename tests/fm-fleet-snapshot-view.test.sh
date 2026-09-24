@@ -342,6 +342,51 @@ EOF
   pass "backlog normalization preserves strict roles and resolves every blocker compatibly"
 }
 
+# A captain hold filed by hand on a ship item carries hold_kind captain and a
+# reason but keeps kind ship. The owed-decision predicate ignores kind, so that
+# item is owed wherever it sits until it is Done, in the main snapshot and in a
+# secondmate home summary alike, even while its parked worker is still live.
+test_captain_hold_on_ship_item_is_owed_whatever_its_kind() {
+  local home fakebin out
+  home=$(make_home captain-hold-kind-ship)
+  mkdir -p "$home/projects/parked-ship"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] parked-ship - Parked ship awaiting captain (repo: alpha) (kind: ship) (hold: redesign or contain) (hold-kind: captain)
+
+## Queued
+- [ ] hand-filed - Hand-filed captain decision (repo: alpha) (kind: ship) (hold: choose the redesign) (hold-kind: captain)
+- [ ] external-ship - Externally held ship (repo: alpha) (kind: ship) (hold: vendor release) (hold-kind: external)
+
+## Done
+- [x] answered-ship - Answered captain decision (repo: alpha) (kind: ship) (done 2026-07-22) (hold: already answered) (hold-kind: captain)
+EOF
+  fm_write_meta "$home/state/parked-ship.meta" \
+    "window=firstmate:fm-ship-task" "worktree=$home/projects/parked-ship" "project=alpha" \
+    "harness=codex" "kind=ship" "mode=ship"
+  printf 'working: standing by for the captain\n' > "$home/state/parked-ship.status"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "hand-filed")
+      | .kind == "ship" and .captain_owed == true and .captain_actionable == true)
+      and (.backlog.records[] | select(.id == "parked-ship")
+        | .kind == "ship" and .captain_owed == true and .captain_actionable == true)
+      and (.backlog.records[] | select(.id == "external-ship")
+        | .captain_owed == false and .captain_actionable == false)
+      and (.backlog.records[] | select(.id == "answered-ship")
+        | .captain_owed == false and .captain_actionable == false)
+  ' >/dev/null || fail "a captain hold on a ship item was not read as owed: $out"
+
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .state == "captain_decision"
+      and ([.decisions_open[] | select(.verb == "captain-hold") | .id] | sort)
+        == ["hand-filed", "parked-ship"]
+  ' >/dev/null || fail "a home summary dropped a captain hold filed on a ship item: $out"
+  pass "a captain hold on a ship item is owed in the snapshot and the home summary"
+}
+
 test_event_hints_follow_reconciled_current_state() {
   local home fakebin out
   home=$(make_home event-hints)
@@ -1441,6 +1486,7 @@ test_unreadable_child_does_not_collapse_the_home_state
 test_unreadable_only_home_does_not_claim_no_active_work
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
+test_captain_hold_on_ship_item_is_owed_whatever_its_kind
 test_event_hints_follow_reconciled_current_state
 test_open_decision_survives_later_unrelated_event
 test_secondmate_open_decision_survives_live_endpoint
