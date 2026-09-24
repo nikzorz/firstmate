@@ -29,6 +29,8 @@
 
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
+# shellcheck source=bin/fm-quota-axi-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/fm-quota-axi-lib.sh"
 
 # --- dialog signature -------------------------------------------------------
 #
@@ -98,7 +100,7 @@ fm_claude_limit_dialog_match() {  # stdin: plain pane capture
   IFS= read -r -d '' text || true
   [ -n "$text" ] || return 1
   text=$(printf '%s\n' "$text" | fm_composer_strip_ansi)
-  text=$(fm_composer_ws_normalize "$text")
+  fm_composer_normalize_spaces_var text
   nonblank=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$') || return 1
   [ -n "$nonblank" ] || return 1
   total=$(printf '%s\n' "$nonblank" | grep -c '')
@@ -121,17 +123,20 @@ fm_claude_limit_dialog_match() {  # stdin: plain pane capture
 
 # fm_claude_limit_quota_json: bounded, read-only `quota-axi` output, or empty.
 # Never fails the caller; an absent tool or a timeout simply yields no output,
-# which the reader below turns into `unknown`.
+# which the reader below turns into `unknown`. --no-credential-refresh keeps the
+# read strictly read-only: without it quota-axi may delegate an expired
+# session's renewal to the vendor CLI, which is not a call this supervision read
+# may make. An expired session then reads stale, which is `unknown`.
 fm_claude_limit_quota_json() {
   local timeout_s=${FM_CLAUDE_LIMIT_QUOTA_TIMEOUT:-$FM_CLAUDE_LIMIT_QUOTA_TIMEOUT_DEFAULT}
   case "$timeout_s" in ''|*[!0-9]*) timeout_s=$FM_CLAUDE_LIMIT_QUOTA_TIMEOUT_DEFAULT ;; esac
   command -v quota-axi >/dev/null 2>&1 || return 0
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$timeout_s" quota-axi --provider claude --json 2>/dev/null || true
+    timeout "$timeout_s" quota-axi --provider claude --json --no-credential-refresh 2>/dev/null </dev/null || true
   elif command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "$timeout_s" quota-axi --provider claude --json 2>/dev/null || true
+    gtimeout "$timeout_s" quota-axi --provider claude --json --no-credential-refresh 2>/dev/null </dev/null || true
   else
-    quota-axi --provider claude --json 2>/dev/null || true
+    quota-axi --provider claude --json --no-credential-refresh 2>/dev/null </dev/null || true
   fi
   return 0
 }
@@ -227,10 +232,15 @@ fm_claude_limit_parse_iso8601() {  # <timestamp> -> epoch seconds, or empty
 # short window. Any short window whose reset or remaining percentage the provider
 # does not report leaves that instant unknown rather than guessed.
 #
+# The snapshot is admitted only through bin/fm-quota-axi-lib.sh's
+# fm_quota_json_valid, and the claude row is bound through its FM_QUOTA_ROW_JQ
+# quota_row join, so a snapshot with several claude account rows binds the
+# default account rather than whichever row happens to come first.
+#
 # Fail-closed inputs, all of which report `unknown` with no recheck time: no
-# `quota-axi`, no `jq`, a timed-out or unparseable read, quota data the provider
-# itself marks stale, or a semantics/availability block the provider does not
-# mark `known`. `unknown` never authorizes recovery, and never counts as a
+# `quota-axi`, no `jq`, a timed-out, unparseable or schema-invalid read, no
+# claude row, quota data the provider itself marks stale, or a
+# semantics/availability block the provider does not mark `known`. `unknown` never authorizes recovery, and never counts as a
 # settled external wait either - it is a condition to surface. A readable window
 # with an unreadable reset time is still a good `exhausted` verdict; only the
 # scheduling refinement is lost, and the caller falls back to its own cadence.
@@ -243,6 +253,7 @@ fm_claude_limit_window_read() {  # -> "<reset|exhausted|unknown>\t<epoch|>"
   command -v jq >/dev/null 2>&1 || { printf 'unknown\t'; return 0; }
   json=$(fm_claude_limit_quota_json)
   [ -n "$json" ] || { printf 'unknown\t'; return 0; }
+  printf '%s\n' "$json" | fm_quota_json_valid || { printf 'unknown\t'; return 0; }
   # Every test is an explicit equality rather than jq's `//` alternative
   # operator: `//` treats a literal `false` the same as a missing field, so
   # `(.state.stale // true) == false` would have discarded the good case where
@@ -251,8 +262,8 @@ fm_claude_limit_window_read() {  # -> "<reset|exhausted|unknown>\t<epoch|>"
   # Output is the remaining percentage on the first line, then either nothing,
   # the literal `?` for a short window the provider did not fully describe, or
   # one reset timestamp per currently-short bounding window.
-  parsed=$(printf '%s' "$json" | jq -r --argjson min "$min" '
-      (.providers // []) | map(select(.provider == "claude")) | .[0] // empty
+  parsed=$(printf '%s' "$json" | jq -r --argjson min "$min" "$FM_QUOTA_ROW_JQ"'
+      quota_row(.; "claude"; "") // empty
       | select(.state.stale == false)
       | . as $p
       | ($p.quotaSemantics // {})

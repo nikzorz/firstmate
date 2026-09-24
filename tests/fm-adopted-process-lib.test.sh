@@ -323,6 +323,36 @@ test_dead_session_leader_reads_as_unknown() {
   pass "a resident process whose session leader has died reads as unknown and is named"
 }
 
+# A caller that already owns a session may exempt it: a home retirement names the
+# sessions its own process-event runners live in, which read exactly like an orphan
+# once their launcher's window is gone. The exemption must clear that session and
+# nothing else, so a detached service beside it is still reported.
+test_an_exempt_session_is_left_out_and_nothing_else_is() {
+  local dir="$TMP_ROOT/exempt" orphan sid detached found rc
+  mkdir -p "$dir"
+  orphan=$(start_orphaned_in "$dir" exempt-orphan)
+  require_pid "$orphan" exempt-orphan
+  sid=$(stat_field_of "$orphan" 4)
+  expect_code 2 "$(scan_status "$dir")" "exempt: without the exemption the orphan should read as unknown"
+
+  set +e
+  fm_adopted_processes "$dir" "$sid" >/dev/null
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "exempt: an exempt session should leave the directory clear"
+
+  detached=$(start_detached_in "$dir" exempt-detached)
+  require_pid "$detached" exempt-detached
+  set +e
+  found=$(fm_adopted_processes "$dir" "$sid")
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "exempt: a detached service beside an exempt session must still be adopted"
+  assert_contains "$found" "$detached" "exempt: the detached service was not named"
+  assert_not_contains "$found" "$orphan" "exempt: a process in the exempt session was named"
+  pass "an exempt session is left out of the answer and a detached service beside it is not"
+}
+
 # A pane's shell leads a session of its own wherever the pane was opened, so a
 # window opened in the directory being given up matches a detached service on
 # residency alone. The terminal it still holds is the whole difference, and
@@ -355,3 +385,4 @@ test_symlinked_directory_still_finds_the_process
 test_scanning_shell_never_accuses_itself
 test_dead_session_leader_reads_as_unknown
 test_window_shell_on_a_terminal_is_not_adopted
+test_an_exempt_session_is_left_out_and_nothing_else_is

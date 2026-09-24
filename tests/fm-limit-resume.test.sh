@@ -24,12 +24,10 @@
 #       fleet's `paused:` vocabulary, idempotently, and sends nothing - and once
 #       recovery lands, that wait is closed again, but only ever the one firstmate
 #       itself opened;
-#   (e) that wait also carries WHEN it ends, so the recheck is scheduled from the
-#       window's reported reset instead of a blind hour. The 2026-07-29/30
-#       follow-on these pin: detection and recovery were both correct, but the
-#       window rolled about forty minutes into an hour-long recheck cadence, so
-#       three crews stayed parked until the cadence came due. Absent, malformed,
-#       or unreadable reset data must leave that cadence exactly as it was.
+#   (e) that wait also carries WHEN it ends, as the declared-wait `until` time,
+#       so the recheck is scheduled from the window's reported reset instead of
+#       the fixed cadence. Absent, malformed, elapsed, or unreadable reset data
+#       must leave that cadence in charge.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -108,19 +106,21 @@ dismissed_pane() {
 EOF
 }
 
+# A quota-axi --json snapshot (schema 5, the shape bin/fm-quota-axi-lib.sh's
+# fm_quota_json_valid admits) whose claude row reports <percent-remaining>.
 quota_json() {  # <percent-remaining>
   cat <<EOF
 {
-  "schemaVersion": 2,
+  "schemaVersion": 5,
   "providers": [
     {
       "provider": "claude",
-      "plan": "max",
       "state": { "status": "fresh", "stale": false },
       "quotaSemantics": {
         "status": "known",
         "effectiveAvailability": [
-          { "scope": "all_models", "status": "known", "effectivePercentRemaining": $1 }
+          { "scope": "all_models", "status": "known", "effectivePercentRemaining": $1,
+            "runway": { "status": "through_reset" } }
         ]
       }
     }
@@ -135,18 +135,18 @@ EOF
 quota_json_windows() {  # <effective-remaining> <windows-json> <bounded-by-json>
   cat <<EOF
 {
-  "schemaVersion": 2,
+  "schemaVersion": 5,
   "providers": [
     {
       "provider": "claude",
-      "plan": "max",
       "state": { "status": "fresh", "stale": false },
       "windows": $2,
       "quotaSemantics": {
         "status": "known",
         "effectiveAvailability": [
           { "scope": "all_models", "status": "known",
-            "effectivePercentRemaining": $1, "boundedBy": $3 }
+            "effectivePercentRemaining": $1, "boundedBy": $3,
+            "runway": { "status": "through_reset" } }
         ]
       }
     }
@@ -224,6 +224,19 @@ test_signature_matches_plain_marker_and_ansi() {
   pass "the signature tolerates the plain selection marker and ANSI styling"
 }
 
+# Claude draws the prompt padded with NO-BREAK SPACE in places, and a byte
+# locale cannot see that as [[:space:]], so the signature must normalize it
+# first; a pane read that skipped the normalization would silently never match.
+test_signature_matches_a_unicode_padded_prompt() {
+  local nbsp
+  nbsp=$(printf '\302\240')
+  limit_prompt_pane | sed "s/ /$nbsp/g" | LC_ALL=C fm_claude_limit_dialog_match \
+    || fail "a prompt padded with NO-BREAK SPACE did not match"
+  limit_prose_pane | sed "s/ /$nbsp/g" | LC_ALL=C fm_claude_limit_dialog_match \
+    && fail "NO-BREAK SPACE padding made ordinary prose match"
+  pass "the signature reads Unicode space padding as blank"
+}
+
 # --- (b) quota window -------------------------------------------------------
 
 # A fakebin whose quota-axi serves FM_FAKE_QUOTA_JSON (or fails on demand).
@@ -284,6 +297,26 @@ test_quota_window_fails_closed_to_unknown() {
   [ "$(PATH=/nonexistent-for-fm-test fm_claude_limit_window_state)" = unknown ] \
     || fail "a missing quota-axi was not unknown"
   pass "every unreadable or unmarked quota input fails closed to unknown"
+}
+
+# The snapshot is admitted through the fleet's shared quota validator and the
+# claude row is bound through its account join, so an unsupported schema never
+# answers and a multi-account snapshot binds the default account rather than
+# whichever claude row happens to come first.
+test_quota_window_binds_the_default_claude_account() {
+  local fb multi
+  fb=$(make_quota_bin "$TMP_ROOT")
+  [ "$(window_state_with "$fb" "$(quota_json 97 | sed 's/"schemaVersion": 5/"schemaVersion": 2/')")" = unknown ] \
+    || fail "a snapshot schema the shared validator refuses was trusted"
+  multi=$(quota_json 97 | jq -c '
+    .schemaVersion = 6
+    | .providers = [
+        (.providers[0] | .accountKey = "work"
+          | .quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 0),
+        (.providers[0] | .accountKey = "default")]')
+  [ "$(window_state_with "$fb" "$multi")" = reset ] \
+    || fail "a multi-account snapshot did not bind the default claude account"
+  pass "the quota read admits only a valid snapshot and binds the default claude account"
 }
 
 # --- (e) reset time and the scheduled recheck -------------------------------
@@ -396,42 +429,30 @@ test_missing_or_unreadable_reset_time_falls_back() {
   pass "absent, malformed, or unreadable reset data leaves the existing cadence in charge"
 }
 
-# The sidecar's three invariants, which are what keep a scheduled recheck from
-# becoming a second cadence: only a future epoch is recorded, an elapsed one is
-# due, and it is a plain one-shot record any consumer can clear.
-test_pause_deadline_records_only_a_future_recheck() {
-  local d now
-  d="$TMP_ROOT/deadline"; mkdir -p "$d"
-  now=$(date +%s)
+# The recorded wait names its end with the declared-wait grammar the supervisors
+# read (status_paused_until). Only a FUTURE reset is written: an elapsed one
+# would make the supervisors recheck at once, on every recheck.
+test_recorded_wait_carries_only_a_future_until() {
+  local d soon last
+  d=$(make_case future-until)
+  setup_task "$d" stalled claude
+  limit_prompt_pane > "$d/pane.txt"
+  soon=$(( $(date +%s) + 2400 ))
 
-  pause_deadline_set "$d" task "$(( now + 600 ))"
-  [ -f "$d/task.pause-recheck" ] || fail "a future recheck deadline was not recorded"
-  pause_deadline_reached "$d" task && fail "a deadline ten minutes out was already due"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$(( $(date +%s) - 300 ))")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  assert_not_contains "$last" " until " "an elapsed reset was written as the wait's end"
+  status_paused_until "$last" >/dev/null && fail "an elapsed reset left a parseable until time"
 
-  # An elapsed deadline is due immediately - the observed case, where the window
-  # had rolled while the crew was still parked.
-  printf '%s\n' "$(( now - 5 ))" > "$d/task.pause-recheck"
-  pause_deadline_reached "$d" task || fail "an elapsed deadline was not due"
-
-  # A deadline that is already due at the moment it is written carries nothing
-  # the writer does not already know, and recording one would re-fire every poll.
-  pause_deadline_set "$d" task "$(( now - 60 ))"
-  [ ! -e "$d/task.pause-recheck" ] || fail "a non-future deadline was recorded instead of cleared"
-
-  for bad in '' 'soon' '-5' '12x'; do
-    printf '%s\n' "$(( now + 600 ))" > "$d/task.pause-recheck"
-    pause_deadline_set "$d" task "$bad"
-    [ ! -e "$d/task.pause-recheck" ] || fail "malformed deadline '$bad' was recorded"
-  done
-
-  printf 'not an epoch\n' > "$d/task.pause-recheck"
-  pause_deadline_reached "$d" task && fail "a corrupt deadline file was read as due"
-  pause_deadline_reached "$d" never-paused && fail "a task with no deadline file was read as due"
-
-  pause_deadline_set "$d" task "$(( now + 600 ))"
-  pause_deadline_clear "$d" task
-  [ ! -e "$d/task.pause-recheck" ] || fail "clearing the deadline left the record behind"
-  pass "only a future recheck deadline is recorded, an elapsed one is due, and clearing removes it"
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "recording the dated wait exited non-zero"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  [ "$(status_paused_until "$last")" = "$(( soon + 60 ))" ] \
+    || fail "a future reset was not written as the wait's until time, got '$last'"
+  pass "the recorded wait carries an until time only for a future reset"
 }
 
 # --- (c)/(d) guarded recovery ----------------------------------------------
@@ -447,14 +468,8 @@ make_case() {  # <name> -> echoes case dir
   cat > "$d/bin/fm-send.sh" <<'SH'
 #!/usr/bin/env bash
 set -u
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-send-result-lib.sh"
 if [ "${FM_FAKE_SEND_FAILS:-0}" = 1 ]; then exit 1; fi
 printf '%s\n' "$*" >> "${FM_FAKE_SENDLOG:?}"
-if [ "${FM_FAKE_SEND_UNCONFIRMED:-0}" = 1 ]; then exit "$FM_SEND_EXIT_UNCONFIRMED"; fi
-if [ "${FM_FAKE_SEND_UNCOMMITTED:-0}" = 1 ]; then
-  printf 'error: text was delivered to %s, but its pending-reply delivery commit failed. Do not resend.\n' "$1" >&2
-  exit "$FM_SEND_EXIT_DELIVERED_UNCOMMITTED"
-fi
 exit 0
 SH
   chmod +x "$d/bin/fm-send.sh"
@@ -696,66 +711,8 @@ test_failed_steer_is_reported_not_swallowed() {
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
     run_resume "$d" stalled 2>&1 >/dev/null) \
     && fail "a resume instruction that did not land was reported as success"
-  assert_contains "$out" "did not land" "a refused steer must still report non-delivery loudly"
+  assert_contains "$out" "was not sent" "a refused steer must still report non-delivery loudly"
   pass "a resume instruction that does not land is reported, not swallowed"
-}
-
-# An unconfirmed steer WAS submitted, so reporting it as non-delivery invites a
-# second steer that repeats the same instruction to the crewmate.
-test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery() {
-  local d out; d=$(make_case steer-unconfirmed)
-  setup_task "$d" stalled claude
-  limit_prompt_pane > "$d/pane.txt"
-  dismissed_pane > "$d/after.txt"
-  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
-    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
-    run_resume "$d" stalled 2>&1 >/dev/null) \
-    && fail "an unconfirmed resume instruction was reported as success"
-  assert_contains "$out" "unconfirmed" "an unconfirmed steer should be named as unconfirmed"
-  assert_contains "$out" "inspect stalled" "an unconfirmed steer should name the endpoint to inspect"
-  assert_not_contains "$out" "did not land" \
-    "an unconfirmed steer must not assert a non-delivery nobody proved"
-  [ -s "$d/sent.log" ] || fail "an unconfirmed steer should still record the submitted instruction"
-  pass "an unconfirmed resume instruction is reported as unknown, never as non-delivery"
-}
-
-# The wait asserts two things this run settles BEFORE it steers: the account
-# window has reset, and the prompt is provably gone. So closing it is not
-# governed by whether the steer's delivery could be confirmed - leaving it open
-# would park a crew that is no longer waiting on the window on the hour-long
-# recheck, the exact hours-unnoticed failure this feature ends.
-test_unconfirmed_steer_still_closes_the_wait_it_opened() {
-  local d soon out last
-  d=$(make_case close-pause-unconfirmed)
-  setup_task "$d" stalled claude
-  limit_prompt_pane > "$d/pane.txt"
-  dismissed_pane > "$d/after.txt"
-  soon=$(( $(date +%s) + 2400 ))
-
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
-    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
-    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
-  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded external wait was not recorded"
-  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not recorded"
-
-  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
-    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCONFIRMED=1 \
-    run_resume "$d" stalled 2>&1 >/dev/null) \
-    && fail "an unconfirmed steer was reported as a completed recovery"
-  assert_contains "$out" "unconfirmed" "the unconfirmed delivery should still be reported"
-  assert_contains "$out" "inspect stalled" "the unconfirmed report should still name the endpoint"
-  [ -s "$d/sent.log" ] || fail "the resume instruction was not submitted"
-  [ ! -e "$d/state/stalled.pause-recheck" ] \
-    || fail "an unconfirmed steer left the recheck deadline behind on a window that had reset"
-  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
-  case "$last" in
-    paused:*) fail "an unconfirmed steer left the quota wait standing as the crew's last event" ;;
-  esac
-  assert_contains "$last" "delivery unconfirmed" \
-    "the recorded outcome should say the instruction's delivery was unconfirmed"
-  assert_not_contains "$last" "re-steered" \
-    "an unconfirmed steer must not record a re-steer it could not prove"
-  pass "an unconfirmed steer closes the quota wait and records only what it proved"
 }
 
 # The close must not widen past what the run proved. A refusal that dismissed
@@ -775,18 +732,18 @@ test_refused_recovery_leaves_the_wait_standing() {
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 97)" \
     run_resume "$d" stalled >/dev/null 2>&1 \
     && fail "a prompt surviving Escape was reported as a recovery"
-  [ -e "$d/state/stalled.pause-recheck" ] || fail "a surviving prompt cleared the recheck deadline"
   last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
   case "$last" in
     paused:*) ;;
     *) fail "a surviving prompt closed the quota wait, last event was '$last'" ;;
   esac
+  [ "$(status_paused_until "$last")" = "$(( soon + 60 ))" ] \
+    || fail "a surviving prompt changed the wait's until time, last event was '$last'"
 
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_FAILS=1 \
     run_resume "$d" stalled >/dev/null 2>&1 \
     && fail "a refused resume instruction was reported as a recovery"
-  [ -e "$d/state/stalled.pause-recheck" ] || fail "a refused send cleared the recheck deadline"
   last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
   case "$last" in
     paused:*) ;;
@@ -795,50 +752,13 @@ test_refused_recovery_leaves_the_wait_standing() {
   pass "a refusal that dismissed or sent nothing leaves the quota wait exactly as it found it"
 }
 
-# A steer whose delivery the backend confirmed, but whose pending-reply
-# bookkeeping write then failed, landed. Reporting it as a refusal would have the
-# captain steer by hand and deliver the same instruction twice.
-test_delivered_but_uncommitted_steer_is_treated_as_delivered() {
-  local d soon out last
-  d=$(make_case steer-uncommitted)
-  setup_task "$d" stalled claude
-  limit_prompt_pane > "$d/pane.txt"
-  dismissed_pane > "$d/after.txt"
-  soon=$(( $(date +%s) + 2400 ))
-
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
-    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
-    run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
-
-  out=$(FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
-    FM_FAKE_QUOTA_JSON="$(quota_json 97)" FM_FAKE_SEND_UNCOMMITTED=1 \
-    run_resume "$d" stalled 2>&1) \
-    || fail "a delivered steer whose bookkeeping failed was reported as a refusal: $out"
-  assert_not_contains "$out" "did not land" \
-    "a steer that landed must not be reported as non-delivery"
-  assert_not_contains "$out" "steer it by hand" \
-    "a steer that landed must not ask the captain to repeat it"
-  [ -s "$d/sent.log" ] || fail "the resume instruction was not submitted"
-  [ ! -e "$d/state/stalled.pause-recheck" ] \
-    || fail "a delivered steer should close the quota wait's recheck deadline"
-  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
-  case "$last" in
-    paused:*) fail "a delivered steer left the quota wait standing, got '$last'" ;;
-  esac
-  assert_contains "$last" "the crew re-steered" \
-    "a delivered steer should record the re-steer it proved"
-  assert_contains "$out" "pending-reply delivery commit" \
-    "fm-send's account of the broken durable state must reach the operator"
-  pass "a delivered steer whose bookkeeping write failed closes the wait and still reports the breakage"
-}
-
 # The end the whole feature turns on: the recorded wait carries the reset time,
-# so the supervisors recheck when the window actually rolls rather than up to an
-# hour later. It is refreshed on each recheck, never left behind after recovery,
-# and simply absent when the provider did not report a usable reset.
+# so the supervisors recheck when the window actually rolls rather than on the
+# fixed cadence. A changed reset appends one new wait, an unchanged one appends
+# nothing, and recovery closes whichever of this script's waits is standing.
 test_exhausted_wait_schedules_its_own_recheck() {
-  local d soon later deadline
-  d=$(make_case recheck-deadline)
+  local d soon later last
+  d=$(make_case recheck-until)
   setup_task "$d" stalled claude
   limit_prompt_pane > "$d/pane.txt"
   dismissed_pane > "$d/after.txt"
@@ -848,61 +768,44 @@ test_exhausted_wait_schedules_its_own_recheck() {
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
     "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
     run_resume "$d" stalled >/dev/null || fail "recording the bounded wait exited non-zero"
-  deadline=$(cat "$d/state/stalled.pause-recheck" 2>/dev/null || true)
-  [ "$deadline" = "$(( soon + 60 ))" ] \
-    || fail "the wait did not schedule its recheck from the reported reset, got '$deadline'"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  [ "$(status_paused_until "$last")" = "$(( soon + 60 ))" ] \
+    || fail "the wait did not name its end from the reported reset, got '$last'"
+
+  # The same read again is idempotent.
+  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
+    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
+    run_resume "$d" stalled >/dev/null || fail "the repeat recheck exited non-zero"
+  [ "$(grep -c '^paused: ' "$d/state/stalled.status")" -eq 1 ] \
+    || fail "an unchanged reset time stacked a duplicate wait"
 
   # A later recheck sees a window that will now roll later; the schedule follows
-  # the current read rather than the first one.
+  # the current read with exactly one new wait.
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
     "[ $(quota_window five_hour 0 "$(iso_at "$later")") ]" '["five_hour"]')" \
     run_resume "$d" stalled >/dev/null || fail "the second recheck exited non-zero"
-  deadline=$(cat "$d/state/stalled.pause-recheck" 2>/dev/null || true)
-  [ "$deadline" = "$(( later + 60 ))" ] || fail "the recheck deadline was not refreshed, got '$deadline'"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  [ "$(status_paused_until "$last")" = "$(( later + 60 ))" ] \
+    || fail "a changed reset time was not recorded, got '$last'"
+  [ "$(grep -c '^paused: ' "$d/state/stalled.status")" -eq 2 ] \
+    || fail "a changed reset time did not append exactly one new wait"
 
-  # A window whose reset has already passed schedules nothing: the recheck is
-  # happening now, and re-recording an elapsed deadline would fire every poll.
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
-    "[ $(quota_window five_hour 0 "$(iso_at "$(( $(date +%s) - 300 ))")") ]" '["five_hour"]')" \
-    run_resume "$d" stalled >/dev/null || fail "the recheck on an elapsed reset exited non-zero"
-  [ ! -e "$d/state/stalled.pause-recheck" ] \
-    || fail "an elapsed reset was recorded as a deadline, which would re-fire every poll"
-
-  # No reset reported at all: the wait is still recorded, just without a schedule.
+  # No reset reported at all: the dated wait already standing stays in force.
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
     run_resume "$d" stalled >/dev/null || fail "the recheck without reset data exited non-zero"
-  grep -q '^paused: ' "$d/state/stalled.status" || fail "the bounded wait itself was lost"
-  [ ! -e "$d/state/stalled.pause-recheck" ] || fail "a deadline was invented without reset data"
+  [ "$(grep -c '^paused: ' "$d/state/stalled.status")" -eq 2 ] \
+    || fail "a read without reset data replaced the standing dated wait"
 
-  # Recovery clears the schedule with the wait, so nothing is left to fire later.
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
-    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
-    run_resume "$d" stalled >/dev/null || fail "re-recording the bounded wait exited non-zero"
-  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not re-recorded"
-  limit_prompt_pane > "$d/pane.txt"
+  # Recovery closes this script's own dated wait.
   FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_PANE_AFTER_KEY="$d/after.txt" \
     FM_FAKE_QUOTA_JSON="$(quota_json 97)" run_resume "$d" stalled >/dev/null \
     || fail "recovery of the reset window exited non-zero"
-  [ ! -e "$d/state/stalled.pause-recheck" ] || fail "recovery left its recheck deadline behind"
-
-  # Recovery through this script is not the only way a stall ends: a human can
-  # dismiss the prompt in the pane, and then this script never reaches close_pause
-  # again - it exits at the prompt gate. So this script is NOT where the deadline's
-  # lifetime is bounded; the supervisors' clear_pause_tracking is, and that seam is
-  # covered by tests/fm-watch-triage.test.sh and tests/fm-daemon.test.sh. Pinned
-  # here so the sidecar's owner records which exit paths leave it in place.
-  limit_prompt_pane > "$d/pane.txt"
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json_windows 0 \
-    "[ $(quota_window five_hour 0 "$(iso_at "$soon")") ]" '["five_hour"]')" \
-    run_resume "$d" stalled >/dev/null || fail "re-recording the bounded wait exited non-zero"
-  [ -e "$d/state/stalled.pause-recheck" ] || fail "the recheck deadline was not re-recorded"
-  dismissed_pane > "$d/pane.txt"
-  FM_FAKE_PANE_FILE="$d/pane.txt" FM_FAKE_QUOTA_JSON="$(quota_json 0)" \
-    run_resume "$d" stalled >/dev/null 2>&1 \
-    && fail "a pane with no usage-limit prompt was treated as a stall"
-  [ -e "$d/state/stalled.pause-recheck" ] \
-    || fail "the prompt-gate exit cleared a deadline it never evaluated"
-  pass "the recorded wait schedules its recheck from the reported reset, refreshes it, and clears it on recovery"
+  last=$(grep -v '^[[:space:]]*$' "$d/state/stalled.status" | tail -1)
+  case "$last" in
+    paused:*) fail "recovery left its dated wait standing as the crew's last event" ;;
+  esac
+  assert_contains "$last" "the crew re-steered" "recovery should record the re-steer it proved"
+  pass "the recorded wait names its end from the reported reset, follows a changed reset, and closes on recovery"
 }
 
 test_check_only_never_sends() {
@@ -927,12 +830,14 @@ test_signature_matches_the_real_prompt
 test_signature_ignores_ordinary_limit_prose
 test_signature_requires_every_anchor_in_order
 test_signature_matches_plain_marker_and_ansi
+test_signature_matches_a_unicode_padded_prompt
 test_quota_window_reset_and_exhausted
 test_quota_window_fails_closed_to_unknown
+test_quota_window_binds_the_default_claude_account
 test_reset_time_parses_without_a_platform_date
 test_exhausted_window_reports_when_it_resets
 test_missing_or_unreadable_reset_time_falls_back
-test_pause_deadline_records_only_a_future_recheck
+test_recorded_wait_carries_only_a_future_until
 test_recovery_refuses_non_claude_harness
 test_recovery_refuses_unresolvable_targets
 test_recovery_refuses_without_a_live_match
@@ -945,10 +850,7 @@ test_recovery_closes_only_a_wait_it_owns
 test_recovery_stops_when_the_pane_is_unreadable_after_escape
 test_malformed_settle_falls_back_to_the_default
 test_failed_steer_is_reported_not_swallowed
-test_unconfirmed_steer_is_reported_as_unknown_not_as_non_delivery
-test_unconfirmed_steer_still_closes_the_wait_it_opened
 test_refused_recovery_leaves_the_wait_standing
-test_delivered_but_uncommitted_steer_is_treated_as_delivered
 test_exhausted_wait_schedules_its_own_recheck
 test_check_only_never_sends
 

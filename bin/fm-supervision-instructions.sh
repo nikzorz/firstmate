@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Render the primary-harness supervision operating block for session start, the
-# short repair line used by guards and turn-end hooks, and the stale-beacon
-# advice line used by the watcher-down banner.
+# Render the primary-harness supervision operating block for session start and
+# the short repair line used by guards and turn-end hooks. On a Claude primary
+# whose home opted into the supervision host (config/supervision-host), the
+# block adds one state line and the host's main-side protocol
+# (docs/supervision-protocols/supervision-host.md); without that file the
+# output is unchanged.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,22 +17,19 @@ DOC_DIR="$REPO_ROOT/docs/supervision-protocols"
 HARNESS=
 READ_ONLY=0
 AFK=0
+AFK_MODE=away
 X_MODE=0
 REPAIR_LINE=0
-ADVICE_LINE=0
 QUEUE_PENDING=0
 
 usage() {
   cat <<'EOF'
-Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--x-mode 0|1] [--repair-line] [--stale-beacon-advice] [--queue-pending 0|1]
+Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--afk-mode away|quiet] [--x-mode 0|1] [--repair-line] [--queue-pending 0|1]
 
 Print the current primary harness's supervision operating instructions.
 With --repair-line, print one concise repair instruction for guard and hook messages.
-With --stale-beacon-advice, print one line answering what to do about a stale watcher
-beacon. On a harness whose routine re-arm belongs to an out-of-model automation, that
-line names the owner and withholds the arm command, because a stale beacon there is as
-likely to be a turn that outran the grace as a genuine lapse. On a harness where the
-model itself arms, it is the --repair-line instruction.
+--afk-mode only matters when --afk 1 (present); it selects the away-mode vs
+quiet-mode (kunchenguid/firstmate#2356) wording, and defaults to away.
 EOF
 }
 
@@ -57,6 +57,14 @@ while [ "$#" -gt 0 ]; do
       AFK=$(bool_value "$2")
       shift 2
       ;;
+    --afk-mode)
+      [ "$#" -gt 1 ] || { echo "error: --afk-mode requires away or quiet" >&2; exit 2; }
+      case "$2" in
+        away|quiet) AFK_MODE=$2 ;;
+        *) AFK_MODE=away ;;
+      esac
+      shift 2
+      ;;
     --x-mode)
       [ "$#" -gt 1 ] || { echo "error: --x-mode requires 0 or 1" >&2; exit 2; }
       X_MODE=$(bool_value "$2")
@@ -69,10 +77,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --repair-line)
       REPAIR_LINE=1
-      shift
-      ;;
-    --stale-beacon-advice)
-      ADVICE_LINE=1
       shift
       ;;
     -h|--help)
@@ -92,14 +96,21 @@ if [ -z "$HARNESS" ]; then
 fi
 
 case "$HARNESS" in
-  claude|codex|opencode|pi|grok) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
+  claude|codex|opencode|pi|grok|cursor|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
+  pi-signed) SNIPPET="$DOC_DIR/pi.md" ;;
   *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
 esac
 [ -f "$SNIPPET" ] || SNIPPET="$DOC_DIR/unknown.md"
+HOST_SNIPPET=
+if [ "$HARNESS" = claude ] && [ -f "$CONFIG/supervision-host" ]; then
+  HOST_SNIPPET="$DOC_DIR/supervision-host.md"
+fi
 
 checkpoint_seconds=${FM_CODEX_WATCH_CHECKPOINT:-180}
 pi_ext="$FM_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 pi_turnend_ext="$FM_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+omp_ext="$FM_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
+omp_turnend_ext="$FM_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
 x_mode_env="$CONFIG/x-mode.env"
 
 shell_quote() {
@@ -114,15 +125,17 @@ if [ "$X_MODE" -eq 0 ] && [ -f "$x_mode_env" ]; then
   X_MODE=1
 fi
 
-render_snippet() {
-  local line
+render_snippet() {  # [snippet]
+  local line snippet=${1:-$SNIPPET}
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line//__FM_PI_EXT__/$pi_ext}
     line=${line//__FM_PI_TURNEND_EXT__/$pi_turnend_ext}
+    line=${line//__FM_OMP_EXT__/$omp_ext}
+    line=${line//__FM_OMP_TURNEND_EXT__/$omp_turnend_ext}
     line=${line//__FM_X_MODE_ENV_SH__/$x_mode_env_sh}
     line=${line//__FM_X_MODE_ENV__/$x_mode_env}
     printf '%s\n' "$line"
-  done < "$SNIPPET"
+  done < "$snippet"
 }
 
 repair_line() {
@@ -131,7 +144,11 @@ repair_line() {
     return 0
   fi
   if [ "$AFK" -eq 1 ]; then
-    printf '%s\n' 'Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.'
+    if [ "$AFK_MODE" = quiet ]; then
+      printf '%s\n' 'Quiet mode owns watcher supervision; load /quiet and ensure the daemon is running instead of starting normal supervision directly.'
+    else
+      printf '%s\n' 'Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.'
+    fi
     return 0
   fi
 
@@ -145,13 +162,16 @@ repair_line() {
 
   case "$HARNESS" in
     claude)
-      printf '%s%s\n' "$prefix" 'repair missing watcher supervision with bin/fm-watch-arm.sh as its own Claude Code background task, never shell &.'
+      printf '%s%s\n' "$prefix" 'watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.'
       ;;
     codex)
       printf '%s%s%s%s\n' "$prefix" 'repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds ' "$checkpoint_seconds" '.'
       ;;
-    pi)
+    pi|pi-signed)
       printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e ' "$pi_turnend_ext" ' -e ' "$pi_ext" ' if the extensions are not loaded.'
+      ;;
+    omp)
+      printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or restart omp inside this home so ' "$omp_turnend_ext" ' and ' "$omp_ext" ' auto-load from .omp/extensions/ (use -e with both paths only when starting omp from another directory).'
       ;;
     opencode)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision by letting the OpenCode TUI plugin arm after idle; use bin/fm-watch-arm.sh only as a manual recovery probe if the plugin reports failure.'
@@ -159,40 +179,13 @@ repair_line() {
     grok)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision with bin/fm-watch-arm.sh as its own Grok tracked background task, never shell &.'
       ;;
+    cursor)
+      printf '%s%s\n' "$prefix" 'watcher supervision is owned by the stop-hook park; inspect the hook registration and watcher startup path before ending the turn.'
+      ;;
     *)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision according to the session-start block for this harness; do not use shell &.'
       ;;
   esac
-}
-
-# Name the out-of-model automation that owns routine watcher re-arm on this
-# harness, or print nothing when the model itself owns it. A stale beacon means
-# different things in each case, which is why the watcher-down banner asks this
-# before it recommends anything: where an automation owns re-arm, the emitted
-# protocol forbids a model arm after an ordinary wake, so a banner that told the
-# model to arm would contradict its own operating instructions and build a
-# second cycle.
-continuity_owner() {
-  case "$HARNESS" in
-    claude) printf '%s\n' 'The Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh)' ;;
-    pi) printf '%s\n' 'The Pi watch extension' ;;
-    opencode) printf '%s\n' 'The OpenCode TUI plugin' ;;
-  esac
-}
-
-stale_beacon_advice() {
-  local owner
-  # Read-only and away mode already answer with ownership rather than a command.
-  if [ "$READ_ONLY" -eq 1 ] || [ "$AFK" -eq 1 ]; then
-    repair_line
-    return 0
-  fi
-  owner=$(continuity_owner)
-  if [ -z "$owner" ]; then
-    repair_line
-    return 0
-  fi
-  printf "%s owns routine re-arm here; do not arm from this banner. If the beacon is still stale after that owner's next arm opportunity, the cycle has genuinely lapsed - repair it through the emitted supervision protocol for this harness.\n" "$owner"
 }
 
 ordinary_wake_line() {
@@ -203,8 +196,11 @@ ordinary_wake_line() {
     codex)
       printf '%s\n' '- Ordinary wake: take the next foreground bin/fm-watch-checkpoint.sh checkpoint as directed below.'
       ;;
-    pi)
+    pi|pi-signed)
       printf '%s\n' '- Ordinary wake: the Pi extension already owns watcher continuity; do not arm another cycle.'
+      ;;
+    omp)
+      printf '%s\n' '- Ordinary wake: the omp extension already owns watcher continuity; do not arm another cycle.'
       ;;
     opencode)
       printf '%s\n' '- Ordinary wake: the OpenCode TUI plugin already owns watcher continuity; do not arm manually.'
@@ -212,16 +208,14 @@ ordinary_wake_line() {
     grok)
       printf '%s\n' '- Ordinary wake: re-arm exactly one bin/fm-watch-arm.sh Grok tracked background task as directed below.'
       ;;
+    cursor)
+      printf '%s\n' '- Ordinary wake: the stop-hook park (bin/fm-turnend-guard-cursor.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'
+      ;;
     *)
       printf '%s\n' '- Ordinary wake: follow the continuation in the harness protocol below; do not use shell &.'
       ;;
   esac
 }
-
-if [ "$ADVICE_LINE" -eq 1 ]; then
-  stale_beacon_advice
-  exit 0
-fi
 
 if [ "$REPAIR_LINE" -eq 1 ]; then
   repair_line
@@ -239,16 +233,27 @@ else
   printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
 fi
 if [ "$AFK" -eq 1 ]; then
-  printf '%s\n' '- Away mode: active; load /afk and keep normal harness supervision paused while the daemon owns the watcher.'
+  if [ "$AFK_MODE" = quiet ]; then
+    printf '%s\n' '- Quiet mode: active; load /quiet and keep normal harness supervision paused while the daemon owns the watcher. Ordinary captain chat does NOT exit it - only an explicit /quiet off does.'
+  else
+    printf '%s\n' '- Away mode: active; load /afk and keep normal harness supervision paused while the daemon owns the watcher.'
+  fi
 else
-  printf '%s\n' '- Away mode: inactive.'
+  printf '%s\n' '- Away/quiet mode: inactive.'
 fi
 if [ "$X_MODE" -eq 1 ]; then
   printf '%s%s%s\n' '- X mode: active; source ' "$x_mode_env" ' before launching any watcher process so the 30s cadence is inherited.'
 else
   printf '%s\n' '- X mode: inactive; use the default watcher cadence.'
 fi
+if [ -n "$HOST_SNIPPET" ]; then
+  printf '%s\n' '- Supervision host: on; it takes away-posture wakes itself and hands the rest to you (protocol at the end of this block).'
+fi
 ordinary_wake_line
 printf '\n'
 render_snippet
 printf '\n'
+if [ -n "$HOST_SNIPPET" ]; then
+  render_snippet "$HOST_SNIPPET"
+  printf '\n'
+fi

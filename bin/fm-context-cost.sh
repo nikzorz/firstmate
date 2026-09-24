@@ -220,16 +220,15 @@ printf 'exactly one delivery-mode variant, the one its project is registered for
 PROBE_ID=probe-task
 PROBE_PROJECT=probe-project
 
-# brief_bytes <slot> <mode> <label> [flag...]: scaffold one brief into its own
+# brief_bytes <slot> <label> [flag...]: scaffold one brief into its own
 # throwaway home and measure it. Each slot gets an equal-length home path and
 # the same task id and project name, so the only thing that moves between the
-# ship rows is the delivery mode the probe registry selects.
+# ship rows is the delivery mode their --mode flag selects.
 brief_bytes() {
-  local slot=$1 mode=$2 label=$3 home
-  shift 3
+  local slot=$1 label=$2 home
+  shift 2
   home="$TMP/brief$slot"
   mkdir -p "$home/data"
-  printf -- '- %s [%s] - context cost probe\n' "$PROBE_PROJECT" "$mode" > "$home/data/projects.md"
   if (
     unset FM_DATA_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
     FM_HOME="$home" \
@@ -240,10 +239,10 @@ brief_bytes() {
     row -1 "$label (scaffold failed)"
   fi
 }
-brief_bytes 1 no-mistakes 'ship brief (no-mistakes)'
-brief_bytes 2 direct-PR 'ship brief (direct-PR)'
-brief_bytes 3 local-only 'ship brief (local-only)'
-brief_bytes 4 no-mistakes 'scout brief' --scout
+brief_bytes 1 'ship brief (no-mistakes)' --mode no-mistakes
+brief_bytes 2 'ship brief (direct-PR)' --mode direct-PR
+brief_bytes 3 'ship brief (local-only)' --mode local-only
+brief_bytes 4 'scout brief' --scout
 
 section 'On trigger: agent skills, paid only by sessions that load them'
 for skill in "$FM_ROOT"/.agents/skills/*/; do

@@ -221,13 +221,14 @@ Body.
 
 # The other half of the guarantee: the strip cleans a trailer that reached a
 # branch commit, and this knob stops claude putting one there in the first place.
-# Claude Code merges settings and resolves both keys independently, so the
-# session link survives an empty co-author text and both must stay false;
-# docs/verification/agent-attribution.md records the runtime measurement.
+# Claude Code resolves the commit text, the PR text, and the session link
+# independently, so the session link survives empty attribution texts and all
+# three must stay off; docs/verification/agent-attribution.md records the
+# runtime measurement.
 test_claude_settings_disable_agent_attribution() {
   local settings="$ROOT/.claude/settings.json"
   command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; return 0; }
-  jq -e '.includeCoAuthoredBy == false' "$settings" >/dev/null \
+  jq -e '.attribution.commit == "" and .attribution.pr == ""' "$settings" >/dev/null \
     || fail "settings: .claude/settings.json no longer disables the co-author trailer"
   jq -e '.attribution.sessionUrl == false' "$settings" >/dev/null \
     || fail "settings: .claude/settings.json no longer disables the session link"

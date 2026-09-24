@@ -3,10 +3,9 @@
 Active empirical evidence for the guarantee that returning a finished task's worktree never terminates a service shared with other work.
 Measured 2026-09-15 on treehouse v2.3.0 unless stated otherwise.
 
-## The sweep belongs to the return tool, not to cleanup
+## Two sweeps terminate by working directory
 
-`bin/fm-teardown.sh` does not sweep processes itself.
-The line that reported the terminations comes from `treehouse return`, whose own help states its scope:
+The first is `treehouse return`, whose own help states its scope:
 
 ```
 $ treehouse --version
@@ -25,6 +24,10 @@ Flags:
 ```
 
 There is no exclusion flag, so the only place firstmate can act is before the call.
+
+The second is `bin/fm-teardown.sh`'s own leaked-process reap (Fix 2 in its header), which ends every process whose working directory is the task's worktree or per-task temp root, before the return runs.
+`tests/fm-teardown.test.sh` covers it (`test_leaked_worktree_process_is_reaped` and its neighbours).
+The adopted-process scan runs above both, so either one only ever reaches a directory the scan has already cleared.
 
 ## The sweep terminates by working directory alone
 
@@ -97,6 +100,15 @@ This transcript predates two changes to the refusal and is left as it was measur
 The scan now runs above the steps that drop the task branch and remove the turn-end hook files, so a refused lane is left exactly as it was found.
 And the trailing `error: treehouse return failed` line no longer prints, because the return tool was never reached.
 
+## A retiring home's own process-event runners
+
+A secondmate home's process-event runners detach into a process group of their own but keep the session of whatever launched them, and their working directory is the home.
+Once the launcher's window is gone, their session leader is gone too, so the scan alone would read them as limit (c) below and refuse every retirement of a dead secondmate with a live source.
+The home's removal already retires them through `bin/fm-procevent.sh sweep-home`, so the home scans in `bin/fm-teardown.sh` exempt the sessions that the home's own claims name (`firstmate_home_process_event_sessions`).
+The exemption covers a session, never a detached service, because detaching gives a process a session of its own.
+`tests/fm-adopted-process-lib.test.sh` covers the exemption against real processes: the exempt orphan is left out while a detached service beside it is still reported.
+No retirement of a dead secondmate with a live process-event source has been measured end to end.
+
 ## Regression coverage
 
 `tests/fm-adopted-process-lib.test.sh` covers the ownership test against real processes, including a process whose session leader has died, which reads as unknown rather than as clear, and a window's own shell on a real pty, which leads its session from inside the directory and is not adopted.
@@ -119,7 +131,10 @@ The operator resolves that by ending that process and running the same cleanup a
 
 (c) A process living in the directory whose session leader has already exited cannot be attributed either way, so it refuses.
 The double-forked daemon has that shape, but the ordinary one is a lane's own leftover orphaned when its window died, which refuses every teardown of that lane until someone ends it.
+Teardown's own leaked-process reap does not end it either, because the scan refuses first.
 The operator resolves that the same way as (b), by ending the named process and running the same cleanup again.
+
+The per-task temp root that teardown's own reap also covers is never scanned: it is created for one task alone, so no service is started there on another lane's behalf.
 
 Orca lanes are not covered at all.
 Both Orca arms remove a worktree through `orca worktree rm --force` without scanning, the task's own and an Orca child's inside the retirement sweep, so an Orca worktree hosting a detached service loses its directory with no refusal and no message.

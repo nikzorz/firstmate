@@ -18,8 +18,8 @@ function wWe({includeOutboundOnly:e=!1}={}){if(a.CLAUDE_CODE_SUPPRESS_SESSION_AT
 function l3o(e,n,r){let o=r??n;return{commit:e.commit?`${e.commit}\nClaude-Session: ${n}`:`Claude-Session: ${n}`, ... }}
 ```
 
-`l3o` appends the session link whether or not the co-author text is empty, so `includeCoAuthoredBy: false` alone still leaves a `Claude-Session:` trailer on a session that has a shareable URL.
-Both keys are required, which is why `.claude/settings.json` carries both.
+`l3o` appends the session link whether or not the co-author text is empty, so an empty `attribution.commit` alone still leaves a `Claude-Session:` trailer on a session that has a shareable URL.
+Both are required, which is why `.claude/settings.json` sets `attribution.commit` and `attribution.pr` empty and `attribution.sessionUrl` false, the same policy `bin/fm-spawn.sh` passes to every claude worker launch.
 
 Codex 0.147.0's equivalent is not local.
 Its trailer text and the developer instruction that carries it sit next to `commit_attribution_enabled` and the `https://chatgpt.com/backend-api` base URL in `@openai/codex-linux-x64`'s `codex` binary, and its disable path reads:
@@ -34,7 +34,7 @@ The setting is account-side and explicitly outranks repository rules, so no file
 That is why the merge path, not the harness setting, owns the guarantee.
 
 Claude and codex are the whole of the measured set.
-`opencode`, `pi`, `grok`, and `kimi` are verified firstmate harnesses too, but none is installed on this machine, so whether each injects a trailer, and under which address, is unmeasured rather than known to be nothing.
+Every other verified firstmate harness is unmeasured here, so whether each injects a trailer, and under which address, is unknown rather than known to be nothing.
 Covering one starts by measuring the trailer that runtime actually emits and ends by adding the address it uses to `FM_ATTRIBUTION_AGENT_EMAILS`; a guessed address is worse than no entry, because a wrong one silently strips a human co-author.
 
 ## The Claude settings knob works, including in a linked worktree
@@ -54,6 +54,7 @@ test: add hello
 ```
 
 `attr-b` carried `{"includeCoAuthoredBy": false, "attribution": {"sessionUrl": false}}`.
+The tracked file now uses the `attribution` object form, which the same resolver reads first (`o.commit??n`), so the older key is no longer needed.
 Repeating the run in a `git worktree add` checkout of a repository with that file committed also produced `test: add hello` with no trailer, which is the shape the validation pipeline uses: it runs each pipeline agent in its own worktree under `~/.no-mistakes/worktrees/<repo>/<run>/`, a full checkout that carries the repo's tracked settings.
 
 ## The pipeline's own commits never carried a trailer

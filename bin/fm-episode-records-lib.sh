@@ -6,8 +6,8 @@
 #
 # WHY THIS IS NOT A TEARDOWN LIST
 # -------------------------------
-# A home's state/ holds two namespaces. bin/fm-teardown.sh's sweep of
-# state/<id>.* owns the first: records named for the TASK. The second is named
+# A home's state/ holds two namespaces. bin/fm-teardown.sh's own record removal
+# owns the first: records named for the TASK, state/<id>.<suffix>. The second is named
 # for the watcher key - the endpoint a task occupies, folded ':/.' to '_' - plus
 # a few task-named records that sit outside the <id>.<suffix> shape that sweep
 # can see. bin/fm-watch.sh and bin/fm-supervise-daemon.sh write them, and every
@@ -44,12 +44,13 @@
 #                            this clear by the caller that takes it. Its
 #                            lifecycle belongs to bin/fm-lock-lib.sh, and a
 #                            leftover file is re-acquired, never obeyed.
+#   the other per-task locks (.control-<id>.lock, .meta-<id>.lock,
+#                            .pr-poll-publish-<id>.lock) for the same reason.
 #   home-scoped watcher and daemon records (.wake-queue, .last-*, .afk*,
 #                            .heartbeat-streak, .subsuper-last-*) are keyed by
 #                            neither task nor endpoint, so no task can inherit
 #                            them.
-#   state/<id>.*             bin/fm-teardown.sh's remove_task_state_records owns
-#                            that namespace in full.
+#   state/<id>.*             bin/fm-teardown.sh owns that namespace in full.
 
 # The watcher key for a backend target. bin/fm-watch.sh, bin/fm-supervise-daemon.sh
 # and bin/backends/herdr.sh each fold their own copies inline on hot paths; this
@@ -80,10 +81,15 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
       "$state/.count-$key" \
       "$state/.stale-$key" \
       "$state/.stale-since-$key" \
+      "$state/.churn-since-$key" \
       "$state/.paused-$key" \
       "$state/.paused-rechecked-$key" \
       "$state/.paused-resurfaced-$key" \
+      "$state/.waiting-resurfaced-$key" \
+      "$state/.writing-since-$key" \
+      "$state/.writing-resurfaced-$key" \
       "$state/.wedge-escalations-$key" \
+      "$state/.dead-reported-$key" \
       "$state/.advancing-resurfaced-$key" \
       "$state/.advancing-absorbs-$key" \
       "$state/.herdr-escalated-$key" || return 1
@@ -96,6 +102,7 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
     rm -f -- \
       "$state/.subsuper-stale-$idkey" \
       "$state/.subsuper-paused-$idkey" \
+      "$state/.subsuper-pause-until-due-$idkey" \
       "$state/.subsuper-advancing-$idkey" \
       "$state/.subsuper-advancing-resurfaced-$idkey" \
       "$state/.subsuper-advancing-absorbs-$idkey" \
@@ -103,6 +110,22 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
       "$state/.hb-surfaced-$idkey" \
       "$state/.seen-${idkey}_status" \
       "$state/.seen-${idkey}_turn-ended" || return 1
+    # The secondmate wake-stall episode, keyed by the raw id its writers accept.
+    # Only a secondmate ever has one, and a new mate reusing the id must not start
+    # with an episode already alerted or a row already rung.
+    case "$id" in
+      *[!A-Za-z0-9._-]*) ;;
+      *)
+        rm -f -- \
+          "$state/.secondmate-wake-progress-$id" \
+          "$state/.secondmate-wake-ring-$id" \
+          "$state/.secondmate-wake-stall-$id" || return 1
+        if [ -d "$state/.secondmate-wake-stall-receipts/$id" ] \
+          && [ ! -L "$state/.secondmate-wake-stall-receipts/$id" ]; then
+          rm -rf -- "$state/.secondmate-wake-stall-receipts/$id" || return 1
+        fi
+        ;;
+    esac
   fi
   return 0
 }

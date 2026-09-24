@@ -4,7 +4,8 @@
 # the id-keyed daemon markers it is about to occupy may still hold a dead task's
 # suppression and escalation state. Spawn must start the new task with none of
 # it, whether the previous occupant was torn down or simply vanished, and must
-# leave a live neighbor's records alone.
+# leave a live neighbor's records alone. A relaunch continues the same task on
+# its own recorded endpoint, so it claims nothing and is not exercised here.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -42,7 +43,8 @@ test_reused_id_inherits_no_supervision_records() {
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
   printf 'codex\n' > "$home/config/crew-harness"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  printf '# Task\n## Captain'"'"'s intent\nFix the widget.\n\n## Firstmate spec\nKeep it small.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' \
+    > "$home/data/$id/brief.md"
   fm_git_worktree "$proj" "$wt" "wt-reuse"
   s="$home/state"
   touch "$s/.last-watcher-beat"
@@ -51,11 +53,13 @@ test_reused_id_inherits_no_supervision_records() {
   # twice, a stale suppressor, a declared pause and its throttles, an advancing
   # absorb count, the pane signature whose mtime is its idle clock, and the
   # daemon's id-keyed markers.
-  for f in .wedge-escalations .stale .stale-since .paused .paused-rechecked .paused-resurfaced \
+  for f in .wedge-escalations .stale .stale-since .churn-since .paused .paused-rechecked \
+    .paused-resurfaced .waiting-resurfaced .writing-since .writing-resurfaced .dead-reported \
     .advancing-absorbs .advancing-resurfaced .hash .count .herdr-escalated; do
     printf '2\n' > "$s/$f-firstmate_fm-$id"
   done
-  for f in .subsuper-stale .subsuper-paused .subsuper-advancing .subsuper-seen-status .hb-surfaced; do
+  for f in .subsuper-stale .subsuper-paused .subsuper-pause-until-due .subsuper-advancing \
+    .subsuper-seen-status .hb-surfaced; do
     printf '2\n' > "$s/$f-$id"
   done
   printf 'sig\n' > "$s/.seen-${id}_status"
@@ -67,7 +71,7 @@ test_reused_id_inherits_no_supervision_records() {
     FM_STATE_OVERRIDE="$s" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_FAKE_PANE_PATH="$wt" \
-    PATH="$fakebin:$PATH" "$SPAWN" "$id" "$proj" 2>&1)
+    PATH="$fakebin:$PATH" "$SPAWN" "$id" "$proj" --mode direct-PR --yolo off 2>&1)
   status=$?
   expect_code 0 "$status" "spawn failed: $out"
   assert_grep "window=firstmate:fm-$id" "$s/$id.meta" "spawn claimed a different endpoint than the seeded key"
