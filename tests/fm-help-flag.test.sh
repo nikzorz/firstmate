@@ -43,11 +43,12 @@ is_library() {
 # It already exits zero and silently on any unrecognized argument.
 EXEMPT_PERMANENT=(fm-pr-poll.sh)
 
-# bin/fm-send.sh and bin/fm-limit-resume.sh are pending the same fix; they were
-# held by concurrent work when this sweep landed. Their exemption retires
-# itself: it is asserted below to still be true, so the follow-up that teaches
-# either one the flag fails here until the name is moved into the sweep.
-EXEMPT_PENDING=(fm-send.sh fm-limit-resume.sh)
+# A helper held by concurrent work when it should join the sweep is parked here.
+# The exemption retires itself: it is asserted below to still be true, so the
+# change that teaches the helper the flag fails here until the name is removed.
+# Empty is the normal state, so every expansion below must survive set -u on an
+# empty array under macOS's stock bash.
+EXEMPT_PENDING=()
 
 is_exempt() {
   local base
@@ -64,6 +65,11 @@ entrypoints() {
     is_library "$base" && continue
     is_exempt "$base" && continue
     printf '%s\n' "$base"
+  done
+  # Backend .sh files are sourced; only the executable helpers there run directly.
+  for path in "$ROOT"/bin/backends/*; do
+    [ -f "$path" ] && [ -x "$path" ] || continue
+    printf 'backends/%s\n' "${path##*/}"
   done
 }
 
