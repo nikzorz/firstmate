@@ -72,6 +72,9 @@ def _clean(value):
 
 
 def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
     if len(argv) < 4:
         return 2
     sock_path = argv[1]

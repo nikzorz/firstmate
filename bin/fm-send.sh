@@ -70,6 +70,20 @@ set -eu
 
 FM_SEND_SETTLE_DEFAULT=1
 
+usage() {
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
+}
+
+# Answered before the gate refusal and the FM_HOME check: reading the header
+# resolves no target and touches no home.
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
