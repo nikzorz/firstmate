@@ -11,6 +11,7 @@
 # standalone fill line is spliced full of task text by the fill itself.
 # Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   A missing required argument prints this usage and names the argument.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
@@ -91,6 +92,14 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
+# A missing required argument must name the argument rather than aborting on an
+# unbound positional under `set -u`.
+die_missing() {
+  echo "error: missing required argument: $1" >&2
+  usage >&2
+  exit 1
+}
+
 # shellcheck source=bin/fm-marker-lib.sh
 . "$SCRIPT_DIR/fm-marker-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -113,7 +122,11 @@ for a in "$@"; do
     *) POS+=("$a") ;;
   esac
 done
+[ "${#POS[@]}" -ge 1 ] || die_missing "<task-id>"
 ID=${POS[0]}
+if [ "$KIND" != secondmate ]; then
+  [ "${#POS[@]}" -ge 2 ] || die_missing "<repo-name>"
+fi
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
@@ -123,6 +136,20 @@ fi
 if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   echo "error: --no-projects applies only to --secondmate charters" >&2
   exit 1
+fi
+
+if [ "$KIND" = secondmate ]; then
+SECONDMATE_PROJECTS=""
+idx=1
+while [ "$idx" -lt "${#POS[@]}" ]; do
+  SECONDMATE_PROJECTS="${SECONDMATE_PROJECTS}${SECONDMATE_PROJECTS:+ }${POS[$idx]}"
+  idx=$((idx + 1))
+done
+if [ "$NO_PROJECTS" -eq 1 ]; then
+  [ -z "$SECONDMATE_PROJECTS" ] || { echo "error: --no-projects cannot be combined with a project list" >&2; exit 1; }
+else
+  [ -n "$SECONDMATE_PROJECTS" ] || { echo "error: missing required argument: <project> (--secondmate requires at least one project, or --no-projects for a project-less home)" >&2; usage >&2; exit 1; }
+fi
 fi
 
 BRIEF="$DATA/$ID/brief.md"
@@ -138,17 +165,6 @@ shell_quote() {
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
 if [ "$KIND" = secondmate ]; then
-SECONDMATE_PROJECTS=""
-idx=1
-while [ "$idx" -lt "${#POS[@]}" ]; do
-  SECONDMATE_PROJECTS="${SECONDMATE_PROJECTS}${SECONDMATE_PROJECTS:+ }${POS[$idx]}"
-  idx=$((idx + 1))
-done
-if [ "$NO_PROJECTS" -eq 1 ]; then
-  [ -z "$SECONDMATE_PROJECTS" ] || { echo "error: --no-projects cannot be combined with a project list" >&2; exit 1; }
-else
-  [ -n "$SECONDMATE_PROJECTS" ] || { echo "error: --secondmate requires at least one project, or --no-projects for a project-less home" >&2; exit 1; }
-fi
 SECONDMATE_CHARTER=${FM_SECONDMATE_CHARTER:-"{TASK}"}
 SECONDMATE_SCOPE=${FM_SECONDMATE_SCOPE:-${FM_SECONDMATE_CHARTER:-"{TASK}"}}
 if [ "$NO_PROJECTS" -eq 1 ]; then
