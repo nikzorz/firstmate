@@ -2649,6 +2649,50 @@ test_paused_progressing_run_with_live_endpoint_uses_pause_cadence() {
   pass "a declared pause with a live endpoint and a progressing pipeline takes the pause cadence, not the wedge timer"
 }
 
+# --- the declared-pause absorb's supported backends ---------------------------
+# docs/configuration.md "Declared-pause absorb, by verdict and endpoint liveness"
+# scopes the pipeline-handoff absorb to the backends that can prove an endpoint
+# alive, tmux and herdr, and states that zellij, orca and cmux reach only the
+# liveness-unknown column. This pins both halves of that limit through the real
+# dispatcher: each backend's own adapter is made to report a live agent, and only
+# the two backends whose classifier the dispatcher routes may earn the pause
+# cadence, while the same healthy verdict on the other three stays on the wedge
+# timer. A classifier added for one of those three fails this test, which is the
+# prompt to move that backend across the documented limit as well.
+test_paused_handoff_absorb_is_scoped_to_backends_that_prove_liveness() (
+  local state fakebin backend window class
+  state="$TMP_ROOT/pause-backend-scope/state"; fakebin="$TMP_ROOT/pause-backend-scope/fakebin"
+  mkdir -p "$state" "$fakebin"
+  FM_HOME="$TMP_ROOT/pause-backend-scope/home"
+  FM_STATE_OVERRIDE="$state"
+  export FM_HOME FM_STATE_OVERRIDE
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-watch.sh"
+  FM_CREW_STATE_BIN=$(make_fake_crew_state "$fakebin")
+  for backend in tmux herdr zellij orca cmux; do
+    fm_backend_source "$backend" || fail "could not load the $backend adapter"
+    # shellcheck disable=SC2329 # Runtime override reached through the dispatcher.
+    eval "fm_backend_${backend}_agent_state() { printf alive; }"
+  done
+  for backend in tmux herdr zellij orca cmux; do
+    rm -f "$state"/*.meta "$state"/*.status "$state"/.paused-*
+    window="test:fm-scope-$backend"
+    printf 'window=%s\nkind=ship\nharness=claude\nbackend=%s\n' "$window" "$backend" > "$state/scope-$backend.meta"
+    printf 'paused: handed a fix round back to the pipeline\n' > "$state/scope-$backend.status"
+    class=$(FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)' \
+      pause_state_class "$window" "scope-$backend")
+    case "$backend" in
+      tmux|herdr)
+        [ "$class" = paused ] \
+          || fail "$backend proves liveness, so a live handoff should take the pause cadence, got '$class'" ;;
+      *)
+        [ "$class" = working ] \
+          || fail "$backend has no liveness classifier, so the same handoff should stay on the wedge timer, got '$class'" ;;
+    esac
+  done
+  pass "declared-pause absorb: pause cadence on tmux and herdr only; zellij, orca and cmux keep the wedge timer"
+)
+
 # --- the bounded pause cadence stays cheap across polls -----------------------
 # fm-crew-state.sh may shell out to a bounded no-mistakes call, so fm-classify-lib.sh's
 # contract is that the absorb classification runs on first sighting of a stale hash,
@@ -3200,6 +3244,7 @@ test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
 test_paused_progressing_run_with_dead_endpoint_still_wedge_escalates
 test_paused_progressing_run_with_live_endpoint_uses_pause_cadence
+test_paused_handoff_absorb_is_scoped_to_backends_that_prove_liveness || exit 1
 test_paused_handoff_cadence_memoizes_its_crew_state_read
 test_paused_busy_pane_verdict_still_wedge_escalates
 test_paused_unreliable_run_verdict_absorbed_then_wedge_escalates

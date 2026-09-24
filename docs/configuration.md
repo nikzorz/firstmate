@@ -126,6 +126,7 @@ Immediate wake means surfaced on first sighting of each new idle pane signature,
 Only `tmux` and `herdr` implement the `agent_state` classifier, so only they can produce `alive` or `dead`.
 On `zellij`, `orca` and `cmux` the liveness-unknown column is the only reachable one.
 That is a deliberate supported-surface limit: classifiers for three experimental backends this fleet does not run are not built, and the work reopens on its own merits if a home adopts one.
+`tests/fm-watch-triage.test.sh`'s `test_paused_handoff_absorb_is_scoped_to_backends_that_prove_liveness` pins this limit and fails once any other backend's classifier is routed, so this paragraph and the backend guide move with it.
 
 A secondmate window is never probed for liveness, so its reading is always unknown, but the two gates that force the unknown column are themselves skipped for a secondmate.
 A declared pause on a secondmate is therefore absorbed on the long pause cadence on every backend, this table's unknown column included.
@@ -135,7 +136,7 @@ A run the reader can show has stopped advancing reports `stalled`, which takes t
 The older behaviour, where a run that had stopped advancing still held the long cadence, survives wherever no such evidence is available: the coarse runs-list fallback, an absent `active_steps` table, a `last_activity` of `unknown`, and every case where the forge gives no answer about a monitoring ci step.
 `bin/fm-crew-state.sh` owns what counts as advancing.
 
-The health ordering in the `paused` row is inverted, and this change does not fix it: a confidently dead endpoint earns the long cadence while a confirmed-live one is surfaced.
+The health ordering in the `paused` row is inverted and is not yet handled: a confidently dead endpoint earns the long cadence while a confirmed-live one is surfaced.
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
