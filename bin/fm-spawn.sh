@@ -82,6 +82,10 @@
 #   provisioned firstmate home; the default is kind=ship.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
+#   Ship/scout spawns refuse before any side effect while data/<task-id>/brief.md
+#   still holds the scaffold's standalone {TASK} placeholder line; prose that
+#   merely names the placeholder does not trigger it. Secondmate charters are
+#   checked at seeding by fm-home-seed.sh instead.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
@@ -381,6 +385,10 @@ if ! fm_task_id_creation_valid "$ID"; then
   echo "error: invalid task id '$ID'" >&2
   echo "A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, and may not take the reserved x- prefix: a home's state/ is one flat <id>.<suffix> namespace, so a dot in the id leaves its records unattributable." >&2
   exit 2
+fi
+if [ "$KIND" != secondmate ] && grep -Eq '^[[:space:]]*\{TASK\}[[:space:]]*$' "$DATA/$ID/brief.md" 2>/dev/null; then
+  echo "error: refusing to spawn $ID: brief at $DATA/$ID/brief.md still has its unfilled {TASK} placeholder line; fill the task section first" >&2
+  exit 1
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
 if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
