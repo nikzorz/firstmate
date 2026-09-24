@@ -367,6 +367,14 @@ test_exclude_family() {
   pass "exclude-family drops the named primary family after selection"
 }
 
+ci_job_timeout_minutes() {
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+    python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["jobs"][sys.argv[2]].get("timeout-minutes"))' "$CI" "$1"
+  else
+    ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV[0]))["jobs"][ARGV[1]]["timeout-minutes"]' "$CI" "$1"
+  fi
+}
+
 test_ci_and_docs_call_the_owner() {
   assert_present "$CI" "ci.yml missing"
   assert_present "$CONTRIB" "CONTRIBUTING.md missing"
@@ -410,10 +418,12 @@ test_ci_and_docs_call_the_owner() {
     || fail "Herdr CI job must use bounded lab cleanup"
   grep -Fq 'tests-timing-aggregate:' "$CI" \
     || fail "CI must aggregate per-lane timing artifacts"
-  grep -Fq 'timeout-minutes: 20' "$CI" \
-    || fail "portable serial hang tripwire must be timeout-minutes: 20"
-  grep -Fq 'timeout-minutes: 10' "$CI" \
-    || fail "portable parallel shards must keep a hang tripwire (10m)"
+  [ "$(ci_job_timeout_minutes tests-portable-serial)" = 30 ] \
+    || fail "portable serial hang tripwire must be timeout-minutes: 30"
+  for shard in 1 2; do
+    [ "$(ci_job_timeout_minutes "tests-portable-parallel-$shard")" = 10 ] \
+      || fail "portable parallel shard $shard must keep a hang tripwire (10m)"
+  done
   # Interim full-suite 25m portable timeout must not remain after sharding.
   if grep -Eq 'timeout-minutes: 25' "$CI"; then
     fail "CI still has interim timeout-minutes: 25 after portable sharding"

@@ -107,10 +107,10 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial
     runs-on: ubuntu-latest
-    # Measured serial remainder is ~13 min wall without Herdr. Cap is a hang
-    # tripwire above observed p99 script cost and suite wall, not the expected
-    # healthy end (interim 25m full-suite slack reduced after sharding).
-    timeout-minutes: 20
+    # Observed job wall is ~18-20 min and growing as serial tests are added.
+    # Cap is a hang tripwire with real headroom over that, not the expected
+    # healthy end; docs/fm-test-portable-shards.md owns the rationale.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
