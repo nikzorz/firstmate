@@ -1450,11 +1450,11 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   exit "$rc"
 fi
 ID=${POS[0]}
-fm_task_id_creation_valid "$ID" && { [ "$RELAUNCH" -eq 1 ] || fm_task_id_record_namespace_safe "$ID"; } || {
+if ! fm_task_id_creation_valid "$ID" || { [ "$RELAUNCH" -eq 0 ] && ! fm_task_id_record_namespace_safe "$ID"; }; then
   echo "error: invalid task id '$ID'" >&2
   echo "A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, may not take the reserved x- prefix, and may not be the name of a home-level state/ record: a home's state/ is one flat <id>.<suffix> namespace, so a dot or a shared name leaves its records unattributable." >&2
   exit 2
-}
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" = ship ]; then
   BRANCH="$BRANCH_PREFIX$ID"
   if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
