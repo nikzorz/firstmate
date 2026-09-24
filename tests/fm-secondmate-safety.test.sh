@@ -21,6 +21,33 @@ file_mode() {
   fi
 }
 
+# The suite-level herdr guard from secondmate-helpers.sh is this file's only
+# protection against a teardown path starting a real herdr server, so prove both
+# of its trips in a child suite: an unstubbed call, and a herdr-named process the
+# suite started and left running, which must also be reaped.
+test_herdr_guard_fails_a_suite_that_leaks_herdr() {
+  local dir out pid
+  dir="$TMP_ROOT/herdr-guard"
+  mkdir -p "$dir"
+  if out=$(bash -c '. "$1/tests/secondmate-helpers.sh"; herdr status --json' _ "$ROOT" 2>&1); then
+    fail "the herdr guard let a suite with an unstubbed herdr call pass"
+  fi
+  assert_contains "$out" 'unstubbed herdr calls reached the real CLI path' "the herdr guard did not report the unstubbed call"
+
+  [ -d /proc ] || { pass "herdr guard fails an unstubbed call (process check needs /proc)"; return; }
+  cp "$(command -v sleep)" "$dir/herdr"
+  if out=$(bash -c '. "$1/tests/secondmate-helpers.sh"; "$2/herdr" 300 >/dev/null 2>&1 & printf "%s\n" "$!" > "$2/pid"' _ "$ROOT" "$dir" 2>&1); then
+    fail "the herdr guard let a suite that leaked a herdr process pass"
+  fi
+  assert_contains "$out" 'a herdr process started by this suite outlived it' "the herdr guard did not report the leaked process"
+  pid=$(cat "$dir/pid")
+  if wait_live "$pid" 20; then
+    kill "$pid" 2>/dev/null
+    fail "the herdr guard did not reap the herdr process its suite leaked"
+  fi
+  pass "herdr guard fails and reaps a suite that leaks herdr"
+}
+
 test_fm_home_parameterization() {
   local brief home_one home_two out
   home_one="$TMP_ROOT/home one"
@@ -1498,6 +1525,8 @@ EOF
 
   [ -d "$subhome" ] || fail "the fixture did not model a returned slot; the home was deleted"
   [ ! -e "$lease" ] || fail "teardown left the secondmate home lease held after retirement"
+  grep -F 'herdr pane close fm-cm1 --session firstmate' "$log" >/dev/null \
+    || fail "the herdr child's pane close did not reach the fake herdr"
   leftovers=
   for leftover in "$subhome"/state/cm1.*; do
     [ -e "$leftover" ] || [ -L "$leftover" ] || continue
@@ -2781,6 +2810,7 @@ EOF
   pass "fm-backlog-handoff refuses Done items under whitespace section headings and unsafe homes"
 }
 
+test_herdr_guard_fails_a_suite_that_leaks_herdr
 test_fm_home_parameterization
 test_lock_status_is_per_home
 test_seed_allows_overlapping_clones_and_drops_owner
