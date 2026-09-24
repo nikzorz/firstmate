@@ -1418,7 +1418,7 @@ wedge_defer_advancing() {  # <window> <since-file> <triage-label> <idle-age> <es
       wake "$reason"
     fi
     echo "$absorbs" > "$af"
-    resurface_absorbed "$win" "$rf" "$idle_age" \
+    resurface_absorbed "$win" "$rf" "$recheck_age" \
       "stale: $win (idle ${idle_age}s, run step still advancing - absorbed on a long cadence not a wedge; confirm the run is still moving)"
   fi
   triage_log "absorbed $label (run step still advancing at the escalation threshold, idle ${idle_age}s): $win"
