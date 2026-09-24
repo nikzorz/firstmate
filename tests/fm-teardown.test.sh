@@ -793,6 +793,41 @@ test_teardown_removes_the_per_task_supervisor_records() {
   pass "teardown removes the per-task supervisor records with the task"
 }
 
+# The watcher and the away-mode daemon key their suppression and escalation
+# records on the endpoint, outside the state/<id>.* sweep. Teardown reclaims them
+# with the task (the inheritance guarantee itself lives at the spawn claim), and
+# must leave a live neighbor whose key merely shares a hyphenated suffix alone.
+test_teardown_reclaims_the_endpoint_keyed_supervisor_records() {
+  local case_dir s
+  case_dir=$(make_case endpoint-keyed-records)
+  s="$case_dir/state"
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  printf '2\n' > "$s/.wedge-escalations-fm-task-x1"
+  printf '1\n' > "$s/.stale-fm-task-x1"
+  printf '1\n' > "$s/.paused-fm-task-x1"
+  printf '1\n' > "$s/.advancing-absorbs-fm-task-x1"
+  printf '1\n' > "$s/.hash-fm-task-x1"
+  printf '1\n' > "$s/.subsuper-stale-task-x1"
+  printf '1\n' > "$s/.seen-task-x1_status"
+  printf '2\n' > "$s/.wedge-escalations-sub-fm-task-x1"
+  printf '1\n' > "$s/.subsuper-stale-sub-task-x1"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "endpoint-keyed-records: teardown failed: $(cat "$case_dir/stderr")"
+
+  for f in .wedge-escalations-fm-task-x1 .stale-fm-task-x1 .paused-fm-task-x1 \
+    .advancing-absorbs-fm-task-x1 .hash-fm-task-x1 .subsuper-stale-task-x1 .seen-task-x1_status; do
+    assert_absent "$s/$f" "endpoint-keyed-records: $f outlived its task"
+  done
+  assert_present "$s/.wedge-escalations-sub-fm-task-x1" \
+    "endpoint-keyed-records: a live neighbor's escalation count was cleared as collateral"
+  assert_present "$s/.subsuper-stale-sub-task-x1" \
+    "endpoint-keyed-records: a live neighbor's daemon marker was cleared as collateral"
+  pass "teardown reclaims the endpoint-keyed supervisor records and spares a live neighbor"
+}
+
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
   local case_dir out
   case_dir=$(make_case tasks-axi-manual-optout)
@@ -3201,6 +3236,7 @@ test_other_lanes_survive_a_third_lanes_cleanup() {
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_removes_the_per_task_supervisor_records
+test_teardown_reclaims_the_endpoint_keyed_supervisor_records
 test_teardown_sweep_spares_a_longer_id_that_shares_the_prefix
 test_teardown_refuses_a_state_dir_holding_a_dotted_task_id
 test_teardown_sweeps_a_task_a_legacy_dotted_id_cannot_collide_with

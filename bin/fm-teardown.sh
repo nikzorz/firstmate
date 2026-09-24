@@ -50,7 +50,11 @@
 # if Herdr's last-pane cleanup focuses an unrelated neighboring workspace.
 # Per-task records under a home's state/ directory are cleared by one sweep of
 # state/<id>.* in remove_task_state_records, which the task's own cleanup and the
-# retired-secondmate child sweep both call. A new record needs no declaration and
+# retired-secondmate child sweep both call. The supervision records keyed on the
+# ENDPOINT rather than the id go with them, through
+# bin/fm-episode-records-lib.sh; that file owns why clearing them here is
+# reclamation and why the guarantee that no task inherits them lives at the
+# claim in bin/fm-spawn.sh instead. A new record needs no declaration and
 # no second list to keep in step: the glob already reaches it on both paths. That
 # glob attributes a record by its id prefix, so teardown refuses rather than sweep
 # when a task that still has a meta carries an id the record namespace cannot
@@ -228,6 +232,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-episode-records-lib.sh
+. "$SCRIPT_DIR/fm-episode-records-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -453,6 +459,12 @@ remove_task_state_records() {  # <state_dir> <id> [<retained-suffix>...]
       return 1
     fi
   done
+  # The records keyed on the endpoint rather than the id, plus the task-named
+  # ones spelled outside the <id>.<suffix> shape this sweep can see. The target
+  # still comes from the meta the glob below removes, so it is read here. This
+  # is reclamation, not the inheritance guarantee: bin/fm-episode-records-lib.sh
+  # owns why the guarantee lives at the claim instead.
+  fm_episode_records_clear "$state_dir" "$(fm_backend_target_of_meta "$state_dir/$id.meta")" "$id" || return 1
   remove_grok_turnend_auth "$state_dir" "$id" || return 1
   remove_kimi_turnend_auth "$state_dir" "$id" || return 1
   remove_pr_poll_artifacts "$state_dir" "$id" || return 1

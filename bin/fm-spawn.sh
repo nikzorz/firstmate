@@ -140,6 +140,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-episode-records-lib.sh
+. "$SCRIPT_DIR/fm-episode-records-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1424,6 +1426,19 @@ fi
 
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
+# Claiming the key is what makes a stale suppressor or escalation count from a
+# previous occupant dangerous, so the claim is where they go (see
+# bin/fm-episode-records-lib.sh for why this is not teardown's job). It runs
+# above the meta write deliberately: until the meta exists no supervision path
+# can attribute this key to this task, so nothing this task earned can be in
+# the records being dropped.
+# $T is the endpoint supervision keys on; Orca additionally records a separate
+# window= handle, and fm_backend_target_of_meta falls back to it when no
+# terminal= was recorded, so both spellings are claimed here.
+fm_episode_records_clear "$STATE" "$T" "$ID" || exit 1
+if [ "$META_WINDOW" != "$T" ]; then
+  fm_episode_records_clear "$STATE" "$META_WINDOW" "" || exit 1
+fi
 {
   echo "window=$META_WINDOW"
   echo "worktree=$WT"
