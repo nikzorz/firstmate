@@ -524,6 +524,29 @@ fm_backlog_row_artifact_supported() {
   esac
 }
 
+# Decode the body field of a `tasks-axi show --full` read on stdin into the raw
+# body bytes on stdout; an empty or "-" body prints nothing.
+# The leading quote selects a JSON-encoded bare string, which is exactly the
+# value an older JSON::PP rejects unless allow_nonref is asked for, so the
+# decoder requests it rather than inheriting the local default. It then writes
+# bytes, because printing the decoded characters to a stream with no :raw layer
+# emits a codepoint at or below U+00FF as one latin-1 byte and silently corrupts
+# the body.
+fm_backlog_body_decode() {
+  sed -n 's/^  body: //p' | head -1 \
+    | LC_ALL=C perl -MJSON::PP -e '
+      local $/;
+      my $shown = <STDIN>;
+      $shown =~ s/\s+\z//;
+      exit 0 if $shown eq "" || $shown eq "-";
+      my $value = $shown =~ /\A"/
+        ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
+      binmode STDOUT, ":raw";
+      utf8::encode($value) if utf8::is_utf8($value);
+      print $value unless $value eq "-";
+    '
+}
+
 # Keep a captain-held row open across the removal of the work record that
 # discovered it: record the finished work's deliverable as one line at the end
 # of the task body (a line already present is left alone), preserve supported
@@ -567,24 +590,7 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         || FM_BACKLOG_TRANSITION_ERROR="tasks-axi show $id failed with no output"
       return "$command_status"
     fi
-    # The leading quote selects a JSON-encoded bare string, which is exactly the
-    # value an older JSON::PP rejects unless allow_nonref is asked for, so the
-    # decoder below requests it rather than inheriting the local default. It then
-    # writes bytes, because printing the decoded characters to a stream with no
-    # :raw layer emits a codepoint at or below U+00FF as one latin-1 byte and
-    # silently corrupts the body this rewrites.
-    body=$(printf '%s\n' "$out" | sed -n 's/^  body: //p' | head -1 \
-      | LC_ALL=C perl -MJSON::PP -e '
-        local $/;
-        my $shown = <STDIN>;
-        $shown =~ s/\s+\z//;
-        exit 0 if $shown eq "" || $shown eq "-";
-        my $value = $shown =~ /\A"/
-          ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
-        binmode STDOUT, ":raw";
-        utf8::encode($value) if utf8::is_utf8($value);
-        print $value unless $value eq "-";
-      ') || {
+    body=$(printf '%s\n' "$out" | fm_backlog_body_decode) || {
       FM_BACKLOG_TRANSITION_ERROR="could not decode the task body of $id"
       return 1
     }

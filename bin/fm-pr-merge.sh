@@ -133,9 +133,18 @@
 # so "Close issues #148 and #117" closes nothing while carrying both numbers, and
 # "Closes #117x" names no issue at all. Keywords match case-insensitively, and
 # "#N" (same repository only), "owner/repo#N", and the full issue URL all count
-# as the reference. It warns rather than refuses because the links: entry records
-# every URL the row carries, so an issue mentioned for context reads exactly like
-# one the work owns. A row naming no issue, an id the backlog does not hold, and a
+# as the reference. For those issues the warning is hedged, because the links:
+# entry records every URL the row carries, so an issue mentioned for context
+# reads exactly like one the work owns. The one explicit ownership marker is a
+# line in the task body reading "Owns issue: <full GitHub issue URL>", written
+# at intake only for an issue the work is meant to close; the issue it names is
+# checked too, and a missing keyword for it is reported without the hedge,
+# naming the keyword line the body needs. The check acts on exactly one owned
+# issue: a malformed marker, or lines naming more than one issue, are reported
+# and treated as no marker. Ownership is never inferred from anything else,
+# including an issue being the only URL on the row, and the check still warns
+# rather than refuses or edits the body, owned issue or not. A row naming no
+# issue, an id the backlog does not hold, and a
 # home keeping no markdown backlog are determinate and silent; a backlog or body
 # that could not be read gets one warning saying the check did not run. After a
 # verified landed merge, each issue the body does close (every named issue when
@@ -1026,6 +1035,7 @@ CLOSING_KEYWORD_RE='(close[sd]?|fix|fixe[sd]|resolve[sd]?)'
 MERGE_DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 FM_PR_GITHUB_VIEW_JSON=
 TASK_ISSUE_URLS=
+TASK_OWNED_ISSUE_URL=
 CLOSING_CHECK_ERROR=
 # The issues the post-merge read may speak for, which the body read narrows to
 # the ones the body actually asks the forge to close.
@@ -1036,13 +1046,40 @@ ere_escape() {  # <text>
   printf '%s' "$1" | sed 's/\./\\./g'
 }
 
+GITHUB_ISSUE_URL_RE='https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]*'
+
+# Sets TASK_OWNED_ISSUE_URL from the row body's owned-issue line (see the
+# header), warning and leaving it empty when that line is malformed or more
+# than one issue is marked, so an unreadable marker is never acted on.
+read_task_owned_issue() {  # <show-output>
+  local body values
+  if ! body=$(printf '%s\n' "$1" | fm_backlog_body_decode); then
+    echo "warning: task $ID's record body could not be decoded, so any owned-issue line on it was not read" >&2
+    return 0
+  fi
+  values=$(printf '%s\n' "$body" | sed -En 's/^[[:space:]]*[Oo]wns issue:[[:space:]]*//p' |
+    sed -E 's/[[:space:]]+$//' | awk '!seen[tolower($0)]++')
+  [ -n "$values" ] || return 0
+  if [ "$(printf '%s\n' "$values" | wc -l)" -gt 1 ]; then
+    echo "warning: task $ID's record marks more than one owned issue, and this check acts on exactly one, so none is treated as owned" >&2
+    return 0
+  fi
+  if ! printf '%s\n' "$values" | grep -Eqx "$GITHUB_ISSUE_URL_RE"; then
+    echo "warning: task $ID's owned-issue line names \"$values\", which is not a full GitHub issue URL, so no issue is treated as owned" >&2
+    return 0
+  fi
+  TASK_OWNED_ISSUE_URL=$values
+}
+
 # Sets TASK_ISSUE_URLS to the issue URLs on this task's backlog row, one per
-# line. 0: the row names issues; 1: determinate, it names none (including an id
-# the backlog does not hold and a home keeping no markdown backlog); 2: the read
-# could not answer, with CLOSING_CHECK_ERROR saying why.
+# line, and TASK_OWNED_ISSUE_URL to the one it marks as owned, which is always
+# among them. 0: the row names issues; 1: determinate, it names none (including
+# an id the backlog does not hold and a home keeping no markdown backlog); 2:
+# the read could not answer, with CLOSING_CHECK_ERROR saying why.
 read_task_issue_urls() {
   local data out status=0
   TASK_ISSUE_URLS=
+  TASK_OWNED_ISSUE_URL=
   CLOSING_CHECK_ERROR=
   if ! data=$(fm_backlog_data_absolute "$MERGE_DATA" 2>/dev/null); then
     CLOSING_CHECK_ERROR="the data directory $MERGE_DATA cannot be resolved"
@@ -1064,9 +1101,11 @@ read_task_issue_urls() {
     [ -n "$CLOSING_CHECK_ERROR" ] || CLOSING_CHECK_ERROR="tasks-axi show $ID failed with no output"
     return 2
   fi
-  TASK_ISSUE_URLS=$(printf '%s\n' "$out" | sed -n 's/^  links: //p' | head -1 |
-    grep -Eo 'https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]*' |
-    awk '!seen[$0]++' || true)
+  read_task_owned_issue "$out"
+  TASK_ISSUE_URLS=$({
+    [ -z "$TASK_OWNED_ISSUE_URL" ] || printf '%s\n' "$TASK_OWNED_ISSUE_URL"
+    printf '%s\n' "$out" | sed -n 's/^  links: //p' | head -1 | grep -Eo "$GITHUB_ISSUE_URL_RE" || true
+  } | awk '!seen[tolower($0)]++')
   [ -n "$TASK_ISSUE_URLS" ] || return 1
 }
 
@@ -1139,10 +1178,13 @@ URLS
     number=${repo##*/issues/}
     repo=${repo%%/issues/*}
     owner=${owner%%/*}
+    ref=$(issue_reference "$owner" "$repo" "$number")
     if body_closes_issue "$body_file" "$owner" "$repo" "$number"; then
       closing+=("$url")
+    elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ]; then
+      echo "warning: this PR's body does not close $ref ($url), which task $ID's record marks as owned; the body needs a closing keyword directly before the reference, such as \"Closes $ref\"" >&2
     else
-      missing+=("$(issue_reference "$owner" "$repo" "$number") ($url)")
+      missing+=("$ref ($url)")
     fi
   done
   VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
