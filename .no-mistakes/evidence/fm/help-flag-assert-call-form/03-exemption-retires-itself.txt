@@ -1,0 +1,20 @@
+## Mutation B: exempt helper bin/fm-mail.sh gains a usage line
+diff --git a/bin/fm-mail.sh b/bin/fm-mail.sh
+index f2bfc18..aa25772 100755
+--- a/bin/fm-mail.sh
++++ b/bin/fm-mail.sh
+@@ -1,4 +1,5 @@
+ #!/usr/bin/env bash
++# Usage: fm-mail.sh <verb> [args]
+ # fm-mail.sh - general-purpose mail plane for reading and sending mail.
+ #
+ # Reads inbound mail over IMAP and sends mail over SMTP on demand. This is an
+
+ok - a write made before the flag check lands in the sandbox home
+ok - the call-form anchor rejects an error printed in place of help
+ok - every bin entrypoint answers --help and -h with a usage line and exits zero
+ok - fm-pr-merge.sh and fm-promote.sh answer --help with their usage line
+ok - the helpers that share usage() with their error path send help to stdout and errors to stderr
+ok - every permanent exemption still names a real helper
+not ok - bin/fm-mail.sh --help now prints a usage line; remove it from EXEMPT_NO_CALL_FORM so the sweep requires one
+rc=1

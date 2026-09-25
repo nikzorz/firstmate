@@ -1,0 +1,33 @@
+## Mutation A: bin/fm-watch.sh answers --help/-h with an error and exits 0
+diff --git a/bin/fm-watch.sh b/bin/fm-watch.sh
+index f773dfa..850b326 100755
+--- a/bin/fm-watch.sh
++++ b/bin/fm-watch.sh
+@@ -156,7 +156,7 @@ set -u
+ # not read the sourcing script's own arguments as a flag.
+ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+   case "${1:-}" in
+-    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
++    -h|--help) echo "error: unknown argument $1"; exit 0 ;;
+   esac
+ fi
+ 
+
+$ bin/fm-watch.sh --help; echo rc=$?
+error: unknown argument --help
+rc=0
+
+## Tightened sweep (target commit) against the mutation
+ok - a write made before the flag check lands in the sandbox home
+ok - the call-form anchor rejects an error printed in place of help
+not ok - bin/fm-watch.sh --help printed no usage line: error: unknown argument --help
+rc=1
+
+## Base-commit sweep (b24a519) against the same mutation
+ok - a write made before the flag check lands in the sandbox home
+ok - every bin entrypoint answers --help and -h with output and exits zero
+ok - fm-pr-merge.sh and fm-promote.sh answer --help with their usage line
+ok - the helpers that share usage() with their error path send help to stdout and errors to stderr
+ok - every permanent exemption still names a real helper
+ok - the sweep adds and removes no path under this repo's own state directory
+rc=0

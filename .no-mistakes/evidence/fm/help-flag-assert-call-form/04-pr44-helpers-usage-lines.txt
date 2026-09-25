@@ -1,0 +1,21 @@
+## The ten helpers PR #44 gave call forms: first usage line of --help and -h
+fm-claude-stop-autoarm.sh --help rc=0: Usage: fm-claude-stop-autoarm.sh   (no arguments; the Stop payload arrives on stdin)
+fm-claude-stop-autoarm.sh -h rc=0: Usage: fm-claude-stop-autoarm.sh   (no arguments; the Stop payload arrives on stdin)
+fm-crew-state.sh --help rc=0: Usage: fm-crew-state.sh <task-id>
+fm-crew-state.sh -h rc=0: Usage: fm-crew-state.sh <task-id>
+fm-guard.sh --help rc=0: Usage: fm-guard.sh   (no arguments)
+fm-guard.sh -h rc=0: Usage: fm-guard.sh   (no arguments)
+fm-sessionstart-nudge.sh --help rc=0: Usage: fm-sessionstart-nudge.sh   (no arguments)
+fm-sessionstart-nudge.sh -h rc=0: Usage: fm-sessionstart-nudge.sh   (no arguments)
+fm-turnend-guard-grok.sh --help rc=0: Usage: fm-turnend-guard-grok.sh   (no arguments; the Stop payload arrives on stdin)
+fm-turnend-guard-grok.sh -h rc=0: Usage: fm-turnend-guard-grok.sh   (no arguments; the Stop payload arrives on stdin)
+fm-turnend-guard.sh --help rc=0: Usage: fm-turnend-guard.sh [--claude|--cursor]   (the turn-end payload arrives on stdin)
+fm-turnend-guard.sh -h rc=0: Usage: fm-turnend-guard.sh [--claude|--cursor]   (the turn-end payload arrives on stdin)
+fm-wake-drain.sh --help rc=0: Usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
+fm-wake-drain.sh -h rc=0: Usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
+fm-watch-arm.sh --help rc=0: Usage: fm-watch-arm.sh [arm|--arm] | --restart | --stop | --handling-delivered GENERATION --watcher-pid PID
+fm-watch-arm.sh -h rc=0: Usage: fm-watch-arm.sh [arm|--arm] | --restart | --stop | --handling-delivered GENERATION --watcher-pid PID
+fm-watch.sh --help rc=0: Usage: fm-watch.sh   (no arguments)
+fm-watch.sh -h rc=0: Usage: fm-watch.sh   (no arguments)
+fm-x-poll.sh --help rc=0: Usage: fm-x-poll.sh   (no arguments; see Config below)
+fm-x-poll.sh -h rc=0: Usage: fm-x-poll.sh   (no arguments; see Config below)
