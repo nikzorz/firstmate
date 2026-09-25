@@ -432,6 +432,34 @@ Any other value, or an unreadable file, refuses every spawn from that home, whic
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
 
+## Primary session allow rules (.claude/settings.local.json)
+
+A Claude primary runs in whatever permission mode the captain started it with, and `config/claude-permission-mode` does not reach it.
+In the default or auto mode, Claude Code's permission layer can refuse a supervision command such as `bin/fm-send.sh` before the script runs, and the auto-mode classifier can start refusing a command it allowed earlier in the same session.
+No Firstmate script runs, so no guard or status line can see the refusal; the denial text in the tool result is the only signal, and a worker waiting on a decision stays parked.
+Claude Code evaluates `permissions.allow` rules before the auto-mode classifier, so an allow rule clears the refusal ([permission modes](https://code.claude.com/docs/en/permission-modes)).
+The primary cannot add the rule itself: Claude Code never auto-approves a write under `.claude/` outside bypass mode, and a permission entry is the captain's security surface.
+
+The captain adds the rules to the home's local `.claude/settings.local.json`, which Claude Code keeps out of git, or through the `/permissions` dialog at local scope.
+Replace `/abs/firstmate` with the home's absolute path:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bin/fm-*.sh *)",
+      "Bash(/abs/firstmate/bin/fm-*.sh *)",
+      "Bash(FM_HOME=/abs/firstmate bin/fm-*.sh *)",
+      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-*.sh *)"
+    ]
+  }
+}
+```
+
+The `FM_HOME=` spellings are separate rules because an allow rule does not match past a leading assignment of a variable Claude Code does not know to be safe ([permissions, "Wrappers"](https://code.claude.com/docs/en/permissions)).
+A captain who wants a narrower grant can name individual scripts, such as `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh`, in place of `fm-*.sh`.
+Firstmate does not ship these rules in tracked `.claude/settings.json`, because that file propagates into every Claude worker's copy of this repository.
+
 ## Worker account pin (config/claude-account, config/pi-account)
 
 A home that mixes accounts for one runner, such as a work login and a personal one, can pin the account its own Claude and Pi workers launch on.
