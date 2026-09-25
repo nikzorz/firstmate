@@ -1,0 +1,7 @@
+ok - reminder fires once, on the turn that crosses the threshold, ignoring mid-turn tool results and metadata entries
+ok - a context drop re-arms the reminder with no marker state
+ok - synthetic zero-usage entries neither re-arm nor hide the reminder
+ok - sidechain calls are ignored and a crossing first turn reminds
+ok - silent for a foreign host, a missing transcript, an empty payload, and a task worktree
+ok - tracked .claude/settings.json Stop hooks run the reminder
+exit=0

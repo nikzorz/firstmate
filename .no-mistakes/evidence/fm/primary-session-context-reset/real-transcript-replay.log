@@ -1,0 +1,4 @@
+  turn-end 13 (line 818, 2001148 bytes): {"systemMessage":"Firstmate: this session has reached about 254k tokens of context. Resetting is safe because durable records, not this conversation, carry the work: run /stow, then /clear once it reports the session is safe to reset."}
+ef972e5e-ef18-49a1-a093-d763e125a124.jsonl: 124 turn ends, 1 reminder(s)
+  turn-end 6 (line 496, 1757880 bytes): {"systemMessage":"Firstmate: this session has reached about 262k tokens of context. Resetting is safe because durable records, not this conversation, carry the work: run /stow, then /clear once it reports the session is safe to reset."}
+10b1c34f-eb63-41e7-a965-d1674d0fdb96.jsonl: 27 turn ends, 1 reminder(s)
