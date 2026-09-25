@@ -298,7 +298,7 @@ Two firstmate-specific rules layer on top of that guidance:
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
 
 Preserve before you end a run: a deliberate abort can leave the run's recorded head where \`no-mistakes axi sync --recover\` no longer looks, exactly as a crash does, so the order is preserve first and abort second, whatever the reason for stopping.
-1. Read the run head from \`no-mistakes axi status\`: \`branch_sync.pipeline.current_head\`, or \`head_sha\` only when that is empty. Find a ref that points at it in \`git ls-remote no-mistakes\`, and fetch that ref by name into \`refs/heads/archive/<your branch>\`; the store refuses a bare-SHA fetch.
+1. Read the run head from \`no-mistakes axi status\`: \`branch_sync.pipeline.current_head\`, or \`head_sha\` only when that is empty. Find the gate worktree whose HEAD is that run head in \`git -C "\$(git remote get-url no-mistakes)" worktree list\` and run \`git fetch <that worktree path> HEAD:refs/heads/archive/<your branch>\`. Only when a ref in \`git ls-remote no-mistakes\` points at the run head may you fetch that ref by name instead; the store refuses a bare-SHA fetch.
 2. Confirm \`git rev-parse refs/heads/archive/<your branch>\` prints that run head, and complete any push your instruction names.
 3. Only then run \`no-mistakes axi abort\`.
 A report that the pipeline's preserved head or commits are missing, such as \`blocked_recover_preserved_head_missing\`, is not evidence the work is gone: the recovery ref \`refs/no-mistakes/recover/<run id>\` can still hold it in the local gate store.

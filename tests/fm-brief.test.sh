@@ -490,7 +490,7 @@ test_no_mistakes_dod_preserves_before_abort() {
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-  fetch_line=$(grep -n 'into `refs/heads/archive/<your branch>`' "$brief" | head -1 | cut -d: -f1)
+  fetch_line=$(grep -n 'HEAD:refs/heads/archive/<your branch>`' "$brief" | head -1 | cut -d: -f1)
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   abort_line=$(grep -n 'Only then run `no-mistakes axi abort`' "$brief" | head -1 | cut -d: -f1)
   [ -n "$fetch_line" ] || fail "no-mistakes DOD must tell the worker to fetch the run's head before ending it"
