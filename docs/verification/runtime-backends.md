@@ -1067,6 +1067,23 @@ The CLI matrix was checked directly:
 | Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
 | Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
 
+Verified on 2026-09-24 on Linux x86_64 (WSL2) with Herdr 0.8.2 and Claude Code 2.1.281, polling `herdr agent get <pane> --session <name>` every 0.25 seconds in a `bin/fm-herdr-lab.sh` session:
+
+```text
+claude --print '<prompt>'                          agent=claude: unknown, then idle until exit; never working
+claude '<prompt holding a sleep 6 tool call>'      agent=claude: unknown, idle, working for ~20s, then idle
+```
+
+The real-agent arm of the smoke suite refreshes this through the adapter's `busy_state`, and with its opt-in set it fails unless one interactive Claude turn reads busy, then idle, and renders its reply:
+
+```sh
+FM_HERDR_SMOKE_REAL_CLAUDE=1 tests/fm-backend-herdr-smoke.test.sh
+```
+
+```text
+ok - real herdr: busy_state reads busy then idle across a real claude (2.1.281 (Claude Code)) turn, and capture shows its reply
+```
+
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
