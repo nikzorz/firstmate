@@ -1074,7 +1074,8 @@ claude --print '<prompt>'                          agent=claude: unknown, then i
 claude '<prompt holding a sleep 6 tool call>'      agent=claude: unknown, idle, working for ~20s, then idle
 ```
 
-The real-agent arm of the smoke suite refreshes this through the adapter's `busy_state`, and with its opt-in set it fails unless one interactive Claude turn reads busy, then idle, and renders its reply:
+The real-agent arm of the smoke suite refreshes this through the adapter's `busy_state`, and with its opt-in set it fails unless one interactive Claude turn reads busy, then idle, and renders its reply.
+Claude runs in the checkout itself, which must already be a trusted Claude workspace; the arm never answers the trust dialog and fails naming the folder when it appears:
 
 ```sh
 FM_HERDR_SMOKE_REAL_CLAUDE=1 tests/fm-backend-herdr-smoke.test.sh

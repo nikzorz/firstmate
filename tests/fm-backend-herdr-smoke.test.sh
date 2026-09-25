@@ -314,15 +314,12 @@ if [ "${FM_HERDR_SMOKE_REAL_CLAUDE:-0}" = 1 ]; then
   fm_backend_herdr_send_literal "$TARGET" "cd $(printf '%q' "$ROOT") && CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --setting-sources user --settings '{\"feedbackDrafts\":\"off\"}' 'Run the shell command sleep 5, then reply with the word HERDR immediately followed by the word SMOKEOK, with no space and nothing else.'"
   sleep 0.2
   fm_backend_herdr_send_key "$TARGET" Enter
-  found_working=0 idle_after_working=0 trust_accepted=0
+  found_working=0 idle_after_working=0
   for _ in $(seq 1 240); do
-    if [ "$trust_accepted" -eq 0 ]; then
+    if [ "$found_working" -eq 0 ]; then
       case "$(fm_backend_herdr_visible_capture "$TARGET")" in
-        # The prompt preselects "No, exit", so a bare Enter would quit Claude.
         *'Yes, I trust this folder'*)
-          fm_backend_herdr_send_key "$TARGET" down
-          fm_backend_herdr_send_key "$TARGET" Enter
-          trust_accepted=1 ;;
+          fail "real claude ($CLAUDE_VER): $ROOT is not a trusted Claude workspace, so the real-agent check cannot run; trust it once yourself (start claude in $ROOT and accept the trust prompt), then re-run" ;;
       esac
     fi
     bs=$(fm_backend_herdr_busy_state "$TARGET" 2>/dev/null)
@@ -338,11 +335,16 @@ if [ "${FM_HERDR_SMOKE_REAL_CLAUDE:-0}" = 1 ]; then
     || fail "real claude ($CLAUDE_VER) on $HERDR_VER: busy_state never read busy during a real turn"
   [ "$idle_after_working" -eq 1 ] \
     || fail "real claude ($CLAUDE_VER) on $HERDR_VER: busy_state never returned to idle after the turn went busy"
-  out=$(fm_backend_herdr_capture "$TARGET" 60)
-  case "$out" in
-    *HERDRSMOKEOK*) : ;;
-    *) fail "real claude ($CLAUDE_VER) on $HERDR_VER: the turn went busy then idle but its reply marker never rendered"$'\n'"$out" ;;
-  esac
+  marker_seen=0
+  for _ in $(seq 1 10); do
+    out=$(fm_backend_herdr_capture "$TARGET" 60)
+    case "$out" in
+      *HERDRSMOKEOK*) marker_seen=1; break ;;
+    esac
+    sleep 0.5
+  done
+  [ "$marker_seen" -eq 1 ] \
+    || fail "real claude ($CLAUDE_VER) on $HERDR_VER: the turn went busy then idle but its reply marker never rendered"$'\n'"$out"
   pass "real herdr: busy_state reads busy then idle across a real claude ($CLAUDE_VER) turn, and capture shows its reply"
 else
   echo "note: FM_HERDR_SMOKE_REAL_CLAUDE=1 not set; skipping the real-agent busy_state check" >&2
