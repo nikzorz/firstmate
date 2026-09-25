@@ -38,6 +38,8 @@ assistant() {  # <file> <context-tokens> [sidechain]
     '{type:"assistant",isSidechain:$side,message:{role:"assistant",content:[{type:"text",text:"x"}],usage:{input_tokens:3,cache_read_input_tokens:($n - 13),cache_creation_input_tokens:10,output_tokens:5}}}' >> "$1"
 }
 
+synthetic() { jq -cn '{type:"assistant",message:{role:"assistant",model:"<synthetic>",content:[{type:"text",text:"No response requested."}],usage:{input_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0,output_tokens:0}}}' >> "$1"; }
+
 stop() {  # <home> <transcript> [extra payload jq] -> stdout; status in STOP_RC
   local payload
   payload=$(jq -cn --arg t "$2" "{session_id:\"s1\",transcript_path:\$t,hook_event_name:\"Stop\",stop_hook_active:false} ${3:-}")
@@ -76,6 +78,26 @@ test_compaction_rearms() {
   out=$(stop "$home" "$t")
   assert_contains "$out" "systemMessage" "crossing again after a drop reminds again"
   pass "a context drop re-arms the reminder with no marker state"
+}
+
+test_synthetic_entries_are_not_measurements() {
+  local home t out
+  home=$(make_primary_dir "$TMP_ROOT/synthetic")
+  t="$home/t.jsonl"
+  prompt "$t" one; assistant "$t" 400
+  prompt "$t" two; assistant "$t" 1100
+  prompt "$t" three; synthetic "$t"
+  out=$(stop "$home" "$t")
+  assert_equals "" "$out" "a turn ending on a synthetic entry does not remind again"
+  prompt "$t" four; assistant "$t" 1200
+  out=$(stop "$home" "$t")
+  assert_equals "" "$out" "the turn after a synthetic entry, still past the threshold, does not remind"
+  t="$home/crossing.jsonl"
+  prompt "$t" one; assistant "$t" 400
+  prompt "$t" two; assistant "$t" 1100; synthetic "$t"
+  out=$(stop "$home" "$t")
+  assert_contains "$out" "systemMessage" "a crossing turn ending on a synthetic entry still reminds"
+  pass "synthetic zero-usage entries neither re-arm nor hide the reminder"
 }
 
 test_first_turn_and_sidechain() {
@@ -134,6 +156,7 @@ test_tracked_claude_stop_registration_runs_the_reminder() {
 
 test_fires_once_on_the_crossing_turn
 test_compaction_rearms
+test_synthetic_entries_are_not_measurements
 test_first_turn_and_sidechain
 test_silent_outside_scope_or_without_input
 test_tracked_claude_stop_registration_runs_the_reminder

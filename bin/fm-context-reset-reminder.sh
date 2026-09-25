@@ -16,7 +16,8 @@
 # Once: the reminder fires on the Stop that ends the turn crossing the
 # threshold, that is, when the last call before this turn's prompt was below
 # FM_CONTEXT_RESET_TOKENS (default 250000) and the latest call is at or above
-# it. The transcript is the only state: /clear opens a fresh transcript and
+# it. Synthetic placeholder entries (model "<synthetic>" or zero input usage)
+# are not API calls, so they never count as a measurement. The transcript is the only state: /clear opens a fresh transcript and
 # compaction drops the count, so either re-arms the reminder without a marker.
 # The transcript is read backwards and only as far as this turn's prompt, so
 # the cost does not grow with the session.
@@ -74,18 +75,21 @@ command -v tac >/dev/null 2>&1 || tail -r /dev/null >/dev/null 2>&1 || exit 0
 TOKENS=$(reverse_lines "$TRANSCRIPT" 2>/dev/null | jq -Rn --argjson threshold "$THRESHOLD" '
   def usage_tokens:
     [.message.usage | .input_tokens, .cache_read_input_tokens, .cache_creation_input_tokens | numbers] | add // 0;
+  def is_measurement:
+    .type == "assistant" and (.message.usage | type) == "object"
+    and .message.model != "<synthetic>" and usage_tokens > 0;
   def is_prompt:
     .type == "user" and .isMeta != true
     and ([.message.content | if type == "array" then .[] else empty end | select(type == "object" and .type == "tool_result")] | length) == 0;
   first(
     foreach ((inputs | fromjson? | select(type == "object" and .isSidechain != true)), null) as $e
-      ({latest: null, in_turn_prompt_seen: false, result: null};
+      ({latest: null, prompt_seen: false, result: null};
        if $e == null then .result = {before: 0, latest: (.latest // 0)}
-       elif $e.type == "assistant" and ($e.message.usage | type) == "object" then
-         if .latest == null then .latest = ($e | usage_tokens)
-         elif .in_turn_prompt_seen then .result = {before: ($e | usage_tokens), latest: .latest}
+       elif ($e | is_measurement) then
+         if .prompt_seen then .result = {before: ($e | usage_tokens), latest: (.latest // ($e | usage_tokens))}
+         elif .latest == null then .latest = ($e | usage_tokens)
          else . end
-       elif .latest != null and ($e | is_prompt) then .in_turn_prompt_seen = true
+       elif ($e | is_prompt) then .prompt_seen = true
        else . end;
        .result // empty)
   )
