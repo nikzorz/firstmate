@@ -1,0 +1,21 @@
+== read-only search of the real gate stores for this run's head 918533e5b08a3d817b9b653d067551518b93682d
+== bare-SHA fetch from real store into a throwaway repo:
+From /home/nik/.no-mistakes/repos/50866b63a668
+ * branch            918533e5b08a3d817b9b653d067551518b93682d -> FETCH_HEAD
+rc=0
+== fetch by ref name () into refs/heads/archive/fm/pipeline-cancel-loses-recorded-head:
+fatal: couldn't find remote ref HEAD
+rc=128
+fatal: ambiguous argument 'refs/heads/archive/fm/pipeline-cancel-loses-recorded-head': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+rev-parse: refs/heads/archive/fm/pipeline-cancel-loses-recorded-head
+
+== note: 918533e is this run's in-flight review-fix commit, present as an object but not yet under any gate ref, so the empty result above is correct
+== search for the gate's recorded branch head c7cdffc26db8ee780ef4897b8131ee71167abe25:
+/home/nik/.no-mistakes/repos/50866b63a668.git refs/heads/fm/pipeline-cancel-loses-recorded-head
+== search for a head held only by a real recovery ref (9a783f295ce32c2e57de5f8a651ec2fbe68701ad):
+/home/nik/.no-mistakes/repos/50866b63a668.git refs/heads/fm/done-awaiting-merge-wakes-forever
+/home/nik/.no-mistakes/repos/50866b63a668.git refs/no-mistakes/recover/01M1AF1DREHYQXNBWZJQ2EGASB
+== fetch that recovery ref by name from the printed store into a throwaway repo:
+rc=0 rev-parse=9a783f295ce32c2e57de5f8a651ec2fbe68701ad

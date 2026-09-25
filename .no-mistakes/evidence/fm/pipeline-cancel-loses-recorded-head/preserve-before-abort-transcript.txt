@@ -1,0 +1,12 @@
+== [skip] recorded head_sha=899fee615116f731fb330b36c076dd48ec8a7cba
+(no preservation: abort first)
+step3 (simulated abort cleanup): delete gate branch and run worktree, prune gate objects
+gate no longer has head
+RESULT: head is LOST
+
+== [preserve] recorded head_sha=f0b5591a4098d264e43b1e08502d9d1c0af766a8
+step1: ls-remote ref pointing at head_sha: refs/heads/fm/task
+step2: git rev-parse refs/heads/archive/fm/task = f0b5591a4098d264e43b1e08502d9d1c0af766a8
+step3 (simulated abort cleanup): delete gate branch and run worktree, prune gate objects
+gate no longer has head
+RESULT: head survives in refs/heads/archive/fm/task

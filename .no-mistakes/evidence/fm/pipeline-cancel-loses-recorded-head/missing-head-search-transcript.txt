@@ -1,0 +1,15 @@
+== recorded head: d7b704221dc1fb482f20f4fd36d6170036ff820f (held only by bbbb.git refs/no-mistakes/recover/01RUNID)
+== worker clone no longer has d7b704221dc1fb482f20f4fd36d6170036ff820f
+== loop from brief: for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <recorded head> 2>/dev/null; done
+== running with HOME=fakehome:
+/tmp/tmp.YOz3KTKHMC/fakehome/.no-mistakes/repos/bbbb.git refs/no-mistakes/recover/01RUNID
+== bare-SHA fetch attempt from /tmp/tmp.YOz3KTKHMC/fakehome/.no-mistakes/repos/bbbb.git:
+From /tmp/tmp.YOz3KTKHMC/fakehome/.no-mistakes/repos/bbbb
+ * branch            d7b704221dc1fb482f20f4fd36d6170036ff820f -> FETCH_HEAD
+rc=0
+== fetch by ref name, as the brief prescribes:
+rc=0
+== rev-parse archive: d7b704221dc1fb482f20f4fd36d6170036ff820f
+RECOVERED: matches recorded head
+== adversarial: head held by no store
+output: [] -> empty, so the worker reports blocked per contract

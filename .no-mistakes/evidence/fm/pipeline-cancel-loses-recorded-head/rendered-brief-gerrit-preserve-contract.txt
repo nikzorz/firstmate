@@ -1,0 +1,9 @@
+$ FM_HOME=<tmp> bin/fm-brief.sh live-preserve-g1 some-proj --mode no-mistakes --forge gerrit
+80:Delivery contract: mode=no-mistakes forge=gerrit shape=squash
+116:Preserve before you end a run: a deliberate abort can leave the run's recorded head where `no-mistakes axi sync --recover` no longer looks, exactly as a crash does, so the order is preserve first and abort second, whatever the reason for stopping.
+117-1. Read `head_sha` from `no-mistakes axi status`, find a ref that points at it in `git ls-remote no-mistakes`, and fetch that ref by name into `refs/heads/archive/<your branch>`; the store refuses a bare-SHA fetch.
+118-2. Confirm `git rev-parse refs/heads/archive/<your branch>` prints that `head_sha`, and complete any push your instruction names.
+119-3. Only then run `no-mistakes axi abort`.
+120-A report that the pipeline's preserved head or commits are missing, such as `blocked_recover_preserved_head_missing`, is not evidence the work is gone: the recovery ref `refs/no-mistakes/recover/<run id>` can still hold it in the local gate store.
+121-Before you conclude anything, run `for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <recorded head> 2>/dev/null; done` and fetch any match by its ref name from that store.
+122-If no store holds it, report `blocked:` naming the recorded head and that search; never re-implement, reset, or discard on the report alone.
