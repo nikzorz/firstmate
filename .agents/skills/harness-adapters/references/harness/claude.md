@@ -80,6 +80,8 @@ With extra usage (usage credits) turned on, an emptied plan window becomes paid 
 `FM_HOME=<this-firstmate-home> bin/fm-extra-usage.sh arm` adds a watcher check that reads every claude worker's footer for that notice; while extra usage is off the notice never renders and the check stays silent.
 Its `check:` wake names the next command: `bin/fm-extra-usage.sh steer` re-proves the notice, sends every live worker one instruction to reach a safe stopping point, including letting a validation round in flight finish without starting another, and prints the outcome to report with the credit spend when the footer shows it.
 A refusal means the notice was not confirmed on a fresh read, so nothing was sent.
+After a stop the check stays silent for as long as any worker footer still shows the notice, so workers restarted on credits on purpose are not stopped again; the first read that finds no notice on a readable claude pane ends the episode, and the next flip wakes it again.
+A secondmate home arms its own check, because this home steers only its direct reports and never a secondmate or its crew.
 The script's header owns the episode record, recipients, and exit codes; `bin/fm-claude-limit-lib.sh` owns the footer signature.
 
 ## Primary integration

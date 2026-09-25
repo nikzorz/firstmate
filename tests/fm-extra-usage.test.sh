@@ -9,8 +9,9 @@
 #       under a provable claude composer; the same words in the transcript, under
 #       a shell an exited agent left behind, truncated, or in a zone too tall to
 #       be a footer never do, and neither does the out-of-credits notice;
-#   (b) check: silent unless a pane shows the notice, and silent again for the
-#       episode once the fleet was stopped;
+#   (b) check: silent unless a pane shows the notice, and silent for the
+#       episode once the fleet was stopped, which ends only when a readable
+#       claude pane shows no notice;
 #   (c) steer: re-proves the match and sends nothing without it, reaches every
 #       live worker once (any harness, never a secondmate), reports the credit
 #       spend when the footer shows it, and retries only what did not land;
@@ -199,18 +200,40 @@ test_steer_retries_only_what_did_not_land() {
   pass "a failed stop instruction is reported and retried alone"
 }
 
-test_check_wakes_again_after_the_episode() {
+test_episode_ends_when_a_readable_scan_finds_no_notice() {
   local d out
   d=$(make_case episode)
   task "$d" a claude
   show "$d" a "$FOOTER_HINTS    Now using usage credits"
   run_eu "$d" steer >/dev/null || fail "steer failed"
-  printf 'fm-extra-usage-v1 %s using a\nsteered a\n' "$(( $(date +%s) - 20000 ))" > "$d/state/.extra-usage-steered"
+  rm -f "$d/panes/fm:fm-a"
   out=$(run_eu "$d" check)
-  assert_contains "$out" "extra-usage using on a" "check stayed silent after the episode ended"
+  [ -z "$out" ] || fail "check spoke with no readable pane: $out"
+  [ -e "$d/state/.extra-usage-steered" ] || fail "an unreadable fleet ended the episode"
+  show "$d" a "$FOOTER_HINTS"
+  out=$(run_eu "$d" check)
+  [ -z "$out" ] || fail "check spoke with no notice: $out"
+  [ ! -e "$d/state/.extra-usage-steered" ] || fail "a notice-free readable scan did not end the episode"
+  show "$d" a "$FOOTER_HINTS    Now using usage credits"
+  out=$(run_eu "$d" check)
+  assert_contains "$out" "extra-usage using on a" "check stayed silent on the next flip"
   run_eu "$d" steer >/dev/null || fail "a new episode's steer failed"
   [ "$(grep -c '' "$d/sent.log")" = 2 ] || fail "a new episode did not stop the worker again"
-  pass "a new episode after the window wakes and stops the fleet again"
+  pass "a notice-free readable scan ends the episode, so the next flip wakes and stops the fleet again"
+}
+
+test_episode_holds_while_the_notice_shows() {
+  local d out
+  d=$(make_case holds)
+  task "$d" a claude
+  show "$d" a "$FOOTER_HINTS    Now using usage credits"
+  run_eu "$d" steer >/dev/null || fail "steer failed"
+  printf 'fm-extra-usage-v1 %s using a\nsteered a\n' "$(( $(date +%s) - 10 * 86400 ))" > "$d/state/.extra-usage-steered"
+  out=$(run_eu "$d" check)
+  [ -z "$out" ] || fail "check woke inside an old episode while the notice still shows: $out"
+  [ -e "$d/state/.extra-usage-steered" ] || fail "the episode ended while the notice still shows"
+  [ "$(grep -c '' "$d/sent.log")" = 1 ] || fail "the worker was stopped again"
+  pass "while the notice shows, check stays silent with no time limit"
 }
 
 test_arm_and_disarm() {
@@ -236,7 +259,8 @@ test_check_is_silent_without_the_notice
 test_check_reads_only_claude_panes
 test_steer_stops_every_live_worker_once
 test_steer_retries_only_what_did_not_land
-test_check_wakes_again_after_the_episode
+test_episode_ends_when_a_readable_scan_finds_no_notice
+test_episode_holds_while_the_notice_shows
 test_arm_and_disarm
 
 echo "all fm-extra-usage tests passed"

@@ -32,9 +32,11 @@
 #
 # ONE STOP PER EPISODE. `steer` records state/.extra-usage-steered with the time
 # and each worker it reached, so a rerun reaches only workers it has not
-# reached, and `check` stays silent for FM_EXTRA_USAGE_EPISODE_SECS (default
-# 18000, one five-hour window) instead of re-stopping workers restarted on
-# purpose. Secondmates are not stopped from here: each home arms its own check.
+# reached, and `check` stays silent while the notice stays up instead of
+# re-stopping workers restarted on purpose. The episode ends when a `check`
+# reads at least one claude pane and none shows the notice, so the next flip
+# after a window reset wakes it again; a fleet with no readable pane never ends
+# an episode. Secondmates are not stopped from here: each home arms its own check.
 set -u
 
 usage() {
@@ -71,16 +73,15 @@ CHECK_ID='extra-usage'
 CHECK_SHIM="$STATE/$CHECK_ID.check.sh"
 RECORD="$STATE/.extra-usage-steered"
 RECORD_SCHEMA=fm-extra-usage-v1
-EPISODE_SECS_DEFAULT=18000
-EPISODE_SECS=${FM_EXTRA_USAGE_EPISODE_SECS:-$EPISODE_SECS_DEFAULT}
-case "$EPISODE_SECS" in ''|*[!0-9]*) EPISODE_SECS=$EPISODE_SECS_DEFAULT ;; esac
 
 STEER=${FM_EXTRA_USAGE_STEER:-"Claude extra usage is now in effect for this account, so further work is paid from usage credits. Reach a safe stopping point and stop: finish or commit the step in hand and start nothing new. If a validation run is in flight, let the round already running finish, then do not answer its next gate or start another round; do not abort it. Then append a paused status line saying you stopped for Claude extra usage, and wait for firstmate."}
 
 # Prints `<task><TAB><class><TAB><spend>` per claude pane showing the notice;
-# with `first`, stops at the first one, which is all `check` needs.
+# with `first`, stops at the first one, which is all `check` needs. Fails when
+# no claude pane could be read at all, so silence is never mistaken for an
+# all-clear.
 scan() {  # [first]
-  local meta id target backend pane verdict lines
+  local meta id target backend pane verdict lines readable=1
   lines=$(fm_claude_limit_scan_lines)
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -91,27 +92,29 @@ scan() {  # [first]
     backend=$(fm_backend_of_meta "$meta")
     pane=$(fm_backend_capture "$backend" "$target" "$lines" "fm-$id" 2>/dev/null) || continue
     [ -n "$pane" ] || continue
+    readable=0
     verdict=$(printf '%s' "$pane" | fm_claude_extra_usage_read) || continue
     printf '%s\t%s\n' "$id" "$verdict"
     [ "${1:-}" != first ] || return 0
   done
-  return 0
+  return "$readable"
 }
 
 episode_active() {
-  local schema epoch
+  local schema
   [ -f "$RECORD" ] || return 1
-  read -r schema epoch _ < "$RECORD" || return 1
-  [ "$schema" = "$RECORD_SCHEMA" ] || return 1
-  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
-  [ $(( $(date +%s) - epoch )) -lt "$EPISODE_SECS" ]
+  read -r schema _ < "$RECORD" || return 1
+  [ "$schema" = "$RECORD_SCHEMA" ]
 }
 
 action_check() {
   local hit id class
+  hit=$(scan first) || return 0
+  if [ -z "$hit" ]; then
+    rm -f -- "$RECORD"
+    return 0
+  fi
   episode_active && return 0
-  hit=$(scan first)
-  [ -n "$hit" ] || return 0
   id=${hit%%$'\t'*}
   class=${hit#*$'\t'}; class=${class%%$'\t'*}
   printf 'extra-usage %s on %s: claude workers are now on paid usage credits; run FM_HOME=%q %q steer to stop every worker at a safe point, then report it\n' \
@@ -198,7 +201,7 @@ action_disarm() {
 
 case "${1:-}" in
   check) action_check ;;
-  scan) scan ;;
+  scan) scan || true ;;
   steer) action_steer ;;
   arm) action_arm ;;
   disarm) action_disarm ;;
