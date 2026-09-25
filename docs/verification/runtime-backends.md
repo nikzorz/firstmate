@@ -594,6 +594,31 @@ The real pane renders this inside a bordered box, omitted here for readability; 
 That capture demonstrated why each signature function matches the FULL captured tail rather than the Grok/Rovo/AGY busy-footer convention of the last 12 non-blank lines: a bordered dialog box renders many short lines of pure border and padding (`│  ...  │`) that are NOT whitespace-only, so the 12-line reduction pushed this exact heading text out of the window and silently defeated the match on the first attempt.
 None of these three runs ever answered its dialog (Escape only, never Enter), so no credential store was written to and no model tokens were spent.
 
+## Claude extra-usage footer
+
+`bin/fm-claude-limit-lib.sh`'s `fm_claude_extra_usage_read` reads Claude Code's extra-usage notice from the footer under the composer, and `tests/fm-extra-usage-live-e2e.test.sh` (`FM_EXTRA_USAGE_LIVE=1`) refreshes this record after a claude upgrade.
+The notice itself has not been observed live, because it renders only once usage credits are funded and in use; the evidence below is the installed release's own source plus its real composer and footer.
+
+Read from the Claude Code 2.1.281 binary on 2026-09-24:
+
+- The footer's right-aligned notification column, drawn below the composer, carries a persistent `Now using usage credits` while overage is in use on a plan that is not team or enterprise.
+- When overage starts, a one-time notification reads `You're now using usage credits`, followed by ` · Your <limit> resets <time>` when a plan window is named, or `Now using usage credits` with no window.
+- Overage near its cap warns `You're close to your usage credit limit`, assembled from a template, and may show `You've used N% of your usage credits`.
+- Claude Code's own list of recognized notice prefixes still carries the older `You're now using extra usage` and `Now using extra usage` wording, which is what 2.1.263 rendered, so the signature anchors on both generations.
+- `You're out of usage credits` and `You're out of extra usage` belong to its hard-limit list, which also covers accounts without credits, so the signature excludes them.
+
+Verified 2026-09-24 on Claude Code 2.1.281, tmux on Linux (WSL2), with extra usage off:
+
+```sh
+FM_EXTRA_USAGE_LIVE=1 bash tests/fm-extra-usage-live-e2e.test.sh
+```
+
+```
+ok - claude 2.1.281 (Claude Code): binary carries notice wording|Now using usage credits|You're now using usage credits|Now using extra usage|You're now using extra usage|Extra usage is now covering your requests
+ok - claude 2.1.281 (Claude Code): a real idle pane with extra usage off reads as no notice
+ok - claude 2.1.281 (Claude Code): a notice in the real footer row matches
+```
+
 ## Worker account pin sign-in check
 
 `bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, and the provider column of `pi --list-models`.

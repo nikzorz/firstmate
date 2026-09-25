@@ -74,6 +74,14 @@ A still-exhausted window is not a wedge: the script records the wait with `pause
 When the provider reports the reset time, that pause line ends with ` until <time>Z`, so the recheck lands shortly after the window resets rather than a full pause cadence later; `bin/fm-classify-lib.sh` `status_paused_until` owns that grammar.
 No other verified harness has been observed presenting a blocking usage-limit prompt.
 
+## Extra usage
+
+With extra usage (usage credits) turned on, an emptied plan window becomes paid spend instead of the prompt above, and Claude Code says so only in the footer under the composer, so no worker can notice it or checkpoint on its own.
+`FM_HOME=<this-firstmate-home> bin/fm-extra-usage.sh arm` adds a watcher check that reads every claude worker's footer for that notice; while extra usage is off the notice never renders and the check stays silent.
+Its `check:` wake names the next command: `bin/fm-extra-usage.sh steer` re-proves the notice, sends every live worker one instruction to reach a safe stopping point, including letting a validation round in flight finish without starting another, and prints the outcome to report with the credit spend when the footer shows it.
+A refusal means the notice was not confirmed on a fresh read, so nothing was sent.
+The script's header owns the episode record, recipients, and exit codes; `bin/fm-claude-limit-lib.sh` owns the footer signature.
+
 ## Primary integration
 
 [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#turn-end-guard) records the current primary and Stop auto-arm live evidence.

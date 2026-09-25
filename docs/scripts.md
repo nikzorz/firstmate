@@ -101,8 +101,9 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
-| `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature and the quota read for whether, and when, the account window resets |
+| `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature, its extra-usage footer signature, and the quota read for whether, and when, the account window resets |
 | `fm-limit-resume.sh`     | Recover one crewmate stalled on Claude Code's usage-limit prompt once the account window has reset |
+| `fm-extra-usage.sh`      | Watcher check that notices Claude workers on paid extra usage, and the guarded steer that stops the fleet at a safe point |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |

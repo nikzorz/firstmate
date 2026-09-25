@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # fm-claude-limit-lib.sh - the ONE owner of Claude Code's usage-limit stall: the
 # pane signature that identifies it, and the quota read that decides whether the
-# account window has actually reset.
+# account window has actually reset. It also owns the footer signature of the
+# other thing an empty window can turn into, paid extra usage.
 #
 # WHY THIS EXISTS (incident 2026-07-29): three of four live crewmates exhausted
 # the account usage limit mid-turn and stopped on Claude Code's interactive
@@ -21,6 +22,7 @@
 # pane parked on this prompt is not working no matter what the run says) and
 # bin/fm-limit-resume.sh (re-proves the match immediately before it sends a key).
 # bin/fm-classify-lib.sh owns the shared triage vocabulary over that state.
+# bin/fm-extra-usage.sh reads the extra-usage notice.
 #
 # EVERYTHING HERE FAILS CLOSED. An unreadable pane, an uncertain match, a
 # missing tool, or unparseable quota output reports "no match" or "unknown"
@@ -117,6 +119,86 @@ fm_claude_limit_dialog_match() {  # stdin: plain pane capture
   [ "$option" -lt "$footer" ] || return 1
   [ "$(( total - footer ))" -le "$slack" ] || return 1
   return 0
+}
+
+# --- extra-usage notice -----------------------------------------------------
+#
+# When the plan window empties and extra usage (usage credits) is turned on,
+# Claude Code keeps working on paid credits and says so only on screen: nothing
+# reaches the model, so a worker cannot notice the flip itself. The notices
+# live in the footer drawn BELOW the composer, right-aligned beside the mode
+# hints:
+#
+#   ──────────────────────────────────────────────
+#   ❯
+#   ──────────────────────────────────────────────
+#     ⏵⏵ bypass permissions on        Now using usage credits
+#
+# The segment anchors below are Claude Code's own recognized prefixes for these
+# notices, both the credits wording and the older extra-usage wording, so a
+# release that keeps either still matches. `You're out of ...` is deliberately
+# absent: it also appears when credits were never turned on, and spend has
+# already stopped by then, which the usage-limit prompt above owns.
+FM_CLAUDE_EXTRA_USAGE_RE_DEFAULT="^(You're now using usage credits|You're now using extra usage|Now using usage credits|Now using extra usage|Extra usage is now covering your requests)( .*)?\$"
+FM_CLAUDE_EXTRA_USAGE_NEAR_RE_DEFAULT="^You're close to your usage credit limit( .*)?\$"
+FM_CLAUDE_EXTRA_USAGE_SPEND_RE_DEFAULT="^You've used [0-9]+% of your usage credits( .*)?\$"
+
+# Non-blank rows the footer may hold under the composer. Text a worker prints
+# sits above the composer, so the footer zone is what separates a live notice
+# from the same words merely displayed; a zone taller than this is not a footer.
+FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS_DEFAULT=5
+
+# fm_claude_extra_usage_read: `<class><TAB><spend>` and 0 when the pane on stdin
+# is a live claude composer whose footer shows an extra-usage notice, 1
+# otherwise (including empty input or no provable composer). <class> is
+# `near-limit` when the credit-limit warning shows, else `using`; <spend> is the
+# footer's own `You've used N% of your usage credits` segment, or empty.
+# A notice must be a whole footer segment (split on runs of two or more spaces)
+# below the last two full-width rules with the `❯` prompt row between them, so
+# prose, quoted fixtures, a dialog, or a shell left behind by an exited agent
+# never qualify. Pure text classification: no pane, backend, or tool access.
+fm_claude_extra_usage_read() {  # stdin: plain pane capture
+  local text rows
+  IFS= read -r -d '' text || true
+  [ -n "$text" ] || return 1
+  text=$(printf '%s\n' "$text" | fm_composer_strip_ansi)
+  fm_composer_normalize_spaces_var text
+  rows=${FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS:-$FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS_DEFAULT}
+  case "$rows" in ''|*[!0-9]*) rows=$FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS_DEFAULT ;; esac
+  printf '%s\n' "$text" | LC_ALL=C awk \
+    -v using_re="${FM_CLAUDE_EXTRA_USAGE_RE:-$FM_CLAUDE_EXTRA_USAGE_RE_DEFAULT}" \
+    -v near_re="${FM_CLAUDE_EXTRA_USAGE_NEAR_RE:-$FM_CLAUDE_EXTRA_USAGE_NEAR_RE_DEFAULT}" \
+    -v spend_re="${FM_CLAUDE_EXTRA_USAGE_SPEND_RE:-$FM_CLAUDE_EXTRA_USAGE_SPEND_RE_DEFAULT}" \
+    -v max_rows="$rows" '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function is_rule(s) { s = trim(s); return s ~ /^(──────────)(─)*$/ }
+    { row[NR] = $0 }
+    END {
+      bottom = 0; top = 0
+      for (i = NR; i >= 1; i--) {
+        if (!is_rule(row[i])) continue
+        if (!bottom) { bottom = i } else { top = i; break }
+      }
+      if (!top) exit 1
+      for (i = top + 1; i < bottom; i++) if (trim(row[i]) != "") break
+      if (i >= bottom || index(trim(row[i]), "❯") != 1) exit 1
+      footer = 0; class = ""; spend = ""
+      for (i = bottom + 1; i <= NR; i++) {
+        line = row[i]
+        gsub(/\t/, " ", line)
+        if (trim(line) == "") continue
+        footer++
+        n = split(line, seg, /  +/)
+        for (j = 1; j <= n; j++) {
+          s = trim(seg[j])
+          if (s ~ near_re) class = "near-limit"
+          else if (s ~ using_re && class == "") class = "using"
+          if (s ~ spend_re) spend = s
+        }
+      }
+      if (footer > max_rows || class == "") exit 1
+      printf "%s\t%s", class, spend
+    }'
 }
 
 # --- quota window -----------------------------------------------------------
