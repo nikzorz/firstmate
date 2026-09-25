@@ -441,23 +441,35 @@ Claude Code evaluates `permissions.allow` rules before the auto-mode classifier,
 The primary cannot add the rule itself: Claude Code never auto-approves a write under `.claude/` outside bypass mode, and a permission entry is the captain's security surface.
 
 The captain adds the rules to the home's local `.claude/settings.local.json`, which Claude Code keeps out of git, or through the `/permissions` dialog at local scope.
-Replace `/abs/firstmate` with the home's absolute path:
+Replace `/abs/firstmate` with the home's absolute path; each script appears in its relative, absolute, and `FM_HOME=`-prefixed spellings:
 
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(bin/fm-*.sh *)",
-      "Bash(/abs/firstmate/bin/fm-*.sh *)",
-      "Bash(FM_HOME=/abs/firstmate bin/fm-*.sh *)",
-      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-*.sh *)"
+      "Bash(bin/fm-send.sh *)",
+      "Bash(/abs/firstmate/bin/fm-send.sh *)",
+      "Bash(FM_HOME=/abs/firstmate bin/fm-send.sh *)",
+      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-send.sh *)",
+      "Bash(bin/fm-peek.sh *)",
+      "Bash(/abs/firstmate/bin/fm-peek.sh *)",
+      "Bash(FM_HOME=/abs/firstmate bin/fm-peek.sh *)",
+      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-peek.sh *)",
+      "Bash(bin/fm-crew-state.sh *)",
+      "Bash(/abs/firstmate/bin/fm-crew-state.sh *)",
+      "Bash(FM_HOME=/abs/firstmate bin/fm-crew-state.sh *)",
+      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-crew-state.sh *)",
+      "Bash(bin/fm-control.sh *)",
+      "Bash(/abs/firstmate/bin/fm-control.sh *)",
+      "Bash(FM_HOME=/abs/firstmate bin/fm-control.sh *)",
+      "Bash(FM_HOME=/abs/firstmate /abs/firstmate/bin/fm-control.sh *)"
     ]
   }
 }
 ```
 
 The `FM_HOME=` spellings are separate rules because an allow rule does not match past a leading assignment of a variable Claude Code does not know to be safe ([permissions, "Wrappers"](https://code.claude.com/docs/en/permissions)).
-A captain who wants a narrower grant can name individual scripts, such as `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh`, in place of `fm-*.sh`.
+The list names only the scripts supervision needs to read and steer a worker: `fm-send.sh` delivers a steer, `fm-peek.sh` and `fm-crew-state.sh` read a worker's pane and state, and `fm-control.sh` interrupts or relaunches it.
 Firstmate does not ship these rules in tracked `.claude/settings.json`, because that file propagates into every Claude worker's copy of this repository.
 
 ## Worker account pin (config/claude-account, config/pi-account)
