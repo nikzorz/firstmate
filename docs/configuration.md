@@ -1307,6 +1307,9 @@ FM_CLAUDE_LIMIT_RESET_GRACE_SECS=60   # seconds added to a reported window reset
 FM_LIMIT_RESUME_SETTLE=1   # seconds fm-limit-resume.sh waits after Escape before re-reading the pane
 FM_LIMIT_RESUME_STEER=    # override for the resume instruction fm-limit-resume.sh sends after dismissing the prompt
 FM_CLAUDE_LIMIT_PROMPT_RE= FM_CLAUDE_LIMIT_OPTION_RE= FM_CLAUDE_LIMIT_FOOTER_RE=   # override the three prompt anchors if Claude Code changes their wording; bin/fm-claude-limit-lib.sh owns the defaults
+FM_CLAUDE_EXTRA_USAGE_RE= FM_CLAUDE_EXTRA_USAGE_NEAR_RE= FM_CLAUDE_EXTRA_USAGE_SPEND_RE=   # override the extra-usage footer segment anchors if Claude Code changes their wording; bin/fm-claude-limit-lib.sh owns the defaults
+FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS=5   # non-blank rows allowed under the claude composer before a zone stops counting as its footer
+FM_EXTRA_USAGE_STEER=    # override for the stop instruction bin/fm-extra-usage.sh steer sends
 FM_DOD_PR_SCAN_LINES=64   # URL-bearing status lines, from the end, that the direct-PR done gate reads for an earlier pull-request announcement
 FM_MAIL_USER=      # mail-plane IMAP/SMTP login, from .env or environment (docs/configuration.md "Mail plane")
 FM_MAIL_PASS=      # mail-plane IMAP/SMTP password

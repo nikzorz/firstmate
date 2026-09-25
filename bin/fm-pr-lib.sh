@@ -115,7 +115,7 @@ fm_pr_task_id_valid() {
 # X-mode relay records, and no id is the name of another home-level record that
 # wears the same <name>.<suffix> shape. Suffixes themselves may hold dots; only the
 # id may not. A new home-level state/<name>.<suffix> record reserves its name here.
-FM_STATE_HOME_RECORD_NAMES=' branch-outcomes contributions fleet-ledger home-summary mail parent-replies tool-updates '
+FM_STATE_HOME_RECORD_NAMES=' branch-outcomes contributions extra-usage fleet-ledger home-summary mail parent-replies tool-updates '
 fm_task_id_record_namespace_safe() {
   local id=${1-}
   fm_task_id_path_safe "$id" || return 1
