@@ -1,0 +1,9 @@
+worker appends: needs-decision [at=1790297218] [key=nm-01RUN42-stale-intent]: intent stale after 3 contract-changing rulings (steps 2,3,8); continue this run or re-validate with restated intent
+open decision for run 01RUN42: open
+open decision for other run 01OTHER: not-open
+after firstmate resolves 'continue this run': not-open
+after a new contract-changing ruling re-report: open
+--- status file
+needs-decision [at=1790297218] [key=nm-01RUN42-stale-intent]: intent stale after 3 contract-changing rulings (steps 2,3,8); continue this run or re-validate with restated intent
+resolved [at=1790297218] [key=nm-01RUN42-stale-intent]: continue this run
+needs-decision [at=1790297218] [key=nm-01RUN42-stale-intent]: intent stale after 3 contract-changing rulings (steps 2,3,8,11); continue this run or re-validate with restated intent

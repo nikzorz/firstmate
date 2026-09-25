@@ -1,0 +1,29 @@
+### no-mistakes (forge none)
+scaffolded: /tmp/tmp.EZxET6Y1iM/data/t-nm/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+99:A run's `--intent` is fixed when the run starts, so every ruling that changes the accepted contract, rather than fixing the code toward it, leaves the review measuring the code against an older description.
+100-When firstmate's reply to a gate would be the run's third such contract-changing ruling, or a finding that faults the code for carrying out an earlier ruling comes back on a later round at any severity, including as a no-op, do not respond at that gate.
+101-Append `needs-decision [at=<epoch>] [key=nm-<run>-stale-intent]: intent stale after <n> contract-changing rulings (steps <a>,<b>,...); continue this run or re-validate with restated intent` and stop until firstmate replies.
+102-Once firstmate answers `continue this run`, do not report stale intent again for that run on a finding that returns; report again only at the gate of a new contract-changing ruling that lands after that answer.
+103-Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
+104-
+
+### no-mistakes (forge gerrit)
+scaffolded: /tmp/tmp.EZxET6Y1iM/data/t-gr/brief.md (ship, mode=no-mistakes forge=gerrit shape=squash; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+102:A run's `--intent` is fixed when the run starts, so every ruling that changes the accepted contract, rather than fixing the code toward it, leaves the review measuring the code against an older description.
+103-When firstmate's reply to a gate would be the run's third such contract-changing ruling, or a finding that faults the code for carrying out an earlier ruling comes back on a later round at any severity, including as a no-op, do not respond at that gate.
+104-Append `needs-decision [at=<epoch>] [key=nm-<run>-stale-intent]: intent stale after <n> contract-changing rulings (steps <a>,<b>,...); continue this run or re-validate with restated intent` and stop until firstmate replies.
+105-Once firstmate answers `continue this run`, do not report stale intent again for that run on a finding that returns; report again only at the gate of a new contract-changing ruling that lands after that answer.
+106-Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
+107-
+
+### direct-PR
+scaffolded: /tmp/tmp.EZxET6Y1iM/data/t-direct-PR/brief.md (ship, mode=direct-PR; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+stale-intent lines: 0
+
+### local-only
+scaffolded: /tmp/tmp.EZxET6Y1iM/data/t-local-only/brief.md (ship, mode=local-only; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+stale-intent lines: 0
