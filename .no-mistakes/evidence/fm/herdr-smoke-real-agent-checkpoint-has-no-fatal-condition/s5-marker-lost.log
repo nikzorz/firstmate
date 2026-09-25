@@ -1,0 +1,52 @@
+mutation (temp copy only): prompt asks for DONE, so the marker never renders
+-  fm_backend_herdr_send_literal "$TARGET" "cd $(printf '%q' "$ROOT") && CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --setting-sources user --settings '{\"feedbackDrafts\":\"off\"}' 'Run the shell command sleep 5, then reply with the word HERDR immediately followed by the word SMOKEOK, with no space and nothing else.'"
++  fm_backend_herdr_send_literal "$TARGET" "cd $(printf '%q' "$ROOT") && CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --setting-sources user --settings '{\"feedbackDrafts\":\"off\"}' 'Run the shell command sleep 5, then reply with the single word DONE and nothing else.'"
+ok - real herdr: version_check accepts the installed binary's protocol
+ok - real herdr: container_ensure starts the isolated session's server, creates the firstmate workspace (fm-lab-backend-smoke-1880606:w2), and reports its seeded default tab id (w2:t1)
+ok - real herdr: session status normalizes running and compatible
+ok - real herdr: container_ensure is idempotent (reuses/adopts the existing firstmate workspace, reports no seeded default tab on adoption)
+ok - real herdr: create_task prunes the freshly-created workspace's seeded default tab, leaving exactly one clean fm-<id> task tab
+ok - real herdr: create_task refuses a same-labeled tab whose pane hosts a genuinely live registered agent (unchanged behavior)
+ok - real herdr: create_task closes and replaces a same-labeled tab whose pane hosts no registered agent (the restored-husk shape), leaving the workspace intact
+ok - real herdr: a secondmate-shaped home (.fm-secondmate-home) gets its OWN herdr workspace, distinct from the primary's, in the SAME session
+ok - real herdr: the secondmate-shaped home's workspace is labeled 2ndmate-<secondmate-id> in herdr itself
+ok - real herdr: a task spawned into the secondmate-shaped home lands as a tab inside the secondmate's OWN workspace
+ok - real herdr: list_live stays scoped to each home's own workspace - neither home sees the other's tasks
+ok - real herdr: BOTH workspace ids/labels AND both tasks' pane ids survive a session stop + fresh server restart (multi-workspace shape)
+ok - real herdr: send_text_line runs a command atomically (pane run) and its output is capturable
+ok - real herdr: send_literal + send_key Enter submit as two separate steps (verified: send-text does NOT auto-submit)
+ok - real herdr: current_path reads the pane's live cwd
+not ok - real claude (2.1.281 (Claude Code)) on herdr 0.8.2: the turn went busy then idle but its reply marker never rendered
+nik@Nik-Laptop:/tmp$ echo captain-on-deck-line
+captain-on-deck-line
+nik@Nik-Laptop:/tmp$ echo literal-then-key-captain
+literal-then-key-captain
+nik@Nik-Laptop:/tmp$ cd /tmp
+nik@Nik-Laptop:/tmp$ cd /tmp/claude-1000/-home-nik--treehouse-firstmate-387a15-4
+-firstmate/10b1c34f-eb63-41e7-a965-d1674d0fdb96/scratchpad/suite1/tmp/fm-secondm
+ate-restart.QvNHfR/post-stop-24110/sm1-home && CLAUDE_CODE_ENABLE_PROMPT_SUGGEST
+ION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --se
+tting-sources user --settings '{"feedbackDrafts":"off"}' 'Run the shell command
+sleep 5, then reply with the single word DONE and nothing else.'
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+  ▝▝ ▝▝    /…/tmp/fm-secondmate-restart.QvNHfR/post-stop-24110/sm1-home
+
+
+❯ Run the shell command sleep 5, then reply with the single word DONE and
+  nothing else.
+
+● Bash(sleep 5)
+  ⎿  (No output)
+
+● DONE
+
+✻ Worked for 11s · done 7:00 PM
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · r…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+fm-herdr-lab: missing fleet-state tripwire for 'fm-lab-backend-smoke-1880606'; refusing destructive calls
+exit=1

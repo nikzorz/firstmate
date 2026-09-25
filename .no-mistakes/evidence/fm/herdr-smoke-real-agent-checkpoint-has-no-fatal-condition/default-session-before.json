@@ -1,0 +1,1 @@
+{"sessions":[{"default":true,"name":"default","running":true,"session_dir":"/home/nik/.config/herdr","socket_path":"/home/nik/.config/herdr/herdr.sock"},{"default":false,"name":"firstmate","running":false,"session_dir":"/home/nik/.config/herdr/sessions/firstmate","socket_path":"/home/nik/.config/herdr/sessions/firstmate/herdr.sock"}]}
