@@ -149,8 +149,10 @@ FM_CLAUDE_EXTRA_USAGE_SPEND_RE_DEFAULT="^You've used [0-9]+% of your usage credi
 FM_CLAUDE_EXTRA_USAGE_FOOTER_ROWS_DEFAULT=5
 
 # fm_claude_extra_usage_read: `<class><TAB><spend>` and 0 when the pane on stdin
-# is a live claude composer whose footer shows an extra-usage notice, 1
-# otherwise (including empty input or no provable composer). <class> is
+# is a live claude composer whose footer shows an extra-usage notice; 2 with no
+# output when it is a live claude composer whose footer shows none, the only
+# read that proves the notice is gone; 1 for anything uncertain (including
+# empty input, no provable composer, or a zone too tall to be a footer). <class> is
 # `near-limit` when the credit-limit warning shows, else `using`; <spend> is the
 # footer's own `You've used N% of your usage credits` segment, or empty.
 # A notice must be a whole footer segment (split on runs of two or more spaces)
@@ -196,7 +198,8 @@ fm_claude_extra_usage_read() {  # stdin: plain pane capture
           if (s ~ spend_re) spend = s
         }
       }
-      if (footer > max_rows || class == "") exit 1
+      if (footer > max_rows) exit 1
+      if (class == "") exit 2
       printf "%s\t%s", class, spend
     }'
 }

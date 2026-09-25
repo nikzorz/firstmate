@@ -10,8 +10,8 @@
 #       a shell an exited agent left behind, truncated, or in a zone too tall to
 #       be a footer never do, and neither does the out-of-credits notice;
 #   (b) check: silent unless a pane shows the notice, and silent for the
-#       episode once the fleet was stopped, which ends only when a readable
-#       claude pane shows no notice;
+#       episode once the fleet was stopped, which ends only when a live claude
+#       composer shows no notice, never on an uncertain read;
 #   (c) steer: re-proves the match and sends nothing without it, reaches every
 #       live worker once (any harness, never a secondmate), reports the credit
 #       spend when the footer shows it, and retries only what did not land;
@@ -54,8 +54,12 @@ test_signature_matches_the_footer_notice() {
 }
 
 test_signature_ignores_the_notice_anywhere_else() {
-  claude_pane "$FOOTER_HINTS" | fm_claude_extra_usage_read >/dev/null \
-    && fail "a footer with no notice matched"
+  local rc
+  claude_pane "$FOOTER_HINTS" | fm_claude_extra_usage_read >/dev/null && rc=0 || rc=$?
+  [ "$rc" = 2 ] || fail "a live composer with no notice did not read as a proven clear (status $rc)"
+  printf '%s\n' "$RULE" '  Now using usage credits' "$RULE" 'user@host:~$ ' \
+    | fm_claude_extra_usage_read >/dev/null && rc=0 || rc=$?
+  [ "$rc" = 1 ] || fail "a pane with no claude composer did not read as uncertain (status $rc)"
   { printf '%s\n' '● The footer says:' '  Now using usage credits' "  You're close to your usage credit limit"
     claude_pane "$FOOTER_HINTS"; } | fm_claude_extra_usage_read >/dev/null \
     && fail "the notice quoted in the transcript matched"
@@ -210,6 +214,11 @@ test_episode_ends_when_a_readable_scan_finds_no_notice() {
   out=$(run_eu "$d" check)
   [ -z "$out" ] || fail "check spoke with no readable pane: $out"
   [ -e "$d/state/.extra-usage-steered" ] || fail "an unreadable fleet ended the episode"
+  printf '%s\n' '● Running the tests.' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel' \
+    > "$d/panes/fm:fm-a"
+  out=$(run_eu "$d" check)
+  [ -z "$out" ] || fail "check spoke over a dialog: $out"
+  [ -e "$d/state/.extra-usage-steered" ] || fail "a dialog in place of the composer ended the episode"
   show "$d" a "$FOOTER_HINTS"
   out=$(run_eu "$d" check)
   [ -z "$out" ] || fail "check spoke with no notice: $out"

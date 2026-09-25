@@ -34,9 +34,9 @@
 # and each worker it reached, so a rerun reaches only workers it has not
 # reached, and `check` stays silent while the notice stays up instead of
 # re-stopping workers restarted on purpose. The episode ends when a `check`
-# reads at least one claude pane and none shows the notice, so the next flip
-# after a window reset wakes it again; a fleet with no readable pane never ends
-# an episode. Secondmates are not stopped from here: each home arms its own check.
+# finds a live claude composer without the notice and none with it, so the next
+# flip after a window reset wakes it again; an unreadable pane, a dialog in
+# place of the composer, or any other uncertain read never ends an episode. Secondmates are not stopped from here: each home arms its own check.
 set -u
 
 usage() {
@@ -77,11 +77,11 @@ RECORD_SCHEMA=fm-extra-usage-v1
 STEER=${FM_EXTRA_USAGE_STEER:-"Claude extra usage is now in effect for this account, so further work is paid from usage credits. Reach a safe stopping point and stop: finish or commit the step in hand and start nothing new. If a validation run is in flight, let the round already running finish, then do not answer its next gate or start another round; do not abort it. Then append a paused status line saying you stopped for Claude extra usage, and wait for firstmate."}
 
 # Prints `<task><TAB><class><TAB><spend>` per claude pane showing the notice;
-# with `first`, stops at the first one, which is all `check` needs. Fails when
-# no claude pane could be read at all, so silence is never mistaken for an
-# all-clear.
+# with `first`, stops at the first one, which is all `check` needs. Fails unless
+# some pane showed the notice or a live claude composer without it, so an
+# unreadable or uncertain pane is never mistaken for an all-clear.
 scan() {  # [first]
-  local meta id target backend pane verdict lines readable=1
+  local meta id target backend pane verdict rc lines clear=1
   lines=$(fm_claude_limit_scan_lines)
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -92,12 +92,13 @@ scan() {  # [first]
     backend=$(fm_backend_of_meta "$meta")
     pane=$(fm_backend_capture "$backend" "$target" "$lines" "fm-$id" 2>/dev/null) || continue
     [ -n "$pane" ] || continue
-    readable=0
-    verdict=$(printf '%s' "$pane" | fm_claude_extra_usage_read) || continue
+    verdict=$(printf '%s' "$pane" | fm_claude_extra_usage_read) && rc=0 || rc=$?
+    [ "$rc" != 2 ] || clear=0
+    [ "$rc" = 0 ] || continue
     printf '%s\t%s\n' "$id" "$verdict"
     [ "${1:-}" != first ] || return 0
   done
-  return "$readable"
+  return "$clear"
 }
 
 episode_active() {
