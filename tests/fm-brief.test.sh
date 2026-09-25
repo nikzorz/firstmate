@@ -448,6 +448,10 @@ test_no_mistakes_dod_reports_stale_intent() {
     "no-mistakes DOD lost the third-contract-changing-ruling trigger"
   assert_grep "comes back on a later round at any severity, including as a no-op" "$brief" \
     "no-mistakes DOD lost the recurring stale-intent finding trigger"
+  assert_grep "Once firstmate answers \`continue this run\`, do not report stale intent again for that run on a finding that returns" "$brief" \
+    "no-mistakes DOD re-reports stale intent after firstmate chose to continue the run"
+  assert_grep "report again only at the gate of a new contract-changing ruling that lands after that answer" "$brief" \
+    "no-mistakes DOD lost the new-ruling condition for re-reporting stale intent"
 
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   template=$(grep -o '`needs-decision [^`]*key=nm-<run>-stale-intent[^`]*`' "$brief" | tr -d '`')

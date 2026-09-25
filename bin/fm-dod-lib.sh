@@ -279,6 +279,7 @@ Do not hand-edit, commit, or fix findings yourself while a run is active - the p
 A run's \`--intent\` is fixed when the run starts, so every ruling that changes the accepted contract, rather than fixing the code toward it, leaves the review measuring the code against an older description.
 When firstmate's reply to a gate would be the run's third such contract-changing ruling, or a finding that faults the code for carrying out an earlier ruling comes back on a later round at any severity, including as a no-op, do not respond at that gate.
 Append \`needs-decision [at=<epoch>] [key=nm-<run>-stale-intent]: intent stale after <n> contract-changing rulings (steps <a>,<b>,...); continue this run or re-validate with restated intent\` and stop until firstmate replies.
+Once firstmate answers \`continue this run\`, do not report stale intent again for that run on a finding that returns; report again only at the gate of a new contract-changing ruling that lands after that answer.
 Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
 
 One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
