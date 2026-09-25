@@ -1,0 +1,7 @@
+ok - fm-pr-merge reads a plan-gated 403 on branch rules as no merge queue, not unreadable
+ok - away merge proceeds on a plan-gated 403 because that repository cannot have a merge queue
+ok - fm-pr-merge runs no closing-keyword report for a task that names no issue
+ok - fm-pr-merge warns about a closing keyword that does not precede its reference, and merges
+ok - fm-pr-merge reports an owned issue's missing keyword without the hedge, and merges
+ok - fm-pr-merge reads back a closed owned issue and keeps other issues hedged
+ok - fm-pr-merge treats a missing, malformed, or multiple owned-issue marker as no ownership

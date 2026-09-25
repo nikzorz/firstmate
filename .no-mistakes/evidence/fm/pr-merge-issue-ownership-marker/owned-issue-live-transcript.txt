@@ -1,0 +1,194 @@
+ok - fm-pr-merge reads a plan-gated 403 on branch rules as no merge queue, not unreadable
+ok - away merge proceeds on a plan-gated 403 because that repository cannot have a merge queue
+=== follow-up-only-url
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/40 (since 2026-09-24)
+  Follow-up to https://github.com/example/repo/issues/40, which stays open.
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: "doc:https://github.com/example/repo/issues/40"
+  body: "Follow-up to https://github.com/example/repo/issues/40, which stays open."
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/60 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: this PR's body does not close #40 (https://github.com/example/repo/issues/40), which task task-x1's record mentions
+warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+--- forge calls (merge / issue view):
+pr merge 60 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.F9O1VL
+
+=== prose-ownership
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  This task owns issue https://github.com/example/repo/issues/7 in spirit.
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: none
+  body: "This task owns issue https://github.com/example/repo/issues/7 in spirit."
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/61 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+--- forge calls (merge / issue view):
+pr merge 61 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.MJnEVZ
+
+=== owned-marker-no-keyword
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: none
+  body: "Owns issue: https://github.com/example/repo/issues/7"
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/62 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; the body needs a closing keyword directly before the reference, such as "Closes #7"
+--- forge calls (merge / issue view):
+pr merge 62 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.LBhiEi
+
+=== owned-marker-closed
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/40 (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: "doc:https://github.com/example/repo/issues/40"
+  body: "Owns issue: https://github.com/example/repo/issues/7"
+--- PR body: Fixes #7
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/63 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: this PR's body does not close #40 (https://github.com/example/repo/issues/40), which task task-x1's record mentions
+warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+--- forge calls (merge / issue view):
+pr merge 63 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.kymROw
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+
+=== marker-with-trailing-prose
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7 (the retry one)
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: none
+  body: "Owns issue: https://github.com/example/repo/issues/7 (the retry one)"
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/64 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: task task-x1's owned-issue line names "https://github.com/example/repo/issues/7 (the retry one)", which is not a full GitHub issue URL, so no issue is treated as owned
+--- forge calls (merge / issue view):
+pr merge 64 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.9v9ZMk
+
+=== pull-url-marker
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/pull/7
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: none
+  body: "Owns issue: https://github.com/example/repo/pull/7"
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/65 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: task task-x1's owned-issue line names "https://github.com/example/repo/pull/7", which is not a full GitHub issue URL, so no issue is treated as owned
+--- forge calls (merge / issue view):
+pr merge 65 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.8lqFa7
+
+=== duplicate-same-marker
+--- backlog.md:
+## In flight
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+  owns issue: https://github.com/example/repo/issues/7
+
+## Queued
+
+## Done
+--- tasks-axi show task-x1 --full (real tasks-axi):
+  links: none
+  body: "Owns issue: https://github.com/example/repo/issues/7\nowns issue: https://github.com/example/repo/issues/7"
+--- PR body: Tighten the retry
+--- fm-pr-merge.sh exit: 0
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/66 is open and mergeable, with every required check green at head 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; the body needs a closing keyword directly before the reference, such as "Closes #7"
+--- forge calls (merge / issue view):
+pr merge 66 --repo example/repo --match-head-commit 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e --squash --subject fix: do a thing (#7) --body-file /tmp/fm-pr-merge-squash-body.2iEyUS
+
