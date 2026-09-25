@@ -252,7 +252,8 @@ EOF
 }
 
 # The forge-independent middle of the no-mistakes contract: how a worker drives
-# the pipeline, what `--intent` may carry, and the two firstmate-specific rules.
+# the pipeline, what `--intent` may carry, when a stale intent must be
+# reported, and the two firstmate-specific rules.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit the ci step is skipped and there is no PR to report.
 fm_nm_driving_block() {  # <forge>
@@ -274,6 +275,11 @@ The \`--intent\` string you pass must be self-sufficient: that string plus the c
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+
+A run's \`--intent\` is fixed when the run starts, so every ruling that changes the accepted contract, rather than fixing the code toward it, leaves the review measuring the code against an older description.
+When firstmate's reply to a gate would be the run's third such contract-changing ruling, or a finding that faults the code for carrying out an earlier ruling comes back on a later round at any severity, including as a no-op, do not respond at that gate.
+Append \`needs-decision [at=<epoch>] [key=nm-<run>-stale-intent]: intent stale after <n> contract-changing rulings (steps <a>,<b>,...); continue this run or re-validate with restated intent\` and stop until firstmate replies.
+Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
 
 One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
 So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
