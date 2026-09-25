@@ -263,6 +263,7 @@ Each secondmate reconciles work already in its own home and then idles; recovery
 If `state/.afk` is present, load `/afk` in away mode or `/quiet` in quiet mode (`bin/fm-wake-lib.sh`'s `fm_afk_mode`); where its daemon runs, let the daemon own supervision rather than arming another cycle, and on Pi keep the ordinary supervision session, which runs in both postures with main parked while the record exists.
 Surface only captain-relevant decisions, review-ready PRs, failures, and credential needs; otherwise resume the emitted supervision protocol silently.
 A restart must be a non-event because durable state and live backend inventory, not conversation memory, are authoritative.
+For the same reason a long primary session is reset rather than left to grow; the `stow` skill's session-reset section owns that procedure.
 
 ## 6. Project and knowledge management
 

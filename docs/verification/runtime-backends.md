@@ -508,6 +508,24 @@ The lab home was deleted and the test entry was removed from the store and verif
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude context reset reminder
+
+`bin/fm-context-reset-reminder.sh` reads Claude's own transcript records: the Stop payload's `transcript_path`, main-thread assistant `usage`, and which user entries are prompts rather than tool results.
+`tests/fm-context-reset-reminder-live-e2e.test.sh` (`FM_CONTEXT_RESET_LIVE_E2E=1`) proves that shape against the installed Claude Code and refreshes this record after an upgrade.
+
+Verified 2026-09-24 on Claude Code 2.1.281.
+
+```sh
+FM_CONTEXT_RESET_LIVE_E2E=1 bash tests/fm-context-reset-reminder-live-e2e.test.sh
+```
+
+```
+ok - 2.1.281 (Claude Code): the reset reminder fires once on the crossing turn and stays silent on the next
+```
+
+The measure is the usage count rather than transcript bytes because bytes per context token vary too widely to calibrate.
+Replaying three real primary transcripts to each recorded turn end, the reminder fired exactly once per session, at 250-254k tokens, while the transcripts then held between 1.39 MB and 2.00 MB; the same sessions ended at 331-617k tokens and 2.6-5.2 MB.
+
 ## Launch-prompt backstop signatures
 
 `bin/fm-busy-lib.sh`'s launch-prompt backstop (`fm_busy_launch_prompt_parked`) reclassifies a launch whose busy record is still pinned at the fm-spawn seed as `unknown launch-prompt`, rather than `busy fm-spawn`, when the captured pane matches that harness's own recognized trust, sign-in, or first-run dialog.

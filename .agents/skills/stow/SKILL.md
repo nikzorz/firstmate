@@ -300,6 +300,20 @@ Extend the completion receipt with one entry per secondmate alongside the primar
 Keep those entries in the same plain captain-facing language the rest of the receipt uses.
 The session is reset-safe only when every home is within its own budget with no unresolved exception.
 
+## Session reset
+
+A long primary session grows with every handled wake, while its startup cost is fixed, so resetting it returns the session to that fixed cost and loses nothing that durable records hold.
+This pass is the capture half; the reset is complete only after the other two steps:
+
+1. Run this pass to a reset-safe receipt.
+2. The operator clears the conversation in the same session, with `/clear` on Claude.
+   Clearing keeps the same process, so the session lock and live supervision stay with it, whereas exiting and relaunching pays lock and supervision continuity for the same result.
+3. Take the session-start digest that the clear re-delivers as this session's fresh start.
+   On a harness whose clear does not re-deliver it (`docs/sessionstart-nudge.md`), run `bin/fm-session-start.sh` once.
+
+Reset before auto-compaction instead of relying on it: a compacted session keeps a lossy summary in context beside the re-read digest.
+On Claude, `bin/fm-context-reset-reminder.sh` suggests this reset once when the session's context crosses its threshold; its header owns the measure.
+
 ## Scope exclusion: no skill storage by the pass
 
 The stow pass itself must never store, create, or edit a skill as a destination for any finding.
