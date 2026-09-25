@@ -40,6 +40,7 @@ Firstmate cannot move a selection with Enter, Escape, and C-c alone, so it canno
 Inspect the pane to identify which dialog is on screen, and report it rather than answering it.
 A launch under `config/claude-permission-mode=auto` never meets the bypass confirmation, because it does not request bypass mode: on 2.1.269 `claude --permission-mode auto` reached the composer directly with the footer `⏵⏵ auto mode on (shift+tab to cycle)`, so a captain who refuses the bypass dialog selects `auto` there instead of accepting it.
 The workspace-trust dialog is unaffected by the permission mode and still needs the pre-registration above.
+A Claude primary's own permission mode is outside that file, and `../../../../../docs/configuration.md` "Primary session allow rules" owns the rules that keep its supervision commands from being refused.
 
 ## Composer ghost
 
@@ -73,6 +74,16 @@ It refuses rather than guessing whenever the pane, the match, or the quota windo
 A still-exhausted window is not a wedge: the script records the wait with `paused:` and ordinary declared-wait handling takes over until the window clears.
 When the provider reports the reset time, that pause line ends with ` until <time>Z`, so the recheck lands shortly after the window resets rather than a full pause cadence later; `bin/fm-classify-lib.sh` `status_paused_until` owns that grammar.
 No other verified harness has been observed presenting a blocking usage-limit prompt.
+
+## Extra usage
+
+With extra usage (usage credits) turned on, an emptied plan window becomes paid spend instead of the prompt above, and Claude Code says so only in the footer under the composer, so no worker can notice it or checkpoint on its own.
+`FM_HOME=<this-firstmate-home> bin/fm-extra-usage.sh arm` adds a watcher check that reads every claude worker's footer for that notice; while extra usage is off the notice never renders and the check stays silent.
+Its `check:` wake names the next command: `bin/fm-extra-usage.sh steer` re-proves the notice, sends every live worker one instruction to reach a safe stopping point, including letting a validation round in flight finish without starting another, and prints the outcome to report with the credit spend when the footer shows it.
+A refusal means the notice was not confirmed on a fresh read, so nothing was sent.
+After a stop the check stays silent for as long as any worker footer still shows the notice, so workers restarted on credits on purpose are not stopped again; the first read that finds a live claude composer without the notice, and none with it, ends the episode, and the next flip wakes it again.
+A secondmate home arms its own check, because this home steers only its direct reports and never a secondmate or its crew.
+The script's header owns the episode record, recipients, and exit codes; `bin/fm-claude-limit-lib.sh` owns the footer signature.
 
 ## Primary integration
 

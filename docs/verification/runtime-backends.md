@@ -594,6 +594,31 @@ The real pane renders this inside a bordered box, omitted here for readability; 
 That capture demonstrated why each signature function matches the FULL captured tail rather than the Grok/Rovo/AGY busy-footer convention of the last 12 non-blank lines: a bordered dialog box renders many short lines of pure border and padding (`│  ...  │`) that are NOT whitespace-only, so the 12-line reduction pushed this exact heading text out of the window and silently defeated the match on the first attempt.
 None of these three runs ever answered its dialog (Escape only, never Enter), so no credential store was written to and no model tokens were spent.
 
+## Claude extra-usage footer
+
+`bin/fm-claude-limit-lib.sh`'s `fm_claude_extra_usage_read` reads Claude Code's extra-usage notice from the footer under the composer, and `tests/fm-extra-usage-live-e2e.test.sh` (`FM_EXTRA_USAGE_LIVE=1`) refreshes this record after a claude upgrade.
+The notice itself has not been observed live, because it renders only once usage credits are funded and in use; the evidence below is the installed release's own source plus its real composer and footer.
+
+Read from the Claude Code 2.1.281 binary on 2026-09-24:
+
+- The footer's right-aligned notification column, drawn below the composer, carries a persistent `Now using usage credits` while overage is in use on a plan that is not team or enterprise.
+- When overage starts, a one-time notification reads `You're now using usage credits`, followed by ` · Your <limit> resets <time>` when a plan window is named, or `Now using usage credits` with no window.
+- Overage near its cap warns `You're close to your usage credit limit`, assembled from a template, and may show `You've used N% of your usage credits`.
+- Claude Code's own list of recognized notice prefixes still carries the older `You're now using extra usage` and `Now using extra usage` wording, which is what 2.1.263 rendered, so the signature anchors on both generations.
+- `You're out of usage credits` and `You're out of extra usage` belong to its hard-limit list, which also covers accounts without credits, so the signature excludes them.
+
+Verified 2026-09-24 on Claude Code 2.1.281, tmux on Linux (WSL2), with extra usage off:
+
+```sh
+FM_EXTRA_USAGE_LIVE=1 bash tests/fm-extra-usage-live-e2e.test.sh
+```
+
+```
+ok - claude 2.1.281 (Claude Code): binary carries notice wording|Now using usage credits|You're now using usage credits|Now using extra usage|You're now using extra usage|Extra usage is now covering your requests
+ok - claude 2.1.281 (Claude Code): a real idle pane with extra usage off reads as no notice
+ok - claude 2.1.281 (Claude Code): a notice in the real footer row matches
+```
+
 ## Worker account pin sign-in check
 
 `bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, and the provider column of `pi --list-models`.
@@ -1066,6 +1091,24 @@ The CLI matrix was checked directly:
 | Native state | `herdr agent get <pane>` | Working and done transitions were visible on some harnesses; live Claude Code 2.1.236 on Herdr 0.8.0 kept `agent_status=idle` for an entire landed turn, including a multi-second tool call, so submit confirmation falls through to the shared composer verdict. Native `busy` remains positive activity evidence, while native `idle` cannot close a turn and the adapter's semantic lifecycle decides worker state. |
 | Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
 | Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
+
+Verified on 2026-09-24 on Linux x86_64 (WSL2) with Herdr 0.8.2 and Claude Code 2.1.281, polling `herdr agent get <pane> --session <name>` every 0.25 seconds in a `bin/fm-herdr-lab.sh` session:
+
+```text
+claude --print '<prompt>'                          agent=claude: unknown, then idle until exit; never working
+claude '<prompt holding a sleep 6 tool call>'      agent=claude: unknown, idle, working for ~20s, then idle
+```
+
+The real-agent arm of the smoke suite refreshes this through the adapter's `busy_state`, and with its opt-in set it fails unless one interactive Claude turn reads busy, then idle, and renders its reply.
+Claude runs in the checkout itself, which must already be a trusted Claude workspace; the arm never answers the trust dialog and fails naming the folder when it appears:
+
+```sh
+FM_HERDR_SMOKE_REAL_CLAUDE=1 tests/fm-backend-herdr-smoke.test.sh
+```
+
+```text
+ok - real herdr: busy_state reads busy then idle across a real claude (2.1.281 (Claude Code)) turn, and capture shows its reply
+```
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.

@@ -3524,6 +3524,19 @@ add_task_row() {
     > "$case_dir/home/data/backlog.md"
 }
 
+# Like add_task_row, with each further line written into the row's body.
+# Args: case_dir title-url-or-empty body-line...
+add_task_row_with_body() {
+  local case_dir=$1 title="ship the fix" line
+  [ -z "$2" ] || title="$title for $2"
+  shift 2
+  {
+    printf '%s\n' '## In flight' "- [ ] task-x1 - $title (since 2026-09-24)"
+    for line in "$@"; do printf '  %s\n' "$line"; done
+    printf '%s\n' '' '## Queued' '' '## Done'
+  } > "$case_dir/home/data/backlog.md"
+}
+
 # Args: case_dir body
 write_github_body() {
   local case_dir=$1 view
@@ -3712,6 +3725,71 @@ test_queued_merge_reads_no_issue_back() {
   pass "fm-pr-merge reads no issue back for a queued merge"
 }
 
+# The owned-issue body line is the only ownership signal: an issue it names is
+# checked even when the row's title carries no URL, and a missing keyword for it
+# is reported without the context hedge. It stays a report, never a refusal.
+test_owned_issue_missing_keyword_is_reported_unhedged() {
+  local case_dir
+  case_dir=$(make_issue_case owned-missing 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a 'Close issues #7 and #8')
+  add_task_row_with_body "$case_dir" '' 'Mode no-mistakes.' "Owns issue: $ISSUE_7"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "owned-missing: a report about an owned issue blocked the merge"
+
+  assert_grep "does not close #7 ($ISSUE_7), which task task-x1's record marks as owned" "$case_dir/stderr" \
+    "owned-missing: the owned issue's missing keyword was not reported"
+  assert_grep 'such as "Closes #7"' "$case_dir/stderr" \
+    "owned-missing: the report did not name the keyword line the body needs"
+  assert_no_grep 'nothing is wrong' "$case_dir/stderr" \
+    "owned-missing: an owned issue was reported with the context hedge"
+  assert_no_grep 'issue view' "$case_dir/gh.log" \
+    "owned-missing: an issue the body does not close was read back"
+  assert_logged_gh_merge "$case_dir" 50 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  pass "fm-pr-merge reports an owned issue's missing keyword without the hedge, and merges"
+}
+
+test_owned_issue_closed_is_read_back_and_context_issue_stays_hedged() {
+  local case_dir
+  case_dir=$(make_issue_case owned-closed 4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b 'Closes #7' "$ISSUE_14")
+  add_task_row_with_body "$case_dir" "$ISSUE_14" "Owns issue: $ISSUE_7"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/51 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-closed: fm-pr-merge failed"
+
+  assert_no_grep 'does not close #7\|marks as owned' "$case_dir/stderr" \
+    "owned-closed: an owned issue the body closes was reported"
+  assert_grep "issue view $ISSUE_7" "$case_dir/gh.log" \
+    "owned-closed: the owned issue was not read back after the merge"
+  assert_grep "does not close #14 ($ISSUE_14), which task task-x1's record mentions" "$case_dir/stderr" \
+    "owned-closed: the unmarked issue lost its report"
+  assert_grep 'if the record only mentions it for context, nothing is wrong' "$case_dir/stderr" \
+    "owned-closed: the unmarked issue lost its hedge"
+  pass "fm-pr-merge reads back a closed owned issue and keeps other issues hedged"
+}
+
+# A body URL without the marker, a malformed marker, and more than one marked
+# issue all leave nothing owned; the last two say so.
+test_unusable_owned_issue_markers_mark_nothing() {
+  local case_dir label line1 line2 expect
+  while IFS='|' read -r label line1 line2 expect; do
+    [ -n "$label" ] || continue
+    case_dir=$(make_issue_case "owned-$label" 4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c 'no keyword here')
+    add_task_row_with_body "$case_dir" '' "$line1" "$line2"
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/52 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-$label: fm-pr-merge failed"
+    assert_no_grep 'does not close' "$case_dir/stderr" \
+      "owned-$label: an unusable marker was treated as ownership"
+    [ -z "$expect" ] || assert_grep "$expect" "$case_dir/stderr" \
+      "owned-$label: the unusable marker was not reported"
+  done <<ROWS
+plain-url|see $ISSUE_7|Mode no-mistakes.|
+two-issues|Owns issue: $ISSUE_7|owns issue: $ISSUE_14|marks more than one owned issue
+malformed|Owns issue: #7|Mode no-mistakes.|which is not a full GitHub issue URL
+ROWS
+  pass "fm-pr-merge treats a missing, malformed, or multiple owned-issue marker as no ownership"
+}
+
 test_gitlab_merge_runs_no_closing_keyword_check() {
   local case_dir
   case_dir=$(make_gitlab_case gitlab-no-keyword-check)
@@ -3764,5 +3842,8 @@ test_unreadable_pr_body_warns_and_merges
 test_issue_not_observed_closed_after_merge_is_reported
 test_unreadable_issue_is_reported_as_unknown
 test_queued_merge_reads_no_issue_back
+test_owned_issue_missing_keyword_is_reported_unhedged
+test_owned_issue_closed_is_read_back_and_context_issue_stays_hedged
+test_unusable_owned_issue_markers_mark_nothing
 test_gitlab_merge_runs_no_closing_keyword_check
 test_scratch_files_are_removed_on_every_exit

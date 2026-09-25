@@ -432,6 +432,51 @@ test_no_mistakes_dod_green_detection() {
   pass "fm-brief.sh: no-mistakes DOD detects a green PR from the drive call, not a status poll"
 }
 
+# A run's --intent is fixed at start, so contract-changing rulings leave the
+# review measuring against an outdated description. The no-mistakes DOD must
+# tell the worker to stop and report that at the gate, under a key the watcher
+# binds to the run so the parked lane is not read as a wedge.
+test_no_mistakes_dod_reports_stale_intent() {
+  local home id brief template line status other_id
+  home="$TMP_ROOT/stale-intent-home"
+  mkdir -p "$home/data" "$home/state"
+  id="brief-stale-intent-s1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "the run's third such contract-changing ruling" "$brief" \
+    "no-mistakes DOD lost the third-contract-changing-ruling trigger"
+  assert_grep "comes back on a later round at any severity, including as a no-op" "$brief" \
+    "no-mistakes DOD lost the recurring stale-intent finding trigger"
+  assert_grep "Once firstmate answers \`continue this run\`, do not report stale intent again for that run on a finding that returns" "$brief" \
+    "no-mistakes DOD re-reports stale intent after firstmate chose to continue the run"
+  assert_grep "report again only at the gate of a new contract-changing ruling that lands after that answer" "$brief" \
+    "no-mistakes DOD lost the new-ruling condition for re-reporting stale intent"
+
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  template=$(grep -o '`needs-decision [^`]*key=nm-<run>-stale-intent[^`]*`' "$brief" | tr -d '`')
+  [ -n "$template" ] || fail "no-mistakes DOD renders no stale-intent status line"
+  line=${template//<epoch>/$(date +%s)}
+  line=${line//<run>/run42}
+  line=$(printf '%s' "$line" | sed 's/<[^>]*>/3/g')
+  status="$home/state/$id.status"
+  printf '%s\n' "$line" > "$status"
+  bash -c '. "$1"; status_has_open_needs_decision "$2" run42' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$status" \
+    || fail "the stale-intent report does not bind to its run as an open decision"
+  printf 'resolved [at=%s] [key=nm-run42-stale-intent]: continue\n' "$(date +%s)" >> "$status"
+  if bash -c '. "$1"; status_has_open_needs_decision "$2" run42' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$status"; then
+    fail "a resolved stale-intent report still reads as open"
+  fi
+
+  other_id="brief-direct-pr-s2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other_id" some-proj --mode direct-PR >/dev/null 2>&1
+  assert_no_grep "key=nm-<run>-stale-intent" "$home/data/$other_id/brief.md" \
+    "a direct-PR brief received the no-mistakes-only stale-intent rule"
+  pass "fm-brief.sh: no-mistakes DOD stops at the gate to report a stale intent"
+}
+
 # A deliberate abort can leave the run's recorded head where the tool's own
 # recovery no longer finds it, so the rendered contract must put preservation
 # strictly before the abort and send a "preserved head missing" report to the
@@ -1528,6 +1573,7 @@ test_no_mistakes_dod_wording
 test_no_mistakes_dod_green_detection
 test_no_mistakes_dod_preserves_before_abort
 test_pr_based_dod_requires_non_draft
+test_no_mistakes_dod_reports_stale_intent
 test_ask_user_escalation_format
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete

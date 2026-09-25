@@ -94,6 +94,9 @@ Send it as one line and read the answer, because a crew that cannot get there ha
 Do not interrupt, exit, or relaunch on this state alone.
 Its work is intact, its status record needs no repairing, and the next reading agrees on its own once the pull request exists.
 
+A steer the harness's permission layer refused never reached `fm-send.sh`, so it is neither a failed send nor a stuck worker: do not retry it or escalate the worker, and report it to the captain as a blocker with the allow rules from [`docs/configuration.md`](../../../docs/configuration.md) "Primary session allow rules".
+Offer the `/permissions` dialog first; when a command is needed, write it to a script at a short path such as `/tmp/<name>.sh` and hand the captain `! bash /tmp/<name>.sh`, because a long line, whether an inline command or a long script path, wraps in their terminal and pastes back broken.
+
 Escalate in order:
 
 1. Peek the pane, and check the task's steering inbox (`state/<id>.inbox/`) for unhandled `*.msg` records - a stale wake naming an unread firstmate instruction means the worker never acknowledged a durable steer, and the record itself shows exactly what was intended.

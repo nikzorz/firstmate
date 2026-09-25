@@ -37,6 +37,7 @@ commands:
 # The evidence is not committed to the feature or default branch.
 test:
   instructions: |
+    Target tests to the run intent and the changed behavior, running only the tests that cover them, and never walk the whole tests/ suite, because CI owns broad regression coverage.
     Run live Herdr scenarios only through bin/fm-herdr-lab.sh with a named non-default fm-lab-* session, following that helper's prepare, provision, run, and teardown contract exactly.
     Never touch the live default Herdr session or fleet panes.
     Prefer a throwaway lab for spawn, long-launch, and Claude-path proofs, and tear it down in the same evidence turn.

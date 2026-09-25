@@ -50,6 +50,37 @@ EXEMPT_PERMANENT=(fm-pr-poll.sh)
 # empty array under macOS's stock bash.
 EXEMPT_PENDING=()
 
+# These helpers answer the flag but their help text states no call form. Their
+# headers track the upstream project's text, so a usage line added here would
+# diverge from it; they are carried instead of edited. Like EXEMPT_PENDING this
+# retires itself: each is asserted below to still lack a call form, so the change
+# that gives one a usage line fails here until its name is removed.
+EXEMPT_NO_CALL_FORM=(
+  fm-busy-event.sh
+  fm-decision-hold.sh
+  fm-extension.sh
+  fm-mail.sh
+  fm-remote-entrypoint.sh
+  fm-remote-job-worker.sh
+  fm-test-run.sh
+  fm-turnend-guard-cursor.sh
+)
+
+lacks_call_form_by_exemption() {
+  local base
+  for base in "${EXEMPT_NO_CALL_FORM[@]}"; do
+    [ "$1" = "$base" ] && return 0
+  done
+  return 1
+}
+
+# Answering the flag is not enough: a helper that prints an error such as
+# "unknown argument --help" and still exits zero is the defect this sweep exists
+# to catch. Every conforming helper opens a line with "usage:" in some case.
+has_call_form() {
+  printf '%s\n' "$1" | grep -qiE '^[[:space:]]*usage:'
+}
+
 is_exempt() {
   local base
   for base in "${EXEMPT_PERMANENT[@]}" "${EXEMPT_PENDING[@]:-}"; do
@@ -139,9 +170,20 @@ test_every_entrypoint_answers_help_and_exits_zero() {
       rc=$?
       [ "$rc" -eq 0 ] || fail "bin/$base $flag exited $rc: $out"
       [ -n "$out" ] || fail "bin/$base $flag printed nothing"
+      lacks_call_form_by_exemption "$base" && continue
+      has_call_form "$out" || fail "bin/$base $flag printed no usage line: $out"
     done
   done < <(entrypoints)
-  pass "every bin entrypoint answers --help and -h with output and exits zero"
+  pass "every bin entrypoint answers --help and -h with a usage line and exits zero"
+}
+
+test_call_form_anchor_rejects_an_error_in_place_of_help() {
+  local error_text="error: unknown argument --help"
+  ! has_call_form "$error_text" \
+    || fail "an error printed in place of help must not read as a call form"
+  has_call_form "Usage: fm-example.sh <task-id>" \
+    || fail "a documented usage line must read as a call form"
+  pass "the call-form anchor rejects an error printed in place of help"
 }
 
 # The two reported helpers, named so a regression in either is unambiguous.
@@ -190,6 +232,21 @@ test_permanent_exemptions_still_exist() {
   pass "every permanent exemption still names a real helper"
 }
 
+test_call_form_exemptions_still_lack_one() {
+  local base flag out rc
+  for base in "${EXEMPT_NO_CALL_FORM[@]}"; do
+    assert_present "$ROOT/bin/$base" "exempt helper bin/$base no longer exists; drop or update the exemption"
+    for flag in --help -h; do
+      out=$(run_help "$HELP_HOME" "$ROOT/bin/$base" "$flag")
+      rc=$?
+      [ "$rc" -eq 0 ] || fail "bin/$base $flag exited $rc: $out"
+      ! has_call_form "$out" \
+        || fail "bin/$base $flag now prints a usage line; remove it from EXEMPT_NO_CALL_FORM so the sweep requires one"
+    done
+  done
+  pass "every call-form exemption still answers the flag without a usage line"
+}
+
 test_pending_exemptions_still_reject_help() {
   local base flag out rc
   [ "${#EXEMPT_PENDING[@]}" -gt 0 ] || return
@@ -221,9 +278,11 @@ test_sweep_never_touched_the_repo_home() {
 }
 
 test_pre_help_writes_land_in_the_sandbox_home
+test_call_form_anchor_rejects_an_error_in_place_of_help
 test_every_entrypoint_answers_help_and_exits_zero
 test_reported_helpers_answer_instead_of_rejecting
 test_shared_usage_helpers_answer_on_stdout
 test_permanent_exemptions_still_exist
+test_call_form_exemptions_still_lack_one
 test_pending_exemptions_still_reject_help
 test_sweep_never_touched_the_repo_home
