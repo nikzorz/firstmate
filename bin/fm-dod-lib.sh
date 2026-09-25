@@ -252,7 +252,8 @@ EOF
 }
 
 # The forge-independent middle of the no-mistakes contract: how a worker drives
-# the pipeline, what `--intent` may carry, and the two firstmate-specific rules.
+# the pipeline, what `--intent` may carry, the two firstmate-specific rules, and
+# how to end a run without losing its head.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit the ci step is skipped and there is no PR to report.
 fm_nm_driving_block() {  # <forge>
@@ -288,6 +289,14 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
+
+Preserve before you end a run: a deliberate abort can leave the run's recorded head where \`no-mistakes axi sync --recover\` no longer looks, exactly as a crash does, so the order is preserve first and abort second, whatever the reason for stopping.
+1. Read \`head_sha\` from \`no-mistakes axi status\`, find a ref that points at it in \`git ls-remote no-mistakes\`, and fetch that ref by name into \`refs/heads/archive/<your branch>\`; the store refuses a bare-SHA fetch.
+2. Confirm \`git rev-parse refs/heads/archive/<your branch>\` prints that \`head_sha\`, and complete any push your instruction names.
+3. Only then run \`no-mistakes axi abort\`.
+A report that the pipeline's preserved head or commits are missing, such as \`blocked_recover_preserved_head_missing\`, is not evidence the work is gone: the recovery ref \`refs/no-mistakes/recover/<run id>\` can still hold it in the local gate store.
+Before you conclude anything, run \`for r in ~/.no-mistakes/repos/*.git; do git -C "\$r" for-each-ref --contains <recorded head> 2>/dev/null; done\` and fetch any match by its ref name from that store.
+If no store holds it, report \`blocked:\` naming the recorded head and that search; never re-implement, reset, or discard on the report alone.
 EOF
 }
 
