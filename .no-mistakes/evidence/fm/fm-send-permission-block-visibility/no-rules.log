@@ -1,0 +1,30 @@
+== home: /tmp/fmperm-R7b1ER  variant: no-rules
+== settings.local.json:
+{
+  "permissions": {
+    "allow": []
+  }
+}
+== tool results (from transcript):
+CALL : bin/fm-send.sh rel
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+AttributeError: 'str' object has no attribute 'get'
+== scripts that actually executed (marker files):
+== tool results (reparsed):
+CALL : bin/fm-send.sh rel
+== tool results (reparsed):
+CALL : bin/fm-send.sh rel
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : /tmp/fmperm-R7b1ER/bin/fm-send.sh abs
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : FM_HOME=/tmp/fmperm-R7b1ER bin/fm-send.sh envrel
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : FM_HOME=/tmp/fmperm-R7b1ER /tmp/fmperm-R7b1ER/bin/fm-send.sh envabs
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : bin/fm-peek.sh rel
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : bin/fm-crew-state.sh rel
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : FM_HOME=/tmp/fmperm-R7b1ER /tmp/fmperm-R7b1ER/bin/fm-control.sh envabs
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp

@@ -1,0 +1,47 @@
+== home: /tmp/fmperm-vxaVKY  variant: with-rules
+== settings.local.json:
+{
+  "permissions": {
+    "allow": [
+      "Bash(bin/fm-send.sh *)",
+      "Bash(/tmp/fmperm-vxaVKY/bin/fm-send.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY bin/fm-send.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-send.sh *)",
+      "Bash(bin/fm-peek.sh *)",
+      "Bash(/tmp/fmperm-vxaVKY/bin/fm-peek.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY bin/fm-peek.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-peek.sh *)",
+      "Bash(bin/fm-crew-state.sh *)",
+      "Bash(/tmp/fmperm-vxaVKY/bin/fm-crew-state.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY bin/fm-crew-state.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-crew-state.sh *)",
+      "Bash(bin/fm-control.sh *)",
+      "Bash(/tmp/fmperm-vxaVKY/bin/fm-control.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY bin/fm-control.sh *)",
+      "Bash(FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-control.sh *)"
+    ]
+  }
+}
+== tool results (from transcript):
+CALL : bin/fm-send.sh rel
+CALL : /tmp/fmperm-vxaVKY/bin/fm-send.sh abs
+CALL : FM_HOME=/tmp/fmperm-vxaVKY bin/fm-send.sh envrel
+CALL : FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-send.sh envabs
+RESULT: OK-fm-send
+CALL : bin/fm-peek.sh rel
+CALL : bin/fm-crew-state.sh rel
+RESULT: OK-fm-send
+CALL : FM_HOME=/tmp/fmperm-vxaVKY /tmp/fmperm-vxaVKY/bin/fm-control.sh envabs
+RESULT: OK-fm-send
+RESULT: OK-fm-send
+RESULT: OK-fm-peek
+RESULT: OK-fm-crew-state
+RESULT: OK-fm-control
+== scripts that actually executed (marker files):
+fm-control.fmperm-vxaVKY-envabs
+fm-crew-state.none-rel
+fm-peek.none-rel
+fm-send.fmperm-vxaVKY-envabs
+fm-send.fmperm-vxaVKY-envrel
+fm-send.none-abs
+fm-send.none-rel

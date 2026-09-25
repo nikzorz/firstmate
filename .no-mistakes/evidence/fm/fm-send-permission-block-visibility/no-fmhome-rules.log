@@ -1,0 +1,51 @@
+== home: /tmp/fmperm-hTvPdW  variant: no-fmhome-rules
+== settings.local.json:
+{
+  "permissions": {
+    "allow": [
+      "Bash(bin/fm-send.sh *)",
+      "Bash(/tmp/fmperm-hTvPdW/bin/fm-send.sh *)",
+      "Bash(bin/fm-peek.sh *)",
+      "Bash(/tmp/fmperm-hTvPdW/bin/fm-peek.sh *)",
+      "Bash(bin/fm-crew-state.sh *)",
+      "Bash(/tmp/fmperm-hTvPdW/bin/fm-crew-state.sh *)",
+      "Bash(bin/fm-control.sh *)",
+      "Bash(/tmp/fmperm-hTvPdW/bin/fm-control.sh *)"
+    ]
+  }
+}
+== tool results (from transcript):
+CALL : bin/fm-send.sh rel
+RESULT: OK-fm-send
+CALL : /tmp/fmperm-hTvPdW/bin/fm-send.sh abs
+RESULT: OK-fm-send
+CALL : FM_HOME=/tmp/fmperm-hTvPdW bin/fm-send.sh envrel
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+AttributeError: 'str' object has no attribute 'get'
+== scripts that actually executed (marker files):
+fm-crew-state.none-rel
+fm-peek.none-rel
+fm-send.none-abs
+fm-send.none-rel
+== tool results (reparsed):
+CALL : bin/fm-send.sh rel
+RESULT: OK-fm-send
+CALL : /tmp/fmperm-hTvPdW/bin/fm-send.sh abs
+RESULT: OK-fm-send
+CALL : FM_HOME=/tmp/fmperm-hTvPdW bin/fm-send.sh envrel
+== tool results (reparsed):
+CALL : bin/fm-send.sh rel
+RESULT: OK-fm-send
+CALL : /tmp/fmperm-hTvPdW/bin/fm-send.sh abs
+RESULT: OK-fm-send
+CALL : FM_HOME=/tmp/fmperm-hTvPdW bin/fm-send.sh envrel
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : FM_HOME=/tmp/fmperm-hTvPdW /tmp/fmperm-hTvPdW/bin/fm-control.sh envabs
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+CALL : bin/fm-peek.sh rel
+RESULT: OK-fm-peek
+CALL : bin/fm-crew-state.sh rel
+RESULT: OK-fm-crew-state
+CALL : FM_HOME=/tmp/fmperm-hTvPdW /tmp/fmperm-hTvPdW/bin/fm-control.sh envabs
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp

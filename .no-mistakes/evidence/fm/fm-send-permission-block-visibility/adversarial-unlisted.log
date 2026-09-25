@@ -1,0 +1,5 @@
+== home: /tmp/fmperm-C0Cm0Q (adversarial: scripts outside the enumerated list)
+== tool results (reparsed):
+CALL : bin/fm-teardown.sh x
+RESULT: ERROR Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomp
+== executed:
