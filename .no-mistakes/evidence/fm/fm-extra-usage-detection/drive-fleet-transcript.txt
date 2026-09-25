@@ -1,0 +1,124 @@
+=== S2: inert with extra usage off (real idle claude pane) ===
+--- real claude pane (last rows) ---
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+  ▝▝ ▝▝    ~/firstmate
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent                                                                                                                                  ◐ medium · /effort
+
+$ fm-extra-usage.sh scan
+[exit=0]
+
+$ fm-extra-usage.sh check
+[exit=0]
+
+$ fm-extra-usage.sh steer
+refused: no claude worker pane shows the extra-usage notice right now; nothing sent
+[exit=1]
+inbox after refused steer: 0 entries; episode record: absent
+
+=== S3/S4: flip detected, fleet stopped once, secondmate/dead excluded ===
+--- pane b as tmux shows it ---
+● Working on the step.
+────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · 1 shell   You're close to your usage credit limit
+   You've used 91% of your usage credits · resets Oct 1
+
+$ fm-extra-usage.sh scan
+b	near-limit	You've used 91% of your usage credits · resets Oct 1
+sm	using	
+[exit=0]
+
+$ fm-extra-usage.sh check
+extra-usage near-limit on b: claude workers are now on paid usage credits; run FM_HOME=/tmp/fm-eu-drive.Ww2DXb/home /home/nik/.no-mistakes/worktrees/50866b63a668/01M3B1RJWRWE4X4C23GZAQB9A1/bin/fm-extra-usage.sh steer to stop every worker at a safe point, then report it
+[exit=0]
+
+$ fm-extra-usage.sh steer
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  5 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+extra usage: near-limit, first seen on b; credit spend: You've used 91% of your usage credits · resets Oct 1
+stop instruction sent to: a b c
+not sent, endpoint dead: gone
+[exit=0]
+--- durable steer records written by real fm-send ---
+a.inbox: 1 files
+b.inbox: 1 files
+c.inbox: 1 files
+sm.inbox: 0 files
+gone.inbox: 0 files
+--- b's inbox record ---
+schema=fm-task-inbox.v1
+at=2026-09-25T01:21:21Z
+--
+Claude extra usage is now in effect for this account, so further work is paid from usage credits. Reach a safe stopping point and stop: finish or commit the step in hand and start nothing new. If a validation run is in flight, let the round already running finish, then do not answer its next gate or start another round; do not abort it. Then append a paused status line saying you stopped for Claude extra usage, and wait for firstmate.
+--- episode record ---
+fm-extra-usage-v1 1790299279 near-limit b
+steered a
+steered b
+steered c
+
+$ fm-extra-usage.sh check
+[exit=0]
+
+$ fm-extra-usage.sh steer
+extra usage: near-limit, first seen on b; credit spend: You've used 91% of your usage credits · resets Oct 1
+stop instruction sent to: none
+not sent, endpoint dead: gone
+[exit=0]
+
+=== S5: uncertain reads never end the episode ===
+--- pane b now a dialog ---
+● Running the tests.
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel
+
+$ fm-extra-usage.sh check
+[exit=0]
+episode record: present
+
+$ fm-extra-usage.sh check
+[exit=0]
+episode record after panes vanished: present
+
+=== S6: notice still up keeps check silent; proven clear composer ends episode; next flip wakes ===
+
+$ fm-extra-usage.sh check
+[exit=0]
+episode record: present
+
+$ fm-extra-usage.sh check
+[exit=0]
+episode record after proven notice-free composer: absent
+
+$ fm-extra-usage.sh check
+extra-usage using on a: claude workers are now on paid usage credits; run FM_HOME=/tmp/fm-eu-drive.Ww2DXb/home /home/nik/.no-mistakes/worktrees/50866b63a668/01M3B1RJWRWE4X4C23GZAQB9A1/bin/fm-extra-usage.sh steer to stop every worker at a safe point, then report it
+[exit=0]
+
+=== S7: arm / armed shim / disarm ===
+
+$ fm-extra-usage.sh arm
+armed: state/extra-usage.check.sh
+[exit=0]
+extra-usage.check-trust
+extra-usage.check.sh
+
+$ state/extra-usage.check.sh (as the watcher runs it)
+extra-usage using on a: claude workers are now on paid usage credits; run FM_HOME=/tmp/fm-eu-drive.Ww2DXb/home /home/nik/.no-mistakes/worktrees/50866b63a668/01M3B1RJWRWE4X4C23GZAQB9A1/bin/fm-extra-usage.sh steer to stop every worker at a safe point, then report it
+[exit=0]
+
+$ fm-extra-usage.sh disarm
+disarmed: state/extra-usage.check.sh
+[exit=0]
+(no extra-usage files left)

@@ -1,0 +1,11 @@
+ok - claude 2.1.281 (Claude Code): binary carries notice wording|Now using usage credits|You're now using usage credits|Now using extra usage|You're now using extra usage|Extra usage is now covering your requests
+#    /home/nik/.no-mistakes/worktrees/50866b63a668/01M3B1RJWRWE4X4C23GZAQB9A1
+#    Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this
+#    folder first.
+#    Claude Code'll be able to read, edit, and execute files here.
+#    Security guide
+#    ❯ No, exit
+#      Yes, I trust this folder
+#    Enter to confirm · Esc to cancel
+not ok - claude 2.1.281 (Claude Code): idle composer never classified empty (last verdict: pending)
+exit=1

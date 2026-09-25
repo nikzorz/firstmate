@@ -1,0 +1,11 @@
+ok - the live footer notice matches, with its class and any credit spend
+ok - the notice outside a live claude footer, truncated, or out-of-credits never matches
+ok - no notice: check is silent and steer refuses without sending
+ok - only claude panes are read for the notice
+ok - steer stops every live worker once and reports the credit spend
+ok - a failed stop instruction is reported and retried alone
+ok - a notice-free readable scan ends the episode, so the next flip wakes and stops the fleet again
+ok - while the notice shows, check stays silent with no time limit
+ok - arm writes a bound watcher check and disarm retires it
+all fm-extra-usage tests passed
+exit=0

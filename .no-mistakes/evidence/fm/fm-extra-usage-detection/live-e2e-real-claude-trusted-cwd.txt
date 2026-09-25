@@ -1,0 +1,4 @@
+ok - claude 2.1.281 (Claude Code): binary carries notice wording|Now using usage credits|You're now using usage credits|Now using extra usage|You're now using extra usage|Extra usage is now covering your requests
+ok - claude 2.1.281 (Claude Code): a real idle pane with extra usage off reads as no notice
+ok - claude 2.1.281 (Claude Code): a notice in the real footer row matches
+exit=0
