@@ -295,7 +295,7 @@ Preserve before you end a run: a deliberate abort can leave the run's recorded h
 2. Confirm \`git rev-parse refs/heads/archive/<your branch>\` prints that \`head_sha\`, and complete any push your instruction names.
 3. Only then run \`no-mistakes axi abort\`.
 A report that the pipeline's preserved head or commits are missing, such as \`blocked_recover_preserved_head_missing\`, is not evidence the work is gone: the recovery ref \`refs/no-mistakes/recover/<run id>\` can still hold it in the local gate store.
-Before you conclude anything, run \`for r in ~/.no-mistakes/repos/*.git; do git -C "\$r" for-each-ref --contains <recorded head> 2>/dev/null; done\` and fetch any match by its ref name from that store.
+Before you conclude anything, run \`for r in ~/.no-mistakes/repos/*.git; do git -C "\$r" for-each-ref --format="\$r %(refname)" --contains <recorded head> 2>/dev/null; done\` and fetch any match by its ref name from that store.
 If no store holds it, report \`blocked:\` naming the recorded head and that search; never re-implement, reset, or discard on the report alone.
 EOF
 }

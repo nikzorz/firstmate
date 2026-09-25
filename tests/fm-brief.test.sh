@@ -454,7 +454,7 @@ test_no_mistakes_dod_preserves_before_abort() {
   assert_grep "the store refuses a bare-SHA fetch" "$brief" \
     "no-mistakes DOD must say the head is fetched by ref name"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks and $r must stay literal
-  assert_grep 'for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --contains <recorded head>' "$brief" \
+  assert_grep 'for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <recorded head>' "$brief" \
     "no-mistakes DOD must send a missing-head report to the gate stores"
   assert_grep "never re-implement, reset, or discard on the report alone" "$brief" \
     "no-mistakes DOD must forbid acting on a missing-head report unverified"
