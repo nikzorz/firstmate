@@ -4,6 +4,7 @@ description: >-
   Agent-only playbook for stuck or missing ordinary Firstmate direct reports.
   Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
   Also use on the inverse case: a live crewmate reporting the no-mistakes pipeline dead, unreachable, or timed out.
+  Also use before instructing a worker to end its validation run, and when a worker or the pipeline reports the run's preserved work missing or unrecoverable.
   Reconciles recorded work before escalating from targeted inspection through safe relaunch or failure.
 user-invocable: false
 metadata:
@@ -66,6 +67,15 @@ Nothing reaches the captain in that case.
 Never restart, stop, or update the shared daemon on a crewmate's claim.
 It is one instance serving every lane and home, so a restart kills other lanes' in-flight runs.
 Only positive socket refusal or absence is a daemon-down finding; escalate that finding, or a failed run record that names a daemon error, to the captain.
+
+## Ending a run, and a report that its work is missing
+
+A deliberate abort can leave a run's recorded head unreachable through the tool's supported recovery, so every worker's no-mistakes contract orders preserve first and abort second, and `fm_nm_driving_block` in `bin/fm-dod-lib.sh` owns those steps.
+An instruction you write that ends a run - a stand-down, a supersession, a restart - still names that order explicitly, preservation before the abort, because a worker acting on your words should not have to infer it.
+
+A report that the pipeline's preserved head is missing, such as `blocked_recover_preserved_head_missing`, is not evidence the work is gone: the head and its `refs/no-mistakes/recover/<run id>` ref have been found intact in the local gate store after exactly that report.
+Before authorizing any re-implementation, reset, or discard on such a report, search the stores yourself with the loop that same contract gives the worker, and steer the worker to fetch any match by its ref name.
+Only when no store holds the head is the loss real; report it to the captain with the recorded head and the search as evidence.
 
 ## Live-endpoint escalation
 

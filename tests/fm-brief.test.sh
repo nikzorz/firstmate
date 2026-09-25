@@ -477,6 +477,35 @@ test_no_mistakes_dod_reports_stale_intent() {
   pass "fm-brief.sh: no-mistakes DOD stops at the gate to report a stale intent"
 }
 
+# A deliberate abort can leave the run's recorded head where the tool's own
+# recovery no longer finds it, so the rendered contract must put preservation
+# strictly before the abort and send a "preserved head missing" report to the
+# gate stores instead of letting the worker believe it.
+test_no_mistakes_dod_preserves_before_abort() {
+  local home id brief fetch_line abort_line
+  home="$TMP_ROOT/preserve-home"
+  mkdir -p "$home/data"
+  id="brief-preserve-b1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  fetch_line=$(grep -n 'HEAD:refs/heads/archive/<your branch>`' "$brief" | head -1 | cut -d: -f1)
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  abort_line=$(grep -n 'Only then run `no-mistakes axi abort`' "$brief" | head -1 | cut -d: -f1)
+  [ -n "$fetch_line" ] || fail "no-mistakes DOD must tell the worker to fetch the run's head before ending it"
+  [ -n "$abort_line" ] || fail "no-mistakes DOD must name the abort as the step after preservation"
+  [ "$fetch_line" -lt "$abort_line" ] || fail "no-mistakes DOD orders the abort before preserving the run's head"
+  assert_grep "the store refuses a bare-SHA fetch" "$brief" \
+    "no-mistakes DOD must say the head is fetched by ref name"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks and $r must stay literal
+  assert_grep 'for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head>' "$brief" \
+    "no-mistakes DOD must send a missing-head report to the gate stores"
+  assert_grep "never re-implement, reset, or discard on the report alone" "$brief" \
+    "no-mistakes DOD must forbid acting on a missing-head report unverified"
+  pass "fm-brief.sh: no-mistakes DOD preserves the run's head before abort and verifies a missing-head report"
+}
+
 test_ask_user_escalation_format() {
   local home id brief mode other_id other_brief
   home="$TMP_ROOT/ask-user-home"
@@ -1542,6 +1571,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_green_detection
+test_no_mistakes_dod_preserves_before_abort
 test_pr_based_dod_requires_non_draft
 test_no_mistakes_dod_reports_stale_intent
 test_ask_user_escalation_format
