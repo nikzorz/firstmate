@@ -1,0 +1,44 @@
+== 1. scaffold a real no-mistakes brief
+Preserve before you end a run: a deliberate abort can leave the run's recorded head where `no-mistakes axi sync --recover` no longer looks, exactly as a crash does, so the order is preserve first and abort second, whatever the reason for stopping.
+1. Read the run head from `no-mistakes axi status`: `branch_sync.pipeline.current_head`, or `head_sha` only when that is empty. Find the gate worktree whose HEAD is that run head in `git -C "$(git remote get-url no-mistakes)" worktree list` and run `git fetch <that worktree path> HEAD:refs/heads/archive/<your branch>`. Only when a ref in `git ls-remote no-mistakes` points at the run head may you fetch that ref by name instead; the store refuses a bare-SHA fetch.
+2. Confirm `git rev-parse refs/heads/archive/<your branch>` prints that run head, and complete any push your instruction names.
+3. Only then run `no-mistakes axi abort`.
+A report that the pipeline's preserved head or commits are missing, such as `blocked_recover_preserved_head_missing`, is not evidence the work is gone: the recovery ref `refs/no-mistakes/recover/<run id>` can still hold it in the local gate store.
+Before you conclude anything, run `for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head> 2>/dev/null; done` and fetch any match by its ref name from that store.
+If no store holds it, report `blocked:` naming the run head and that search; never re-implement, reset, or discard on the report alone.
+
+== ordering (line numbers in brief)
+121:1. Read the run head from `no-mistakes axi status`: `branch_sync.pipeline.current_head`, or `head_sha` only when that is empty. Find the gate worktree whose HEAD is that run head in `git -C "$(git remote get-url no-mistakes)" worktree list` and run `git fetch <that worktree path> HEAD:refs/heads/archive/<your branch>`. Only when a ref in `git ls-remote no-mistakes` points at the run head may you fetch that ref by name instead; the store refuses a bare-SHA fetch.
+122:2. Confirm `git rev-parse refs/heads/archive/<your branch>` prints that run head, and complete any push your instruction names.
+123:3. Only then run `no-mistakes axi abort`.
+
+== 2. build synthetic gate: store A (this project), store B (other), detached pipeline worktree
+head_sha=81c843dd5a7f0e4dfb90294e391bde2e84fc3a1c  current_head(pipeline fix)=68cab718a081354c5c1401d0b9ea56fe3aebb77d
+refs containing current_head in store: []
+
+== 3. adversarial: bare-SHA fetch of current_head from the store
+From /tmp/tmp.jLHfv57O9G/home/.no-mistakes/repos/aaaa
+ * [new ref]         68cab718a081354c5c1401d0b9ea56fe3aebb77d -> archive/bare
+rc=0
+
+== 4. contract step 1: locate gate worktree via the brief's command, fetch HEAD
+/tmp/tmp.jLHfv57O9G/home/.no-mistakes/repos/aaaa.git             (bare)
+/tmp/tmp.jLHfv57O9G/home/.no-mistakes/worktrees/aaaa/01TESTRUNID 68cab71 (detached HEAD)
+worktree whose HEAD is run head: /tmp/tmp.jLHfv57O9G/home/.no-mistakes/worktrees/aaaa/01TESTRUNID
+fetch rc=0
+== step 2: rev-parse archive ref = 68cab718a081354c5c1401d0b9ea56fe3aebb77d  (expected 68cab718a081354c5c1401d0b9ea56fe3aebb77d)
+PRESERVED OK
+
+== 5. step 3 abort (simulated: gate worktree removed, as abort does)
+store still has current_head? fatal: git cat-file: could not get object info
+local archive still has it: commit 68cab71 no-mistakes(review): fix
+
+== 6. missing-head search loop, extracted verbatim from the brief
+loop: for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head> 2>/dev/null; done
+-- search for head in recover ref:
+/tmp/tmp.jLHfv57O9G/home/.no-mistakes/repos/aaaa.git refs/heads/fm/demo-t1
+/tmp/tmp.jLHfv57O9G/home/.no-mistakes/repos/bbbb.git refs/no-mistakes/recover/01OTHERRUN
+-- adversarial: search for a head no store holds:
+[] (empty => loss is real, report blocked:)
+-- fetch the match by its ref name from that store:
+recovered 81c843d worker change

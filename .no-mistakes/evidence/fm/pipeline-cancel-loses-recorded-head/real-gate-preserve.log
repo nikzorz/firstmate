@@ -1,0 +1,8 @@
+== real gate store, this run's detached pipeline head (read-only on store; fetch into scratch clone)
+run head: a4644e061c2b271124b3f8daaee8bf4ccc007061
+refs in store containing it: []
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M3B77Q6F2DY25W3TG5GP96CP a4644e0 (detached HEAD)
+From /home/nik/.no-mistakes/worktrees/50866b63a668/01M3B77Q6F2DY25W3TG5GP96CP
+ * [new ref]         HEAD       -> archive/fm/pipeline-cancel-loses-recorded-head
+step 2 rev-parse: a4644e061c2b271124b3f8daaee8bf4ccc007061
+a4644e0 no-mistakes(review): Preserve detached run head by fetching from its gate worktree
