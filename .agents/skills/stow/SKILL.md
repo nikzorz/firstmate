@@ -42,7 +42,7 @@ The tier names say what the pass does with an entry:
 
 Marking rules:
 
-- Tier defaults are file-scoped: entries in `data/captain.md` and `data/captain-shared.md` default to `pinned` because preferences and authority boundaries do not age, and entries in `data/learnings.md` default to `aging` because operational facts must re-prove themselves.
+- Tier defaults are file-scoped: entries in `data/captain.md`, `data/captain-shared.md`, and each `data/captain-<project>.md` default to `pinned` because preferences and authority boundaries do not age, and entries in `data/learnings.md` and each `data/learnings-<project>.md` default to `aging` because operational facts must re-prove themselves.
 - An entry matching its file's `pinned` default carries no marker at all; every `aging` and `perishable` entry always carries its dated marker, whose letter names the tier, so a clock-carrying entry is never ambiguous with unmarked legacy material.
 - Marker and header-pointer bytes count toward the startup-memory budget: the pass's own bookkeeping is costed content, never free, which is why the spellings above are as short as they are.
 - Each memory file's header carries at most a one-line pointer naming this skill as the scheme owner, such as `<!-- memory tiers: see the stow skill -->`.
@@ -89,6 +89,8 @@ Every `/stow` invocation performs this complete pass, even when the session cont
    In a secondmate home, `data/captain-shared.md` is a read-only primary-owned input: count it, never edit it, and curate only the editable local files.
    Every mutation in the rest of this pass, including reinforcement, retiering, decay archival, legacy migration, consolidation, budget archival, and offload, applies only to an editable memory file.
    When a read-only shared entry appears to require one of those changes, leave it untouched, report the required change as an ownership exception, and route it to the primary owner.
+   Also read each existing per-project notes file, `data/captain-<project>.md` and `data/learnings-<project>.md`, that this pass curates or routes a finding to.
+   They are not loaded at startup, so they never count toward the effective budget and never receive budget eviction; curate them by inspect-then-update with the same consolidation, tier defaults, and decay archival as their home-wide counterparts.
 3. Build one whole-file retention plan before editing, ordered by likelihood of informing a future session.
    Keep in always-loaded memory only current captain preferences, authority and safety boundaries, recurring working style, fleet-wide or frequently relevant operating facts, and concise pointers that are expensive to rediscover.
    Prefer offloading current but conditional, narrow, project-specific, or context-specific material to a live on-demand owner, and archive stale, superseded, or low-recurrence material to the cold tier.
@@ -218,6 +220,7 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
 3. **Write within the existing boundaries.**
    - Captain preferences and fleet-local operational facts belong in the destination selected by AGENTS.md after the required whole-file curation pass.
      Create `data/learnings.md` only for a genuinely new local learning with no stronger owner.
+   - A captain preference or operational learning that matters only for one project's work goes to that project's `data/captain-<project>.md` or `data/learnings-<project>.md`, created lazily, rather than to the startup-loaded home-wide file.
    - In a primary home, curate shared captain preferences only under the existing primary-authoritative shared-preference contract.
      In a secondmate home, route a newly discovered shared preference to the main firstmate through marked status or a document pointer instead of editing the inherited file.
    - Project-intrinsic knowledge never goes directly into a project's project-memory file.
@@ -246,6 +249,7 @@ Where the right correction is a judgment you cannot make, leave the record alone
 
 ## One-time migration of unmarked entries
 
+Each `data/learnings-<project>.md` follows the `data/learnings.md` migration and grace rules below, and each `data/captain-<project>.md` follows the default-pinned rule for `data/captain.md`.
 Legacy entries carry no markers; an unmarked entry is its file's default tier with unknown age, and unknown age is not guilt.
 The first pass after adoption performs a one-time revalidation sweep of editable memory files instead of blanket restamping, while a read-only shared file remains untouched and any required change is routed to its primary owner:
 
@@ -260,7 +264,7 @@ The first pass after adoption performs a one-time revalidation sweep of editable
 Report the outcome in plain captain-facing language with all of these facts:
 
 - effective startup-memory budget and total estimated tokens before and after;
-- one or more actions for each of `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, using only `unchanged`, `added`, `rewritten`, `pruned`, `routed`, `archived`, or `proposed-offload`; adding or replacing a migration marker is `rewritten`, never a new action verb such as `migrated`;
+- one or more actions for each of `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, using only `unchanged`, `added`, `rewritten`, `pruned`, `routed`, `archived`, or `proposed-offload`; adding or replacing a migration marker is `rewritten`, never a new action verb such as `migrated`; report each per-project notes file this pass curated or routed a finding to with the same action words;
 - each durable finding filed outside memory and its authoritative owner;
 - each archived entry's reason, each autonomous offload's live destination and actual relief, and, when a pinned candidate was proposed, the `proposed-offload` section with every candidate's fields;
 - every unresolved exception, including a primary-owned shared-file constraint in a secondmate home, and every concrete captain decision opened for an over-budget result;
