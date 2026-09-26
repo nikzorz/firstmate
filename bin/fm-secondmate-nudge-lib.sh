@@ -5,9 +5,10 @@
 # publish the same bounded record before delivery. A failed send leaves the
 # record for the locked bootstrap retry; a successful send removes it.
 # An unconfirmed send keeps its pending-reply expectation open (the text may
-# have landed), so the record also carries that expectation's correlation and
-# every repeat of the same send reuses it rather than minting another
-# expectation and another delivery-unknown escalation per retry.
+# have landed), so every repeat of the same send reuses that expectation rather
+# than minting another one and another delivery-unknown escalation per retry.
+
+_FM_SECONDMATE_NUDGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_SECONDMATE_NUDGE_LIB_DIR="."
 
 FM_SECOND_MATE_NUDGE_MESSAGE='firstmate was updated to the latest - please re-read your AGENTS.md to pick up the new instructions.'
 FM_REMOTE_SECOND_MATE_NUDGE_MESSAGE='Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files before further work.'
@@ -44,18 +45,9 @@ fm_remote_inherit_generation_next() { # <state-dir> <id>
   printf '%s\n' "$next"
 }
 
-fm_secondmate_nudge_corr() { # <marker>
-  local corr
-  [ -f "$1" ] && [ ! -L "$1" ] || return 0
-  corr=$(grep '^corr=' "$1" 2>/dev/null | tail -1 | cut -d= -f2-)
-  case "$corr" in *[!a-f0-9]*|'') return 0 ;; esac
-  [ "${#corr}" -eq 16 ] || return 0
-  printf '%s\n' "$corr"
-}
-
 fm_secondmate_nudge_write() { # <state> <id> <home> <commit> <instructions> <message> <remote:0|1>
   local state=$1 id=$2 home=$3 commit=$4 instructions=$5 message=$6 remote=$7
-  local marker parent tmp corr=''
+  local marker parent tmp
   case "$remote" in 0|1) ;; *) return 1 ;; esac
   case "$home$commit$instructions$message" in *$'\n'*|*$'\r'*) return 1 ;; esac
   marker=$(fm_secondmate_nudge_marker_path "$state" "$id") || return 1
@@ -66,9 +58,6 @@ fm_secondmate_nudge_write() { # <state> <id> <home> <commit> <instructions> <mes
     mkdir -p "$parent" || return 1
   fi
   [ ! -L "$marker" ] || return 1
-  if [ "$(grep '^message=' "$marker" 2>/dev/null | tail -1 | cut -d= -f2-)" = "$message" ]; then
-    corr=$(fm_secondmate_nudge_corr "$marker")
-  fi
   tmp=$(umask 077; mktemp "$parent/.nudge.XXXXXX" 2>/dev/null) || return 1
   {
     printf 'id=%s\n' "$id"
@@ -78,33 +67,20 @@ fm_secondmate_nudge_write() { # <state> <id> <home> <commit> <instructions> <mes
     printf 'instructions=%s\n' "$instructions"
     printf 'message=%s\n' "$message"
     printf 'remote=%s\n' "$remote"
-    [ -z "$corr" ] || printf 'corr=%s\n' "$corr"
   } > "$tmp" || { rm -f -- "$tmp"; return 1; }
   chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$marker" || { rm -f -- "$tmp"; return 1; }
 }
 
-fm_secondmate_nudge_record_corr() { # <marker> <corr>
-  local marker=$1 corr=$2 tmp
-  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
-  tmp=$(umask 077; mktemp "${marker%/*}/.nudge.XXXXXX" 2>/dev/null) || return 1
-  { grep -v '^corr=' "$marker"; printf 'corr=%s\n' "$corr"; } > "$tmp" || { rm -f -- "$tmp"; return 1; }
-  chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$marker" || { rm -f -- "$tmp"; return 1; }
-}
-
-# Prints fm-send's combined output and returns its status. The carried
-# correlation rides as a leading corr= token, which fm-send reuses while that
-# expectation is still open and replaces with a fresh one once it is not.
-fm_secondmate_nudge_send() { # <marker> <send-bin> <selector> <message>
-  local marker=$1 send_bin=$2 selector=$3 message=$4 corr out rc=0
-  corr=$(fm_secondmate_nudge_corr "$marker")
-  [ -z "$corr" ] || message="corr=$corr $message"
-  out=$("$send_bin" "$selector" "$message" 2>&1) || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    corr=$(printf '%s\n' "$out" | grep -oE 'FM_PENDING_REPLY_EXISTING_CORR=[a-f0-9]{16}' | tail -1 | cut -d= -f2-)
-    [ -z "$corr" ] || fm_secondmate_nudge_record_corr "$marker" "$corr" || true
+# Prints fm-send's combined output and returns its status.
+fm_secondmate_nudge_send() { # <state> <task-id> <send-bin> <selector> <message>
+  local state=$1 task_id=$2 send_bin=$3 selector=$4 message=$5 corr
+  # shellcheck source=bin/fm-pending-reply-lib.sh
+  corr=$(. "$_FM_SECONDMATE_NUDGE_LIB_DIR/fm-pending-reply-lib.sh" &&
+    fm_pending_reply_open_undelivered_corr "$state" "$task_id" "$message") || corr=''
+  if [ -n "$corr" ]; then
+    FM_PENDING_REPLY_EXISTING_CORR=$corr "$send_bin" "$selector" "$message" 2>&1
+  else
+    "$send_bin" "$selector" "$message" 2>&1
   fi
-  printf '%s\n' "$out"
-  return "$rc"
 }

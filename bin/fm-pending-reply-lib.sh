@@ -258,6 +258,24 @@ fm_pending_reply_corr_reusable() {  # <state-dir> <corr_id> <task_id>
   return 1
 }
 
+# Prints the correlation of an open, never-delivered expectation already held
+# for this same request to <task_id>, or nothing. An automatic repeat of an
+# unconfirmed send resends under it (FM_PENDING_REPLY_EXISTING_CORR) rather
+# than minting a second expectation for text that may already have landed.
+fm_pending_reply_open_undelivered_corr() {  # <state-dir> <task_id> <request-text>
+  local state=$1 task_id=$2 summary rec corr
+  summary=$(fm_pending_reply_summarize "$3")
+  for rec in "$(fm_pending_reply_dir "$state")"/*; do
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    corr=${rec##*/}
+    [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || continue
+    [ "$(fm_pending_reply_get "$rec" request_summary)" = "$summary" ] || continue
+    fm_pending_reply_corr_reusable "$state" "$corr" "$task_id" || continue
+    printf '%s' "$corr"
+    return 0
+  done
+}
+
 # Rewrite one key in a pending-reply record atomically. Other keys preserved.
 fm_pending_reply_set() {  # <record-path> <key> <value>
   local rec=$1 key=$2 value=$3 dir base tmp line
