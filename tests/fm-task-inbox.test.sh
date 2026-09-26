@@ -393,8 +393,8 @@ test_ring_submits_its_own_stuck_doorbell() {
 # A Ctrl+U that reaches a render-stalled agent after the whole doorbell
 # removes only its last wrapped row, leaving a prefix that skipping would keep
 # forever. The ring clears a fragment of its own doorbell and rings the full
-# line; a fragment followed by a draft, or a short piece of the line that could
-# be anyone's text, still skips untouched.
+# line; a fragment followed by a draft, a long piece from inside the line, or a
+# short piece of the line that could be anyone's text, still skips untouched.
 test_ring_clears_its_own_doorbell_fragment() {
   local dir state rec doorbell log composer rc other
   dir="$TMP_ROOT/ring-fragment"
@@ -416,7 +416,7 @@ test_ring_clears_its_own_doorbell_fragment() {
     || fail "the fragment should be replaced by exactly one full doorbell:"$'\n'"$(cat "$log")"
   [ ! -s "$composer" ] || fail "the doorbell fragment was left in the composer: $(cat "$composer")"
 
-  for other in "${doorbell:0:130} and a draft" 'handled'; do
+  for other in "${doorbell:0:130} and a draft" "${doorbell:10:40}" 'handled'; do
     : > "$log"; printf '%s' "$other" > "$composer"
     rc=0; ring || rc=$?
     [ "$rc" = 1 ] || fail "text that is not only our doorbell fragment should skip the ring, got rc $rc for: $other"

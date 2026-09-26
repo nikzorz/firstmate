@@ -344,10 +344,11 @@ fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
 }
 
 # Classify the composer against <line>, ignoring whitespace and wrapping:
-# prints `whole` for exactly the line, `fragment` for a contiguous piece of it
-# at least 16 characters long (or any non-empty piece with any-size), and
-# `other` for empty, unreadable, or foreign content. The 16-character floor
-# keeps a short draft that happens to occur inside the line from being cleared.
+# prints `whole` for exactly the line, `fragment` for a prefix of it at least
+# 16 characters long (or any non-empty prefix with any-size), and `other` for
+# empty, unreadable, or foreign content. A prefix is the only residue a stalled
+# submit or a partial Ctrl+U clear leaves, and the 16-character floor keeps a
+# short draft that happens to start the line from being cleared.
 fm_task_inbox_composer_doorbell() {  # <backend> <target> <line> [expected-label] [any-size]
   local cap held want min=16
   [ -z "${5:-}" ] || min=1
@@ -361,7 +362,7 @@ fm_task_inbox_composer_doorbell() {  # <backend> <target> <line> [expected-label
   want=$(printf '%s' "$3" | tr -d '[:space:]')
   if [ -n "$held" ] && [ "$held" = "$want" ]; then
     printf 'whole'
-  elif [ "${#held}" -ge "$min" ] && [[ $want == *"$held"* ]]; then
+  elif [ "${#held}" -ge "$min" ] && [[ $want == "$held"* ]]; then
     printf 'fragment'
   else
     printf 'other'
