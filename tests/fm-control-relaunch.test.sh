@@ -89,6 +89,12 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       case "$payload" in
+        C-u)
+          # Like Claude, one Ctrl+U deletes one wrapped row of the draft.
+          held=$(cat "$D/composer" 2>/dev/null)
+          keep=$(( ${#held} > 40 ? ${#held} - 40 : 0 ))
+          printf '%s' "${held:0:$keep}" > "$D/composer"
+          ;;
         'export GOTMPDIR='*)
           if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
             : > "$FM_FAKE_TRACE_PREPARE"
@@ -104,7 +110,9 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
+        *cursor_y*)
+          if [ -s "$D/composer" ] && [ "$(wc -c < "$D/composer")" -gt 40 ]; then printf '2\n'; else printf '1\n'; fi
+          exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*)
           if [ -n "${FM_FAKE_CWD_RACE_READY:-}" ]; then
@@ -117,7 +125,13 @@ case "${1:-}" in
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     [ -z "${FM_FAKE_COMPOSER_READ_FAIL:-}" ] || exit 1
-    if [ -s "$D/composer" ]; then
+    if [ -s "$D/composer" ] && [ "$(wc -c < "$D/composer")" -gt 40 ]; then
+      # A long draft wraps inside Claude's ruled composer.
+      rule=$(printf '─%.0s' $(seq 64))
+      printf '● done\n%s\n' "$rule"
+      fold -w 60 "$D/composer" | awk 'NR == 1 { print "❯ " $0; next } { print "  " $0 }'
+      printf '%s\n  ? for shortcuts\n' "$rule"
+    elif [ -s "$D/composer" ]; then
       printf '╭────╮\n│ %s  │\n╰────╯\n' "$(cat "$D/composer")"
     else
       printf '╭────╮\n│    │\n╰────╯\n'
@@ -405,6 +419,34 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
   assert_no_grep "/exit" "$dir/fake/literal" \
     "the exit command must not be concatenated onto pending composer text"
   pass "fm-control relaunch: pending composer text refuses before the exit command is typed"
+}
+
+# A doorbell cut short by a Ctrl+U that reached a render-stalled agent is the
+# task's own text, not a draft: exit clears it rather than refusing, and the
+# steer it announced stays durable in the inbox. A draft appended to that
+# fragment is someone's text again and still refuses untouched.
+test_relaunch_clears_its_own_doorbell_fragment_before_exit() {
+  local dir out rc line
+  dir=$(new_case doorbell-exit rl45)
+  add_ship_task "$dir" rl45 claude
+  mkdir -p "$dir/home/state/rl45.inbox/handled"
+  line=$(bash -c '. "$1"; fm_task_inbox_doorbell_line_for_dir "$2"' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/home/state/rl45.inbox")
+  printf '%s and a draft' "${line:0:120}" > "$dir/fake/composer"
+
+  out=$(run_control "$dir" rl45 relaunch --note "keep the draft"); rc=$?
+  expect_code 1 "$rc" "a doorbell fragment followed by a draft must still refuse"
+  assert_contains "$out" "composer visibly holds pending text" \
+    "the refusal should name the pending composer text"
+  [ "$(cat "$dir/fake/composer")" = "${line:0:120} and a draft" ] \
+    || fail "a draft after a doorbell fragment must be left untouched, got: $(cat "$dir/fake/composer")"
+
+  printf '%s' "${line:0:120}" > "$dir/fake/composer"
+  out=$(run_control "$dir" rl45 relaunch --note "clear the doorbell fragment"); rc=$?
+  expect_code 0 "$rc" "a composer holding only a fragment of the task's doorbell should be cleared, not refused"$'\n'"$out"
+  [ ! -s "$dir/fake/composer" ] || fail "the doorbell fragment was not cleared: $(cat "$dir/fake/composer")"
+  assert_grep "/exit" "$dir/fake/literal" "the exit command should follow the cleared fragment"
+  pass "fm-control relaunch: a composer holding only the task's own doorbell fragment is cleared before exit, while a draft still refuses"
 }
 
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven() {
@@ -2335,6 +2377,7 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
+test_relaunch_clears_its_own_doorbell_fragment_before_exit
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata

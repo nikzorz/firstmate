@@ -1226,6 +1226,25 @@ ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8
 ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 accepts /exit past its command popup and stops
 ```
 
+### Doorbell after a stalled render
+
+Measured 2026-09-26 against Herdr 0.8.2 and Claude Code 2.1.281 in an isolated `fm-lab-` session, with the Claude process stopped by `SIGSTOP` for the duration of the first ring to stand in for a saturated host.
+The first ring's payload proof and its Ctrl+U clear both read the stalled screen, so the ring reported the send failed; once resumed, Claude applied the whole doorbell and then one Ctrl+U, which deleted only the last wrapped row and left a doorbell prefix in the composer.
+Before the fragment recovery, every later ring skipped that composer as foreign pending text, matching a production worker whose composer held the prefix `...in numeric order, read` until the text was submitted by hand.
+The same guard refreshes this proof:
+
+```sh
+FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh
+```
+
+Observed 2026-09-26:
+
+```text
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-1431355-7870
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr doorbell stall: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 recovers a doorbell fragment left by a stalled render, and the worker acts and acknowledges
+```
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:

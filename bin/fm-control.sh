@@ -120,6 +120,9 @@
 #     classified state acts.
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
+#     The one exception is a composer holding only this task's own steering
+#     doorbell or a fragment of it, which is cleared first; the instruction it
+#     announces stays durable in the task's inbox.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -172,6 +175,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
@@ -396,6 +401,18 @@ rendered_matches() {  # <ere>
   local screen
   screen=$(fm_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) || return 1
   printf '%s\n' "$screen" | grep -Eq -- "$1"
+}
+
+# clear_own_doorbell: clear a composer holding only this task's own doorbell
+# or a fragment of it. Nothing else is ever deleted.
+clear_own_doorbell() {
+  local line held_as
+  line=$(fm_task_inbox_doorbell_line_for_dir "$(fm_task_inbox_dir "$STATE" "$ID")") || return 1
+  held_as=$(fm_task_inbox_composer_doorbell "$BACKEND" "$T" "$line" "$LABEL")
+  case "$held_as" in
+    whole|fragment) fm_task_inbox_clear_composer "$BACKEND" "$T" "$line" "$LABEL" ;;
+    *) return 1 ;;
+  esac
 }
 
 # wait_rendered <ere> <timeout>: poll the viewport until a row matches.
@@ -626,6 +643,9 @@ do_exit() {
   fi
   composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
     || composer_state=unknown
+  if [ "$composer_state" = pending ] && clear_own_doorbell; then
+    composer_state=empty
+  fi
   case "$composer_state" in
     empty) ;;
     pending)

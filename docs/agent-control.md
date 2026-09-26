@@ -50,6 +50,7 @@ muse is the one verified adapter that restores the cancelled prompt back into it
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
 `exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text, and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty, matching the fail-safe contract every other consumer that can overwrite composer input follows.
+The one exception is a `pending` composer holding only this task's own steering doorbell or a prefix of it, which `exit` clears first; the instruction it announces stays durable in the task's inbox, and any other pending text still refuses ([`bin/fm-task-inbox-lib.sh`](../bin/fm-task-inbox-lib.sh) owns the doorbell match).
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
