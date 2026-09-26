@@ -1,0 +1,23 @@
+[18:27:54] repo under test: /tmp/fm-base-6ac3aea (6ac3aea)
+[18:27:54] lab session: fm-lab-ctl-done-base-999720-7483; herdr 0.8.2; claude 2.1.281 (Claude Code)
+[18:27:56] parked worker endpoint: fm-lab-ctl-done-base-999720-7483:w2:p2 (workspace w2, unfocused tab w2:t2)
+[18:28:02] claude registered: agent_status=idle
+[18:28:03] one worker turn submitted: verdict=empty
+[18:28:06] herdr pane list row for the parked worker:
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+[18:28:06] fm_backend_herdr_agent_state before exit: alive
+[18:28:06] composer as the operator sees it (last visible rows):
+    | ✻ Cooked for 2s · done 12:28 PM
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    | ❯
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    |   ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+    |   ⏵⏵ bypass permissions on (shift+tab to cycle)                             ● high · /effort
+[18:28:06] $ bin/fm-control.sh parked exit
+    > error: the exit command could not be sent to task parked on herdr
+[18:28:08] fm-control exit rc=1
+[18:28:08] fm_backend_herdr_agent_state after exit: alive
+[18:28:08] pane still present (endpoint preserved): yes
+[18:28:08] claude processes left in the pane: 
+[18:28:08] RESULT: FAIL
+[18:28:10] teardown of fm-lab-ctl-done-base-999720-7483 done (rc=1)

@@ -1,0 +1,23 @@
+[18:27:36] repo under test: /home/nik/.no-mistakes/worktrees/50866b63a668/01M3FFC37827D00WQE541BFBEP (a2592dd)
+[18:27:36] lab session: fm-lab-ctl-done-fix-991786-27061; herdr 0.8.2; claude 2.1.281 (Claude Code)
+[18:27:37] parked worker endpoint: fm-lab-ctl-done-fix-991786-27061:w2:p2 (workspace w2, unfocused tab w2:t2)
+[18:27:43] claude registered: agent_status=idle
+[18:27:44] one worker turn submitted: verdict=empty
+[18:27:46] herdr pane list row for the parked worker:
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+[18:27:46] fm_backend_herdr_agent_state before exit: alive
+[18:27:46] composer as the operator sees it (last visible rows):
+    | ✻ Brewed for 2s · done 12:27 PM
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    | ❯
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    |   ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+    |   ⏵⏵ bypass permissions on (shift+tab to cycle)                             ● high · /effort
+[18:27:46] $ bin/fm-control.sh parked exit
+    > stopped parked harness=claude backend=herdr endpoint=fm-lab-ctl-done-fix-991786-27061:w2:p2 worktree=/tmp/fm-ctl-done.ZMYiht/wt
+[18:27:49] fm-control exit rc=0
+[18:27:49] fm_backend_herdr_agent_state after exit: dead
+[18:27:49] pane still present (endpoint preserved): yes
+[18:27:49] claude processes left in the pane: 
+[18:27:49] RESULT: PASS
+[18:27:50] teardown of fm-lab-ctl-done-fix-991786-27061 done (rc=0)

@@ -1,0 +1,25 @@
+[18:28:30] repo under test: /home/nik/.no-mistakes/worktrees/50866b63a668/01M3FFC37827D00WQE541BFBEP (a2592dd)
+[18:28:30] lab session: fm-lab-ctl-done-draft-1021686-26837; herdr 0.8.2; claude 2.1.281 (Claude Code)
+[18:28:31] parked worker endpoint: fm-lab-ctl-done-draft-1021686-26837:w2:p2 (workspace w2, unfocused tab w2:t2)
+[18:28:37] claude registered: agent_status=idle
+[18:28:39] one worker turn submitted: verdict=empty
+[18:28:41] herdr pane list row for the parked worker:
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+[18:28:41] fm_backend_herdr_agent_state before exit: alive
+[18:28:41] composer as the operator sees it (last visible rows):
+    | ✻ Crunched for 1s · done 12:28 PM
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    | ❯
+    | ──────────────────────────────────────────────────────────────────────────────────────────────
+    |   ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+    |   ⏵⏵ bypass permissions on (shift+tab to cycle)                             ● high · /effort
+[18:28:42] typed an unsent draft into the parked composer: ❯ operator draft keep me
+[18:28:42] $ bin/fm-control.sh parked exit
+    > error: task parked's composer visibly holds pending text; refusing to type the /exit exit command because it would concatenate onto that text. Clear or submit the pending text, then retry 'exit'
+[18:28:43] fm-control exit rc=1
+[18:28:43] fm_backend_herdr_agent_state after exit: alive
+[18:28:43] pane still present (endpoint preserved): yes
+[18:28:43] claude processes left in the pane: 
+[18:28:43] draft still in composer after refusal: yes
+[18:28:43] RESULT: PASS (refused, draft preserved, agent alive)
+[18:28:45] teardown of fm-lab-ctl-done-draft-1021686-26837 done (rc=0)
