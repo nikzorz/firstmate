@@ -150,10 +150,12 @@ while IFS='|' read -r id home _window meta; do
       printf '%s\n' "$remote_out" | sed 's/^/  /'
       remote_nudge=0
       if printf '%s\n' "$remote_out" | grep -Eq '^(pushed|removed):'; then remote_nudge=1; fi
+      remote_repeat=0
+      [ "$remote_pending" -eq 0 ] || [ "$remote_nudge" -eq 1 ] || remote_repeat=1
       [ "$remote_pending" -eq 0 ] || remote_nudge=1
       if [ "$remote_nudge" -eq 1 ]; then
         if FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
-          fm_secondmate_nudge_send "$STATE" "$id" "$SCRIPT_DIR/fm-send.sh" "fm-$id" \
+          fm_secondmate_nudge_send "$remote_repeat" "$STATE" "$id" "$SCRIPT_DIR/fm-send.sh" "fm-$id" \
           "$FM_REMOTE_SECOND_MATE_NUDGE_MESSAGE" >/dev/null; then
           rm -f -- "$remote_marker"
           echo "  config-reread: sent"

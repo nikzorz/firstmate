@@ -73,11 +73,13 @@ fm_secondmate_nudge_write() { # <state> <id> <home> <commit> <instructions> <mes
 }
 
 # Prints fm-send's combined output and returns its status.
-fm_secondmate_nudge_send() { # <state> <task-id> <send-bin> <selector> <message>
-  local state=$1 task_id=$2 send_bin=$3 selector=$4 message=$5 corr
-  # shellcheck source=bin/fm-pending-reply-lib.sh
-  corr=$(. "$_FM_SECONDMATE_NUDGE_LIB_DIR/fm-pending-reply-lib.sh" &&
-    fm_pending_reply_open_undelivered_corr "$state" "$task_id" "$message") || corr=''
+fm_secondmate_nudge_send() { # <repeat:0|1> <state> <task-id> <send-bin> <selector> <message>
+  local repeat=$1 state=$2 task_id=$3 send_bin=$4 selector=$5 message=$6 corr=''
+  if [ "$repeat" = 1 ]; then
+    # shellcheck source=bin/fm-pending-reply-lib.sh
+    corr=$(. "$_FM_SECONDMATE_NUDGE_LIB_DIR/fm-pending-reply-lib.sh" &&
+      fm_pending_reply_open_undelivered_corr "$state" "$task_id" "$message") || corr=''
+  fi
   if [ -n "$corr" ]; then
     FM_PENDING_REPLY_EXISTING_CORR=$corr "$send_bin" "$selector" "$message" 2>&1
   else
