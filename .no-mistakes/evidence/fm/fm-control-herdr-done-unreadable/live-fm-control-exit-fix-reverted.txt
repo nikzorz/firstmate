@@ -1,0 +1,31 @@
+[11:33:37] provisioned lab fm-lab-fmctl-exit-3908659-23498 (herdr herdr 0.8.2, claude 2.1.281 (Claude Code))
+[11:33:39] worker pane w2:p2 in unfocused tab w2:t2 of workspace w2
+[11:33:46] claude registered: agent_status=idle
+[11:33:47] steer turn verdict: empty
+[11:33:51] parked worker: herdr agent_status=done
+{"pane_id":"w2:p1","agent":null,"agent_status":"unknown"}
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+[11:33:51] fm_backend_herdr_agent_state -> alive
+--- composer before exit (visible) ---
+
+✻ Brewed for 2s · done 11:33 AM
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)                             ● high · /effort
+[11:33:51] RUN: FM_HOME=<lab home> bin/fm-control.sh parked1 exit
+error: the exit command could not be sent to task parked1 on herdr
+[11:33:53] fm-control.sh exit rc=1
+[11:33:53] after exit: fm_backend_herdr_agent_state -> alive
+{"pane_id":"w2:p1","agent":null,"agent_status":"unknown"}
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+--- pane after exit (visible) ---
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)                 Ctrl+Y to paste deleted text
+[11:33:55] lab fm-lab-fmctl-exit-3908659-23498 torn down

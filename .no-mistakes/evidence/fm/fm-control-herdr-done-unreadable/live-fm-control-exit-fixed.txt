@@ -1,0 +1,31 @@
+[11:33:12] provisioned lab fm-lab-fmctl-exit-3892065-20116 (herdr herdr 0.8.2, claude 2.1.281 (Claude Code))
+[11:33:14] worker pane w2:p2 in unfocused tab w2:t2 of workspace w2
+[11:33:20] claude registered: agent_status=idle
+[11:33:22] steer turn verdict: empty
+[11:33:25] parked worker: herdr agent_status=done
+{"pane_id":"w2:p1","agent":null,"agent_status":"unknown"}
+{"pane_id":"w2:p2","agent":"claude","agent_status":"done"}
+[11:33:26] fm_backend_herdr_agent_state -> alive
+--- composer before exit (visible) ---
+
+✻ Brewed for 2s · done 11:33 AM
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)                             ● high · /effort
+[11:33:26] RUN: FM_HOME=<lab home> bin/fm-control.sh parked1 exit
+stopped parked1 harness=claude backend=herdr endpoint=fm-lab-fmctl-exit-3892065-20116:w2:p2 worktree=/tmp/fmctl-exit.d4eiAF/wt
+[11:33:29] fm-control.sh exit rc=0
+[11:33:29] after exit: fm_backend_herdr_agent_state -> dead
+{"pane_id":"w2:p1","agent":null,"agent_status":"unknown"}
+{"pane_id":"w2:p2","agent":null,"agent_status":"unknown"}
+--- pane after exit (visible) ---
+  /docs                                docs (living docs people share, comment on and edit;
+                                       use only when the user asks for one: names a doc, do…
+  /godot-prompter:addon-development    (godot-prompter) Use when creating Godot editor
+                                       plugins — EditorPlugin, @tool scripts, custom inspec…
+
+nik@Nik-Laptop:/tmp/fmctl-exit.d4eiAF/wt$
+[11:33:30] lab fm-lab-fmctl-exit-3892065-20116 torn down
