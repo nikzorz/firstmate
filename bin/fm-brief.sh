@@ -503,6 +503,8 @@ HERDR_SECTION=$(printf '%s\n' \
 '   Install `trap '\''"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"'\'' EXIT` before provisioning, then provision only with `"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"`.' \
 '2. Run every task-specific non-lifecycle Herdr command through `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" <arguments...>`.' \
 '   The helper supplies the required `--session "$HERDR_LAB_SESSION"` as a Herdr option, before any `--` delimiter; `HERDR_SESSION` alone is never accepted as isolation.' \
+'   Never start a lab agent inside this task worktree, by `--cwd` or by `cd`: it would load your own harness hooks and report its stops as your turn ends; lab panes already default to a scratch directory outside it.' \
+'   A Claude agent started in that fresh scratch directory first shows its workspace-trust dialog with the cursor on the declining option: answer it inside your own lab by moving the selection to the accepting option and pressing Enter with `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" pane send-keys <pane> <key>`, then confirm with `pane read` through the same helper that the agent reached its composer.' \
 '3. Teardown only through `"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"`.' \
 '   It re-checks refuse-default immediately before stop and again immediately before delete, and fails closed on ambiguity.' \
 '4. If an experiment requires a deliberate mid-run session stop, use only `"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION"`; it performs the same immediate refuse-default check.' \

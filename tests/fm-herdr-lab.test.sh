@@ -50,6 +50,7 @@ case "$1 ${2:-}" in
       "$FM_FAKE_HERDR_REAL_SLEEP" "$FM_FAKE_HERDR_SERVER_DELAY"
     fi
     printf '%s\n' running > "$state/$session"
+    pwd -P > "$state/$session.server-cwd"
     ;;
   "status --json")
     if [ "$lab_state" = running ]; then
@@ -534,9 +535,46 @@ test_viewer_launcher_refuses_unsafe_arguments() {
   pass "fm-herdr-lab: the viewer launcher refuses unsafe sessions and pidfiles"
 }
 
+test_lab_panes_default_to_a_scratch_cwd() {
+  local name="fm-lab-scratch-cwd-$$" scratch caller="$TMP_ROOT/caller-worktree"
+  mkdir -p "$caller"
+  : > "$FAKE_LOG"
+  (cd "$caller" && run_with_fake fm_herdr_lab_provision "$name") || fail "scratch-cwd fixture provision failed"
+  scratch=$(cd "$TRIPWIRES/$name.cwd" && pwd -P) || fail "provision did not create the lab scratch directory"
+  case "$scratch/" in
+    "$ROOT"/*|"$(cd "$caller" && pwd -P)"/*) fail "lab scratch directory sits inside a task worktree: $scratch" ;;
+  esac
+  [ "$(cat "$FAKE_STATE/$name.server-cwd")" = "$scratch" ] \
+    || fail "lab server did not start from the scratch directory"
+
+  (
+    cd "$caller" || exit 1
+    run_with_fake fm_herdr_lab_cli "$name" workspace create --label probe --no-focus >/dev/null
+    run_with_fake fm_herdr_lab_cli "$name" tab create --workspace w1 --no-focus >/dev/null
+    run_with_fake fm_herdr_lab_cli "$name" pane split w1:p1 --direction right >/dev/null
+    run_with_fake fm_herdr_lab_cli "$name" workspace create --cwd "$caller" --no-focus >/dev/null
+    run_with_fake fm_herdr_lab_cli "$name" pane split w1:p1 --cwd="$caller" >/dev/null
+  ) || fail "pane-creating run commands failed"
+  grep -Fx -- "workspace create --cwd $scratch --label probe --no-focus --session $name" "$FAKE_LOG" >/dev/null \
+    || fail "workspace create without --cwd did not default to the lab scratch directory"
+  grep -Fx -- "tab create --cwd $scratch --workspace w1 --no-focus --session $name" "$FAKE_LOG" >/dev/null \
+    || fail "tab create without --cwd did not default to the lab scratch directory"
+  grep -Fx -- "pane split --cwd $scratch w1:p1 --direction right --session $name" "$FAKE_LOG" >/dev/null \
+    || fail "pane split without --cwd did not default to the lab scratch directory"
+  grep -Fx -- "workspace create --cwd $caller --no-focus --session $name" "$FAKE_LOG" >/dev/null \
+    || fail "an explicit --cwd was not passed through unchanged"
+  grep -Fx -- "pane split w1:p1 --cwd=$caller --session $name" "$FAKE_LOG" >/dev/null \
+    || fail "an explicit equals-form --cwd was not passed through unchanged"
+
+  run_with_fake fm_herdr_lab_teardown "$name" || fail "scratch-cwd fixture teardown failed"
+  assert_absent "$TRIPWIRES/$name.cwd" "teardown did not remove the lab scratch directory"
+  pass "fm-herdr-lab: lab panes default to a scratch directory outside the caller's worktree"
+}
+
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
 test_run_scopes_session_before_double_dash
+test_lab_panes_default_to_a_scratch_cwd
 test_missing_tripwire_blocks_destruction
 test_changed_default_trips_after_teardown
 test_stopped_owned_lab_can_reprovision

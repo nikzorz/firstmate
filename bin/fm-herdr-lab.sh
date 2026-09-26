@@ -27,6 +27,12 @@
 # destructive call.
 # Provision records the running default session as a fleet-state tripwire and
 # teardown requires that record to be identical afterward.
+# Lab panes start in a per-session scratch directory under the lab state
+# directory unless the caller passes --cwd: an agent started inside a task
+# worktree loads that worktree's harness hooks and reports its own stops as the
+# task worker's turn ends. Teardown removes the scratch directory.
+# A Claude agent started there meets its workspace-trust dialog with the cursor
+# on the declining option; the lab worker accepts it through run pane send-keys.
 # The viewer command attaches or detaches one real foreground Herdr client on
 # an owned lab session over a fixed 40-row by 120-column pty;
 # bin/fm-herdr-lab-viewer.py owns the pty mechanics.
@@ -58,6 +64,10 @@ fm_herdr_lab_state_dir() {
 
 fm_herdr_lab_tripwire_path() { # <session>
   printf '%s/%s.fleet-state.json' "$(fm_herdr_lab_state_dir)" "$1"
+}
+
+fm_herdr_lab_scratch_cwd() { # <session>
+  printf '%s/%s.cwd' "$(fm_herdr_lab_state_dir)" "$1"
 }
 
 fm_herdr_lab_raw() { # <session> <herdr arguments...>
@@ -167,8 +177,29 @@ fm_herdr_lab_cli() { # <session> <herdr arguments...>
       fm_herdr_lab_error "run forbids session lifecycle operations; use guarded teardown"
       return 1
       ;;
+    "workspace create"|"tab create"|"pane split")
+      fm_herdr_lab_with_scratch_cwd "$name" "$@"
+      return
+      ;;
   esac
   fm_herdr_lab_raw "$name" "$@"
+}
+
+fm_herdr_lab_with_scratch_cwd() { # <session> <pane-creating herdr arguments...>
+  local name=$1 arg scratch
+  shift
+  for arg in "$@"; do
+    [ "$arg" != -- ] || break
+    case "$arg" in
+      --cwd|--cwd=*)
+        fm_herdr_lab_raw "$name" "$@"
+        return
+        ;;
+    esac
+  done
+  scratch=$(fm_herdr_lab_scratch_cwd "$name")
+  mkdir -p "$scratch" || return 1
+  fm_herdr_lab_raw "$name" "$1" "$2" --cwd "$scratch" "${@:3}"
 }
 
 # --- foreground viewer ------------------------------------------------------
@@ -408,7 +439,7 @@ fm_herdr_lab_cancel_provision() { # <pid>
 }
 
 fm_herdr_lab_provision() { # <session>
-  local name=$1 sessions tripwire running attempt server_pid max_attempts timeout_seconds
+  local name=$1 sessions tripwire running attempt server_pid max_attempts timeout_seconds scratch
   fm_herdr_lab_validate_name "$name" || return 1
   command -v herdr >/dev/null 2>&1 || { fm_herdr_lab_error "herdr is required"; return 1; }
   command -v jq >/dev/null 2>&1 || { fm_herdr_lab_error "jq is required"; return 1; }
@@ -434,7 +465,9 @@ fm_herdr_lab_provision() { # <session>
   else
     fm_herdr_lab_prepare "$name" || return 1
   fi
-  fm_herdr_lab_raw "$name" server >/dev/null 2>&1 &
+  scratch=$(fm_herdr_lab_scratch_cwd "$name")
+  mkdir -p "$scratch" || return 1
+  (cd "$scratch" && fm_herdr_lab_raw "$name" server) >/dev/null 2>&1 &
   server_pid=$!
   attempt=0
   max_attempts=300
@@ -478,6 +511,7 @@ fm_herdr_lab_verify_tripwire() { # <session>
   fm_herdr_lab_check_tripwire "$name" || return 1
   tripwire=$(fm_herdr_lab_tripwire_path "$name")
   rm -f "$tripwire"
+  rm -rf "$(fm_herdr_lab_scratch_cwd "$name")"
 }
 
 fm_herdr_lab_stop() { # <session>
