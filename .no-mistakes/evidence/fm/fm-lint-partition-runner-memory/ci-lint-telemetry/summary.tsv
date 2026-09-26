@@ -1,0 +1,7 @@
+CI run 36272623127 (branch fm/fm-lint-partition-runner-memory, target 42f37e7 via PR merge ref): all four Lint jobs succeeded
+partition	jobs	analysis_mode	roots	direct_bytes	max_worker_rss_GB	wall_s	result_exit
+1of4	1	full	113	3829461	5.65	285	0
+2of4	1	full	113	3829685	6.86	287	0
+3of4	1	full	113	3829751	3.79	548	0
+4of4	1	full	113	3829151	6.85	404	0
+Before (main, per commit message): 2 partitions x 2 workers, Lint 1 max worker 12.5 GB, worker sum 21.9 GB; Lint 1 killed with exit 143 on PR 61/64.

@@ -1,0 +1,3 @@
+Weight-controlled rerun: base-commit fm-lint.sh padded with a trailing comment to the new script's byte size (34426 vs 34426), over the identical target tree:
+1of2: base=226 roots, new=226 roots, identical=YES
+2of2: base=226 roots, new=226 roots, identical=YES

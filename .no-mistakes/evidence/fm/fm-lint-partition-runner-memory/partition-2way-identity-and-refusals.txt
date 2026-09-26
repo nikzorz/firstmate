@@ -1,0 +1,18 @@
+Same file tree (target 42f37e7); base-commit fm-lint.sh vs new fm-lint.sh, 2-way split:
+1of2: base=226 roots, new=226 roots, sha256 base=5e754cd24ddbc3cd new=cb334e40cd19cf01 identical=NO
+2of2: base=226 roots, new=226 roots, sha256 base=5935f37f7c38def3 new=c83fd1a6477587d3 identical=NO
+
+Adversarial --partition inputs (new script):
+--partition '0of4' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 0of4.
+--partition '5of4' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 5of4.
+--partition '1of1' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 1of1.
+--partition '1of10' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 1of10.
+--partition '2of1' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 2of1.
+--partition 'xof4' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got xof4.
+--partition '3of2' -> exit 2: fm-lint.sh: --partition must be KofN with 1 <= K <= N and 2 <= N <= 9, got 3of2.
+--partition '' -> exit 2: fm-lint.sh: --partition requires KofN.
+--partition 1of4 --fast -> exit 2: fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.
+--partition 3of4 bin/fm-lint.sh -> exit 2: fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.
+--partition 1of4 --jobs 3 -> exit 2: fm-lint.sh: jobs must be 1 or 2, got 3.
+
+NOTE: the identical=NO rows above are a measurement confound. bin/fm-lint.sh is itself a byte-weighted lint root, and the base copy is 561 bytes smaller, so packing shifts. See partition-2way-identity-weight-controlled.txt for the size-controlled comparison (identical=YES).
