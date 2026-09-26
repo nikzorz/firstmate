@@ -153,6 +153,7 @@ $command_fields
 EOF
 case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
   inherit-partial:fm-remote-inherit.sh:config/crew-harness) exit 255 ;;
+  send-lost:fm-remote-secondmate-control.sh:*) [ "$_command_action" != send ] || exit 255 ;;
   inherit-block:fm-remote-inherit.sh:data/captain-shared.md)
     cat > "$FM_FAKE_INHERIT_PAYLOAD"
     touch "$FM_FAKE_INHERIT_ENTERED"
@@ -1033,6 +1034,56 @@ resolve_ios_pending() {
       || fail "concurrent inheritance acknowledgment was not ingested"
   done
 }
+
+# A reread nudge whose transport is lost before the remote leg runs stays
+# unconfirmed: its expectation is kept because the text may have landed, and
+# its retry marker makes every later convergence send it again. Each repeat
+# must reuse that one open expectation, so the parent never gains a second
+# record or a second delivery-unknown escalation for the same send.
+open_ios_expectations() {
+  local rec count=0
+  for rec in "$PARENT/state/pending-replies"/*; do
+    [ -f "$rec" ] || continue
+    [ "$(grep '^task_id=' "$rec" | cut -d= -f2-)" = ios ] || continue
+    [ "$(grep '^phase=' "$rec" | cut -d= -f2-)" != resolved ] || continue
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+escalate_ios_expectations() {
+  local rec
+  for rec in "$PARENT/state/pending-replies"/*; do
+    [ -f "$rec" ] || continue
+    [ "$(grep '^task_id=' "$rec" | cut -d= -f2-)" = ios ] || continue
+    FM_HOME="$PARENT" FM_STATE_OVERRIDE="$PARENT/state" /bin/bash -c \
+      '. "$1"; fm_pending_reply_maybe_escalate "$2" "$3"' _ \
+      "$ROOT/bin/fm-pending-reply-lib.sh" "$PARENT/state" "$(basename "$rec")" || true
+  done
+}
+resolve_ios_pending
+[ "$(open_ios_expectations)" -eq 0 ] || fail "open ios expectations remained before the lost-reread scenario"
+printf 'opencode\n' > "$PARENT/config/crew-harness"
+if FM_FAKE_SSH_MODE=send-lost remote_env "$ROOT/bin/fm-config-push.sh" > "$TMP_ROOT/lost-reread-push.out" 2>&1; then
+  fail "config push claimed its lost reread nudge was sent"
+fi
+assert_grep 'remote=1' "$NUDGE_MARKER" "lost reread nudge left no retry marker"
+escalate_ios_expectations
+publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$REMOTE_ROOT/bin/fm-watch.sh"
+for lost_retry in 1 2; do
+  FM_FAKE_SSH_MODE=send-lost remote_env "$ROOT/bin/fm-bootstrap.sh" > "$TMP_ROOT/lost-reread-bootstrap-$lost_retry.out" 2>&1 \
+    || fail "bootstrap failed while retrying a lost reread nudge"
+  assert_present "$NUDGE_MARKER" "bootstrap dropped the retry marker of a still-unconfirmed reread nudge"
+  escalate_ios_expectations
+done
+lost_open=$(open_ios_expectations)
+[ "$lost_open" -eq 1 ] || fail "repeated unconfirmed reread nudges left $lost_open open expectations instead of one"
+lost_lines=$(grep -c 'pending-reply-delivery-unknown: task=ios' "$PARENT/state/ios.status" || true)
+[ "$lost_lines" -eq 1 ] || fail "repeated unconfirmed reread nudges published $lost_lines delivery-unknown escalations instead of one"
+remote_env "$ROOT/bin/fm-bootstrap.sh" > "$TMP_ROOT/lost-reread-recovered.out" 2>&1 \
+  || fail "bootstrap failed to deliver the recovered reread nudge"
+assert_absent "$NUDGE_MARKER" "a delivered reread nudge kept its retry marker"
+[ "$(open_ios_expectations)" -eq 1 ] || fail "the delivered retry did not land on the one open expectation"
+pass "repeated unconfirmed reread nudges reuse one expectation and one escalation"
 resolve_ios_pending
 
 # Structured fleet state comes from each home's published ledger. The remote
