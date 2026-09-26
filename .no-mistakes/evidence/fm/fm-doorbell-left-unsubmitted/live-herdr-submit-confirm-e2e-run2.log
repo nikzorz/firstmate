@@ -1,0 +1,4 @@
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-3426781-25829
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr doorbell stall: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 recovers a doorbell fragment left by a stalled render, and the worker acts and acknowledges
+rc=0

@@ -1,0 +1,23 @@
++ fm_backend_herdr_cli fm-lab-doorbell-exit-3521713-25000 pane send-text w2:p1 /exit
++ sleep 1.2
++ '[' 1 = 1 ']'
++++ LC_ALL=C
++++ sed 's/\[[0-9;:?]*[[:alpha:]]//g'
+++ plain='──────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CL…
+  /exit                                Exit the CLI
+  /context                             Visualize current context usage as a colored grid
+  /godot-prompter:gdextension          (godot-prompter) Use when building native extensions
+                                       for Godot — godot-cpp (C++) or gdext (Rust), binding…
+  /pptx                                Use this skill any time a .pptx or .potx file is
+                                       involved in any way — as input, output, or both. Thi…
+  /usage-credits                       Configure usage credits or request them from your
+                                       admin when you hit a limit
+  /doctor                              Health-check the user'\''s Claude Code setup and fix
+                                       issues: diagnose installation health — what the `cla…
+  /skill-creator                       Create new skills, modify and improve existing
+                                       skills, and measure skill performance. Use when user…
++ '[' empty = empty ']'
++ return 0
++ printf send-failed
++ return 0
