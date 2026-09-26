@@ -343,18 +343,13 @@ fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
   [ "$(fm_task_inbox_composer_doorbell "$@")" = whole ]
 }
 
-# FM_TASK_INBOX_FRAGMENT_MIN: the fewest non-space characters a composer must
-# hold before a contiguous piece of the doorbell counts as our own fragment, so
-# a short draft that happens to occur inside the line is never cleared.
-FM_TASK_INBOX_FRAGMENT_MIN=${FM_TASK_INBOX_FRAGMENT_MIN:-16}
-
 # Classify the composer against <line>, ignoring whitespace and wrapping:
 # prints `whole` for exactly the line, `fragment` for a contiguous piece of it
-# at least FM_TASK_INBOX_FRAGMENT_MIN characters long (or any non-empty piece
-# with any-size), and `other` for empty, unreadable, or foreign content.
+# at least 16 characters long (or any non-empty piece with any-size), and
+# `other` for empty, unreadable, or foreign content. The 16-character floor
+# keeps a short draft that happens to occur inside the line from being cleared.
 fm_task_inbox_composer_doorbell() {  # <backend> <target> <line> [expected-label] [any-size]
-  local cap held want min=$FM_TASK_INBOX_FRAGMENT_MIN
-  case "$min" in ''|*[!0-9]*) min=16 ;; esac
+  local cap held want min=16
   [ -z "${5:-}" ] || min=1
   fm_backend_source "$1" || { printf 'other'; return 0; }
   if ! cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) \
