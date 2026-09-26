@@ -238,6 +238,7 @@ A composer that holds a shorter suffix, or a placeholder plus a literal remainde
 The adapter presses Ctrl+U until the shared classifier reads the composer as empty, then reports `send-failed`, so a resend starts from a clean composer.
 Ctrl+C is not used for this, because Claude documents it as interrupting a running operation.
 If the composer cannot be verified empty again, the submit reports `unknown` instead, because text may still be in the composer.
+A render stalled past the proof, as on a saturated host, can read empty before the typed payload and the Ctrl+U are applied, so the agent can end with a prefix of the text and `send-failed` is reported; the steering doorbell recovers that fragment on its next ring (`bin/fm-task-inbox-lib.sh`).
 A Claude composer that already holds text, or cannot be read, before the send is refused with nothing typed.
 Other harnesses, and panes with no native identity, skip this proof and keep the type-then-Enter path, because their paste placeholders and composer shapes are not live-verified.
 

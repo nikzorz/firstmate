@@ -306,6 +306,11 @@ case "${1:-}" in
     done
     if [ "$literal" = 1 ]; then
       printf '%s' "$1" >> "$FM_FAKE_COMPOSER"
+    elif [ "${1:-}" = C-u ]; then
+      # Like Claude, one Ctrl+U deletes one wrapped row of the draft.
+      held=$(cat "$FM_FAKE_COMPOSER")
+      keep=$(( ${#held} > 60 ? (${#held} - 1) / 60 * 60 : 0 ))
+      printf '%s' "${held:0:$keep}" > "$FM_FAKE_COMPOSER"
     elif [ "${1:-}" = Enter ]; then
       drops=$(cat "$FM_FAKE_DROP_ENTERS" 2>/dev/null || echo 0)
       if [ "$drops" -gt 0 ]; then
@@ -383,6 +388,42 @@ test_ring_submits_its_own_stuck_doorbell() {
     || fail "the retry Enter should submit the doorbell once:"$'\n'"$(cat "$log")"
   [ ! -s "$composer" ] || fail "a lost Enter left the doorbell unsubmitted"
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
+}
+
+# A Ctrl+U that reaches a render-stalled agent after the whole doorbell
+# removes only its last wrapped row, leaving a prefix that skipping would keep
+# forever. The ring clears a fragment of its own doorbell and rings the full
+# line; a fragment followed by a draft, or a short piece of the line that could
+# be anyone's text, still skips untouched.
+test_ring_clears_its_own_doorbell_fragment() {
+  local dir state rec doorbell log composer rc other
+  dir="$TMP_ROOT/ring-fragment"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"
+  ring() {
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_DROP_ENTERS="$dir/drops" inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+
+  : > "$log"; printf '%s' "${doorbell:0:130}" > "$composer"
+  rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a composer holding a fragment of our own doorbell should be cleared and rung, got rc $rc"
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "the fragment should be replaced by exactly one full doorbell:"$'\n'"$(cat "$log")"
+  [ ! -s "$composer" ] || fail "the doorbell fragment was left in the composer: $(cat "$composer")"
+
+  for other in "${doorbell:0:130} and a draft" 'handled'; do
+    : > "$log"; printf '%s' "$other" > "$composer"
+    rc=0; ring || rc=$?
+    [ "$rc" = 1 ] || fail "text that is not only our doorbell fragment should skip the ring, got rc $rc for: $other"
+    [ ! -s "$log" ] || fail "text that is not only our doorbell fragment was submitted:"$'\n'"$(cat "$log")"
+    [ "$(cat "$composer")" = "$other" ] || fail "text that is not only our doorbell fragment was changed: $(cat "$composer")"
+  done
+  pass "inbox: the ring clears a fragment of its own doorbell and rings the full line, leaving any other text untouched"
 }
 
 test_idempotent_write_dedups_exact_body() {
@@ -803,6 +844,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_ring_clears_its_own_doorbell_fragment
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

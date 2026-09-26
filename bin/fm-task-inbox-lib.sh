@@ -47,7 +47,8 @@
 # Re-ring ladder (fm_task_inbox_due_action): an unhandled message older than
 # FM_TASK_INBOX_GRACE_SECS is due one delivery attempt per grace period; an
 # attempt may ring or be skipped to protect another draft in a proven pending
-# composer; an unsubmitted copy of this doorbell is retried. After
+# composer; an unsubmitted copy of this doorbell is retried, and a fragment of
+# it is cleared and rung again. After
 # FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it escalates. The
 # caller owns the busy and recovery-grade endpoint checks: a busy pane waits,
 # while a positively dead or missing endpoint skips delivery and the ladder and
@@ -259,7 +260,11 @@ fm_task_inbox_body() {  # <record-path>
 # A non-printable path fails without output so terminal controls never reach
 # the pane's line discipline.
 fm_task_inbox_doorbell_line() {  # <record-path>
-  local dir=${1%/*} abs quoted LC_ALL=C
+  fm_task_inbox_doorbell_line_for_dir "${1%/*}"
+}
+
+fm_task_inbox_doorbell_line_for_dir() {  # <inbox-dir-or-its-handled-dir>
+  local dir=$1 abs quoted LC_ALL=C
   abs=$(cd "$dir" 2>/dev/null && pwd) || abs=$dir
   abs=${abs%/handled}
   case "$abs" in
@@ -274,9 +279,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # composer pre-check, then the backend's submit machinery with a minimal retry
 # budget, verdict discarded.
 # Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
-# other than our own doorbell (the watcher re-rings later), 2 the backend send
-# failed, 3 skipped because the endpoint is positively dead or missing (nothing
-# typed; recovery owns the record). No return value is delivery proof; the
+# other than our own doorbell or a fragment of it, or the agent is busy (the
+# watcher re-rings later), 2 the backend send failed, 3 skipped because the
+# endpoint is positively dead or missing (nothing typed; recovery owns the
+# record). No return value is delivery proof; the
 # acknowledgement move is the only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict can defer,
 # because there our Enter could submit someone's real half-typed content.
@@ -288,6 +294,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # whose Enter never landed, so on an agent not reported busy it is submitted
 # rather than skipped; skipping it would block every later ring. On both paths
 # a lost first Enter gets one confirmed retry.
+# A composer holding only a fragment of our doorbell is a previous ring cut
+# short, for example a clear whose Ctrl+U reached a render-stalled agent after
+# the full line and removed only its last wrapped row. Submitting it would hand
+# the worker a truncated instruction, so it is cleared and the full line rung.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
@@ -299,14 +309,20 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
-        && [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
-        || return 1
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      sleep 0.3
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      return 0
+      [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 1
+      case "$(fm_task_inbox_composer_doorbell "$backend" "$target" "$line" "$label")" in
+        whole)
+          fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+          sleep 0.3
+          fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
+          fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+          return 0
+          ;;
+        fragment)
+          fm_task_inbox_clear_composer "$backend" "$target" "$line" "$label" || return 1
+          ;;
+        *) return 1 ;;
+      esac
       ;;
   esac
   # Accepted residual race: terminal input and Enter are separate delivery
@@ -324,11 +340,63 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
 
 # Whether the composer's content, ignoring line wrapping, is exactly <line>.
 fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
-  local cap held
-  fm_backend_source "$1" || return 1
-  cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
-  held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
-  [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
+  [ "$(fm_task_inbox_composer_doorbell "$@")" = whole ]
+}
+
+# FM_TASK_INBOX_FRAGMENT_MIN: the fewest non-space characters a composer must
+# hold before a contiguous piece of the doorbell counts as our own fragment, so
+# a short draft that happens to occur inside the line is never cleared.
+FM_TASK_INBOX_FRAGMENT_MIN=${FM_TASK_INBOX_FRAGMENT_MIN:-16}
+
+# Classify the composer against <line>, ignoring whitespace and wrapping:
+# prints `whole` for exactly the line, `fragment` for a contiguous piece of it
+# at least FM_TASK_INBOX_FRAGMENT_MIN characters long (or any non-empty piece
+# with any-size), and `other` for empty, unreadable, or foreign content.
+fm_task_inbox_composer_doorbell() {  # <backend> <target> <line> [expected-label] [any-size]
+  local cap held want min=$FM_TASK_INBOX_FRAGMENT_MIN
+  case "$min" in ''|*[!0-9]*) min=16 ;; esac
+  [ -z "${5:-}" ] || min=1
+  fm_backend_source "$1" || { printf 'other'; return 0; }
+  if ! cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) \
+    || ! held=$(fm_composer_extract_selected_content styled=0 "$cap"); then
+    printf 'other'
+    return 0
+  fi
+  held=$(printf '%s' "$held" | tr -d '[:space:]')
+  want=$(printf '%s' "$3" | tr -d '[:space:]')
+  if [ -n "$held" ] && [ "$held" = "$want" ]; then
+    printf 'whole'
+  elif [ "${#held}" -ge "$min" ] && [[ $want == *"$held"* ]]; then
+    printf 'fragment'
+  else
+    printf 'other'
+  fi
+}
+
+# Clear a composer that holds only our own doorbell or a fragment of it, one
+# Ctrl+U per wrapped row, re-proving before every press that nothing but our
+# doorbell remains so text typed meanwhile is never deleted. 0 only when two
+# spaced reads agree the composer is empty, so a render that has not yet
+# caught up with the presses cannot pass for a cleared composer.
+fm_task_inbox_clear_composer() {  # <backend> <target> <line> [expected-label]
+  local backend=$1 target=$2 line=$3 label=${4:-} presses i=0 held_as
+  presses=$(( ${#line} / 20 + 4 ))
+  while [ "$i" -lt "$presses" ]; do
+    held_as=$(fm_task_inbox_composer_doorbell "$backend" "$target" "$line" "$label" any-size)
+    case "$held_as" in
+      whole|fragment) ;;
+      *)
+        [ "$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" = empty ] || return 1
+        sleep 0.5
+        [ "$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" = empty ]
+        return
+        ;;
+    esac
+    fm_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || return 1
+    sleep 0.2
+    i=$((i + 1))
+  done
+  return 1
 }
 
 fm_task_inbox_is_fire_and_forget() {  # <record-path>
