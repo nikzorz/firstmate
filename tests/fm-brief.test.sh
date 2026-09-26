@@ -595,6 +595,8 @@ test_herdr_lab_contract_is_explicit_and_complete() {
     "Herdr lab brief missing helper-owned teardown"
   assert_grep "required \`--session \"\$HERDR_LAB_SESSION\"\` as a Herdr option, before any \`--\` delimiter" "$brief" \
     "Herdr lab brief missing the per-call session option contract"
+  assert_grep "Never start a lab agent inside this task worktree" "$brief" \
+    "Herdr lab brief missing the lab-agent working-directory rule"
   assert_grep "direct \`herdr server stop\`" "$brief" \
     "Herdr lab brief missing the forbidden server-global command list"
   assert_grep "records the live default session before provisioning" "$brief" \
