@@ -31,6 +31,8 @@
 # directory unless the caller passes --cwd: an agent started inside a task
 # worktree loads that worktree's harness hooks and reports its own stops as the
 # task worker's turn ends. Teardown removes the scratch directory.
+# A Claude agent started there meets its workspace-trust dialog with the cursor
+# on the declining option; the lab worker accepts it through run pane send-keys.
 # The viewer command attaches or detaches one real foreground Herdr client on
 # an owned lab session over a fixed 40-row by 120-column pty;
 # bin/fm-herdr-lab-viewer.py owns the pty mechanics.
