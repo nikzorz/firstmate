@@ -263,7 +263,7 @@ fm_pending_reply_corr_reusable() {  # <state-dir> <corr_id> <task_id>
 # unconfirmed send resends under it (FM_PENDING_REPLY_EXISTING_CORR) rather
 # than minting a second expectation for text that may already have landed.
 fm_pending_reply_open_undelivered_corr() {  # <state-dir> <task_id> <request-text>
-  local state=$1 task_id=$2 summary rec corr
+  local state=$1 task_id=$2 summary rec corr created newest='' newest_created=-1
   summary=$(fm_pending_reply_summarize "$3")
   for rec in "$(fm_pending_reply_dir "$state")"/*; do
     [ -f "$rec" ] && [ ! -L "$rec" ] || continue
@@ -271,9 +271,13 @@ fm_pending_reply_open_undelivered_corr() {  # <state-dir> <task_id> <request-tex
     [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || continue
     [ "$(fm_pending_reply_get "$rec" request_summary)" = "$summary" ] || continue
     fm_pending_reply_corr_reusable "$state" "$corr" "$task_id" || continue
-    printf '%s' "$corr"
-    return 0
+    created=$(fm_pending_reply_get "$rec" created_epoch)
+    case "$created" in ''|*[!0-9]*) created=0 ;; esac
+    [ "$created" -gt "$newest_created" ] || continue
+    newest=$corr
+    newest_created=$created
   done
+  printf '%s' "$newest"
 }
 
 # Rewrite one key in a pending-reply record atomically. Other keys preserved.
