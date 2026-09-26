@@ -1,0 +1,30 @@
+1. Set `HERDR_LAB_HELPER='/home/nik/.no-mistakes/worktrees/50866b63a668/01M3F8ET8GTB88JGS3PGVWZ53J/bin/fm-herdr-lab.sh'` and generate the session name with `HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name live-lab-brief)`.
+   Install `trap '"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"' EXIT` before provisioning, then provision only with `"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"`.
+2. Run every task-specific non-lifecycle Herdr command through `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" <arguments...>`.
+   The helper supplies the required `--session "$HERDR_LAB_SESSION"` as a Herdr option, before any `--` delimiter; `HERDR_SESSION` alone is never accepted as isolation.
+   Never start a lab agent inside this task worktree, by `--cwd` or by `cd`: it would load your own harness hooks and report its stops as your turn ends; lab panes already default to a scratch directory outside it.
+   A Claude agent started in that fresh scratch directory first shows its workspace-trust dialog with the cursor on the declining option: answer it inside your own lab by moving the selection to the accepting option and pressing Enter with `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" pane send-keys <pane> <key>`, then confirm with `pane read` through the same helper that the agent reached its composer.
+3. Teardown only through `"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"`.
+   It re-checks refuse-default immediately before stop and again immediately before delete, and fails closed on ambiguity.
+4. If an experiment requires a deliberate mid-run session stop, use only `"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION"`; it performs the same immediate refuse-default check.
+5. Forbidden commands: direct `herdr server stop`, every other server-global operation such as `herdr server live-handoff` or reload/update operations, direct `herdr session stop`, direct `herdr session delete`, and any Herdr call scoped only by ambient or inline `HERDR_SESSION`.
+6. The helper records the live default session before provisioning and verifies the identical fleet state after teardown.
+   A missing, stopped, or changed default session is a hard tripwire failure, never a cleanup warning to ignore.
+
+Never bypass the helper, even for a read-only lifecycle probe or cleanup after failure.
+The captain fleet uses the running `default` session.
+
+# Setup
+You are in a disposable git worktree of firstmate, at a detached HEAD on a clean default branch.
+
+**Verify isolation before anything else.** Run `pwd -P` and `git rev-parse --show-toplevel`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from.
+The path check is authoritative: `git rev-parse --git-dir` and `git rev-parse --git-common-dir` can help inspect the repo, but they do not prove you are outside the primary checkout.
+If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append `blocked [at=<epoch>]: launched in primary checkout, not an isolated worktree` to the status file and stop.
+
+1. First action: create your branch: `git checkout -b fm/live-lab-brief --`
+2. Run `no-mistakes doctor`; if it reports the repo is not initialized here, run `no-mistakes init`.
+
+# Rules
+1. Never push to the default branch. Never merge a PR.
+2. Stay inside this worktree; modify nothing outside it.
+3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.

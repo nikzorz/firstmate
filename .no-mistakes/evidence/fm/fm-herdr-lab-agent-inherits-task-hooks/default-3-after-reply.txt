@@ -1,0 +1,16 @@
+$ claude
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 (1M context) with high effort · Claude Max
+  ▝▝ ▝▝    /tmp/fm-herdr-lab-1000/fm-lab-cwdlive-1934337-26834.cwd
+
+
+❯ Reply with exactly LABPONG and nothing else.
+
+● LABPONG
+
+✻ Worked for 4s · done 10:37 AM
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent

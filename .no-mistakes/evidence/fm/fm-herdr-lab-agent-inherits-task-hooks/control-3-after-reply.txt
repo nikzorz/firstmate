@@ -1,0 +1,16 @@
+$ claude
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 (1M context) with high effort · Claude Max
+  ▝▝ ▝▝    /tmp/fm-lab-cwd-live/task-worktree
+
+
+❯ Reply with exactly LABPONG and nothing else.
+
+● LABPONG
+
+✻ Crunched for 4s · done 10:38 AM
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent

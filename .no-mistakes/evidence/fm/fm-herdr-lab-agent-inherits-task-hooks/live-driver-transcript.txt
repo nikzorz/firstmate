@@ -1,0 +1,24 @@
+[10:37:28] session=fm-lab-cwdlive-1934337-26834  caller cwd=/tmp/fm-lab-cwd-live/task-worktree (simulated task worktree with worker hooks)
+[10:37:28] provisioned; scratch=/tmp/fm-herdr-lab-1000/fm-lab-cwdlive-1934337-26834.cwd exists=yes
+[10:37:34] default pane w1:p1: LAB_PWD=/tmp/fm-herdr-lab-1000/fm-lab-cwdlive-1934337-26834.cwd
+[10:37:38] probe: trust dialog shown (cursor on: ❯ No, exit); sending down+enter via helper
+[10:37:40] probe: agent start exit=0 trust_accepted=1 composer_ready=1
+[10:37:42] prompt exit=0
+[10:37:48] reply observed=yes
+[10:37:53] worker hook events after default-cwd lab Claude turn: 0 (before prompt: 0)
+[10:37:56] control pane w2:p1: LAB_PWD=/tmp/fm-lab-cwd-live/task-worktree
+[10:38:02] control: trust dialog shown (cursor on: ❯ No, exit); sending down+enter via helper
+[10:38:04] control: agent start exit=0 trust_accepted=1 composer_ready=1
+[10:38:06] prompt exit=0
+[10:38:12] reply observed=yes
+[10:38:18] worker hook events after control (worktree cwd) Claude turn:
+SessionStart /tmp/fm-lab-cwd-live/task-worktree
+Stop /tmp/fm-lab-cwd-live/task-worktree
+[10:38:18] teardown
+[10:38:20] teardown exit=0
+[10:38:20] scratch dir after teardown: ls: cannot access '/tmp/fm-herdr-lab-1000/fm-lab-cwdlive-1934337-26834.cwd': No such file or directory
+[10:38:20] worker hook events after teardown:
+SessionStart /tmp/fm-lab-cwd-live/task-worktree
+Stop /tmp/fm-lab-cwd-live/task-worktree
+SessionEnd /tmp/fm-lab-cwd-live/task-worktree
+--- end events

@@ -1,0 +1,4 @@
+name                 status   directory                                        socket
+default              running  /home/nik/.config/herdr                          /home/nik/.config/herdr/herdr.sock
+firstmate            stopped  /home/nik/.config/herdr/sessions/firstmate       /home/nik/.config/herdr/sessions/firstmate/herdr.sock
+fm-lab-fm-herdr-present-1942725-21384 running  /home/nik/.config/herdr/sessions/fm-lab-fm-herdr-present-1942725-21384 /home/nik/.config/herdr/sessions/fm-lab-fm-herdr-present-1942725-21384/herdr.sock

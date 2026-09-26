@@ -1,0 +1,10 @@
+$ claude
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 (1M context) with high effort · Claude Max
+  ▝▝ ▝▝    /tmp/fm-lab-cwd-live/task-worktree
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "refactor <filepath>"
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent                          ● high · /effort
