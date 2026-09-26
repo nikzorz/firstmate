@@ -1,0 +1,17 @@
+$ ls -l data/
+total 264
+-rw-r--r-- 1 nik nik 132088 Sep 26 13:31 captain-oracle.md
+-rw-r--r-- 1 nik nik     81 Sep 26 13:31 captain.md
+-rw-r--r-- 1 nik nik 123089 Sep 26 13:31 learnings-oracle.md
+-rw-r--r-- 1 nik nik     69 Sep 26 13:31 learnings.md
+
+$ FM_HOME=<scratch-home> bin/fm-startup-memory-budget.sh report
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=7500
+file=data/captain.md bytes=81 estimated_tokens=27 status=present
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/learnings.md bytes=69 estimated_tokens=23 status=present
+total_estimated_tokens=50
+budget_status=within-budget
+exit=0

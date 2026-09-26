@@ -1,0 +1,55 @@
+$ FM_HOME=<scratch-home> bin/fm-context-cost.sh   (excerpt: startup memory + conditional notes)
+19:        81  data/captain.md
+20:    ABSENT  data/captain-shared.md
+21:        69  data/learnings.md
+22-  --------
+23-       150  private notes and fleet records
+24-
+25-== Always loaded: session digest fleet state, every session ==
+26-Neither an upper nor a lower bound: the digest prints a bounded projection of
+27-the backlog and a bounded tail of each status log, so those two rows over-state,
+28-while it prints every meta record in full plus per-task framing counted nowhere
+29-here.
+--
+59:            trigger: when the captain invokes /afk, says they are going afk, `state/.afk-contract` or `state/.afk` exists,...
+60-      6093  ahoy
+61:            trigger: when the captain explicitly invokes /ahoy, with a Bearings fallback when /ahoy is the session's first...
+62-      4485  ask-user-authority
+63-            trigger: Use before deciding any ask-user finding. This skill is the single owner of finding-decision policy: ...
+64-     65252  bearings
+65:            trigger: Use when the captain invokes /bearings or asks for a bearings report, morning brief, status report, c...
+66-     14737  bootstrap-diagnostics
+67-            trigger: Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diag...
+68:      9340  captain-hold-lifecycle
+69-            trigger: Load before treating an investigation, scout report, structured review, or Lavish review as complete,...
+70-       804  decision-hold-lifecycle
+71-            trigger: (not detected)
+72-      3850  diagnostic-reasoning
+73-            trigger: Use before scoping a reported bug and before acting on a diagnostic report. Owns end-user-aligned rep...
+74-     83423  firstmate-calm
+75-            trigger: (not detected)
+76-      8721  firstmate-codexapp
+--
+91:            trigger: when the captain invokes /quiet or asks for quiet mode, quiet-while-present, or fewer routine wake tu...
+92-     12403  quota-array-dispatch
+93-            trigger: Load when a dispatch rule or default resolves to more than one profile candidate.
+94-     33584  secondmate-provisioning
+95-            trigger: Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited ...
+96-     37642  stow
+97:            trigger: Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), before a session reset...
+98-     12487  stuck-crewmate-recovery
+99-            trigger: Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata h...
+100-      9936  updatefirstmate
+101:            trigger: Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the...
+102-  --------
+103-    542418  every agent skill, if a single session loaded all of them
+104-
+105:== Conditional: per-project private notes ==
+106-Loaded only when working the project they name.
+107:    123089  data/learnings-oracle.md
+108:    132088  data/captain-oracle.md
+109-  --------
+110:    255177  conditional project notes
+111-
+112-Public skills/ is installer-facing and is not loaded by a firstmate session, so
+113-it carries no session cost and is not measured here.

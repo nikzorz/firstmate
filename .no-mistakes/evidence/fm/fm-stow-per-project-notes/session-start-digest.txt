@@ -1,0 +1,38 @@
+# FM_HOME=<scratch-home> bin/fm-session-start.sh  (scratch home holds data/captain-oracle.md and data/learnings-oracle.md with PROJECT-*-MARKER bullets)
+# grep for markers in full digest:
+per-project marker hits: 0
+home-wide marker hits: 2
+
+# context-digest excerpt:
+data/projects.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/secondmates.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain.md
+--------------------------------------------------------------------------------
+# Captain preferences
+
+- [pinned] HOMEWIDE-CAPTAIN-MARKER prefers short replies.
+
+data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+ABSENT
+
+data/learnings.md
+--------------------------------------------------------------------------------
+# Learnings
+
+- [aging] HOMEWIDE-LEARNING-MARKER gh-axi needs --repo.
+
+================================================================================
+NEXT STEP
+================================================================================
+Follow the supervision operating instructions block above for harness 'unknown'.
+This script never starts supervision itself.
+
+The digest above is complete for this session start. The READ-ONCE CONTRACT
+section near the top of it governs what may still be read from disk.

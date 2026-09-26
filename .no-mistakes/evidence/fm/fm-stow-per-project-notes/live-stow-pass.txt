@@ -1,0 +1,57 @@
+# Live /stow pass (claude -p) in scratch firstmate copy at target commit
+## Prompt
+Context from earlier in this session (it exists only in conversation, nothing below has been written to disk yet):
+
+1. While reviewing an oracle PR, the captain said: "For oracle only, keep every PR under 200 changed lines; split anything bigger." This applies only to the oracle project, not to other projects.
+2. While running an oracle crewmate, you confirmed that oracle integration tests still hang unless ORACLE_FIXTURE_DB=1 is set (you hit it again today, 2026-09-26).
+3. You also learned a fleet-wide fact: fm-send.sh must be given the full task id, not a prefix, on every project.
+
+There are no open tasks, no backlog items, and no secondmates in this home. Today is 2026-09-26.
+
+/stow
+
+## Agent receipt
+**Applied**, captain: the stow pass is done and the session is safe to reset. Nothing this session knew is lost. That's all "safe to reset" means here: I didn't check any existing record against reality.
+
+**Startup memory budget**
+- Budget is 7,500 estimated tokens. The total was 83 before the pass and 83 after, well within budget.
+- `data/captain.md`: unchanged.
+- `data/captain-shared.md`: unchanged. It doesn't exist, so there are no shared preferences.
+- `data/learnings.md`: unchanged. The gh-axi `--repo` entry is 6 days old, so it isn't due for re-checking, and nothing this session confirmed it.
+
+**Findings filed**
+1. **Oracle PR size limit:** saved to a new `data/captain-oracle.md` as a permanent (pinned) oracle-only preference: keep every PR under 200 changed lines and split anything bigger. It doesn't go in the home-wide file because it doesn't apply to other projects, and it doesn't count against the startup budget.
+2. **Oracle integration tests hang without `ORACLE_FIXTURE_DB=1`:** this was already in `data/learnings-oracle.md`. I hit it again today, so I marked the entry as reconfirmed on 2026-09-26.
+3. **`fm-send.sh` needs the full task id:** not added to memory. The script's own header already says the target must be an exact task id and that it refuses guesses. A second copy in memory would just go stale.
+
+**Archived**
+- "oracle's lint step needs node 20, not 22" moved from `data/learnings-oracle.md` to the new `data/memory-archive.md`. It hadn't been confirmed in 87 days and nothing this session checked it. You can recover it with grep if it turns out to still matter.
+
+**Open work and other homes**
+- No open work records needed filing or correcting, because the session held no tasks or backlog items.
+- There are no second mates, so the pass didn't reach any other home. Nothing is unresolved.
+
+Separately, the Gmail, Google Calendar and Google Drive connectors need authorizing in your claude.ai connector settings before I can use them.
+
+## data/ diffs (before -> after)
+== captain-oracle.md
+(new file)
+# Captain preferences: oracle
+<!-- memory tiers: see the stow skill -->
+
+- Keep every oracle PR under 200 changed lines; split anything bigger. Applies to oracle only.
+== captain.md
+== learnings-oracle.md
+4,5c4
+< - oracle's lint step needs node 20, not 22. <!--a:2026-07-01-->
+< - oracle integration tests hang unless ORACLE_FIXTURE_DB=1 is set. <!--a:2026-09-10-->
+---
+> - oracle integration tests hang unless ORACLE_FIXTURE_DB=1 is set. <!--a:2026-09-26-->
+== learnings.md
+== memory-archive.md
+(new file)
+# Memory archive
+
+## 2026-09-26 stow
+- (from learnings-oracle.md, tier: aging, reinforced: 2026-07-01) oracle's lint step needs node 20, not 22. [archived: unreinforced 87d]
+== projects.md
