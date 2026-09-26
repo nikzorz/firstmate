@@ -5,8 +5,9 @@
 # a busy-queued Enter can keep proven pending text visible. A stub cannot prove
 # either signal. This guard launches real Claude Code in an isolated Herdr lab
 # and requires fm_backend_herdr_send_text_submit to report empty for a landed
-# idle steer. It fails naming the harness and version rather than degrading
-# quietly.
+# idle steer, and requires the steering doorbell to recover from a fragment a
+# stalled render leaves in the composer. It fails naming the harness and
+# version rather than degrading quietly.
 #
 # Run explicitly with FM_HERDR_SUBMIT_CONFIRM_LIVE=1 after a Herdr or Claude
 # upgrade, and before trusting a refreshed docs/verification/runtime-backends.md
@@ -165,5 +166,78 @@ done
 [ "$landed" = 1 ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: operational submit reported '$verdict' but the expected reply never rendered"
 pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER submits a U+2063 away-supervisor payload whose read-back drops the mark"
+
+# A doorbell rung while the worker's render is stalled, as on a saturated
+# host, fails its payload proof against a screen that has not caught up, and
+# the Ctrl+U clear then reads that stale screen as empty. Once the agent runs
+# again it applies the whole line and then one Ctrl+U, which leaves a doorbell
+# prefix in the composer. Stopping only the agent process reproduces the stall;
+# the agent is exec'd so no job-control shell takes the pane over while it is
+# stopped. The next ring must clear that prefix and deliver the full line.
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-task-inbox-lib.sh"
+STALL_CWD="$TMP_ROOT/stall-cwd"
+STALL_STATE="$TMP_ROOT/stall-state"
+mkdir -p "$STALL_CWD" "$STALL_STATE"
+STALL_WS=$(lab workspace create --cwd "$STALL_CWD" --label fm-stalllive --no-focus) \
+  || fail "could not create the isolated doorbell-stall workspace"
+STALL_PANE=$(printf '%s' "$STALL_WS" | jq -er '.result.root_pane.pane_id') \
+  || fail "workspace create did not return a doorbell-stall pane id"
+STALL_TARGET="$SESSION:$STALL_PANE"
+lab pane run "$STALL_PANE" "exec env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}'" >/dev/null \
+  || fail "could not launch Claude Code ($VERSION) in the doorbell-stall pane"
+idle=0
+i=0
+while [ "$i" -lt 45 ]; do
+  st=$(lab agent get "$STALL_PANE" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+  case "$st" in
+    idle|done) idle=1; break ;;
+    blocked)
+      case "$(lab pane read "$STALL_PANE" --source visible 2>/dev/null || true)" in
+        *'Yes, I trust this folder'*) lab pane send-keys "$STALL_PANE" down enter >/dev/null \
+          || fail "could not accept Claude's folder-trust prompt in the doorbell-stall pane" ;;
+      esac
+      ;;
+  esac
+  i=$((i + 1))
+  sleep 1
+done
+[ "$idle" = 1 ] || fail "Claude Code ($VERSION) on $HERDR_VER never registered an idle agent in the doorbell-stall pane"
+sleep 5
+[ "$(fm_backend_composer_state herdr "$STALL_TARGET")" = empty ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: the doorbell-stall composer is not empty before the ring"
+STALL_PID=
+for p in $(pgrep -x claude); do
+  [ "$(readlink "/proc/$p/cwd" 2>/dev/null)" = "$STALL_CWD" ] && STALL_PID=$p
+done
+[ -n "$STALL_PID" ] || fail "could not find the doorbell-stall Claude process to stall"
+STALL_FILE="$STALL_CWD/stall-acted"
+stall_rec=$(fm_task_inbox_write "$STALL_STATE" stall "Create the empty file $STALL_FILE, then reply done.") \
+  || fail "could not write the doorbell-stall inbox record"
+stall_line=$(fm_task_inbox_doorbell_line "$stall_rec")
+kill -STOP "$STALL_PID"
+ring_rc=0
+fm_task_inbox_ring herdr "$STALL_TARGET" "$stall_rec" || ring_rc=$?
+kill -CONT "$STALL_PID"
+sleep 3
+[ "$(fm_task_inbox_composer_doorbell herdr "$STALL_TARGET" "$stall_line")" = fragment ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: a doorbell rung into a stalled render (ring rc $ring_rc) no longer leaves a doorbell fragment; re-verify the stall reproduction"
+ring_rc=0
+fm_task_inbox_ring herdr "$STALL_TARGET" "$stall_rec" || ring_rc=$?
+[ "$ring_rc" = 0 ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: the ring skipped a composer holding only its own doorbell fragment (rc $ring_rc)"
+acked=0
+i=0
+while [ "$i" -lt 90 ]; do
+  if [ -f "$STALL_FILE" ] && [ -f "${stall_rec%/*}/handled/${stall_rec##*/}" ]; then
+    acked=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+[ "$acked" = 1 ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: the re-rung doorbell never led the worker to act on and acknowledge its instruction"
+pass "live Herdr doorbell stall: Claude Code ($VERSION) on $HERDR_VER recovers a doorbell fragment left by a stalled render, and the worker acts and acknowledges"
 
 [ "$CHECKED" -gt 0 ] || fail "FM_HERDR_SUBMIT_CONFIRM_LIVE=1 checked no harness"
