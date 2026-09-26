@@ -1215,11 +1215,14 @@ ok - live Herdr submit confirm: Claude Code (2.1.236 (Claude Code)) on herdr 0.8
 
 Measured 2026-09-26 against Herdr 0.8.2 and Claude Code 2.1.281: typing `/exit` opens Claude's command popup under the composer, and with many installed skills the popup alone filled the 20-row tail the pre-Enter payload proof read, so the proof found no composer and every `/exit` was refused before Enter.
 The proof now reads the full fetch for a `/`-prefixed payload.
-Herdr's `agent_status=done` (a turn that finished while the pane was unfocused) over a live Claude process classifies `alive`, so it was never the refusal's cause.
+Herdr's `agent_status=done` (a turn that finished while the pane was unfocused) over a live Claude process classifies `alive`; the guard parks Claude in a `--no-focus` tab, waits for `done`, and asserts `alive` before sending `/exit`.
+The operator's original `endpoint reads 'unreadable'` refusal was not reproduced.
+Known limitation: `fm_backend_herdr_agent_state` still reads `unreadable`, and `fm-control.sh <id> exit` still refuses before typing, when `pane get` returns an error other than `pane_not_found`, when `agent get` fails or reports a status outside `working|idle|done|blocked`, or when `pane process-info` or `ps` cannot be read while the server runs.
 
 ```text
-ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-1559330-2458
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-3784027-19855
 ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 parked under agent_status=done reads alive
 ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 accepts /exit past its command popup and stops
 ```
 

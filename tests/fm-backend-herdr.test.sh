@@ -482,7 +482,7 @@ test_recovery_grade_read_widens_only_at_its_own_boundary() {
 # the shell pid it names is a real process this test owns, so the descendant
 # walk runs against the real operating-system process table.
 
-stale_registration_case() {  # <dir-suffix> <agent_status> <process-info-body|-> [process-info-exit]
+stale_registration_case() {  # <dir-suffix> <agent_status> <process-info-body|-> [process-info-exit] [agent]
   local dir="$TMP_ROOT/stale-reg-$1" resp log fb n
   mkdir -p "$dir/responses"; resp="$dir/responses"; log="$dir/log"; : > "$log"
   # The probe below classifies the same pane three times (pane state, the
@@ -493,7 +493,7 @@ stale_registration_case() {  # <dir-suffix> <agent_status> <process-info-body|->
     # +1: pane get -> the pane structurally exists
     printf '{"result":{"pane":{"pane_id":"w1:p2"}}}\n' > "$resp/$((n + 1)).out"
     # +2: agent get -> a registered agent with the given status
-    printf '{"result":{"agent":{"agent":"pi","agent_status":"%s"}}}\n' "$2" > "$resp/$((n + 2)).out"
+    printf '{"result":{"agent":{"agent":"%s","agent_status":"%s"}}}\n' "${5:-pi}" "$2" > "$resp/$((n + 2)).out"
     # +3: pane process-info -> the pane's actual process view
     [ "$3" = - ] || printf '%s\n' "$3" > "$resp/$((n + 3)).out"
     [ -z "${4:-}" ] || printf '%s\n' "$4" > "$resp/$((n + 3)).exit"
@@ -564,7 +564,7 @@ test_done_claude_registration_over_a_live_claude_stays_alive() {
   # unfocused, the parked-worker shape. It is a registered status like idle:
   # with Claude in the foreground the pane is live, so lifecycle control may act.
   out=$(stale_registration_case done-claude 'done' \
-    '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":4242,"foreground_process_group_id":4243,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude","--dangerously-skip-permissions"],"cmdline":"claude --dangerously-skip-permissions"}]}}}')
+    '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":4242,"foreground_process_group_id":4243,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude","--dangerously-skip-permissions"],"cmdline":"claude --dangerously-skip-permissions"}]}}}' '' claude)
   [ "$out" = "live alive refused" ] \
     || fail "a done Claude registration over a live Claude foreground must read live/alive, got '$out'"
   pass "herdr agent state: a done Claude registration over a live Claude process reads alive"
