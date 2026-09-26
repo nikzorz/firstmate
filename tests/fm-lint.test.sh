@@ -185,7 +185,7 @@ test_canonical_partitions_preserve_full_lint() {
   mkdir -p "$fakebin"
   all=$(CI=true "$LINT" --list-files | LC_ALL=C sort)
   : > "$tmp/union"
-  for part in 1of2 2of2; do
+  for part in 1of4 2of4 3of4 4of4; do
     selected=$(CI=false GITHUB_ACTIONS=false "$LINT" --partition "$part" --list-files) \
       || fail "partition $part must select full canonical roots even on a local branch"
     [ -n "$selected" ] || fail "empty lint partition $part"
@@ -206,7 +206,21 @@ test_canonical_partitions_preserve_full_lint() {
     [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
   done
   [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
-  for option in 0of2 3of2 1of3; do
+  : > "$tmp/union"
+  for part in 1of2 2of2; do
+    "$LINT" --partition "$part" --list-files >> "$tmp/union" \
+      || fail "two-way partition $part was refused"
+  done
+  [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "two-way lint partitions lose or duplicate canonical roots"
+  env -u FM_LINT_JOBS PATH="$fakebin:$PATH" "$LINT" --partition 1of4 --telemetry "$tmp/serial.tsv" > "$tmp/serial.out" 2>&1 \
+    || fail "telemetry partition failed: $(cat "$tmp/serial.out")"
+  grep -qx "jobs$(printf '\t')1" "$tmp/serial.tsv" \
+    || fail "a partition must default to one ShellCheck worker at a time"
+  PATH="$fakebin:$PATH" "$LINT" --partition 1of4 --jobs 2 --telemetry "$tmp/parallel.tsv" > "$tmp/parallel.out" 2>&1 \
+    || fail "partition with explicit jobs failed: $(cat "$tmp/parallel.out")"
+  grep -qx "jobs$(printf '\t')2" "$tmp/parallel.tsv" \
+    || fail "an explicit --jobs must still override the partition default"
+  for option in 0of4 5of4 1of1 1of10 2of1 xof4; do
     rc=0
     "$LINT" --partition "$option" --list-files > "$tmp/refused" 2>&1 || rc=$?
     [ "$rc" = 2 ] || fail "invalid partition $option was not refused"
@@ -217,7 +231,7 @@ test_canonical_partitions_preserve_full_lint() {
   rc=0
   "$LINT" --partition 1of2 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted an explicit subset"
-  pass "two canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
+  pass "canonical lint partitions preserve complete source-aware coverage, run one worker by default, and reject weakened modes"
 }
 
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
