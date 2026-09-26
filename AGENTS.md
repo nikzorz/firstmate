@@ -96,8 +96,10 @@ config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source 
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
+  captain-<project>.md  project-local captain preferences split out of captain.md; LOCAL, gitignored, same contract, not printed at session start; read when taking that project's work (section 6)
   captain-shared.md  main-authoritative shared captain preferences propagated read-only to secondmate homes; LOCAL, gitignored, owned by secondmate-provisioning
   learnings.md       fleet-local operational facts and gotchas; LOCAL, gitignored; dated, evidence-backed, curated, and updated with inspect-then-update - rewrite and prune rather than append forever, the same contract as captain.md; created lazily, absent until this home has a learning to store
+  learnings-<project>.md  project-local learnings split out of learnings.md; LOCAL, gitignored, same contract, not printed at session start; read when taking that project's work (section 6)
   projects.md        thin fleet navigation registry recording each project's standing delivery posture and optional ship-branch prefix; firstmate-private, parsed by fm-project-mode.sh (section 6)
   secondmates.md      local and remote secondmate routing table; firstmate-private, maintained by the secondmate seed helpers (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
@@ -286,6 +288,7 @@ Route durable knowledge to its most specific owner:
 - Home-domain captain preferences and working style belong in `data/captain.md` after inspect-then-update.
 - Captain preferences shared across secondmate domains belong in the primary home's `data/captain-shared.md` under the `secondmate-provisioning` contract.
 - Fleet-local operational facts belong in curated, home-local `data/learnings.md`.
+- Project-local learnings and captain preferences belong in `data/learnings-<project>.md` and `data/captain-<project>.md`, which are not printed at session start and must be read when taking that project's work.
 - Task-scoped notes belong with the backlog item, and investigation findings belong in the scout report.
 - Knowledge useful to almost every contributor to one project belongs in that project's committed project-memory file.
 - Knowledge general to every firstmate user belongs in this repo's shared tracked surface.
