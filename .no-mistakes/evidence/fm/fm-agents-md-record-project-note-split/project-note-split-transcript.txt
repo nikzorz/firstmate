@@ -1,0 +1,88 @@
+== throwaway home: /tmp/fm-note-split.ecplMQ/home
+captain-oracle.md
+captain.md
+learnings-oracle.md
+learnings.md
+
+== 1. fm-session-start.sh digest (real script, throwaway home)
+exit=0
+--- CONTEXT section of the digest:
+CONTEXT
+================================================================================
+
+data/projects.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/secondmates.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain.md
+--------------------------------------------------------------------------------
+# captain
+MARKER-BASE-CAPTAIN always-loaded preference
+
+data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+ABSENT
+
+data/learnings.md
+--------------------------------------------------------------------------------
+# learnings
+MARKER-BASE-LEARNINGS always-loaded fact
+
+================================================================================
+NEXT STEP
+--- marker presence anywhere in digest:
+MARKER-BASE-LEARNINGS: PRINTED
+MARKER-BASE-CAPTAIN: PRINTED
+MARKER-PROJECT-LEARNINGS: not printed
+MARKER-PROJECT-CAPTAIN: not printed
+per-project filename mentions in digest: 0
+
+== 2. fm-context-cost.sh (session cost accounting)
+        55  data/captain.md
+    ABSENT  data/captain-shared.md
+        53  data/learnings.md
+            trigger: when the captain invokes /afk, says they are going afk, `state/.afk-contract` or `state/.afk` exists,...
+            trigger: when the captain explicitly invokes /ahoy, with a Bearings fallback when /ahoy is the session's first...
+            trigger: Use when the captain invokes /bearings or asks for a bearings report, morning brief, status report, c...
+      9340  captain-hold-lifecycle
+            trigger: when the captain invokes /quiet or asks for quiet mode, quiet-while-present, or fewer routine wake tu...
+            trigger: Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), before a session reset...
+            trigger: Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the...
+== Conditional: per-project private notes ==
+        65  data/learnings-oracle.md
+        67  data/captain-oracle.md
+
+== 3. fm-startup-memory-budget.sh report
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=12000
+file=data/captain.md bytes=55 estimated_tokens=19 status=present
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/learnings.md bytes=53 estimated_tokens=18 status=present
+total_estimated_tokens=37
+budget_status=within-budget
+
+== 4. AGENTS.md as delivered (CLAUDE.md imports @AGENTS.md): section 2 layout + section 6 routing
+18:## 1. Identity and prime directives
+51:## 2. Layout and state
+99:  captain-<project>.md  project-local captain preferences split out of captain.md; LOCAL, gitignored, same contract, not printed at session start; read when taking that project's work (section 6)
+102:  learnings-<project>.md  project-local learnings split out of learnings.md; LOCAL, gitignored, same contract, not printed at session start; read when taking that project's work (section 6)
+178:## 3. Session start (run once at every session start)
+228:## 4. Harness and runtime dispatch
+255:## 5. Recovery
+271:## 6. Project and knowledge management
+291:- Project-local learnings and captain preferences belong in `data/learnings-<project>.md` and `data/captain-<project>.md`, which are not printed at session start and must be read when taking that project's work.
+301:## 7. Task lifecycle
+440:## 8. Supervision protocol
+503:## 9. Escalation and captain etiquette
+557:## 10. Backlog contract
+577:## 11. Crewmate briefs
+594:## 12. Self-update
+601:## 13. Agent-only reference skills
+623:## 14. Relay
+638:## Captain instruction precedence
+647:## Maintaining this file
