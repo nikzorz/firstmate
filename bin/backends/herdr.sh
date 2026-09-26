@@ -3339,6 +3339,12 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   if [ "${identity%%$'\t'*}" = claude ]; then
     proof=1
     proof_lines=$(fm_backend_herdr_proof_lines "$text")
+    # A `/`-prefixed payload opens Claude's command popup under the composer,
+    # and with many installed skills the popup alone fills the proof's tail
+    # (verified live on Herdr 0.8.2), so every slash command, `/exit` included,
+    # was refused. Read the full fetch instead: the extractor selects the
+    # lowest composer, so older rows above it cannot stand in for it.
+    case "$text" in /*) proof_lines=200 ;; esac
     content=$(fm_backend_herdr_composer_content "$target" "$proof_lines") \
       || { printf 'send-failed'; return 0; }
     [ -z "${content//[$' \t\r\n\v\f']/}" ] || { printf 'send-failed'; return 0; }

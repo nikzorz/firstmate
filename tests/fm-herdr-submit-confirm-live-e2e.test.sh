@@ -5,7 +5,8 @@
 # a busy-queued Enter can keep proven pending text visible. A stub cannot prove
 # either signal. This guard launches real Claude Code in an isolated Herdr lab
 # and requires fm_backend_herdr_send_text_submit to report empty for a landed
-# idle steer. It fails naming the harness and version rather than degrading
+# idle steer and to deliver `/exit` past Claude's command popup until the
+# agent stops. It fails naming the harness and version rather than degrading
 # quietly.
 #
 # Run explicitly with FM_HERDR_SUBMIT_CONFIRM_LIVE=1 after a Herdr or Claude
@@ -165,5 +166,33 @@ done
 [ "$landed" = 1 ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: operational submit reported '$verdict' but the expected reply never rendered"
 pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER submits a U+2063 away-supervisor payload whose read-back drops the mark"
+
+# `/exit` opens Claude's command popup under the composer before Enter, which
+# with many installed skills is taller than the composer tail. The pre-Enter
+# proof must still find the payload, and the agent must actually stop.
+i=0
+while [ "$i" -lt 45 ]; do
+  st=$(lab agent get "$PANE" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+  case "$st" in idle|done) break ;; esac
+  i=$((i + 1))
+  sleep 1
+done
+verdict=$(fm_backend_herdr_send_text_submit "$TARGET" /exit 3 0.4 1.2) \
+  || fail "send_text_submit failed to run /exit against Claude Code ($VERSION) on $HERDR_VER"
+[ "$verdict" != send-failed ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: /exit was refused before Enter; the command popup hid the composer from the payload proof"
+stopped=0
+i=0
+while [ "$i" -lt 30 ]; do
+  if [ "$(fm_backend_herdr_agent_state "$TARGET")" = dead ]; then
+    stopped=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+[ "$stopped" = 1 ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: /exit reported '$verdict' but the agent never stopped"
+pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER accepts /exit past its command popup and stops"
 
 [ "$CHECKED" -gt 0 ] || fail "FM_HERDR_SUBMIT_CONFIRM_LIVE=1 checked no harness"

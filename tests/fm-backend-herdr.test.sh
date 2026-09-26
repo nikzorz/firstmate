@@ -558,6 +558,18 @@ test_registered_agent_with_a_non_shell_foreground_process_stays_alive() {
   pass "herdr stale registration: only a shell-only pane demotes a registration"
 }
 
+test_done_claude_registration_over_a_live_claude_stays_alive() {
+  local out
+  # Herdr reports `done` for a Claude pane whose turn finished while it was
+  # unfocused, the parked-worker shape. It is a registered status like idle:
+  # with Claude in the foreground the pane is live, so lifecycle control may act.
+  out=$(stale_registration_case done-claude 'done' \
+    '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":4242,"foreground_process_group_id":4243,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude","--dangerously-skip-permissions"],"cmdline":"claude --dangerously-skip-permissions"}]}}}')
+  [ "$out" = "live alive refused" ] \
+    || fail "a done Claude registration over a live Claude foreground must read live/alive, got '$out'"
+  pass "herdr agent state: a done Claude registration over a live Claude process reads alive"
+}
+
 # settle_registration_case: one pane classification over a scripted sequence
 # of `pane process-info` samples, so the settle window's resampling is
 # observable in the fake CLI's call log.
@@ -4712,6 +4724,56 @@ test_send_text_submit_long_literal_submits_when_composer_holds_every_byte() {
   pass "fm_backend_herdr_send_text_submit: a 1500-character payload a Claude composer still holds is submitted whole"
 }
 
+# herdr_claude_slash_popup_screen: Claude's composer holding <text> with its
+# command popup open below it, the shape captured live on Herdr 0.8.2. With
+# many installed skills the popup alone is taller than a 20-row tail.
+herdr_claude_slash_popup_screen() {  # <text>
+  local rule i
+  rule=$(printf '\xe2\x94\x80%.0s' $(seq 1 60))
+  printf '\xe2\x9d\xaf Reply with exactly PONG and nothing else.\n\n\xe2\x97\x8f PONG\n\n'
+  printf '%s\n\xe2\x9d\xaf\xc2\xa0%s\n%s\n' "$rule" "$1" "$rule"
+  printf '  /exit                                Exit the CLI\n'
+  for i in $(seq 1 11); do
+    printf '  /skill-%s                             Use this skill whenever the user wants to\n' "$i"
+    printf '                                       do something with a kind of file %s\n' "$i"
+  done
+}
+
+test_send_text_submit_proves_a_slash_command_above_its_popup() {
+  local dir log resp fb out enter_count
+  dir="$TMP_ROOT/submit-slash-popup"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/2.out"
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/4.out"
+  herdr_submit_claude_prefix "$resp" "/exit"
+  herdr_claude_slash_popup_screen "/exit" > "$resp/4.out"
+  [ "$(wc -l < "$resp/4.out")" -gt 20 ] \
+    || fail "the slash popup fixture must be taller than the default composer capture"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 /exit 3 0.01 0.01' "$ROOT" )
+  [ "$out" = empty ] || fail "a Claude composer holding /exit above its command popup should confirm delivery, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "a proven slash command should be submitted once, sent $enter_count Enter(s)"
+  [ "$(herdr_ctrl_u_count "$log")" -eq 0 ] || fail "a proven slash command must not be cleared"
+  pass "fm_backend_herdr_send_text_submit: a Claude slash command is proven above a popup taller than the composer tail"
+}
+
+test_send_text_submit_refuses_a_slash_command_with_no_composer_in_view() {
+  local dir log resp fb out enter_count
+  dir="$TMP_ROOT/submit-slash-popup-only"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  herdr_submit_claude_prefix "$resp" "/exit"
+  # Only the popup and the composer's lower border are readable.
+  herdr_claude_slash_popup_screen "/exit" | tail -n 24 > "$resp/4.out"
+  printf '  \xe2\x9d\xaf\n' > "$resp/6.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 /exit 3 0.01 0.01' "$ROOT" )
+  [ "$out" = send-failed ] || fail "a slash command whose composer cannot be read should report send-failed, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 0 ] || fail "an unproven slash command must not be submitted, sent $enter_count Enter(s)"
+  pass "fm_backend_herdr_send_text_submit: a slash command with no readable composer is still refused"
+}
+
 test_send_text_submit_refuses_enter_when_composer_holds_only_the_suffix() {
   local dir log resp fb out enter_count text suffix
   dir="$TMP_ROOT/submit-long-suffix"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5598,6 +5660,7 @@ test_agent_state_bypasses_a_stale_client_shadowing_a_compatible_one
 test_recovery_grade_read_widens_only_at_its_own_boundary
 test_stale_registration_over_a_shell_only_pane_is_agent_free
 test_stale_registration_ignores_status_and_reads_the_process
+test_done_claude_registration_over_a_live_claude_stays_alive
 test_registered_agent_with_a_live_foreground_process_stays_alive
 test_registered_agent_with_a_non_shell_foreground_process_stays_alive
 test_transient_prompt_helper_settles_into_stale_agent
@@ -5772,6 +5835,8 @@ test_send_text_submit_slow_transition_within_one_enter_needs_no_extra_enter
 test_send_text_submit_send_failed
 test_send_text_submit_unknown_on_capture_failure
 test_send_text_submit_unknown_on_composer_capture_failure
+test_send_text_submit_proves_a_slash_command_above_its_popup
+test_send_text_submit_refuses_a_slash_command_with_no_composer_in_view
 test_send_text_submit_long_literal_submits_when_composer_holds_every_byte
 test_send_text_submit_refuses_enter_when_composer_holds_only_the_suffix
 test_send_text_submit_refused_suffix_that_will_not_clear_is_unknown

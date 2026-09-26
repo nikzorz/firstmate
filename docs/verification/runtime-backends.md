@@ -1213,6 +1213,16 @@ Observed 2026-08-19:
 ok - live Herdr submit confirm: Claude Code (2.1.236 (Claude Code)) on herdr 0.8.0 reports empty for a landed idle steer
 ```
 
+Measured 2026-09-26 against Herdr 0.8.2 and Claude Code 2.1.281: typing `/exit` opens Claude's command popup under the composer, and with many installed skills the popup alone filled the 20-row tail the pre-Enter payload proof read, so the proof found no composer and every `/exit` was refused before Enter.
+The proof now reads the full fetch for a `/`-prefixed payload.
+Herdr's `agent_status=done` (a turn that finished while the pane was unfocused) over a live Claude process classifies `alive`, so it was never the refusal's cause.
+
+```text
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-1559330-2458
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr submit confirm: Claude Code (2.1.281 (Claude Code)) on herdr 0.8.2 accepts /exit past its command popup and stops
+```
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:
