@@ -1282,7 +1282,9 @@ backlog_record_reconcile() {
   fi
   # Keep the wake/lock library's source-time state-directory creation inside
   # this mutating sweep, so FM_BOOTSTRAP_DETECT_ONLY remains read-only.
-  # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
+  # ShellCheck already follows this library at its other source site in this
+  # file; a second follow only multiplies dataflow analysis memory.
+  # shellcheck source=/dev/null
   . "$SCRIPT_DIR/fm-wake-lib.sh"
 
   # Finish any close an interrupted cleanup recorded but never landed.
