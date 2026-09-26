@@ -249,6 +249,7 @@ Where the right correction is a judgment you cannot make, leave the record alone
 
 ## One-time migration of unmarked entries
 
+Each `data/learnings-<project>.md` follows the `data/learnings.md` migration and grace rules below, and each `data/captain-<project>.md` follows the default-pinned rule for `data/captain.md`.
 Legacy entries carry no markers; an unmarked entry is its file's default tier with unknown age, and unknown age is not guilt.
 The first pass after adoption performs a one-time revalidation sweep of editable memory files instead of blanket restamping, while a read-only shared file remains untouched and any required change is routed to its primary owner:
 
