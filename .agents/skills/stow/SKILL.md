@@ -89,6 +89,8 @@ Every `/stow` invocation performs this complete pass, even when the session cont
    In a secondmate home, `data/captain-shared.md` is a read-only primary-owned input: count it, never edit it, and curate only the editable local files.
    Every mutation in the rest of this pass, including reinforcement, retiering, decay archival, legacy migration, consolidation, budget archival, and offload, applies only to an editable memory file.
    When a read-only shared entry appears to require one of those changes, leave it untouched, report the required change as an ownership exception, and route it to the primary owner.
+   Also read each existing per-project notes file, `data/captain-<project>.md` and `data/learnings-<project>.md`, that this pass curates or routes a finding to.
+   They are not loaded at startup, so they never count toward the effective budget and never receive budget eviction; curate them by inspect-then-update with the same consolidation, tier defaults (captain files pinned, learnings files aging), and decay archival as their home-wide counterparts.
 3. Build one whole-file retention plan before editing, ordered by likelihood of informing a future session.
    Keep in always-loaded memory only current captain preferences, authority and safety boundaries, recurring working style, fleet-wide or frequently relevant operating facts, and concise pointers that are expensive to rediscover.
    Prefer offloading current but conditional, narrow, project-specific, or context-specific material to a live on-demand owner, and archive stale, superseded, or low-recurrence material to the cold tier.
@@ -218,6 +220,7 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
 3. **Write within the existing boundaries.**
    - Captain preferences and fleet-local operational facts belong in the destination selected by AGENTS.md after the required whole-file curation pass.
      Create `data/learnings.md` only for a genuinely new local learning with no stronger owner.
+   - A captain preference or operational learning that matters only for one project's work goes to that project's `data/captain-<project>.md` or `data/learnings-<project>.md`, created lazily, rather than to the startup-loaded home-wide file.
    - In a primary home, curate shared captain preferences only under the existing primary-authoritative shared-preference contract.
      In a secondmate home, route a newly discovered shared preference to the main firstmate through marked status or a document pointer instead of editing the inherited file.
    - Project-intrinsic knowledge never goes directly into a project's project-memory file.

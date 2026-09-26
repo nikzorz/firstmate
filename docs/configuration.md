@@ -297,11 +297,13 @@ Domain-local preferences for one captain's fleet live locally in each home's `da
 Before changing it, inspect the current file and curate the matching bullet in place under the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a new bullet only for a genuinely new durable preference.
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
 `secondmate-provisioning` owns its propagation contract, including the required header, read-only secondmate copies, quarantine diagnostics, and the rollout rule that existing homes trim `data/captain.md` by hand after first propagation rather than deleting private content automatically.
+Preferences that apply to only one project live in `data/captain-<project>.md` under the same contract; they are not printed at session start, are read when taking that project's work, and do not count toward the startup-memory budget.
 
 ## Operational learnings (data/learnings.md)
 
 Fleet-local operational facts and gotchas live locally in `data/learnings.md`; it is gitignored and printed after the captain-preference files in the session-start context digest.
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
+Learnings that apply to only one project live in `data/learnings-<project>.md` under the same contract; they are not printed at session start, are read when taking that project's work, and do not count toward the startup-memory budget.
 There is no shared learnings file by captain decision.
 
 ## Startup memory budget (config/startup-memory-budget)
