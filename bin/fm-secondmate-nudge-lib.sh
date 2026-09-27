@@ -4,6 +4,12 @@
 # Both local tracked-file convergence and remote inherited-material transfer
 # publish the same bounded record before delivery. A failed send leaves the
 # record for the locked bootstrap retry; a successful send removes it.
+# An unconfirmed remote send keeps its pending-reply expectation open (the text
+# may have landed), so a retry that transferred nothing new resends under that
+# expectation rather than minting another record and delivery-unknown escalation
+# per session; a send after a fresh transfer still opens its own expectation.
+
+_FM_SECONDMATE_NUDGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_SECONDMATE_NUDGE_LIB_DIR="."
 
 FM_SECOND_MATE_NUDGE_MESSAGE='firstmate was updated to the latest - please re-read your AGENTS.md to pick up the new instructions.'
 FM_REMOTE_SECOND_MATE_NUDGE_MESSAGE='Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files before further work.'
@@ -65,4 +71,19 @@ fm_secondmate_nudge_write() { # <state> <id> <home> <commit> <instructions> <mes
   } > "$tmp" || { rm -f -- "$tmp"; return 1; }
   chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$marker" || { rm -f -- "$tmp"; return 1; }
+}
+
+# Prints fm-send's combined output and returns its status.
+fm_secondmate_nudge_send() { # <repeat:0|1> <state> <task-id> <send-bin> <selector> <message>
+  local repeat=$1 state=$2 task_id=$3 send_bin=$4 selector=$5 message=$6 corr=''
+  if [ "$repeat" = 1 ]; then
+    # shellcheck source=/dev/null
+    corr=$(. "$_FM_SECONDMATE_NUDGE_LIB_DIR/fm-pending-reply-lib.sh" &&
+      fm_pending_reply_open_undelivered_corr "$state" "$task_id" "$message") || corr=''
+  fi
+  if [ -n "$corr" ]; then
+    FM_PENDING_REPLY_EXISTING_CORR=$corr "$send_bin" "$selector" "$message" 2>&1
+  else
+    "$send_bin" "$selector" "$message" 2>&1
+  fi
 }
