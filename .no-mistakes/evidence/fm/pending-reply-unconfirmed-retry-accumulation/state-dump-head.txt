@@ -1,0 +1,40 @@
+=== after 1 lost config-push nudge + 2 bootstrap retries (transport lost) ===
+retry marker: present
+record 34e7b74034f7fc83 phase=resolved created=1790468086 delivered=1790468101 summary=report the build result
+record 3efc4fe796ab5538 phase=resolved created=1790468180 delivered=1790468184 summary=Firstmate instructions or inherited config changed on this h
+record 7ae5a029b16117c7 phase=resolved created=1790468297 delivered=1790468303 summary=Firstmate instructions or inherited config changed on this h
+record 7ba86eca55a1622a phase=escalated created=1790468397 delivered= summary=Firstmate instructions or inherited config changed on this h
+record a47682b1a4e20d64 phase=resolved created=1790468080 delivered=1790468085 summary=Firstmate instructions or inherited config changed on this h
+record dfb1c513696e7ccc phase=resolved created=1790468136 delivered=1790468140 summary=Firstmate instructions or inherited config changed on this h
+record ef7b3d2bb987e1f8 phase=resolved created=1790468220 delivered=1790468226 summary=Firstmate instructions or inherited config changed on this h
+delivery-unknown status lines:
+blocked [key=pending-reply-7ba86eca55a1622a] [at=1790468399]: pending-reply-delivery-unknown: task=ios pending-reply-id=7ba86eca55a1622a request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+
+=== after a changed request and a fresh transfer (both lost) ===
+retry marker: present
+record 34e7b74034f7fc83 phase=resolved created=1790468086 delivered=1790468101 summary=report the build result
+record 3efc4fe796ab5538 phase=resolved created=1790468180 delivered=1790468184 summary=Firstmate instructions or inherited config changed on this h
+record 42210334e273864a phase=delivery_unknown created=1790468516 delivered= summary=Re-read AGENTS.md: a different reread request.
+record 4d27e7e27ed32b04 phase=delivery_unknown created=1790468534 delivered= summary=Firstmate instructions or inherited config changed on this h
+record 7ae5a029b16117c7 phase=resolved created=1790468297 delivered=1790468303 summary=Firstmate instructions or inherited config changed on this h
+record 7ba86eca55a1622a phase=escalated created=1790468397 delivered= summary=Firstmate instructions or inherited config changed on this h
+record a47682b1a4e20d64 phase=resolved created=1790468080 delivered=1790468085 summary=Firstmate instructions or inherited config changed on this h
+record dfb1c513696e7ccc phase=resolved created=1790468136 delivered=1790468140 summary=Firstmate instructions or inherited config changed on this h
+record ef7b3d2bb987e1f8 phase=resolved created=1790468220 delivered=1790468226 summary=Firstmate instructions or inherited config changed on this h
+delivery-unknown status lines:
+blocked [key=pending-reply-7ba86eca55a1622a] [at=1790468399]: pending-reply-delivery-unknown: task=ios pending-reply-id=7ba86eca55a1622a request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+
+=== after a bootstrap whose transport works (fresh_corr=4d27e7e27ed32b04) ===
+retry marker: absent
+record 34e7b74034f7fc83 phase=resolved created=1790468086 delivered=1790468101 summary=report the build result
+record 3efc4fe796ab5538 phase=resolved created=1790468180 delivered=1790468184 summary=Firstmate instructions or inherited config changed on this h
+record 42210334e273864a phase=delivery_unknown created=1790468516 delivered= summary=Re-read AGENTS.md: a different reread request.
+record 4d27e7e27ed32b04 phase=awaiting_report created=1790468534 delivered=1790468564 summary=Firstmate instructions or inherited config changed on this h
+record 7ae5a029b16117c7 phase=resolved created=1790468297 delivered=1790468303 summary=Firstmate instructions or inherited config changed on this h
+record 7ba86eca55a1622a phase=escalated created=1790468397 delivered= summary=Firstmate instructions or inherited config changed on this h
+record a47682b1a4e20d64 phase=resolved created=1790468080 delivered=1790468085 summary=Firstmate instructions or inherited config changed on this h
+record dfb1c513696e7ccc phase=resolved created=1790468136 delivered=1790468140 summary=Firstmate instructions or inherited config changed on this h
+record ef7b3d2bb987e1f8 phase=resolved created=1790468220 delivered=1790468226 summary=Firstmate instructions or inherited config changed on this h
+delivery-unknown status lines:
+blocked [key=pending-reply-7ba86eca55a1622a] [at=1790468399]: pending-reply-delivery-unknown: task=ios pending-reply-id=7ba86eca55a1622a request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+

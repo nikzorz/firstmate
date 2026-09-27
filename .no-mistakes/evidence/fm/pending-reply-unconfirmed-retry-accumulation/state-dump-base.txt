@@ -1,0 +1,16 @@
+=== after 1 lost config-push nudge + 2 bootstrap retries (transport lost) ===
+retry marker: present
+record 362e8b5145ae1ae9 phase=resolved created=1790468079 delivered=1790468085 summary=Firstmate instructions or inherited config changed on this h
+record 4dba70fce3d34c00 phase=escalated created=1790468398 delivered= summary=Firstmate instructions or inherited config changed on this h
+record 5831c0ded41208de phase=resolved created=1790468297 delivered=1790468304 summary=Firstmate instructions or inherited config changed on this h
+record 7624612719ae8867 phase=resolved created=1790468085 delivered=1790468100 summary=report the build result
+record 81ec4227c40d1223 phase=escalated created=1790468465 delivered= summary=Firstmate instructions or inherited config changed on this h
+record 95f67d6fdb197c80 phase=resolved created=1790468220 delivered=1790468226 summary=Firstmate instructions or inherited config changed on this h
+record bcc8ff7f0bb967e8 phase=escalated created=1790468513 delivered= summary=Firstmate instructions or inherited config changed on this h
+record d74954b7dc4a5180 phase=resolved created=1790468137 delivered=1790468140 summary=Firstmate instructions or inherited config changed on this h
+record e741d1707f64700d phase=resolved created=1790468181 delivered=1790468185 summary=Firstmate instructions or inherited config changed on this h
+delivery-unknown status lines:
+blocked [key=pending-reply-4dba70fce3d34c00] [at=1790468400]: pending-reply-delivery-unknown: task=ios pending-reply-id=4dba70fce3d34c00 request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+blocked [key=pending-reply-81ec4227c40d1223] [at=1790468468]: pending-reply-delivery-unknown: task=ios pending-reply-id=81ec4227c40d1223 request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+blocked [key=pending-reply-bcc8ff7f0bb967e8] [at=1790468515]: pending-reply-delivery-unknown: task=ios pending-reply-id=bcc8ff7f0bb967e8 request=Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files bef...
+
