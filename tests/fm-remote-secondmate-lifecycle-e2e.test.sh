@@ -1090,6 +1090,7 @@ delivered_ios_expectations() {
   done
   printf '%s\n' "$count"
 }
+# shellcheck disable=SC2016 # $1, $2 and $3 expand inside the isolated child shell.
 if FM_FAKE_SSH_MODE=send-lost remote_env /bin/bash -c \
   '. "$1"; fm_secondmate_nudge_send 1 "$2" ios "$3" fm-ios "Re-read AGENTS.md: a different reread request."' _ \
   "$ROOT/bin/fm-secondmate-nudge-lib.sh" "$PARENT/state" "$ROOT/bin/fm-send.sh" > "$TMP_ROOT/lost-changed.out" 2>&1; then
@@ -1101,7 +1102,11 @@ printf 'codex\n' > "$PARENT/config/crew-harness"
 if FM_FAKE_SSH_MODE=send-lost remote_env "$ROOT/bin/fm-config-push.sh" > "$TMP_ROOT/lost-fresh-push.out" 2>&1; then
   fail "config push claimed its lost fresh reread nudge was sent"
 fi
-fresh_corr=$(ls "$PARENT/state/pending-replies" | grep -vxF -f "$TMP_ROOT/before-fresh-push.list")
+fresh_corr=
+for rec in "$PARENT/state/pending-replies"/*; do
+  [ -f "$rec" ] || continue
+  grep -qxF "$(basename "$rec")" "$TMP_ROOT/before-fresh-push.list" || fresh_corr=$(basename "$rec")
+done
 [ "$(open_ios_expectations)" -eq 3 ] || fail "a fresh transfer after a lost nudge reused the open expectation of the earlier send"
 remote_env "$ROOT/bin/fm-bootstrap.sh" > "$TMP_ROOT/lost-reread-recovered.out" 2>&1 \
   || fail "bootstrap failed to deliver the recovered reread nudge"
