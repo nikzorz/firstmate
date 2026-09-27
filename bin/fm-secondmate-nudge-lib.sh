@@ -4,9 +4,10 @@
 # Both local tracked-file convergence and remote inherited-material transfer
 # publish the same bounded record before delivery. A failed send leaves the
 # record for the locked bootstrap retry; a successful send removes it.
-# An unconfirmed send keeps its pending-reply expectation open (the text may
-# have landed), so every repeat of the same send reuses that expectation rather
-# than minting another one and another delivery-unknown escalation per retry.
+# An unconfirmed remote send keeps its pending-reply expectation open (the text
+# may have landed), so a retry that transferred nothing new resends under that
+# expectation rather than minting another record and delivery-unknown escalation
+# per session; a send after a fresh transfer still opens its own expectation.
 
 _FM_SECONDMATE_NUDGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_SECONDMATE_NUDGE_LIB_DIR="."
 
