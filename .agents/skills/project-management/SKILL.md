@@ -61,9 +61,6 @@ A forge composes with `no-mistakes`, `direct-PR`, and `no-mistakes-prod-only`, a
 `yolo` is inactive on a `forge=gerrit` project, so never propose `+yolo` alongside it.
 `bin/fm-project-mode.sh`'s header owns the binding and `bin/fm-dod-lib.sh` owns what it changes for a worker.
 
-The optional `+keep-claude-md` flag records that the project keeps `CLAUDE.md` as its real project-memory file and gets no `AGENTS.md`.
-Register it only on the captain's decision for that project, then resolve it per task at intake with `bin/fm-project-mode.sh --project-memory` and pass it to `bin/fm-brief.sh --project-memory`, which generates the prohibition in place of the default instruction; a ship spawn refuses a brief that disagrees with the registry.
-
 ## Add or clone an existing project
 
 Confirm the source URL, local project name, delivery posture, and autonomy posture, stating the resolved default for each rather than asking the captain to invent one.

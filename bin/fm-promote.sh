@@ -17,7 +17,9 @@
 # is not relabeled as the ship spec. Promotion refuses leftover `{TASK}` /
 # `{FIRSTMATE_SPEC}` placeholders and a `## Captain's intent` line opening with
 # a Captain label or address (bin/fm-dod-lib.sh). A pre-subsection scout
-# brief contributes only Task lines explicitly marked as captain words to intent.
+# brief contributes only Task lines explicitly marked as captain words to intent,
+# read outside fenced blocks and indented examples so a quoted `Captain:` sample
+# never passes the provenance gate as the ask (bin/fm-dod-lib.sh).
 # A scout records no delivery posture, so promotion is where this task's delivery
 # contract is decided: --mode, --yolo, and the ship branch resolved from
 # --branch-prefix are written into the meta alongside the kind= flip. Firstmate resolves all three at promotion time, having just
@@ -260,6 +262,10 @@ This task is now kind=ship with mode=$MODE$PROMOTE_FORGE_WORDS.
 This section supersedes every earlier brief instruction about delivery mode.
 These current ship instructions supersede the scout delivery rules and report-based Definition of done.
 Any earlier "Never push" or scout-only delivery language in this file is superseded.
+This replaces the scout rule limiting outside-worktree writes to the report and status file.
+Keep project edits inside this worktree; keep proof and scratch output outside it, under \`$DATA/$ID/\` or a temporary directory.
+Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
+Leave the worktree clean before reporting done.
 The mode-specific Definition of done below is the current delivery contract.
 
 # Current ship safety rule
