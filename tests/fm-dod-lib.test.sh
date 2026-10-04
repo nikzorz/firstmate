@@ -303,6 +303,92 @@ test_non_done_lines_are_not_gated() {
   pass "non-done lines are not gated"
 }
 
+# A gate store fixture under <home>/.no-mistakes/repos: held.git keeps one head
+# under a recover ref and one head no ref reaches, empty.git keeps neither.
+# Echoes "<anchored sha> <unreferenced sha>".
+make_gate_stores() {  # <home>
+  local src="$1/src" stores="$1/.no-mistakes/repos" anchored unreferenced
+  git init -q "$src"
+  git -C "$src" commit -q --allow-empty -m base
+  git -C "$src" commit -q --allow-empty -m anchored
+  anchored=$(git -C "$src" rev-parse HEAD)
+  git -C "$src" commit -q --allow-empty -m unreferenced
+  unreferenced=$(git -C "$src" rev-parse HEAD)
+  mkdir -p "$stores"
+  git init -q --bare "$stores/held.git"
+  git init -q --bare "$stores/empty.git"
+  git -C "$stores/held.git" fetch -q "$src" \
+    "$anchored:refs/no-mistakes/recover/RUN1" "$unreferenced:refs/scratch/unreferenced"
+  git -C "$stores/held.git" update-ref -d refs/scratch/unreferenced
+  printf '%s %s\n' "$anchored" "$unreferenced"
+}
+
+# The missing-head search the worker contract renders, with <run head> filled in.
+rendered_store_search() {  # <run head>
+  local line
+  line=$(fm_nm_driving_block github | grep -F 'Before you conclude anything, run `')
+  line=${line#*run \`}
+  line=${line%%\`*}
+  printf '%s\n' "${line//<run head>/$1}"
+}
+
+# A head can survive in a gate store with no ref reaching it, so the rendered
+# search must report that store, not only stores whose refs contain the head.
+test_store_search_finds_unreferenced_head() {
+  local home heads anchored unreferenced search out
+  home="$TMP_ROOT/search-home"
+  mkdir -p "$home"
+  heads=$(make_gate_stores "$home") || fail "gate store fixture could not be built"
+  anchored=${heads% *}
+  unreferenced=${heads#* }
+  search=$(rendered_store_search "$unreferenced")
+  [ -n "$search" ] || fail "the worker contract no longer renders a store search"
+  out=$(HOME="$home" bash -c "$search")
+  [ "$out" = "$home/.no-mistakes/repos/held.git holds it" ] \
+    || fail "store search must name the store holding an unreferenced head, got: $out"
+  search=$(rendered_store_search "$anchored")
+  out=$(HOME="$home" bash -c "$search")
+  case "$out" in
+    *"held.git holds it"*"held.git refs/no-mistakes/recover/RUN1"*) ;;
+    *) fail "store search must name the store and the recover ref holding an anchored head, got: $out" ;;
+  esac
+  case "$out" in
+    *empty.git*) fail "store search named a store that does not hold the head: $out" ;;
+  esac
+  pass "missing-head store search finds an unreferenced head as well as an anchored one"
+}
+
+# The contract tells the worker to fetch by ref name or full sha and warns that
+# an abbreviated sha fails; both halves must hold against a real gate store.
+test_store_fetch_wording_matches_git() {
+  local home heads anchored unreferenced block wt
+  home="$TMP_ROOT/fetch-home"
+  mkdir -p "$home"
+  heads=$(make_gate_stores "$home") || fail "gate store fixture could not be built"
+  anchored=${heads% *}
+  unreferenced=${heads#* }
+  block="$TMP_ROOT/nm-driving-block.txt"
+  fm_nm_driving_block github > "$block"
+  assert_no_grep "refuses a bare-SHA fetch" "$block" \
+    "the worker contract still claims the store refuses a sha fetch"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'fetch by that ref name, such as the recover ref `refs/no-mistakes/recover/<run id>`, or by the full 40-character sha; an abbreviated sha is read as a ref name and always fails.' "$block" \
+    "the worker contract must say to fetch by ref name or full sha, never an abbreviated sha"
+  assert_grep "fetch from a store that holds the head with no ref by the full 40-character sha." "$block" \
+    "the worker contract must say how to fetch a head no ref reaches"
+  wt="$TMP_ROOT/fetch-wt"
+  git init -q "$wt"
+  git -C "$wt" fetch -q "$home/.no-mistakes/repos/held.git" refs/no-mistakes/recover/RUN1 \
+    || fail "fetching the recover ref by name failed"
+  git -C "$wt" fetch -q "$home/.no-mistakes/repos/held.git" "$unreferenced" \
+    || fail "fetching a head no ref reaches by its full sha failed"
+  git -C "$wt" cat-file -e "$unreferenced^{commit}" || fail "the full-sha fetch did not bring the head"
+  if git -C "$TMP_ROOT/fetch-wt" fetch -q "$home/.no-mistakes/repos/held.git" "${anchored:0:7}" 2>/dev/null; then
+    fail "an abbreviated sha fetch succeeded, so the contract's warning is wrong"
+  fi
+  pass "the contract's store fetch advice holds: ref name and full sha work, an abbreviated sha fails"
+}
+
 test_scout_done_is_not_gated
 test_unpushed_ship_done_is_refused
 test_no_mistakes_prevalidation_done_is_not_gated
@@ -319,5 +405,7 @@ test_local_only_linked_branch_is_accepted
 test_local_only_detached_head_is_refused
 test_standalone_local_only_needs_project_ref
 test_non_done_lines_are_not_gated
+test_store_search_finds_unreferenced_head
+test_store_fetch_wording_matches_git
 
 echo "all fm-dod-lib tests passed"
