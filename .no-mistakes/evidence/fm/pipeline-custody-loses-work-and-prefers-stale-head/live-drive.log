@@ -1,0 +1,41 @@
+## 1. scaffold a real no-mistakes brief with bin/fm-brief.sh
+fm-brief rc=0
+--- brief lines carrying the recovery playbook:
+136:1. Read the run head from `no-mistakes axi status`: `branch_sync.pipeline.current_head`, or `head_sha` only when that is empty. Find the gate worktree whose HEAD is that run head in `git -C "$(git remote get-url no-mistakes)" worktree list` and run `git fetch <that worktree path> HEAD:refs/heads/archive/<your branch>`. Only when a ref in `git ls-remote no-mistakes` points at the run head may you fetch from the store instead: fetch by that ref name, such as the recover ref `refs/no-mistakes/recover/<run id>`, or by the full 40-character sha; an abbreviated sha is read as a ref name and always fails.
+140:Before you conclude anything, run `for r in ~/.no-mistakes/repos/*.git; do git -C "$r" cat-file -e <run head>^{commit} 2>/dev/null && echo "$r holds it"; git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head> 2>/dev/null; done`, fetch a ref match by its ref name from that store, and fetch from a store that holds the head with no ref by the full 40-character sha.
+--- stale wording present? 0
+
+## 2. disposable gate stores under a fake HOME
+anchored=e6e31e33e6e43d48dab24a29ec075f7554ce308a unreferenced=1c25c8b4c05bc5fa7df13b45cf0163dfa5ab54a7 absent=6ab995641d5bcaec64e7c83b2640f2f0250dde8a
+held.git refs:
+e6e31e33e6e43d48dab24a29ec075f7554ce308a commit	refs/no-mistakes/recover/RUN1
+
+## 3. the search exactly as the brief renders it:
+for r in ~/.no-mistakes/repos/*.git; do git -C "$r" cat-file -e <run head>^{commit} 2>/dev/null && echo "$r holds it"; git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head> 2>/dev/null; done
+--- run head = anchored (e6e31e33e6e43d48dab24a29ec075f7554ce308a)
+/tmp/fm-nm-live.n5238W/home/.no-mistakes/repos/held.git holds it
+/tmp/fm-nm-live.n5238W/home/.no-mistakes/repos/held.git refs/no-mistakes/recover/RUN1
+(rc=0, end of output)
+--- run head = unref (1c25c8b4c05bc5fa7df13b45cf0163dfa5ab54a7)
+/tmp/fm-nm-live.n5238W/home/.no-mistakes/repos/held.git holds it
+(rc=0, end of output)
+--- run head = absent (6ab995641d5bcaec64e7c83b2640f2f0250dde8a)
+(rc=129, end of output)
+--- old search (for-each-ref --contains only) on the unreferenced head:
+(end of output: old search prints nothing, head looks lost)
+
+## 4. fetch advice against the store
+ * [new ref]         refs/no-mistakes/recover/RUN1 -> archive/by-ref
+by recover ref name: rc=0 -> e6e31e33e6e43d48dab24a29ec075f7554ce308a
+ * [new ref]         1c25c8b4c05bc5fa7df13b45cf0163dfa5ab54a7 -> archive/by-sha
+by full 40-char sha (no ref reaches it): rc=0 -> 1c25c8b4c05bc5fa7df13b45cf0163dfa5ab54a7
+fatal: couldn't find remote ref e6e31e3
+by abbreviated sha e6e31e3: rc=128
+fatal: couldn't find remote ref 1c25c8b4c05b
+by 12-char abbreviated sha: rc=128
+
+## 5. SKILL.md checks: pre-upgrade bundle and equal-tree rewrite
+/tmp/fm-nm-live.n5238W/home/data/nm-update-20260101/some-proj.bundle:
+6ab995641d5bcaec64e7c83b2640f2f0250dde8a refs/no-mistakes/recover/RUN9
+absent head in any store? 0 lines; bundle holds it: 1
+equal-tree rewrite: unref^{tree}=f7018c8e7ce6ba9900b1f4f8e6712b76e4671d35 absent^{tree}=f7018c8e7ce6ba9900b1f4f8e6712b76e4671d35 descends=no
