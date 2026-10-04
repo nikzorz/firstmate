@@ -1,0 +1,7 @@
+## Skill guidance: pre-upgrade bundle check and equal-tree rewrite
+$ git bundle list-heads data/nm-update-*/*.bundle
+dcf384b7482e1ab3b50f641102bcc53b32d0b6c4 refs/no-mistakes/recover/RUN1
+recorded run head: dcf384b7482e1ab3b50f641102bcc53b32d0b6c4
+gate rewrite b34e819f1b5aceda0ec6c49f878179a1ea357e90 descends from head? no
+head^{tree}=02573c73b30e30f3a6e02d69f95677b44b442333  rewrite^{tree}=02573c73b30e30f3a6e02d69f95677b44b442333
+equal ^{tree}: content preserved

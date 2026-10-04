@@ -1,0 +1,33 @@
+## 1. Scaffold a real no-mistakes brief in a throwaway FM_HOME
+fm-brief.sh rc=0
+--- rendered recovery lines:
+121:1. Read the run head from `no-mistakes axi status`: `branch_sync.pipeline.current_head`, or `head_sha` only when that is empty. Find the gate worktree whose HEAD is that run head in `git -C "$(git remote get-url no-mistakes)" worktree list` and run `git fetch <that worktree path> HEAD:refs/heads/archive/<your branch>`. Only when a ref in `git ls-remote no-mistakes` points at the run head may you fetch from the store instead: fetch by that ref name, such as the recover ref `refs/no-mistakes/recover/<run id>`, or by the full 40-character sha; an abbreviated sha is read as a ref name and always fails.
+125:Before you conclude anything, run `for r in ~/.no-mistakes/repos/*.git; do git -C "$r" cat-file -e <run head>^{commit} 2>/dev/null && echo "$r holds it"; git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head> 2>/dev/null; done`, fetch a ref match by its ref name from that store, and fetch from a store that holds the head with no ref by the full 40-character sha.
+--- stale wording present? 0
+
+## 2. Build disposable gate stores under a throwaway HOME
+anchored=90a5279a5c022c6eeef5c7883bd28078b434186c (under refs/no-mistakes/recover/RUN1)
+unreferenced=2628a8fcae5a5c7c9e674ee9406a17b650be6db8 (no ref)
+refs in held.git:
+90a5279a5c022c6eeef5c7883bd28078b434186c commit	refs/no-mistakes/recover/RUN1
+
+## 3. Execute the brief's store-search loop verbatim for run head 2628a8fcae5a5c7c9e674ee9406a17b650be6db8
+$ for r in ~/.no-mistakes/repos/*.git; do git -C "$r" cat-file -e 2628a8fcae5a5c7c9e674ee9406a17b650be6db8^{commit} 2>/dev/null && echo "$r holds it"; git -C "$r" for-each-ref --format="$r %(refname)" --contains 2628a8fcae5a5c7c9e674ee9406a17b650be6db8 2>/dev/null; done
+/tmp/tmp.Hm0r0AebvF/home/.no-mistakes/repos/held.git holds it
+
+## 3. Execute the brief's store-search loop verbatim for run head 90a5279a5c022c6eeef5c7883bd28078b434186c
+$ for r in ~/.no-mistakes/repos/*.git; do git -C "$r" cat-file -e 90a5279a5c022c6eeef5c7883bd28078b434186c^{commit} 2>/dev/null && echo "$r holds it"; git -C "$r" for-each-ref --format="$r %(refname)" --contains 90a5279a5c022c6eeef5c7883bd28078b434186c 2>/dev/null; done
+/tmp/tmp.Hm0r0AebvF/home/.no-mistakes/repos/held.git holds it
+/tmp/tmp.Hm0r0AebvF/home/.no-mistakes/repos/held.git refs/no-mistakes/recover/RUN1
+
+## 3b. Adversarial: a head no store holds
+output: '' (empty => blocked: report)
+
+## 4. Follow the brief's fetch advice from a fresh worker clone
+$ git fetch held.git refs/no-mistakes/recover/RUN1
+ok FETCH_HEAD=90a5279a5c022c6eeef5c7883bd28078b434186c
+$ git fetch held.git <full 40-char unreferenced sha>
+ok archive/b=2628a8fcae5a5c7c9e674ee9406a17b650be6db8
+$ git fetch held.git 90a5279  (abbreviated sha, brief says always fails)
+fatal: couldn't find remote ref 90a5279
+rc=128
