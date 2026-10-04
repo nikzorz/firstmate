@@ -1659,6 +1659,9 @@ keep_awake_home() {  # [enabled-value] -> prints the home path
   local home
   home=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake.XXXXXX")
   mkdir -p "$home/state" "$home/config"
+  # These units arm the away daemon, which a Claude home runs only once it
+  # opts out of the supervision host.
+  : > "$home/config/supervision-host-off"
   printf '%s' "${1-}" > "$home/config/keep-awake"
   date '+%s' > "$home/state/.afk"
   printf '%s\n' "$home" >> "$TRACK_KEEP_AWAKE_FILE"
@@ -1730,6 +1733,8 @@ unit_keep_awake_absent_is_inert() {
   base=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake-base.XXXXXX")
   live=$(mktemp -d "${TMPDIR:-/tmp}/fm-keep-awake-live.XXXXXX")
   keep_awake_cycle() {  # <home> <stub>
+    mkdir -p "$1/config"
+    : > "$1/config/supervision-host-off"
     FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" FM_CONFIG_OVERRIDE="$1/config" \
       "$LAUNCH" enter --words 'keep-awake fixture' >/dev/null 2>&1 \
       || printf 'enter failed\n'
