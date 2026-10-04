@@ -6,9 +6,11 @@
 # either signal. This guard launches real Claude Code in an isolated Herdr lab
 # and requires fm_backend_herdr_send_text_submit to report empty for a landed
 # idle steer, to recover the steering doorbell from a fragment a stalled render
-# leaves in the composer, to read a Claude parked under agent_status=done as
-# alive, and to deliver `/exit` past Claude's command popup until the agent
-# stops. It fails naming the harness and version rather than degrading quietly.
+# leaves in the composer, and to read a Claude parked under agent_status=done as
+# alive. It then requires the same submit path to prove and submit a typed /exit
+# slash command behind the command popup Claude renders below the composer and
+# verifies the agent actually exited. It fails naming the harness and version
+# rather than degrading quietly.
 #
 # Run explicitly with FM_HERDR_SUBMIT_CONFIRM_LIVE=1 after a Herdr or Claude
 # upgrade, and before trusting a refreshed docs/verification/runtime-backends.md
@@ -85,28 +87,36 @@ VERSION=$(PATH="$ORIGINAL_PATH" claude --version 2>/dev/null | head -1 || printf
 HERDR_VER=$(PATH="$ORIGINAL_PATH" herdr --version 2>/dev/null | head -1 || printf 'herdr-unknown')
 
 launch_claude() {  # <pane>
-  local pane=$1 st i=0
+  local pane=$1 st screen trusted=0 i=0
   lab pane run "$pane" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}'" >/dev/null \
     || fail "could not launch Claude Code ($VERSION) in the isolated Herdr pane $pane"
-  while [ "$i" -lt 45 ]; do
-    st=$(lab agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
-    case "$st" in
-      idle|done) return 0 ;;
-      blocked)
+  while [ "$i" -lt 60 ]; do
+    screen=$(lab pane read "$pane" --source visible 2>/dev/null || true)
+    case "$screen" in
+      *'bypass permissions on'*)
+        # The composer footer means Claude is past any folder-trust prompt. Herdr
+        # can report the agent idle while that prompt is still up, so the wait
+        # keys off the rendered composer rather than the native status alone.
+        st=$(lab agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+        case "$st" in idle|done) return 0 ;; esac
+        ;;
+      *'Yes, I trust this folder'*)
         # A fresh checkout path stops on Claude's folder-trust prompt, which the
-        # pre-send proof would read as a non-empty composer. Accept it and keep
-        # waiting for a real idle composer. The prompt preselects "No, exit", so
-        # move to "Yes" before confirming; a bare Enter quits Claude.
-        case "$(lab pane read "$pane" --source visible 2>/dev/null || true)" in
-          *'Yes, I trust this folder'*) lab pane send-keys "$pane" down enter >/dev/null \
-            || fail "could not accept Claude's folder-trust prompt" ;;
-        esac
+        # pre-send proof would read as a non-empty composer. Accept it once and
+        # keep waiting for a real idle composer; the accepted dialog stays in the
+        # viewport. The prompt preselects "No, exit", so move to "Yes" before
+        # confirming; a bare Enter quits Claude.
+        if [ "$trusted" = 0 ]; then
+          trusted=1
+          lab pane send-keys "$pane" down enter >/dev/null \
+            || fail "could not accept Claude's folder-trust prompt"
+        fi
         ;;
     esac
     i=$((i + 1))
     sleep 1
   done
-  fail "Claude Code ($VERSION) on $HERDR_VER never registered an idle agent in the lab pane $pane"
+  fail "Claude Code ($VERSION) on $HERDR_VER never rendered an idle composer in the lab pane $pane"
 }
 
 launch_claude "$PANE"
@@ -248,21 +258,21 @@ pass "live Herdr doorbell stall: Claude Code ($VERSION) on $HERDR_VER recovers a
 # A parked worker is a Claude whose turn finished while its pane was unfocused,
 # which Herdr reports as done; a focused pane stays idle. Park one in a
 # background tab and require lifecycle control to read it alive.
-EXIT_TAB=$(lab tab create --workspace "$WS" --cwd "$ROOT" --label fm-submitlive-exit --no-focus) \
-  || fail "could not create the unfocused /exit tab"
-EXIT_PANE=$(printf '%s' "$EXIT_TAB" | jq -er '.result.root_pane.pane_id') \
+PARK_TAB=$(lab tab create --workspace "$WS" --cwd "$ROOT" --label fm-submitlive-park --no-focus) \
+  || fail "could not create the unfocused parked tab"
+PARK_PANE=$(printf '%s' "$PARK_TAB" | jq -er '.result.root_pane.pane_id') \
   || fail "tab create did not return a pane id"
-EXIT_TARGET="$SESSION:$EXIT_PANE"
-launch_claude "$EXIT_PANE"
+PARK_TARGET="$SESSION:$PARK_PANE"
+launch_claude "$PARK_PANE"
 DONE_TOKEN="FMHERDRDONE$$_$RANDOM"
-verdict=$(fm_backend_herdr_send_text_submit "$EXIT_TARGET" "Reply with exactly $DONE_TOKEN and nothing else." 3 0.4 0.4) \
+verdict=$(fm_backend_herdr_send_text_submit "$PARK_TARGET" "Reply with exactly $DONE_TOKEN and nothing else." 3 0.4 0.4) \
   || fail "send_text_submit failed to run in the unfocused tab against Claude Code ($VERSION) on $HERDR_VER"
 [ "$verdict" = empty ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: a steer to the unfocused tab must confirm empty, got '$verdict'"
 parked=0
 i=0
 while [ "$i" -lt 60 ]; do
-  st=$(lab agent get "$EXIT_PANE" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+  st=$(lab agent get "$PARK_PANE" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
   if [ "$st" = "done" ]; then
     parked=1
     break
@@ -272,30 +282,37 @@ while [ "$i" -lt 60 ]; do
 done
 [ "$parked" = 1 ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: an unfocused finished turn never reported agent_status=done (last '$st')"
-state=$(fm_backend_herdr_agent_state "$EXIT_TARGET")
+state=$(fm_backend_herdr_agent_state "$PARK_TARGET")
 [ "$state" = alive ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: a parked Claude under agent_status=done must read alive, got '$state'"
 pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER parked under agent_status=done reads alive"
 
-# `/exit` opens Claude's command popup under the composer before Enter, which
-# with many installed skills is taller than the composer tail. The pre-Enter
-# proof must still find the payload, and the agent must actually stop.
-verdict=$(fm_backend_herdr_send_text_submit "$EXIT_TARGET" /exit 3 0.4 1.2) \
-  || fail "send_text_submit failed to run /exit against Claude Code ($VERSION) on $HERDR_VER"
-[ "$verdict" != send-failed ] \
-  || fail "Claude Code ($VERSION) on $HERDR_VER: /exit was refused before Enter; the command popup hid the composer from the payload proof"
-stopped=0
+# The fm-control exit regression: a typed slash command (/exit) makes Claude
+# Code 2.1.283 render its command popup between the composer and the pane
+# bottom, which pushed the composer above the old bounded proof read - the
+# typed command was judged unsent, cleared, and never submitted. The viewport
+# capture must prove the typed /exit and submit it; Claude must actually
+# exit. This scenario runs last because it ends the lab's Claude process.
 i=0
-while [ "$i" -lt 30 ]; do
-  if [ "$(fm_backend_herdr_agent_state "$EXIT_TARGET")" = dead ]; then
-    stopped=1
-    break
-  fi
+while [ "$i" -lt 45 ]; do
+  st=$(lab agent get "$PANE" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+  case "$st" in idle|done) break ;; esac
   i=$((i + 1))
   sleep 1
 done
-[ "$stopped" = 1 ] \
-  || fail "Claude Code ($VERSION) on $HERDR_VER: /exit reported '$verdict' but the agent never stopped"
-pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER accepts /exit past its command popup and stops"
+verdict=$(fm_backend_herdr_send_text_submit "$TARGET" '/exit' 3 0.4 1.2) \
+  || fail "send_text_submit failed to run the /exit submission against Claude Code ($VERSION) on $HERDR_VER"
+[ "$verdict" != send-failed ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: a typed /exit behind its command popup was judged unsent and cleared instead of submitted"
+exited=0
+i=0
+while [ "$i" -lt 30 ]; do
+  if ! lab agent get "$PANE" >/dev/null 2>&1; then exited=1; break; fi
+  i=$((i + 1))
+  sleep 1
+done
+[ "$exited" = 1 ] \
+  || fail "Claude Code ($VERSION) on $HERDR_VER: the /exit submission reported '$verdict' but the agent never exited"
+pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER proves and submits a typed /exit behind its command popup"
 
 [ "$CHECKED" -gt 0 ] || fail "FM_HERDR_SUBMIT_CONFIRM_LIVE=1 checked no harness"

@@ -613,15 +613,45 @@ fm_backend_expected_label_of_selector() {  # <raw-target> <state-dir>
 # Each adapter is an independently linted canonical root. The /dev/null source
 # boundaries keep runtime dispatch from importing all five adapter ASTs into
 # every dispatcher consumer while preserving the runtime source operations.
+# Bash 3.2 can enter an EXIT trap with status 0 after `set -e` aborts on a
+# missing or unreadable dot-sourced file, and a newer Bash can print that
+# diagnostic and keep going. Both report a successful teardown. Prove the
+# adapter and the siblings it sources are readable regular files before `.`.
+fm_backend_source_readable() {  # <path>
+  [ -f "$1" ] && [ -r "$1" ]
+}
+
 fm_backend_source() {  # <name>
-  local name=$1 adapter
+  local name=$1 adapter rel sibling
   fm_backend_validate "$name" || return 1
   adapter="$FM_BACKEND_LIB_DIR/backends/$name.sh"
-  # Bash 3.2 can enter an EXIT trap with status 0 after `set -e` aborts on a
-  # missing or unreadable dot-sourced file. Refuse the adapter explicitly so
-  # callers retain the real failure status and never continue a destructive
-  # lifecycle operation after an unavailable backend prerequisite.
-  [ -f "$adapter" ] && [ -r "$adapter" ] || return 1
+  # The sibling list rides in the positional parameters: zsh does not
+  # word-split an unquoted expansion, so a space-separated string is one path.
+  case "$name" in
+    tmux)
+      set -- fm-tmux-lib.sh fm-composer-lib.sh fm-cursor-lib.sh fm-session-lock-lib.sh fm-agent-process-lib.sh fm-gemini-lib.sh
+      ;;
+    herdr)
+      set -- fm-composer-lib.sh fm-transition-lib.sh fm-agent-process-lib.sh fm-session-lock-lib.sh fm-gemini-lib.sh
+      ;;
+    zellij)
+      set -- fm-backend-hometag-lib.sh fm-composer-lib.sh
+      ;;
+    orca)
+      set -- fm-composer-lib.sh
+      ;;
+    cmux)
+      set -- fm-backend-hometag-lib.sh fm-composer-lib.sh
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  fm_backend_source_readable "$adapter" || return 1
+  for rel in "$@"; do
+    sibling="$FM_BACKEND_LIB_DIR/$rel"
+    fm_backend_source_readable "$sibling" || return 1
+  done
   case "$name" in
     tmux)
       if [ -z "${_FM_BACKEND_TMUX_SOURCED:-}" ]; then

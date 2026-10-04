@@ -9,9 +9,6 @@
 # With --forge it prints one word instead: the project's registered forge,
 # none|gerrit. The forge is asked for explicitly, so the default output stays
 # the same two words for every project, bound or not.
-# With --project-memory it prints one word instead: the project's registered
-# project-memory posture, agents-md|keep-claude-md, "agents-md" when the project
-# registers none, is unregistered, or the registry is absent.
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode,
@@ -23,9 +20,7 @@
 # run no-mistakes init), bin/fm-spawn.sh's advisory registry-deviation notice,
 # and --forge for bin/fm-spawn.sh's forge agreement and yolo refusal and for
 # bin/fm-promote.sh, which takes the forge binding from here because it is a
-# project fact rather than a task choice. --project-memory feeds the
-# project-memory value firstmate passes to bin/fm-brief.sh at intake and
-# bin/fm-spawn.sh's agreement check against it.
+# project fact rather than a task choice.
 #
 # Registry line format (data/projects.md):
 #   - <name> - <desc> (added <date>)                                 -> no-mistakes off fm/  (legacy default)
@@ -33,12 +28,12 @@
 #   - <name> [<mode> +yolo] - <desc> (added <date>)                  -> <mode> on fm/
 #   - <name> [<mode> +yolo branch=<prefix>] - <desc> (added <date>)  -> <mode> <yolo> <prefix>
 #   - <name> [<mode> forge=gerrit] - <desc> (added <date>)           -> <mode> off, --forge gerrit
-#   - <name> [<mode> +keep-claude-md] - <desc> (added <date>)        -> <mode> off, --project-memory keep-claude-md
-#   Bracket tokens are order-independent: +yolo, +keep-claude-md, branch=<prefix>,
-#   and forge=<value> are recognized by their own shape wherever they appear, and
-#   whichever token is left over is the mode. Any other "+" token is a flag this
-#   parser does not know: it warns to stderr naming the token and is ignored,
-#   never read as the mode, so a misspelled flag cannot also discard the mode.
+#   <name> may contain spaces; it ends at the literal " [" or " - " that follows it.
+#   Bracket tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
+#   are recognized by their own shape wherever they appear, and whichever token is
+#   left over is the mode. Any other "+" token is a flag this parser does not
+#   know: it warns to stderr naming the token and is ignored, never read as the
+#   mode, so a misspelled or retired flag cannot also discard the mode.
 #   <prefix> must not contain a space; an empty override ("branch=") resolves to
 #   "" for a bare "<task-id>" ship branch instead of the legacy "fm/<task-id>".
 #
@@ -73,17 +68,6 @@
 #   lands by fast-forwarding local main, which on a review-server project
 #   advances it with content the server has never seen
 #   (docs/gerrit-forge-integration.md section 3).
-# project memory (orthogonal) = which file a crewmate records durable project
-#   knowledge in:
-#   agents-md        default: AGENTS.md through bin/fm-ensure-agents-md.sh
-#   keep-claude-md   +keep-claude-md: the project keeps CLAUDE.md as its real
-#                    file and no AGENTS.md is created for it. Set it only on a
-#                    recorded captain decision for that project; the ship brief
-#                    turns it into a prohibition, because a brief that merely
-#                    omitted the default instruction would leave a worker free
-#                    to ship the opposite of that decision. An unknown mode
-#                    keeps this posture rather than resetting it, since the
-#                    default would promote the CLAUDE.md the captain chose to keep.
 #
 # A registered `forge=gerrit` project reports yolo=off with an explicit stderr
 # refusal, on the captain's decision of 2026-09-15: a Gerrit Code-Review+2 is a
@@ -93,8 +77,6 @@
 # --raw prints the registered mode annotation unmapped, so a caller that must
 # tell a conditional policy apart from a flat mode sees "no-mistakes-prod-only"
 # itself. Not combined with --branch-prefix, which has no conditional-policy leg.
-# Like --branch-prefix, --project-memory answers only its own posture and makes
-# no forge check, because the posture is orthogonal to the forge binding.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" (or
 # "fm/" under --branch-prefix) and warns to stderr, so a typo never silently
@@ -113,7 +95,7 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge|--project-memory] <project-name>
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
 set -eu
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -127,29 +109,25 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
-MEMORY_QUERY=0
 case "${1:-}" in
   --raw) RAW=1; shift ;;
   --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
   --forge) WANT_FORGE=1; shift ;;
-  --project-memory) MEMORY_QUERY=1; shift ;;
 esac
-NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge|--project-memory] <project-name>}
+NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>}
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
-  elif [ "$WANT_FORGE" -eq 1 ]; then echo none
-  elif [ "$MEMORY_QUERY" -eq 1 ]; then echo agents-md
-  else echo "no-mistakes off"; fi
+  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
   exit 0
 fi
 
 # awk emits one "near <token>" line per keyed token whose key is a near miss of
 # `forge`, one "flag <token>" line per unknown "+" token, then
-# "posture <mode> <yolo> <forge> <memory> <branch-prefix>" (branch-prefix is the
-# raw prefix, defaulting to "fm/"; forge is `none` or the whole `forge=<value>`
+# "posture <mode> <yolo> <branch-prefix> <forge>" (branch-prefix is the raw
+# prefix, defaulting to "fm/"; forge is `none` or the whole `forge=<value>`
 # token, so an empty value survives the split), or nothing if the project is
 # absent. Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
@@ -167,22 +145,30 @@ parsed=$(awk -v n="$NAME" '
     }
     return d[lx,ly];
   }
-  $1=="-" && $2==n {
-    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none"; memory="agents-md";
-    if ($3 ~ /^\[/) {
+  {
+    # Exact whole-name match on the raw line text (never a regex, so a name
+    # containing dots or brackets is compared literally): the line must start
+    # with "- " n, and the text right after the name must be empty, or start
+    # with " [" or " - ", so a name that is a leading prefix of a longer
+    # registered name does not match that longer row.
+    prefix = "- " n; plen = length(prefix);
+    if (substr($0, 1, plen) != prefix) next
+    after = substr($0, plen + 1);
+    if (after != "" && substr(after, 1, 2) != " [" && substr(after, 1, 3) != " - ") next
+    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none";
+    if (substr(after, 1, 2) == " [") {
       s="";
-      for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
+      nk = split(after, rest, " ");
+      for (i=1; i<=nk; i++) { s = s (s==""?"":" ") rest[i]; if (rest[i] ~ /\]$/) break }
       gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
       k = split(s, a, " ");
-      # Tokens are order-independent: +yolo, +keep-claude-md, branch=<prefix>,
-      # and forge=<value> are recognized by their own shape wherever they
-      # appear, other "+" flags and keyed tokens are ignored (with a warning for
-      # an unknown flag or a near-miss forge spelling), and the first token left
-      # over is the mode.
+      # Tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
+      # are recognized by their own shape wherever they appear, other "+" flags
+      # and keyed tokens are ignored (with a warning for an unknown flag or a
+      # near-miss forge spelling), and the first token left over is the mode.
       mode_set = 0
       for (j=1; j<=k; j++) {
         if (a[j]=="+yolo") { yolo="on"; continue }
-        if (a[j]=="+keep-claude-md") { memory="keep-claude-md"; continue }
         if (a[j] ~ /^\+/) { print "flag", a[j]; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
@@ -198,7 +184,7 @@ parsed=$(awk -v n="$NAME" '
     }
     # branch is printed LAST: an empty branch= override must survive as an
     # empty final field, which only holds when nothing follows it.
-    print "posture", mode, yolo, forge, memory, branch; exit
+    print "posture", mode, yolo, forge, branch; exit
   }
 ' "$REG")
 
@@ -206,9 +192,7 @@ if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
-  elif [ "$WANT_FORGE" -eq 1 ]; then echo none
-  elif [ "$MEMORY_QUERY" -eq 1 ]; then echo agents-md
-  else echo "no-mistakes off"; fi
+  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
   exit 0
 fi
 
@@ -222,8 +206,8 @@ while IFS=' ' read -r kind rest; do
 done <<EOF
 $parsed
 EOF
-while IFS=' ' read -r m y f p b; do
-  mode=$m; yolo=$y; rest_forge=$f; memory=$p; branch=$b
+while IFS=' ' read -r m y f b; do
+  mode=$m; yolo=$y; rest_forge=$f; branch=$b
 done <<EOF
 $posture
 EOF
@@ -233,10 +217,6 @@ case "$mode" in
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
-if [ "$MEMORY_QUERY" -eq 1 ]; then
-  echo "$memory"
-  exit 0
-fi
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   echo "$branch"
   exit 0
