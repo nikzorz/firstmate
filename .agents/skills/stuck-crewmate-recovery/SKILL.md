@@ -73,9 +73,13 @@ Only positive socket refusal or absence is a daemon-down finding; escalate that 
 A deliberate abort can leave a run's recorded head unreachable through the tool's supported recovery, so every worker's no-mistakes contract orders preserve first and abort second, and `fm_nm_driving_block` in `bin/fm-dod-lib.sh` owns those steps.
 An instruction you write that ends a run - a stand-down, a supersession, a restart - still names that order explicitly, preservation before the abort, because a worker acting on your words should not have to infer it.
 
-A report that the pipeline's preserved head is missing, such as `blocked_recover_preserved_head_missing`, is not evidence the work is gone: the head and its `refs/no-mistakes/recover/<run id>` ref have been found intact in the local gate store after exactly that report.
-Before authorizing any re-implementation, reset, or discard on such a report, search the stores yourself with the loop that same contract gives the worker, and steer the worker to fetch any match by its ref name.
-Only when no store holds the head is the loss real; report it to the captain with the recorded head and the search as evidence.
+A report that the pipeline's preserved head is missing, such as `blocked_recover_preserved_head_missing`, is not by itself evidence the work is gone.
+Before no-mistakes v1.65.2 that label covered any recovery the tool could not prove, so the head and its `refs/no-mistakes/recover/<run id>` ref could sit intact in the local gate store after exactly that report.
+Since v1.65.2 the label means the head object is truly absent from that store, and the tool then offers `no-mistakes axi sync --recover --keep-local`, which discards it.
+Before authorizing any re-implementation, reset, or `--keep-local` discard on such a report, search the stores yourself with the loop that same contract gives the worker and steer the worker to fetch any match the way that contract says.
+Also check this home's own pre-upgrade snapshot bundles with `git bundle list-heads` on each `data/nm-update-*/*.bundle`, because they can hold a recover ref the store no longer has.
+Wherever the head turns up, a rewrite on the gate branch whose tree equals it (equal `^{tree}`) counts as preserved content, even though that branch does not descend from the head.
+Only when no store, bundle, or equal-tree rewrite holds the head's content is the loss real; report it to the captain with the recorded head and the search as evidence.
 
 ## Live-endpoint escalation
 

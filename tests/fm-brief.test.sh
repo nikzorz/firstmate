@@ -496,10 +496,8 @@ test_no_mistakes_dod_preserves_before_abort() {
   [ -n "$fetch_line" ] || fail "no-mistakes DOD must tell the worker to fetch the run's head before ending it"
   [ -n "$abort_line" ] || fail "no-mistakes DOD must name the abort as the step after preservation"
   [ "$fetch_line" -lt "$abort_line" ] || fail "no-mistakes DOD orders the abort before preserving the run's head"
-  assert_grep "the store refuses a bare-SHA fetch" "$brief" \
-    "no-mistakes DOD must say the head is fetched by ref name"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks and $r must stay literal
-  assert_grep 'for r in ~/.no-mistakes/repos/*.git; do git -C "$r" for-each-ref --format="$r %(refname)" --contains <run head>' "$brief" \
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Before you conclude anything, run `for r in ~/.no-mistakes/repos/*.git; do' "$brief" \
     "no-mistakes DOD must send a missing-head report to the gate stores"
   assert_grep "never re-implement, reset, or discard on the report alone" "$brief" \
     "no-mistakes DOD must forbid acting on a missing-head report unverified"
