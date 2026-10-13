@@ -48,7 +48,7 @@ case "${1:-}" in
         *) shift ;;
       esac
     done
-    if [ -n "${FM_FAKE_TMUX_DEAD_TARGET:-}" ] && [ "$target" = "$FM_FAKE_TMUX_DEAD_TARGET" ]; then
+    if [ -n "${FM_FAKE_TMUX_DEAD_TARGET:-}" ] && [ "${target//=/}" = "$FM_FAKE_TMUX_DEAD_TARGET" ]; then
       exit 1
     fi
     exit 0 ;;

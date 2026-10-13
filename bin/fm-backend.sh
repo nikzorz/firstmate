@@ -934,6 +934,12 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   local backend=$1 target=$2 expected_label=${3:-} session pane
   case "$backend" in
     tmux)
+      # tmux resolves a bare session or window name by prefix and pattern, so
+      # a gone window would read alive through a live sibling whose name
+      # starts with it. The = marker pins each half to an exact match.
+      case "$target" in
+        ?*:?*) target="=${target%%:*}:=${target#*:}" ;;
+      esac
       # has-session, not a format read: display-message exits 0 for a target
       # that no longer resolves, falling back to another pane or printing an
       # empty line, so a gone window on a running server would read alive.

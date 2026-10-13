@@ -168,6 +168,20 @@ fi
 if fm_backend_target_exists tmux "no-such-session:$WINDOW"; then
   fail "fm_backend_target_exists read a window of a session that does not exist as existing"
 fi
+# tmux resolves a bare name by prefix, so the live window and session are
+# themselves the siblings a shorter gone name would otherwise borrow.
+if fm_backend_target_exists tmux "$SESSION:${WINDOW%?}"; then
+  fail "fm_backend_target_exists read a gone window as existing through a live window whose name starts with it"
+fi
+if fm_backend_target_exists tmux "${SESSION%?}:$WINDOW"; then
+  fail "fm_backend_target_exists read a gone session as existing through a live session whose name starts with it"
+fi
+pane_id=$(tmux list-panes -t "$TARGET" -F '#{pane_id}' | head -1)
+pane_index=$(tmux list-panes -t "$TARGET" -F '#{pane_index}' | head -1)
+fm_backend_target_exists tmux "$pane_id" \
+  || fail "fm_backend_target_exists should read the live window's pane id as existing"
+fm_backend_target_exists tmux "$TARGET.$pane_index" \
+  || fail "fm_backend_target_exists should read a live window.pane target as existing"
 tmux has-session -t "$SESSION" 2>/dev/null \
   || fail "the session should still be running after the gone-endpoint probes"
 pass "real tmux: fm_backend_target_exists reads a live window alive and a gone window or gone session dead while the server runs"

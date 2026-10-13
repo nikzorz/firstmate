@@ -318,7 +318,7 @@ case "\${1:-}" in
       [ "\$prev" = "-t" ] && target="\$a"
       prev="\$a"
     done
-    [ "\$target" = "$live" ] && exit 0
+    [ "\${target//=/}" = "$live" ] && exit 0
     exit 1
     ;;
 esac
