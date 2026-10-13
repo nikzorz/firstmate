@@ -91,6 +91,11 @@
 # name a live quarantined space and is retained for that sweep.
 # data/<id>/ is deliberately left in place: a successor spawn reads brief.md
 # from it.
+# The status log is the one state record that outlives the task: before any of
+# the task's state records is cleared, its lines are appended to
+# data/<id>/status.log, creating data/<id>/ when absent, so a relaunched id
+# accumulates one log across incarnations. A failed archive stops the cleanup
+# with every record retained, and a rerun never archives the same lines twice.
 # Worktree-slot ownership (teardown-slot-collision): a treehouse pool slot is
 # reused across tasks, so a stale, duplicated, or drifted worktree= record can
 # name a slot a DIFFERENT live task now holds. Cleanup kills every process under
@@ -1130,6 +1135,35 @@ remote_outbox_cleanup() {
   )
 }
 
+# Append state/<id>.status to data/<id>/status.log without removing the status
+# file. A rerun after an interrupted cleanup therefore finds the same bytes
+# already at the archive's tail, which is its proof that nothing is left to
+# append.
+archive_task_status_log() {  # <state_dir> <data_dir> <id>
+  local src="$1/$3.status" dir="$2/$3" dest size
+  dest="$dir/status.log"
+  [ -f "$src" ] && [ ! -L "$src" ] && [ -s "$src" ] || return 0
+  mkdir -p -- "$dir" || return 1
+  size=$(wc -c < "$src" | tr -d ' ') || return 1
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    if [ ! -f "$dest" ] || [ -L "$dest" ]; then
+      echo "error: $dest is not a regular file" >&2
+      return 1
+    fi
+    if tail -c "$size" -- "$dest" | cmp -s -- - "$src"; then
+      return 0
+    fi
+    if [ -s "$dest" ] && [ -n "$(tail -c 1 -- "$dest")" ]; then
+      printf '\n' >> "$dest" || return 1
+    fi
+  fi
+  cat -- "$src" >> "$dest" || return 1
+  tail -c "$size" -- "$dest" | cmp -s -- - "$src" || {
+    echo "error: $dest does not end with the lines of $src after the append" >&2
+    return 1
+  }
+}
+
 remote_secondmate_teardown() {
   local remote_host remote_root remote_home kind route_host route_root route_home out rc tmp
   remote_host=$(fm_meta_get "$META" remote_host)
@@ -1189,6 +1223,8 @@ remote_secondmate_teardown() {
     || { echo "error: remote pending-reply cleanup failed; preserving the local route for retry" >&2; return 1; }
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
+  archive_task_status_log "$STATE" "$DATA" "$ID" \
+    || { echo "error: $ID's status log could not be archived to $DATA/$ID/status.log; preserving the local route for retry" >&2; return 1; }
   tmp="$SECONDMATE_REG.tmp.$$"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
@@ -4473,6 +4509,10 @@ if [ "$KIND" = secondmate ]; then
     echo "error: $ID's home was given up but its entry in $SECONDMATE_REG could not be removed, so it is still listed there; run the same retirement again" >&2
     exit 1
   fi
+fi
+if ! archive_task_status_log "$STATE" "$DATA" "$ID"; then
+  echo "error: $ID's status log could not be archived to $DATA/$ID/status.log; retaining every task state record so a rerun can retry" >&2
+  exit 1
 fi
 remove_grok_turnend_auth "$STATE" "$ID" || exit 1
 remove_kimi_turnend_auth "$STATE" "$ID" || exit 1

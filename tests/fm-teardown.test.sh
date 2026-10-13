@@ -2288,6 +2288,144 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+# Run a forced teardown of a local-only task, the shortest path to the
+# record-clearing steps. Args: case_dir
+run_forced_teardown() {
+  local case_dir=$1 rc
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  return "$rc"
+}
+
+test_teardown_archives_the_status_log() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-archive)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'working [at=100]: setup complete' 'paused [at=200]: validation round' \
+    'done [at=300]: ready in branch' > "$case_dir/state/task-x1.status"
+  cp "$case_dir/state/task-x1.status" "$case_dir/expected"
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-archive: teardown should succeed"
+  [ -f "$case_dir/data/task-x1/status.log" ] \
+    || fail "status-log-archive: teardown created no data/task-x1/status.log"
+  cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" \
+    || fail "status-log-archive: the archive does not hold every status line in order"
+  assert_absent "$case_dir/state/task-x1.status" \
+    "status-log-archive: teardown left the status file in state"
+  pass "teardown archives the status log to a data directory it creates"
+}
+
+test_teardown_appends_a_relaunched_tasks_status_log() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-append)
+  write_meta "$case_dir" local-only ship
+  mkdir -p "$case_dir/data/task-x1"
+  printf '%s\n' 'working [at=100]: first launch' 'done [at=200]: first launch landed' \
+    > "$case_dir/data/task-x1/status.log"
+  printf '%s\n' 'working [at=300]: relaunched' 'done [at=400]: relaunch landed' \
+    > "$case_dir/state/task-x1.status"
+  cat "$case_dir/data/task-x1/status.log" "$case_dir/state/task-x1.status" > "$case_dir/expected"
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-append: teardown should succeed"
+  cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" \
+    || fail "status-log-append: the second cleanup did not append after the earlier lines"
+  pass "a second cleanup of a relaunched task appends to its archived status log"
+}
+
+test_teardown_keeps_an_unterminated_archive_line_whole() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-unterminated)
+  write_meta "$case_dir" local-only ship
+  mkdir -p "$case_dir/data/task-x1"
+  printf 'done [at=200]: first launch landed' > "$case_dir/data/task-x1/status.log"
+  printf '%s\n' 'working [at=300]: relaunched' > "$case_dir/state/task-x1.status"
+  printf '%s\n' 'done [at=200]: first launch landed' 'working [at=300]: relaunched' \
+    > "$case_dir/expected"
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-unterminated: teardown should succeed"
+  cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" \
+    || fail "status-log-unterminated: the appended lines ran into the archive's last line"
+  pass "appending to an archive with no final newline keeps each status line whole"
+}
+
+test_teardown_without_a_status_file_archives_nothing() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-absent)
+  write_meta "$case_dir" local-only ship
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-absent: teardown should succeed with no status file"
+  assert_absent "$case_dir/data/task-x1" \
+    "status-log-absent: teardown created a data directory with nothing to archive"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "status-log-absent: teardown remained incomplete"
+  pass "a task with no status file is torn down without an archive"
+}
+
+test_teardown_refuses_when_the_status_log_cannot_be_archived() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-refusal)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'working [at=100]: setup complete' 'done [at=200]: ready in branch' \
+    > "$case_dir/state/task-x1.status"
+  cp "$case_dir/state/task-x1.status" "$case_dir/expected"
+  : > "$case_dir/state/task-x1.turn-ended"
+  # A directory where the archive belongs is a destination no append can reach.
+  mkdir -p "$case_dir/data/task-x1/status.log"
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "status-log-refusal: teardown succeeded without archiving the status log"
+  assert_grep 'status log could not be archived' "$case_dir/stderr" \
+    "status-log-refusal: the refusal did not name the failed archive"
+  assert_grep 'is not a regular file' "$case_dir/stderr" \
+    "status-log-refusal: the refusal did not give its reason"
+  cmp -s "$case_dir/expected" "$case_dir/state/task-x1.status" \
+    || fail "status-log-refusal: the refusal lost the status file"
+  [ -f "$case_dir/state/task-x1.meta" ] && [ -f "$case_dir/state/task-x1.turn-ended" ] \
+    || fail "status-log-refusal: the refusal cleared task state records"
+
+  rmdir "$case_dir/data/task-x1/status.log"
+  rc=0
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-refusal: the retry should succeed once the destination is clear"
+  cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" \
+    || fail "status-log-refusal: the retry did not archive the retained status log"
+  pass "a failed status-log archive stops the cleanup with every state record retained"
+}
+
+test_teardown_rerun_does_not_archive_the_same_lines_twice() {
+  local case_dir rc=0
+  case_dir=$(make_case status-log-rerun)
+  write_meta "$case_dir" local-only ship
+  mkdir -p "$case_dir/data/task-x1"
+  printf '%s\n' 'working [at=300]: relaunched' 'done [at=400]: relaunch landed' \
+    > "$case_dir/state/task-x1.status"
+  # The state an interrupted cleanup leaves: archived, status file not yet retired.
+  { printf '%s\n' 'done [at=200]: first launch landed'; cat "$case_dir/state/task-x1.status"; } \
+    > "$case_dir/data/task-x1/status.log"
+  cp "$case_dir/data/task-x1/status.log" "$case_dir/expected"
+
+  run_forced_teardown "$case_dir" || rc=$?
+
+  expect_code 0 "$rc" "status-log-rerun: teardown should succeed"
+  cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" \
+    || fail "status-log-rerun: the rerun archived the same status lines twice"
+  assert_absent "$case_dir/state/task-x1.status" \
+    "status-log-rerun: the rerun left the status file in state"
+  pass "rerunning an interrupted cleanup archives its status lines once"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -6085,6 +6223,12 @@ test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses
 test_teardown_missing_busy_sidecar_completes
+test_teardown_archives_the_status_log
+test_teardown_appends_a_relaunched_tasks_status_log
+test_teardown_keeps_an_unterminated_archive_line_whole
+test_teardown_without_a_status_file_archives_nothing
+test_teardown_refuses_when_the_status_log_cannot_be_archived
+test_teardown_rerun_does_not_archive_the_same_lines_twice
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence
