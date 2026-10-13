@@ -2259,6 +2259,44 @@ EOF
   pass "manual backlog rendering bounds an over-long hold reason and keeps every held title line"
 }
 
+# A plain reason that opens with a quoted word is not a quoted string, and a
+# hand-edited bullet may be followed by a tab; both still get the bound.
+test_backlog_hold_reason_bound_covers_quote_led_and_tab_bulleted_manual_lines() {
+  local rec root home fakebin out filler tab
+  rec=$(new_world backlog-hold-reason-bound-manual-quote)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  write_long_body_backlog "$home/data/backlog.md"
+  filler=$(printf 'x%.0s' $(seq 1 295))TAIL-
+  tab=$(printf '\t')
+  {
+    printf -- '- [ ] quote-lead - Quote led work (repo: firstmate) (kind: ship) (hold: "quoted" lead then %s) (hold-kind: captain) (hold-until: 2026-11-01)\n' "$filler"
+    printf -- '-\t[ ] tab-bullet - Tab bulleted work (repo: firstmate) (kind: ship) (hold: %s) (hold-kind: captain)\n' "$filler"
+  } > "$home/data/backlog.md.queued"
+  awk -v add="$home/data/backlog.md.queued" '
+    /^## Done/ { while ((getline line < add) > 0) print line }
+    { print }
+  ' "$home/data/backlog.md" > "$home/data/backlog.md.new"
+  mv "$home/data/backlog.md.new" "$home/data/backlog.md"
+  rm -f "$home/data/backlog.md.queued"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "- [ ] quote-lead - Quote led work (repo: firstmate) (kind: ship) (hold: \"\\\"quoted\\\" lead then $(printf 'x%.0s' $(seq 1 181))\\n... (truncated, 319 chars total - use show quote-lead --full to see complete text)\") (hold-kind: captain) (hold-until: 2026-11-01)" \
+    "manual rendering did not bound an over-long plain hold reason that starts with a double quote"
+  assert_contains "$out" "-${tab}[ ] tab-bullet - Tab bulleted work (repo: firstmate) (kind: ship) (hold: \"$(printf 'x%.0s' $(seq 1 200))\\n... (truncated, 300 chars total - use show tab-bullet --full to see complete text)\") (hold-kind: captain)" \
+    "manual rendering did not bound an over-long hold reason on a tab-bulleted title line"
+  assert_not_contains "$out" "TAIL-" "the manual listing still printed the tail of a bounded hold reason"
+  assert_contains "$out" "(shown 1 in-flight, 4 held or blocked queued, 20 of 25 other queued title line(s); 1 done row(s) omitted)" \
+    "the hold-reason bound changed which title lines the manual listing kept"
+
+  pass "manual backlog rendering bounds a quote-led plain reason and a tab-bulleted title line"
+}
+
 test_backlog_compact_manual_backend_skips_indented_bodies() {
   local rec root home fakebin out
   rec=$(new_world backlog-compact-manual)
@@ -3209,6 +3247,7 @@ test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_backlog_queued_bound_discloses_its_remainder
 test_backlog_hold_reason_bound_keeps_the_row_and_names_the_full_read
 test_backlog_hold_reason_bound_applies_to_manual_title_lines
+test_backlog_hold_reason_bound_covers_quote_led_and_tab_bulleted_manual_lines
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet

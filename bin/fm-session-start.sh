@@ -462,14 +462,15 @@ bound_hold_reasons() {
     sub bound_field {
       my ($raw, $id) = @_;
       my $value = $raw =~ /^"/ ? eval { $json->decode($raw) } : $raw;
-      return $raw unless defined($value) && length($value) > $max;
+      $value = $raw unless defined $value;
+      return $raw unless length($value) > $max;
       return $json->encode(sprintf("%s\n... (truncated, %d chars total - use show %s --full to see complete text)",
         substr($value, 0, $max), length($value), $id));
     }
     my $column;
     while (my $line = <STDIN>) {
       if ($format eq "markdown") {
-        if ($line =~ /^[-*] (?:\[.\] )?(\S+) /) {
+        if ($line =~ /^[-*]\s+(?:\[.\]\s+)?(\S+)\s/) {
           my $id = $1;
           $line =~ s{(\(hold:\s*)("(?:[^"\\]|\\.)*"|[^()]*)(\))}
             {$1 . bound_field($2, $id) . $3}e;
