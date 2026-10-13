@@ -6310,6 +6310,36 @@ YML
   pass "a head just pushed to an older pull request gets the settle time"
 }
 
+# The step logs its first-checks wait once and then falls silent, so a pull
+# request parked for hours trips the inactivity budget too. The budget's own
+# detail names neither the cause nor the recovery.
+test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-parked zk)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zk '"3h5m ago: log: no CI checks reported yet, waiting for checks to register..."' 3h6m0s)"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t11160\tmain'
+  local out; out=$(run_crew_state "$d" zk)
+  assert_contains "$out" "state: stalled" "a pull request parked for hours with no checks is not a working run"
+  assert_contains "$out" "https://github.com/o/r/pull/368 has zero Actions checks" "the detail still names the missing checks past the quiet budget"
+  assert_contains "$out" "https://github.com/o/r/actions" "the detail still names the page to confirm past the quiet budget"
+  assert_contains "$out" "close and reopen the pull request" "the detail still names the recovery step past the quiet budget"
+  assert_not_contains "$out" "past its 2h0m budget" "the budget detail does not replace the cause"
+
+  # With the forge unread the quiet step is still a stalled one, on its own figures.
+  FM_FAKE_GH_FAILS=1
+  out=$(run_crew_state "$d" zk)
+  assert_contains "$out" "state: stalled" "an unread forge does not make a quiet step a working one"
+  assert_contains "$out" "ci step quiet 3h5m" "the budget detail stands when the forge gives no answer"
+  FM_FAKE_GH_FAILS=0
+  pass "zero checks outlasting the quiet budget still names the recovery"
+}
+
 test_queued_running_and_conflicting_pull_requests_are_never_flagged() {
   reset_fakes
   local d; d=$(zero_checks_case zero-ordinary zo)
@@ -6831,6 +6861,7 @@ test_the_ci_log_tail_is_bought_once_per_invocation
 test_empty_check_list_only_counts_while_a_rerun_is_awaited
 test_zero_checks_after_the_settle_time_reports_stalled_with_the_recovery
 test_zero_checks_inside_the_settle_time_stays_working
+test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery
 test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time
 test_queued_running_and_conflicting_pull_requests_are_never_flagged
 test_zero_checks_only_counts_where_a_workflow_starts_on_the_pull_request

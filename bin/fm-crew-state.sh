@@ -1708,6 +1708,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   # waiting out the captain on a merge is never called stalled however long that
   # wait runs. Only the full `axi status` path can answer it: the coarse runs
   # list publishes no per-step activity.
+  STALL_STEP=''
   if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ]; then
     STALLED=$(nm_stalled_step)
     if [ -n "$STALLED" ]; then
@@ -1725,15 +1726,21 @@ if [ "$HAVE_RUN" = 1 ]; then
   # asking the forge (forge_ci_wait_blocker). Ordered after the budget so a run
   # already stalled on its own figures keeps the cheaper, more direct detail and
   # costs no query, and after every checks-green route so a finished crew
-  # waiting out the captain on a merge is never probed.
-  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ] \
-     && [ "$CI_STEP_STATUS" = running ] && [ "$CI_LOG_STATE" != green ]; then
-    nm_ci_log_load
-    CI_WAIT_BLOCKER=$(forge_ci_wait_blocker)
-    if [ -n "$CI_WAIT_BLOCKER" ]; then
-      RUN_STATE=stalled
-      RUN_DETAIL="run stopped advancing: ci step waiting on a check re-run that cannot arrive, $CI_WAIT_BLOCKER"
-    else
+  # waiting out the captain on a merge is never probed. The one stalled run
+  # still asked is a ci step quiet past its budget: a step awaiting its first
+  # checks logs that once and falls silent, and the budget's detail names
+  # neither the cause nor the recovery.
+  if [ "$RUN_SOURCE" = full ] && [ "$CI_STEP_STATUS" = running ] \
+     && [ "$CI_LOG_STATE" != green ]; then
+    if [ "$RUN_STATE" = working ]; then
+      nm_ci_log_load
+      CI_WAIT_BLOCKER=$(forge_ci_wait_blocker)
+      if [ -n "$CI_WAIT_BLOCKER" ]; then
+        RUN_STATE=stalled
+        RUN_DETAIL="run stopped advancing: ci step waiting on a check re-run that cannot arrive, $CI_WAIT_BLOCKER"
+      fi
+    fi
+    if [ "$RUN_STATE" = working ] || [ "$STALL_STEP" = ci ]; then
       CI_WAIT_BLOCKER=$(forge_ci_zero_checks_blocker)
       if [ -n "$CI_WAIT_BLOCKER" ]; then
         RUN_STATE=stalled
