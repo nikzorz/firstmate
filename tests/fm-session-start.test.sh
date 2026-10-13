@@ -13,8 +13,10 @@
 #     read-once contract precedes both
 #   - context-aware next-step guidance for read-only, AFK, X mode, and normal
 #     watcher ownership
-#   - status-tail bounding, default and FM_SESSION_START_STATUS_TAIL override
-#   - the per-line status-tail cap and its truncation marker
+#   - one line per lane under way: a healthy lane, a lane with no window, and
+#     a record missing a field, with the raw record left in state/<id>.meta
+#   - a lane prints only its last status line, capped with a truncation marker;
+#     FM_SESSION_START_STATUS_TAIL bounds the orphan-log tail
 #   - startup backlog composition: done rows dropped, every in-flight/held/
 #     blocked row kept whole, the dispatchable queued listing bounded with an
 #     exact disclosed remainder
@@ -1039,7 +1041,7 @@ EOF
   context_line=$(printf '%s\n' "$out" | grep -n '^CONTEXT$' | head -1 | cut -d: -f1)
   fleet_line=$(printf '%s\n' "$out" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
   next_line=$(printf '%s\n' "$out" | grep -n '^NEXT STEP$' | head -1 | cut -d: -f1)
-  inventory_line=$(printf '%s\n' "$out" | grep -n '^--- task-a ---$' | head -1 | cut -d: -f1)
+  inventory_line=$(printf '%s\n' "$out" | grep -n '^task-a | ' | head -1 | cut -d: -f1)
 
   if [ -z "$lock_line" ] || [ -z "$boot_line" ] || [ -z "$wake_line" ] \
     || [ -z "$read_once_line" ] || [ -z "$context_line" ] || [ -z "$fleet_line" ] \
@@ -1138,6 +1140,53 @@ SH
   pass "session start: configured and auto-detected Herdr homes never require tmux"
 }
 
+# --- one line per lane under way ---------------------------------------------
+
+# The lane section sits on the floor of every session, so each lane costs one
+# line, and a record too thin to fill that line still shows up, naming its gap.
+test_work_under_way_prints_one_line_per_lane() {
+  local rec root home fakebin out lanes heading
+  rec=$(new_world lane-lines)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live"
+
+  fm_write_meta "$home/state/lane-a-healthy.meta" \
+    'window=fm-sess:live' 'kind=ship' 'mode=no-mistakes' 'yolo=off' \
+    "worktree=$home/projects/firstmate" 'spawn_gen=7' 'busy_gen=3'
+  printf 'working: setup done\nworking: fix implemented\n' > "$home/state/lane-a-healthy.status"
+  fm_write_meta "$home/state/lane-b-nowindow.meta" 'kind=scout' 'spawn_gen=2'
+  printf 'paused: waiting on validation\n' > "$home/state/lane-b-nowindow.status"
+  fm_write_meta "$home/state/lane-c-thin.meta" 'window=fm-sess:gone' 'spawn_gen=4'
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  heading='Work under way (one line per lane; raw record: state/<id>.meta, full status log: state/<id>.status)'
+  lanes=$(printf '%s\n' "$out" | awk -v h="$heading" '
+    $0 == h { flag = 1; getline; next }
+    flag && /^$/ { exit }
+    flag')
+  [ "$(printf '%s\n' "$lanes" | wc -l)" -eq 3 ] \
+    || fail "three lanes under way did not print as three lines under the heading: $lanes"
+
+  assert_contains "$lanes" \
+    "lane-a-healthy | kind=ship mode=no-mistakes | endpoint: alive (backend=tmux window=fm-sess:live) | last status: working: fix implemented" \
+    "a healthy lane did not print its id, kind, mode, endpoint, endpoint state, and last status line"
+  assert_contains "$lanes" \
+    "lane-b-nowindow | kind=scout mode=- | endpoint: unknown (no window recorded) | last status: paused: waiting on validation | record missing: window" \
+    "a lane with no window did not stay visible with the missing window named"
+  assert_contains "$lanes" \
+    "lane-c-thin | kind=? mode=- | endpoint: dead (backend=tmux window=fm-sess:gone) | last status: (no status file yet) | record missing: kind, mode" \
+    "a record missing a field was dropped or did not name what it is missing"
+  assert_not_contains "$out" "spawn_gen=" "the digest still prints the raw runtime record"
+  assert_not_contains "$out" "working: setup done" "a lane printed more than its last status line"
+
+  pass "work under way is one line per lane, and a thin record names what it is missing instead of vanishing"
+}
+
 # --- status tail bounding -----------------------------------------------------
 
 test_status_tail_bounding() {
@@ -1155,25 +1204,25 @@ EOF
     > "$home/state/task-a.status"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "working: step 7" "default status tail missing the most recent line"
-  assert_contains "$out" "working: step 3" "default status tail (5 lines) missing an expected recent line"
-  assert_not_contains "$out" "working: step 1" "default status tail (5 lines) leaked an older line"
-  assert_contains "$out" "$home/state/task-a.status" "digest did not print the full status log path for a deeper read"
-  assert_contains "$out" "a bounded tail of every state/*.status" "read-once contract does not distinguish bounded status tails"
+  assert_contains "$out" "last status: working: step 7" "the lane line is missing the most recent status line"
+  assert_not_contains "$out" "working: step 6" "the lane line leaked an older status line"
+  assert_contains "$out" "full status log: state/<id>.status" "digest did not name the full status log for a deeper read"
+  assert_contains "$out" "a bounded tail of every orphan state/*.status" "read-once contract does not distinguish bounded status tails"
 
-  out=$(FM_SESSION_START_STATUS_TAIL=2 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "working: step 7" "FM_SESSION_START_STATUS_TAIL=2 tail missing the most recent line"
-  assert_not_contains "$out" "working: step 5" "FM_SESSION_START_STATUS_TAIL=2 did not bound the tail to 2 lines"
+  # The tail knob belongs to orphan logs; a lane stays one line whatever it says.
+  out=$(FM_SESSION_START_STATUS_TAIL=3 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "last status: working: step 7" "FM_SESSION_START_STATUS_TAIL changed the lane's last status line"
+  assert_not_contains "$out" "working: step 6" "FM_SESSION_START_STATUS_TAIL widened a lane past its last status line"
 
-  pass "status tail is bounded to the configured line count, with the full log path always printed"
+  pass "a lane under way prints only its last status line, with the full log named once"
 }
 
 # A crewmate writes its own status lines, so nothing upstream bounds their
-# length: an observed one ran 865 characters. The tail is a wake-EVENT view
-# whose full log path is printed beside it, so a long line is cut, marked, and
-# left recoverable rather than allowed to scale the digest with fleet load.
+# length: an observed one ran 865 characters. The line is a wake-EVENT view
+# whose full log the section names, so a long line is cut, marked, and left
+# recoverable rather than allowed to scale the digest with fleet load.
 test_status_tail_line_cap() {
-  local rec root home fakebin out lede longest capped tail_section
+  local rec root home fakebin out lede lane last
   rec=$(new_world status-line-cap)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -1185,29 +1234,32 @@ EOF
   lede='needs-decision: [key=cap] pick the rendering strategy'
   printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-cap.meta"
   {
+    printf 'working: short line kept whole\n'
     printf '%s' "$lede"
     awk 'BEGIN { while (i++ < 400) printf " padding" }'
     printf '\n'
-    printf 'working: short line kept whole\n'
   } > "$home/state/task-cap.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-short.meta"
+  printf 'working: short line kept whole\n' > "$home/state/task-short.status"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "$lede" "the cap discarded the lede that carries the state word and decision key"
   assert_contains "$out" " [truncated]" "an over-long status line was not marked as truncated"
-  assert_contains "$out" "working: short line kept whole" "the cap mangled a status line already under it"
-  assert_contains "$out" "each capped at 220 characters" "the status tail header does not disclose its per-line cap"
-  assert_contains "$out" "$home/state/task-cap.status" "a capped tail dropped the full log path that recovers the rest"
+  assert_contains "$out" "last status: working: short line kept whole" "the cap mangled a status line already under it"
 
-  # Nothing the tail emits may exceed the cap, and the padded line really was
-  # long enough to exercise it.
-  tail_section=$(printf '%s\n' "$out" | awk '/^status tail \(/ { flag = 1; next } flag && /^$/ { flag = 0 } flag')
-  longest=$(printf '%s\n' "$tail_section" | awk '{ if (length($0) > max) max = length($0) } END { print max + 0 }')
-  [ "$longest" -le 220 ] || fail "a status tail line ran $longest characters past the 220-character cap"
-  capped=$(printf '%s\n' "$tail_section" | grep -c ' \[truncated\]$')
-  [ "$capped" -eq 1 ] || fail "expected exactly one truncated tail line, got $capped: $tail_section"
+  # The capped status line may not exceed the cap, and the padded line really
+  # was long enough to exercise it.
+  lane=$(printf '%s\n' "$out" | grep '^task-cap | ')
+  last=${lane#* | last status: }
+  last=${last% | record missing: *}
+  [ "${#last}" -le 220 ] || fail "a lane's status line ran ${#last} characters past the 220-character cap"
+  case "$last" in
+    *' [truncated]') ;;
+    *) fail "the capped status line does not end in its truncation marker: $last" ;;
+  esac
 
-  pass "status tail lines are capped with a truncation marker while the full log stays reachable"
+  pass "a lane's status line is capped with a truncation marker while the full log stays reachable"
 }
 
 test_orphan_status_logs_are_printed() {
@@ -1448,7 +1500,7 @@ EOF
   assert_contains "$out" "endpoint: alive (backend=herdr window=sess:p-live)" \
     "the digest did not continue past the killed read to the next task"
   assert_contains "$out" "working: doomed task marker" \
-    "the doomed task's status tail was lost along with its endpoint read"
+    "the doomed task's last status line was lost along with its endpoint read"
   assert_contains "$out" "$(printf '\nCONTEXT\n')" \
     "a killed endpoint read cost the digest its context section"
   assert_contains "$out" "NEXT STEP" \
@@ -2042,8 +2094,8 @@ EOF
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "tasks-axi compact digest leaked an in-flight task body"
   assert_not_contains "$out" "QUEUED-BODY-LINE" "tasks-axi compact digest leaked a queued task body"
   assert_not_contains "$out" "DONE-ROW-LINE" "tasks-axi compact digest listed a done row at startup"
-  assert_contains "$out" "--- compact-startup ---" "in-flight meta identity disappeared from startup recovery digest"
-  assert_contains "$out" "worktree=$home/projects/firstmate" "in-flight recovery worktree identity disappeared from startup digest"
+  assert_contains "$out" "compact-startup | kind=ship " "in-flight meta identity disappeared from startup recovery digest"
+  assert_contains "$out" "raw record: state/<id>.meta" "startup digest no longer names where the in-flight recovery record lives"
   assert_contains "$out" "Full task bodies remain available on demand: bin/fm-tasks-axi.sh show <id> --full" \
     "compact digest omitted the full-body lookup pointer"
   assert_contains "$out" "ready_public_followups: 0 delivery-ready obligations" \
@@ -3033,6 +3085,7 @@ test_session_start_preserves_ambiguous_pi_process
 test_session_start_preserves_transiently_unreadable_tmux
 test_session_start_preserves_proven_bare_shell_recovery
 test_session_start_relaunches_herdr_husk_secondmate
+test_work_under_way_prints_one_line_per_lane
 test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
