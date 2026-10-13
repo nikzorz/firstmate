@@ -196,10 +196,6 @@ function parseArguments(argv) {
       i += 1;
       continue;
     }
-    if (name.startsWith("--cwd=")) {
-      result.cwd = name.slice("--cwd=".length);
-      continue;
-    }
     throw new Error(`unknown argument: ${name}`);
   }
   return result;

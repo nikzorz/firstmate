@@ -118,7 +118,6 @@ if [ "$CMD_SET" -eq 0 ]; then
     exit 0
   fi
   CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.toolInput.command // .tool_input.command // empty)' 2>/dev/null) || exit 0
-  SESSION_CWD=$(printf '%s' "$PAYLOAD" | jq -r '(.cwd | strings) // empty' 2>/dev/null) || SESSION_CWD=""
 fi
 
 [ -n "$CMD" ] || exit 0
@@ -153,6 +152,9 @@ esac
 
 # Captured before anything here changes directory. Left empty when unknown,
 # which the policy reads as a session directory it cannot resolve.
+if [ "$CMD_SET" -eq 0 ]; then
+  SESSION_CWD=$(printf '%s' "$PAYLOAD" | jq -r '(.cwd | strings) // empty' 2>/dev/null) || SESSION_CWD=""
+fi
 [ -n "$SESSION_CWD" ] || SESSION_CWD=$(pwd -P 2>/dev/null) || SESSION_CWD=""
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
