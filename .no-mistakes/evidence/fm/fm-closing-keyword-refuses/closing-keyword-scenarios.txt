@@ -1,0 +1,623 @@
+================================================================
+SCENARIO: 1 one owned issue, body has no adjacent keyword -> refused
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Mode no-mistakes.
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Close issues #7 and #8
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/61 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/61 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000061
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/61
+
+================================================================
+SCENARIO: 2 one owned issue, body 'Closes #7' -> merges
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/62 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/62 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/62 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000062
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 62 --repo example/repo --match-head-commit 0000000000000000000000000000000000000062 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/62
+
+================================================================
+SCENARIO: 2b owned issue closed by full URL form
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Fixes https://github.com/example/repo/issues/7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/63 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/63 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/63 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000063
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 63 --repo example/repo --match-head-commit 0000000000000000000000000000000000000063 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/63
+
+================================================================
+SCENARIO: 3 stage PR 'Part of #7' with --no-closing-keyword -> merges, override recorded
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/64 --no-closing-keyword
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/64 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/64 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000064
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 64 --repo example/repo --match-head-commit 0000000000000000000000000000000000000064 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:closing_keyword_override=https://github.com/example/repo/pull/64 https://github.com/example/repo/issues/7
+7:pr=https://github.com/example/repo/pull/64
+
+================================================================
+SCENARIO: 4 no Owns issue line, linked issue lacks keyword -> hedged warning, merges
+--- task backlog row
+- [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/7 (since 2026-09-24)
+  Mode no-mistakes.
+--- PR body: no keyword here
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/65 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/65 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/65 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000065
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record mentions
+warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 65 --repo example/repo --match-head-commit 0000000000000000000000000000000000000065 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/65
+
+================================================================
+SCENARIO: 5 two Owns issue lines -> reported, warns, merges
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+  Owns issue: https://github.com/example/repo/issues/14
+--- PR body: no keyword here
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/66 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/66 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/66 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000066
+warning: task task-x1's record marks more than one owned issue, and this check acts on exactly one, so none is treated as owned
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 66 --repo example/repo --match-head-commit 0000000000000000000000000000000000000066 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/66
+
+================================================================
+SCENARIO: 5b malformed Owns issue marker -> reported, merges
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: #7
+--- PR body: no keyword here
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/67 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/67 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/67 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000067
+warning: task task-x1's owned-issue line names "#7", which is not a full GitHub issue URL, so no issue is treated as owned
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 67 --repo example/repo --match-head-commit 0000000000000000000000000000000000000067 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/67
+
+================================================================
+SCENARIO: 6 owned issue closed, other linked issue unclosed -> merges with hedge for the linked one
+--- task backlog row
+- [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/14 (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/68 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/68 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/68 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000068
+warning: this PR's body does not close #14 (https://github.com/example/repo/issues/14), which task task-x1's record mentions
+warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 68 --repo example/repo --match-head-commit 0000000000000000000000000000000000000068 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/68
+
+================================================================
+SCENARIO: A1 adversarial: 'Closes #70' is not #7
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #70
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/69 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/69 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000069
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/69
+
+================================================================
+SCENARIO: A2 adversarial: 'Closes #7x'
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #7x
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/70 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/70 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000070
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/70
+
+================================================================
+SCENARIO: A3 adversarial: keyword not directly before ('Closes the bug #7')
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes the bug #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/71 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000071
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/71
+
+================================================================
+SCENARIO: A4 adversarial: same number in another repo ('Closes other/repo#7')
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes other/repo#7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/72 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/72 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000072
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/72
+
+================================================================
+SCENARIO: A5 adversarial: 'Part of #7' without the flag
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/73 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/73 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000073
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/73
+
+================================================================
+SCENARIO: A6 adversarial: empty PR body
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: 
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/74 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/74 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000074
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/74
+
+================================================================
+SCENARIO: A7 adversarial: owned issue lives in another repo, body says 'Closes #7'
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/other/place/issues/7
+--- PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/75 
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/75 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000075
+error: PR merge refused - this PR's body does not close other/place#7 (https://github.com/other/place/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes other/place#7
+error: pass --no-closing-keyword only for a stage PR that is "Part of other/place#7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/75
+
+================================================================
+SCENARIO: A8 adversarial: --no-closing-keyword=yes is not the override
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/76 --no-closing-keyword=yes
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/76 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000076
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/76
+
+================================================================
+SCENARIO: A9 adversarial: flag placed after -- is a forge arg, not the override
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/77 -- --no-closing-keyword
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/77 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000077
+error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+(none)
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:pr=https://github.com/example/repo/pull/77
+
+================================================================
+SCENARIO: B1 override record keeps an earlier PR's line and names this PR ahead of pr=
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/78 --no-closing-keyword
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/78 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/78 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000078
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 78 --repo example/repo --match-head-commit 0000000000000000000000000000000000000078 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:closing_keyword_override=https://github.com/example/repo/pull/40 https://github.com/example/repo/issues/7
+7:closing_keyword_override=https://github.com/example/repo/pull/78 https://github.com/example/repo/issues/7
+8:pr=https://github.com/example/repo/pull/78
+
+================================================================
+SCENARIO: B2 flag passed but body closes the issue -> nothing new recorded, earlier line kept
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/79 --no-closing-keyword
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/79 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/79 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000079
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 79 --repo example/repo --match-head-commit 0000000000000000000000000000000000000079 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+--- task record lines (closing_keyword_override=, pr=)
+6:closing_keyword_override=https://github.com/example/repo/pull/40 https://github.com/example/repo/issues/7
+7:pr=https://github.com/example/repo/pull/79
+
+================================================================
+SCENARIO: B3 later merge without the flag removes nothing
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/80 
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/80 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/80 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000080
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 80 --repo example/repo --match-head-commit 0000000000000000000000000000000000000080 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+issue view https://github.com/example/repo/issues/7 --json state -q .state
+--- task record lines (closing_keyword_override=, pr=)
+6:closing_keyword_override=https://github.com/example/repo/pull/40 https://github.com/example/repo/issues/7
+7:pr=https://github.com/example/repo/pull/80
+
+================================================================
+SCENARIO: B4 authority persist fails after an override merge -> override still recorded
+--- task backlog row
+- [ ] task-x1 - ship the fix (since 2026-09-24)
+  Owns issue: https://github.com/example/repo/issues/7
+--- PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/81 --no-closing-keyword
+--- exit code: 1
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/81 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 0000000000000000000000000000000000000081
+warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open
+actionable: the forge accepted the merge request for https://github.com/example/repo/pull/81 but its merge authority could not be persisted; the merge poll remains armed
+--- forge merge calls (stand-in gh log, 'pr merge' lines)
+gh.log:pr merge 81 --repo example/repo --match-head-commit 0000000000000000000000000000000000000081 --squash --subject fix: do a thing (#7) --body-file <body-file>
+--- forge issue read-backs
+(none)
+--- task record lines (closing_keyword_override=, pr=)
+6:closing_keyword_override=https://github.com/example/repo/pull/81 https://github.com/example/repo/issues/7
+7:pr=https://github.com/example/repo/pull/81
+
+================================================================
+SCENARIO: G1 GitLab merge with --no-closing-keyword -> no check, no refusal of the flag
+$ fm-pr-merge.sh task-x1 https://gitlab.example/group/subgroup/project/-/merge_requests/7 --no-closing-keyword
+--- exit code: 0
+--- stdout
+armed: state/task-x1.check.sh
+--- stderr
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://gitlab.example/group/subgroup/project/-/merge_requests/7 is open and mergeable, with a successful pipeline at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+--- glab merge calls
+GITLAB_HOST=gitlab.example mr merge 7 -R https://gitlab.example/group/subgroup/project --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --yes
+--- task record
+6:pr=https://gitlab.example/group/subgroup/project/-/merge_requests/7
