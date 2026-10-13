@@ -172,7 +172,8 @@
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
 #
-# STATUS LINES: a lane under way prints only its last status line, and an
+# STATUS LINES: a lane under way prints only its last status event (the line
+# bin/fm-classify-lib.sh reads past blanks and continuation prose), and an
 # orphan status log prints a tail bounded by FM_SESSION_START_STATUS_TAIL;
 # bin/fm-line-cap-lib.sh bounds how long each of those lines may be. These
 # bounds are safe because the digest names every task's full status log path
@@ -374,6 +375,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-hold-reason-lib.sh
@@ -933,7 +936,7 @@ for meta in "$STATE"/*.meta; do
   status="$STATE/$id.status"
   if [ -f "$status" ]; then
     # A crewmate writes its own status lines, so their length is unbounded.
-    fm_cap_line_var "$(tail -n 1 "$status")"
+    fm_cap_line_var "$(last_status_line "$status")"
     last=${FM_LINE_CAP_LINE:-(empty status log)}
   else
     last='(no status file yet)'

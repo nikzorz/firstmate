@@ -15,8 +15,10 @@
 #     watcher ownership
 #   - one line per lane under way: a healthy lane, a lane with no window, and
 #     a record missing a field, with the raw record left in state/<id>.meta
-#   - a lane prints only its last status line, capped with a truncation marker;
-#     FM_SESSION_START_STATUS_TAIL bounds the orphan-log tail
+#   - a lane prints only its last status event (past continuation prose and
+#     trailing blanks), capped with a truncation marker;
+#     FM_SESSION_START_STATUS_TAIL bounds the orphan-log tail, whose lines
+#     carry the same cap
 #   - startup backlog composition: done rows dropped, every in-flight/held/
 #     blocked row kept whole, the dispatchable queued listing bounded with an
 #     exact disclosed remainder
@@ -1157,9 +1159,10 @@ EOF
   fm_write_meta "$home/state/lane-a-healthy.meta" \
     'window=fm-sess:live' 'kind=ship' 'mode=no-mistakes' 'yolo=off' \
     "worktree=$home/projects/firstmate" 'spawn_gen=7' 'busy_gen=3'
-  printf 'working: setup done\nworking: fix implemented\n' > "$home/state/lane-a-healthy.status"
+  printf 'working: setup done\nneeds-decision: [key=db] pick the migration strategy\n  option A: online copy\n  option B: offline window\n' \
+    > "$home/state/lane-a-healthy.status"
   fm_write_meta "$home/state/lane-b-nowindow.meta" 'kind=scout' 'spawn_gen=2'
-  printf 'paused: waiting on validation\n' > "$home/state/lane-b-nowindow.status"
+  printf 'paused: waiting on validation\n\n' > "$home/state/lane-b-nowindow.status"
   fm_write_meta "$home/state/lane-c-thin.meta" 'window=fm-sess:gone' 'spawn_gen=4'
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
@@ -1173,14 +1176,16 @@ EOF
     || fail "three lanes under way did not print as three lines under the heading: $lanes"
 
   assert_contains "$lanes" \
-    "lane-a-healthy | kind=ship mode=no-mistakes | endpoint: alive (backend=tmux window=fm-sess:live) | last status: working: fix implemented" \
-    "a healthy lane did not print its id, kind, mode, endpoint, endpoint state, and last status line"
+    "lane-a-healthy | kind=ship mode=no-mistakes | endpoint: alive (backend=tmux window=fm-sess:live) | last status: needs-decision: [key=db] pick the migration strategy" \
+    "a healthy lane did not print its id, kind, mode, endpoint, endpoint state, and last status event"
   assert_contains "$lanes" \
     "lane-b-nowindow | kind=scout mode=- | endpoint: unknown (no window recorded) | last status: paused: waiting on validation | record missing: window" \
     "a lane with no window did not stay visible with the missing window named"
   assert_contains "$lanes" \
     "lane-c-thin | kind=? mode=- | endpoint: dead (backend=tmux window=fm-sess:gone) | last status: (no status file yet) | record missing: kind, mode" \
     "a record missing a field was dropped or did not name what it is missing"
+  assert_not_contains "$lanes" "option B: offline window" "a lane printed continuation prose as its last status"
+  assert_not_contains "$lanes" "(empty status log)" "a trailing blank line hid a lane's last status event"
   assert_not_contains "$out" "spawn_gen=" "the digest still prints the raw runtime record"
   assert_not_contains "$out" "working: setup done" "a lane printed more than its last status line"
 
@@ -1263,7 +1268,7 @@ EOF
 }
 
 test_orphan_status_logs_are_printed() {
-  local rec root home fakebin out matched_count orphan_count
+  local rec root home fakebin out matched_count orphan_count lede capped
   rec=$(new_world orphan-status)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -1289,7 +1294,28 @@ EOF
   [ "$matched_count" -eq 1 ] || fail "matched status log was printed $matched_count times: $out"
   [ "$orphan_count" -eq 1 ] || fail "orphan status log was printed $orphan_count times: $out"
 
-  pass "orphan status logs are printed once with bounded tails"
+  out=$(FM_SESSION_START_STATUS_TAIL=2 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "status tail (last 2 line(s), each capped at 220 characters" \
+    "the orphan tail header did not disclose the overridden line count and the per-line cap"
+  assert_contains "$out" "working: orphan step 5" "FM_SESSION_START_STATUS_TAIL=2 dropped a line inside its bound"
+  assert_not_contains "$out" "working: orphan step 4" "FM_SESSION_START_STATUS_TAIL=2 did not shrink the orphan tail"
+
+  lede='needs-decision: [key=orphan-cap] pick the rendering strategy'
+  {
+    printf '%s' "$lede"
+    awk 'BEGIN { while (i++ < 400) printf " padding" }'
+    printf '\n'
+  } >> "$home/state/task-orphan.status"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  capped=$(printf '%s\n' "$out" | grep -F "$lede")
+  [ "${#capped}" -le 220 ] || fail "an orphan tail line ran ${#capped} characters past the 220-character cap"
+  case "$capped" in
+    "$lede"*' [truncated]') ;;
+    *) fail "an over-long orphan tail line did not keep its lede and end in the truncation marker: $capped" ;;
+  esac
+  assert_contains "$out" "working: orphan step 6" "the cap mangled an orphan tail line already under it"
+
+  pass "orphan status logs are printed once with tails bounded in line count and line length"
 }
 
 # --- session-start secondmate recovery boundary -----------------------------
