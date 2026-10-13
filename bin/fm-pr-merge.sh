@@ -161,10 +161,11 @@
 # replays the branch commits untouched, trailers included. A GitLab merge is left
 # alone, because its message is the project's own setting.
 #
-# A GitHub merge also runs an ADVISORY closing-keyword check that blocks
-# nothing. It reads the issue URLs on the task's backlog row (the links: entry
+# A GitHub merge also runs a closing-keyword check that refuses for the one
+# issue the task owns and is advisory for every other. It reads the issue URLs
+# on the task's backlog row (the links: entry
 # tasks-axi derives from them) and the pull request body from the same live view
-# the pre-merge conditions use, and warns, naming each issue, when no closing
+# the pre-merge conditions use, and reports, naming each issue, when no closing
 # keyword immediately precedes a reference to it: GitHub acts only on that form,
 # so "Close issues #148 and #117" closes nothing while carrying both numbers, and
 # "Closes #117x" names no issue at all. Keywords match case-insensitively, and
@@ -174,22 +175,30 @@
 # reads exactly like one the work owns. The one explicit ownership marker is a
 # line in the task body reading "Owns issue: <full GitHub issue URL>", written
 # at intake only for an issue the work is meant to close; the issue it names is
-# checked too, and a missing keyword for it is reported without the hedge,
-# naming the keyword line the body needs. The check acts on exactly one owned
+# checked too, and a missing keyword for it refuses the merge before anything
+# is handed to the forge, printing the keyword line the body needs. The check
+# never edits the body. --no-closing-keyword overrides that one refusal, for a
+# stage PR that is "Part of #N" and should not close the issue; once the forge
+# accepts the merge, the override is recorded in the task's metadata record as
+# a line reading "closing_keyword_override=<PR URL> <issue URL>", so the line
+# says which merge it speaks for. Nothing removes such a line: one written for
+# an earlier pull request stays beside a later one, and a merge that overrode
+# nothing leaves the record as it was. The check acts on exactly one owned
 # issue: a malformed marker, or lines naming more than one issue, are reported
-# and treated as no marker. Ownership is never inferred from anything else,
-# including an issue being the only URL on the row, and the check still warns
-# rather than refuses or edits the body, owned issue or not. A row naming no
+# and treated as no marker, so they warn and never refuse. Ownership is never
+# inferred from anything else, including an issue being the only URL on the
+# row. A row naming no
 # issue, an id the backlog does not hold, and a
 # home keeping no markdown backlog are determinate and silent; a backlog or body
-# that could not be read gets one warning saying the check did not run. After a
+# that could not be read gets one warning saying the check did not run, and
+# refuses nothing. After a
 # verified landed merge, each issue the body does close (every named issue when
 # the body could not be read) is read back, and one not yet observed closed is
 # reported with a hedge, because the forge closes on a keyword in a background
 # job that can finish after that read. A queued or refused merge reads nothing
 # back.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--no-closing-keyword] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -258,6 +267,7 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+NO_CLOSING_KEYWORD=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -287,6 +297,10 @@ while [ "$#" -gt 0 ]; do
     --allow-missing=*)
       echo "error: --allow-missing requires a separate check name argument" >&2
       exit 2
+      ;;
+    --no-closing-keyword)
+      NO_CLOSING_KEYWORD=true
+      shift
       ;;
     --) shift; break ;;
     *) break ;;
@@ -1229,6 +1243,8 @@ FM_PR_GITHUB_VIEW_JSON=
 TASK_ISSUE_URLS=
 TASK_OWNED_ISSUE_URL=
 CLOSING_CHECK_ERROR=
+# The owned issue a merge is going ahead without closing, by the caller's choice.
+CLOSING_KEYWORD_OVERRIDE_ISSUE=
 # The issues the post-merge read may speak for, which the body read narrows to
 # the ones the body actually asks the forge to close.
 VERIFY_ISSUE_URLS=()
@@ -1338,9 +1354,10 @@ closing_check_did_not_run() {  # <why>
   echo "warning: the closing-keyword check did not run: $1" >&2
 }
 
-# Advisory only (see the header): every answer it reaches is a report.
+# Returns 1 only for an owned issue the body does not close (see the header);
+# every other answer it reaches is a report.
 closing_keyword_gate() {
-  local url owner repo number ref rc=0 body_file
+  local url owner repo number ref rc=0 body_file refused=0
   local -a issues=() missing=() closing=()
   read_task_issue_urls || rc=$?
   case "$rc" in
@@ -1373,20 +1390,69 @@ URLS
     ref=$(issue_reference "$owner" "$repo" "$number")
     if body_closes_issue "$body_file" "$owner" "$repo" "$number"; then
       closing+=("$url")
+    elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ] && [ "$NO_CLOSING_KEYWORD" = true ]; then
+      CLOSING_KEYWORD_OVERRIDE_ISSUE=$url
+      echo "warning: this PR's body does not close $ref ($url), which task $ID's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open" >&2
     elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ]; then
-      echo "warning: this PR's body does not close $ref ($url), which task $ID's record marks as owned; the body needs a closing keyword directly before the reference, such as \"Closes $ref\"" >&2
+      refused=1
+      echo "error: PR merge refused - this PR's body does not close $ref ($url), which task $ID's record marks as owned; nothing was merged" >&2
+      echo "error: add this line to the PR body, with the keyword directly before the reference: Closes $ref" >&2
+      echo "error: pass --no-closing-keyword only for a stage PR that is \"Part of $ref\" and should not close it" >&2
     else
       missing+=("$ref ($url)")
     fi
   done
   VERIFY_ISSUE_URLS=("${closing[@]+"${closing[@]}"}")
-  [ "${#missing[@]}" -gt 0 ] || return 0
+  [ "${#missing[@]}" -gt 0 ] || return "$refused"
   for ref in "${missing[@]}"; do
     echo "warning: this PR's body does not close $ref, which task $ID's record mentions" >&2
   done
   # No edit is prescribed: the record cannot establish that this work owns the
   # issue, so only a reader can tell which of these two it is.
   echo "warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong" >&2
+  return "$refused"
+}
+
+# Writes the override into the task's metadata record ahead of its pr= line,
+# the only place that record's identity read accepts a key it does not own.
+# The forge has already accepted the merge, so a failed write is reported and
+# never turned into a failed merge.
+record_closing_keyword_override() {
+  local tmp='' line record status=0
+  [ -n "$CLOSING_KEYWORD_OVERRIDE_ISSUE" ] || return 0
+  record="closing_keyword_override=$URL $CLOSING_KEYWORD_OVERRIDE_ISSUE"
+  MERGE_META_LOCK=$(fm_meta_lock_path "$META") || status=1
+  if [ "$status" -eq 0 ] && ! fm_lock_acquire_wait "$MERGE_META_LOCK"; then
+    MERGE_META_LOCK=
+    status=1
+  fi
+  if [ "$status" -eq 0 ]; then
+    umask 077
+    tmp=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || status=1
+    if [ "$status" -eq 0 ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        [ "$line" != "$record" ] || continue
+        case "$line" in
+          pr=*) printf '%s\n' "$record" ;;
+        esac
+        printf '%s\n' "$line"
+      done < "$META" > "$tmp" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+      chmod 0600 "$tmp" \
+        && fm_pr_metadata_identity_parse "$tmp" \
+        && [ "$FM_PR_META_URL" = "$URL" ] \
+        && grep -qxF -- "$record" "$tmp" \
+        && mv -f -- "$tmp" "$META" \
+        || status=1
+    fi
+    [ "$status" -eq 0 ] || rm -f -- "$tmp"
+    fm_lock_release "$MERGE_META_LOCK" || status=1
+    MERGE_META_LOCK=
+  fi
+  [ "$status" -ne 0 ] || return 0
+  printf 'actionable: %s was merged under --no-closing-keyword without closing %s, but that override could not be recorded\n' \
+    "$URL" "$CLOSING_KEYWORD_OVERRIDE_ISSUE" >&2
 }
 
 # The one check no keyword form can fool, run only after a verified landed merge.
@@ -1718,7 +1784,7 @@ case "$PROVIDER" in
       fi
       exit 1
     fi
-    closing_keyword_gate
+    closing_keyword_gate || exit 1
     github_supply_squash_message "$@" || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
@@ -1733,6 +1799,7 @@ case "$PROVIDER" in
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
     if [ "$merge_status" -eq 0 ]; then
       FM_PR_GITHUB_MERGE_ACCEPTED=true
+      record_closing_keyword_override
       persist_accepted_merge_authority || exit 1
       fm_afk_contract_lock_release || true
       fm_lock_release "$MERGE_CONTROL_LOCK" || true
