@@ -1,0 +1,17 @@
+ok - work under way is one line per lane, and a thin record names what it is missing instead of vanishing
+ok - a lane under way prints only its last status line, with the full log named once
+ok - a lane's status line is capped with a truncation marker while the full log stays reachable
+ok - orphan status logs are printed once with tails bounded in line count and line length
+ok - tmux endpoint liveness is reported per task: alive for a live window, dead for a gone one
+ok - herdr endpoint liveness is reported per task: alive, dead for exit 1, dead for any other probe status
+_: line 4: 3158826 Killed                     "$@"
+ok - a killed per-task endpoint read becomes that task's error line and the digest completes
+ok - a hung per-task endpoint read hits its configured bound, reports the task, and leaves nothing stuck
+ok - the read-once contract is stated once, ahead of the sources it governs
+ok - compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row
+ok - the startup backlog bound cuts only dispatchable queued rows and discloses the remainder exactly
+ok - an over-long hold reason is bounded to one line with its pointer while every row is kept
+ok - manual backlog rendering bounds an over-long hold reason and keeps every held title line
+ok - manual backlog rendering bounds a quote-led plain reason and a tab-bulleted title line
+ok - manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest
+ok - unavailable or incompatible tasks-axi falls back to compact manual backlog rendering
