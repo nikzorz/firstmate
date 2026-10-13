@@ -1,0 +1,129 @@
+# live drive [target] bin=/home/nik/.no-mistakes/worktrees/50866b63a668/01M4V49A54F84RBHBC3NF0K08B/bin
+# commit: ff7e502  lab home: disposable, marked by fm-lab-home.sh
+
+== S0 first arm in a fresh home, then the watcher goes down
+   after 3s: arm pid 3576452 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3576477 (beacon fresh)
+   watcher stopped (downtime begins)
+   recovery marker: pending:downtime:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+
+== S1 re-arm after downtime with NOTHING queued
+   after 8s: arm pid 3578384 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3578443 (beacon fresh)
+   recovery marker: announced:downtime:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:40:48-0600 
+   watcher triage log tail:
+     | [2026-10-13T11:40:48-0600] watcher recovery announcement deferred to the next drain: nothing queued
+
+== S1b the watcher goes down and comes back twice more, still nothing queued (recovery-loop probe)
+   after 6s: arm pid 3582452 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3582512 (beacon fresh)
+   recovery marker: announced:downtime:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:40:48-0600 
+   after 6s: arm pid 3585174 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3585234 (beacon fresh)
+   recovery marker: announced:downtime:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:40:48-0600 
+
+== S2 away-daemon style drain (FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT=1) must not consume the note
+   drain rc=0
+   drain stdout:
+   drain stderr:
+     | WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 3576477.1791913248.80mRxe
+   recovery marker: announced:handling:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:40:48-0600 
+
+== S3 two concurrent session drains: the announcement is printed exactly once
+   drain A stdout:
+   drain B stdout:
+     | WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-13T11:40:48-0600.
+   stderr of both:
+     | WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 3576477.1791913248.80mRxe
+     | WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 3576477.1791913248.80mRxe
+   WATCHER RECOVERED lines across both drains: 1
+   recovery marker: announced:handling:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+   ack --ack-through 0 --recovery-generation 3576477.1791913248.80mRxe rc=0
+
+== S3b a repeat drain does not announce the same recovery again
+   drain rc=0
+   drain stdout:
+   drain stderr:
+   recovery marker: acked:handling:3576477.1791913248.80mRxe
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+   the watcher that deferred is still live: yes
+
+== S4 work appended while the deferring watcher is live wakes it at once (nothing is lost)
+   after 5s: arm pid 3589935 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3589994 (beacon fresh)
+   recovery marker: announced:downtime:3585234.1791913274.RrhWJw
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:41:14-0600 
+   appended durable wake: check: work that arrived after a deferred recovery
+   arm pid 3589935 EXITED rc=0 (cycle closed: the harness would take a turn)
+   arm output:
+     | watcher: started pid=3589994 (beacon fresh)
+     | check: rearm-resurface
+   recovery marker: announced:downtime:3592331.1791913280.h4ZP56
+   wake queue rows: 1
+   deferred note state/.watcher-recovered: 1 line(s): 2026-10-13T11:41:14-0600 
+   drain rc=0
+   drain stdout:
+     | 1791913280	1	check	inbox:live-after-deferral	check: work that arrived after a deferred recovery
+     | WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-13T11:41:14-0600.
+   drain stderr:
+     | WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3592331.1791913280.h4ZP56
+   ack --ack-through 1 --recovery-generation 3592331.1791913280.h4ZP56 rc=0
+   recovery marker: acked:handling:3592331.1791913280.h4ZP56
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+
+== S5 re-arm after downtime WITH a wake queued
+   appended durable wake: check: work queued while the watcher was down
+   recovery marker: pending:downtime:3593429.1791913282.q7YF50
+   wake queue rows: 1
+   deferred note state/.watcher-recovered: <absent>
+   arm pid 3593500 EXITED rc=0 (cycle closed: the harness would take a turn)
+   arm output:
+     | watcher: started pid=3593525 (beacon fresh)
+     | check: rearm-resurface
+   wake lines printed by the arm: 1
+   recovery marker: announced:downtime:3593429.1791913282.q7YF50
+   wake queue rows: 1
+   deferred note state/.watcher-recovered: <absent>
+   drain rc=0
+   drain stdout:
+     | 1791913282	2	check	inbox:queued-during-downtime	check: work queued while the watcher was down
+   drain stderr:
+     | WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3593429.1791913282.q7YF50
+   ack --ack-through 2 --recovery-generation 3593429.1791913282.q7YF50 rc=0
+   recovery marker: acked:handling:3593429.1791913282.q7YF50
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+
+== S6 adversarial: the deferral cannot be recorded (note path is a directory), nothing queued
+   after 3s: arm pid 3594735 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3594760 (beacon fresh)
+   arm pid 3596829 EXITED rc=0 (cycle closed: the harness would take a turn)
+   arm output:
+     | /home/nik/.no-mistakes/worktrees/50866b63a668/01M4V49A54F84RBHBC3NF0K08B/bin/fm-wake-lib.sh: line 1116: /tmp/fm-lab.AOVaB4/state/.watcher-recovered: Is a directory
+     | watcher: started pid=3596922 (beacon fresh)
+     | check: rearm-resurface
+   recovery marker: announced:downtime:3594760.1791913287.S2k8c6
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: 0 line(s): 
+   note path is still a directory: yes

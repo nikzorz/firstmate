@@ -1,0 +1,20 @@
+# live drive [base 1f25a3d] bin=/tmp/fm-base.3ykxJ7/bin
+# commit: base 1f25a3d  lab home: disposable, marked by fm-lab-home.sh
+
+== S0 first arm in a fresh home, then the watcher goes down
+   after 3s: arm pid 3599274 still LIVE (cycle not closed, no turn requested)
+   arm output:
+     | watcher: started pid=3599336 (beacon fresh)
+   watcher stopped (downtime begins)
+   recovery marker: pending:downtime:3599336.1791913292.awxmFD
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+
+== S1 re-arm after downtime with NOTHING queued
+   arm pid 3605084 EXITED rc=0 (cycle closed: the harness would take a turn)
+   arm output:
+     | check: rearm-resurface
+   recovery marker: announced:downtime:3599336.1791913292.awxmFD
+   wake queue rows: 0
+   deferred note state/.watcher-recovered: <absent>
+   watcher triage log tail:

@@ -1,0 +1,35 @@
+# colocated suites at ff7e502 (ok / not ok)
+fm-watch-arm: ok=31 not_ok=0
+fm-watcher-lock: ok=42 not_ok=0
+fm-wake-queue: ok=69 not_ok=0
+fm-afk-return: ok=35 not_ok=0
+fm-daemon: ok=158 not_ok=0
+fm-supervision-host (as shipped): ok=15 not_ok=1, stops at test_branch_outcomes_stay_unread_when_the_drain_cannot_print; identical failure on base 1f25a3d
+fm-supervision-host (that one case skipped): ok=72 not_ok=0
+
+# cases covering this change
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4V49A54F84RBHBC3NF0K08B/bin/fm-wake-lib.sh: line 1116: /tmp/fm-watch-arm-tests.qarb77/unrecordable-deferral/state/.watcher-recovered: Is a directory
+ok - a bounded digest's full-text file survives a failure after typing, and a deferral writes none
+ok - a dead presenter's claimed recovery announcement is presented once by the next drain
+ok - a drain holding the recovery announcement leaves it for the next session drain
+ok - an active turn defers the secondmate stall escalation without cancelling it
+ok - arm defers TERM until startup watcher can run its lock cleanup
+ok - below MAX_DEFER: no inject, no alarm, buffer preserved
+ok - busy panes defer without a ring and unknown panes keep the parent alarm
+ok - busy-guard defers injection when supervisor pane is busy
+ok - housekeeping bounds a distant declared time, defers to a near one, and rechecks a passed one at once
+ok - inject_msg: defers on a dead-shell/unreadable composer (unknown), never typing the escalation into a shell
+ok - inject_msg: herdr busy-guard defers before ever attempting a submit
+ok - inject_msg: herdr composer-guard defers before ever attempting a submit
+ok - inject_msg: herdr pane-gone check defers before any busy/composer/submit call
+ok - inject_msg: unrecognized composer states defer by default
+ok - max-defer does not flush or alarm while afk is inactive
+ok - max-defer flushes and clears the buffer on an empty bordered pane
+ok - max-defer on a pending composer alarms without typing
+ok - max-defer on an empty stuck pane types once, alarms, and preserves the buffer
+ok - pane_input_pending: a blank unidentified cursor row defers (strict container-proof rule)
+ok - the away daemon's drain leaves the deferred recovery announcement for a session drain
+ok - the return brief does not report a recovered watcher's deferred announcement as a gap
+ok - the return brief reports a recovery with queued work as a gap even when an older deferred note stands
+ok - watch-arm: a recovery that cannot be deferred still wakes
+ok - watch-arm: appending work reopens an announced empty recovery
