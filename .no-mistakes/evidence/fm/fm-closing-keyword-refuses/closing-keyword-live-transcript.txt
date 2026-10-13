@@ -1,0 +1,478 @@
+=== 1. owned issue, body has no closing keyword -> refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Mode no-mistakes.
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Fixes the thing. Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/61 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/61
+
+=== 2. round trip: the exact line the refusal printed, added to the body -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Mode no-mistakes.
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Fixes the thing.
+Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/62 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/62 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/62
+
+=== 3. keyword directly before the owned issue (closes #7) -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/63 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/63 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/63
+
+=== 4. keyword directly before the owned issue (FIXED: #7) -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: FIXED: #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/64 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/64 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/64
+
+=== 5. keyword directly before the owned issue (Resolves example/repo#7) -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Resolves example/repo#7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/65 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/65 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/65
+
+=== 6. keyword directly before the owned issue (close https://github.com/example/repo/issues/7) -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: close https://github.com/example/repo/issues/7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/66 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/66 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/66
+
+=== 7. keyword directly before the owned issue (This (fixes #7).) -> merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: This (fixes #7).
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/67 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/67 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/67
+
+=== 8. adversarial: near-miss body (Close issues #8 and #7) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Close issues #8 and #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/68 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/68
+
+=== 9. adversarial: near-miss body (Closes #70) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes #70
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/69 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/69
+
+=== 10. adversarial: near-miss body (Closes #7x) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes #7x
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/70 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/70
+
+=== 11. adversarial: near-miss body (Closes other/repo#7) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes other/repo#7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/71 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/71
+
+=== 12. adversarial: near-miss body (Closes # 7) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes # 7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/72 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/72
+
+=== 13. adversarial: near-miss body (Closes https://github.com/example/repo/issues/71) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes https://github.com/example/repo/issues/71
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/73 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/73
+
+=== 14. adversarial: near-miss body (Closes https://github.com/example/repo/pull/7) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes https://github.com/example/repo/pull/7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/74 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/74
+
+=== 15. adversarial: near-miss body (Encloses #7) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Encloses #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/75 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/75
+
+=== 16. adversarial: near-miss body (Closes #14) -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes #14
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/76 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/76
+
+=== 17. adversarial: near-miss body () -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: 
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/77 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/77
+
+=== 18. adversarial: owned issue in another repository, bare #7 does not count -> refused, line names owner/repo#7
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/other/thing/issues/7
+PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/78 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close other/thing#7 (https://github.com/other/thing/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes other/thing#7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of other/thing#7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/78
+
+=== 19. adversarial: flag after -- is a forge argument, not the override -> still refused
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/79 -- --no-closing-keyword
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/79
+
+=== 20. --no-closing-keyword on a stage PR -> merges, override recorded with PR URL ahead of pr=
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/80 --no-closing-keyword
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/80 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:closing_keyword_override=https://github.com/example/repo/pull/80 https://github.com/example/repo/issues/7
+    7:pr=https://github.com/example/repo/pull/80
+
+=== 21. final PR after a stage override, body closes the issue, no flag -> merges, earlier line kept, none added
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/81 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/81 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:closing_keyword_override=https://github.com/example/repo/pull/40 https://github.com/example/repo/issues/7
+    7:pr=https://github.com/example/repo/pull/81
+
+=== 22. second stage override -> both override lines on record
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Part of #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/82 --no-closing-keyword
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    warning: this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/82 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:closing_keyword_override=https://github.com/example/repo/pull/40 https://github.com/example/repo/issues/7
+    7:closing_keyword_override=https://github.com/example/repo/pull/82 https://github.com/example/repo/issues/7
+    8:pr=https://github.com/example/repo/pull/82
+
+=== 23. no Owns issue line, issue only linked on the row -> hedged warning, merges
+task row:
+    - [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/14 (since 2026-09-24)
+      Mode no-mistakes.
+PR body: Part of #14
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/83 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    warning: this PR's body does not close #14 (https://github.com/example/repo/issues/14), which task task-x1's record mentions
+    warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/83 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/83
+
+=== 24. two Owns issue lines -> reported, treated as no marker, merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+      Owns issue: https://github.com/example/repo/issues/14
+PR body: no keyword
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/84 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    warning: task task-x1's record marks more than one owned issue, and this check acts on exactly one, so none is treated as owned
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/84 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/84
+
+=== 25. owned issue closed, a second linked issue not closed -> hedged warning for the linked one only, merges
+task row:
+    - [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/14 (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: Closes #7
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/85 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    warning: this PR's body does not close #14 (https://github.com/example/repo/issues/14), which task task-x1's record mentions
+    warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/85 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/85
+
+=== 26. owned issue unclosed and a linked issue unclosed -> refused, both reported
+task row:
+    - [ ] task-x1 - ship the fix for https://github.com/example/repo/issues/14 (since 2026-09-24)
+      Owns issue: https://github.com/example/repo/issues/7
+PR body: nothing
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/86 
+exit: 1 (expected 1)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    error: PR merge refused - this PR's body does not close #7 (https://github.com/example/repo/issues/7), which task task-x1's record marks as owned; nothing was merged
+    error: add this line to the PR body, with the keyword directly before the reference: Closes #7
+    error: pass --no-closing-keyword only for a stage PR that is "Part of #7" and should not close it
+    warning: this PR's body does not close #14 (https://github.com/example/repo/issues/14), which task task-x1's record mentions
+    warning: if this work owns that issue, its body needs a closing keyword directly before the reference; if the record only mentions it for context, nothing is wrong
+stdout:
+    armed: state/task-x1.check.sh
+forge merge calls: 0
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/86
+
+=== 27. task names no issue at all -> silent, merges
+task row:
+    - [ ] task-x1 - ship the fix (since 2026-09-24)
+      Mode no-mistakes.
+PR body: nothing
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/87 
+exit: 0 (expected 0)
+stderr:
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+stdout:
+    armed: state/task-x1.check.sh
+    verified: https://github.com/example/repo/pull/87 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+forge merge calls: 1
+override lines in task record:
+    6:pr=https://github.com/example/repo/pull/87
+
+driver checks failed: 0

@@ -1,0 +1,13 @@
+ok - fm-pr-merge runs no closing-keyword report for a task that names no issue
+ok - fm-pr-merge warns about a closing keyword that does not precede its reference, and merges
+ok - fm-pr-merge accepts every well-formed closing keyword spelling and reference form
+ok - fm-pr-merge reads only a reference GitHub itself would resolve to the issue
+ok - fm-pr-merge names each issue the body misses and reads back only the ones it closes
+ok - fm-pr-merge reports a closing-keyword check it could not run, and merges
+ok - fm-pr-merge refuses when the body does not close the task's owned issue, and names the line and the flag
+ok - fm-pr-merge merges an unclosed owned issue under --no-closing-keyword and records the override
+ok - fm-pr-merge records no override when the body already closes the owned issue
+ok - fm-pr-merge records the override even when the merge authority persist fails
+ok - fm-pr-merge reads back a closed owned issue and keeps other issues hedged
+ok - fm-pr-merge treats a missing, malformed, or multiple owned-issue marker as no ownership
+ok - fm-pr-merge runs the closing-keyword check on GitHub merges only
