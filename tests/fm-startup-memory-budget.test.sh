@@ -205,6 +205,126 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
   pass "budget accounting sums the three startup files and reports safe failures"
 }
 
+new_entry_home() {  # <name>: one long and two short learnings entries
+  local home="$TMP_ROOT/$1" long
+  mkdir -p "$home/config" "$home/data"
+  printf '7500\n' > "$home/config/startup-memory-budget"
+  long=$(printf 'x%.0s' $(seq 1 600))
+  {
+    printf '%s\n' '<!-- memory tiers: see the stow skill -->' '## Gotchas' \
+      '- A short entry. <!--a:2026-08-03-->'
+    printf -- '- %s\n  continued on a second line. <!--a:2026-08-03-->\n' "$long"
+    printf '%s\n' '' '## Tools' '- Another short entry. <!--a:2026-08-03-->'
+  } > "$home/data/learnings.md"
+  printf '%s\n' "$home"
+}
+
+test_report_lists_only_entries_over_the_size_largest_first() {
+  local home out err rc expected
+  home=$(new_entry_home entry-report)
+
+  set +e
+  out=$(FM_HOME="$home" "$BUDGET" report)
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "report should succeed while an entry is merely over the size"
+  expected=$(printf '%s\n' \
+    'estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate' \
+    'role=primary' \
+    'effective_budget_tokens=7500' \
+    'file=data/captain.md bytes=0 estimated_tokens=0 status=absent' \
+    'file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent' \
+    'file=data/learnings.md bytes=796 estimated_tokens=266 status=present' \
+    'total_estimated_tokens=266' \
+    'budget_status=within-budget' \
+    'entry_size_limit_tokens=150' \
+    'oversized_entries=1' \
+    'oversized_entry=data/learnings.md line=4 bytes=653 estimated_tokens=218 heading=Gotchas')
+  [ "$out" = "$expected" ] \
+    || fail "report should keep its accounting lines and append only the long entry, got: $out"
+
+  # A second, larger entry in another file sorts ahead of the first.
+  printf -- '- %s\n' "$(printf 'y%.0s' $(seq 1 900))" > "$home/data/captain.md"
+  out=$(FM_HOME="$home" "$BUDGET" report)
+  assert_contains "$out" 'oversized_entries=2' "report did not count both oversized entries"
+  expected=$(printf '%s\n' \
+    'oversized_entry=data/captain.md line=1 bytes=903 estimated_tokens=301 heading=(none)' \
+    'oversized_entry=data/learnings.md line=4 bytes=653 estimated_tokens=218 heading=Gotchas')
+  [ "$(printf '%s\n' "$out" | tail -n 2)" = "$expected" ] \
+    || fail "oversized entries were not listed largest first, got: $out"
+
+  printf '0300\n' > "$home/config/startup-memory-entry-size"
+  err="$TMP_ROOT/entry-report.err"
+  set +e
+  out=$(FM_HOME="$home" "$BUDGET" report 2>"$err")
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "report should reject a malformed entry size as invalid input"
+  [ -z "$out" ] || fail "report printed accounting lines from a rejected run, got: $out"
+  assert_contains "$(<"$err")" 'invalid config/startup-memory-entry-size' \
+    "report's malformed entry size rejection was not specific"
+  pass "report appends the entries over the size, largest first, with a count"
+}
+
+test_entry_bounds_and_heading_text_follow_markdown() {
+  local home out long
+  home="$TMP_ROOT/entry-bounds"
+  mkdir -p "$home/config" "$home/data"
+  printf '7500\n' > "$home/config/startup-memory-budget"
+  long=$(printf 'x%.0s' $(seq 1 600))
+  {
+    printf '%s\n' '## C#' '- short item' '' '```' "$long" '```' '' '- another'
+    printf '%s\n' '- adjacent' '~~~' "$long" '~~~'
+    printf '%s\n' '## Closed ##' '- fenced item' '  ```' "  $long" '  ```'
+    printf -- '## F# \n- %s\n' "$long"
+  } > "$home/data/learnings.md"
+
+  set +e
+  out=$(FM_HOME="$home" "$BUDGET" check)
+  set -e
+  assert_contains "$out" 'oversized_entries=2' \
+    "a top-level fenced block was counted into the list item above it, got: $out"
+  assert_contains "$out" 'line=14 bytes=629 estimated_tokens=210 heading=Closed' \
+    "an indented fence was not counted into its item under the closed heading, got: $out"
+  assert_contains "$out" 'line=19 bytes=603 estimated_tokens=201 heading=F#' \
+    "a heading ending in # lost its last character, got: $out"
+  pass "entries end at a top-level fence and headings keep a trailing # that closes nothing"
+}
+
+test_check_mode_fails_only_while_an_entry_is_over_the_size() {
+  local home out rc
+  home=$(new_entry_home entry-check)
+
+  set +e
+  out=$(FM_HOME="$home" "$BUDGET" check)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "check should fail while an entry is over the size"
+  assert_contains "$out" 'heading=Gotchas' "check did not name the oversized entry"
+
+  # The setting moves the size: the same fixture passes under a larger one.
+  printf '300\n' > "$home/config/startup-memory-entry-size"
+  out=$(FM_HOME="$home" "$BUDGET" check)
+  assert_contains "$out" 'entry_size_limit_tokens=300' "check did not read the configured size"
+  assert_contains "$out" 'oversized_entries=0' "check listed an entry within the configured size"
+
+  printf '0300\n' > "$home/config/startup-memory-entry-size"
+  set +e
+  out=$(FM_HOME="$home" "$BUDGET" check 2>&1)
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "a malformed entry size should be an error, not a default"
+  assert_contains "$out" 'invalid config/startup-memory-entry-size' \
+    "malformed entry size rejection was not specific"
+  rm -f "$home/config/startup-memory-entry-size"
+
+  printf '%s\n' '## Gotchas' '- A short entry.' '- The long entry, shortened.' \
+    '## Tools' '- Another short entry.' > "$home/data/learnings.md"
+  out=$(FM_HOME="$home" "$BUDGET" check)
+  assert_contains "$out" 'oversized_entries=0' "check listed an entry after it was shortened"
+  pass "check exits 1 on an oversized entry and 0 once it is shortened or the size is raised"
+}
+
 new_propagation_world() {
   local world=$1 root="$1/root" home="$1/home" sm="$1/sm" head
   mkdir -p "$home/config" "$home/data" "$home/state" "$root/bin"
@@ -329,6 +449,9 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
 test_primary_bootstrap_materializes_visible_default
 test_safe_parser_rejects_ambiguous_and_unsafe_values
 test_budget_accounting_reports_all_three_files_and_safe_failure
+test_report_lists_only_entries_over_the_size_largest_first
+test_entry_bounds_and_heading_text_follow_markdown
+test_check_mode_fails_only_while_an_entry_is_over_the_size
 test_primary_budget_converges_with_exact_reread_and_safe_failures
 
 echo '# all fm-startup-memory-budget tests passed'
