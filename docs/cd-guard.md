@@ -14,6 +14,7 @@ The primary firstmate shell persists its working directory across tool calls.
 A stray persistent top-level `cd projects/<clone>` therefore silently relocates the shell, so the next firstmate-owned command - a backlog write, an `fm-*` lifecycle call - runs inside a project clone instead of the home.
 That has actually happened: a persistent top-level `cd` caused a firstmate-owned backlog write to execute inside a project clone rather than the home.
 The seatbelt denies exactly that command shape - a cwd change that persists to the primary shell - before it runs.
+It also denies one unrelated command shape that shares its transport and scope: the wake drain piped into another command, described under [Block vs allow](#block-vs-allow).
 
 This guard is not a general sandbox.
 It classifies shell command positions only; it never evaluates, expands, sources, or runs any byte of the submitted command.
@@ -110,8 +111,8 @@ Identical in shape to `docs/arm-pretool-check.md`:
 ## Shared classifier ownership
 
 `bin/fm-cd-command-policy.mjs` imports the shell tokenizer and command-position analysis (`Lexer`, `splitProgram`, `commandPosition`) from `bin/fm-arm-command-policy.mjs`, the sole owner of firstmate's shell classification.
-`basename` remains a private helper of the shared arm classifier because the cd policy identifies shell builtins by exact cooked-word identity.
-The cd-guard never duplicates shell lexing; it adds only the cd-specific decision on top of that shared classifier.
+`basename` remains a private helper of the shared arm classifier because the cd policy identifies shell builtins by exact cooked-word identity; the drain rule matches the script by the last path component of its command word through the policy's own helper.
+The cd-guard never duplicates shell lexing; it adds only its own two decisions on top of that shared classifier.
 `bin/fm-arm-command-policy.mjs` runs its own CLI entry point only when invoked directly, never on import, so the two policies stay independent CLIs over one parser.
 
 ## Harness wiring
