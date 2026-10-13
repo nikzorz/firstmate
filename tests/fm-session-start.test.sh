@@ -397,7 +397,23 @@ case "${1:-}" in
     fi
     exit 0
     ;;
-  has-session) exit 0 ;;
+  has-session)
+    target=
+    prev=
+    for arg in "$@"; do
+      [ "$prev" = -t ] && target=$arg
+      prev=$arg
+    done
+    case "$target" in
+      *:*)
+        [ -e "$spawned" ] && exit 0
+        [ -e "$killed" ] && exit 1
+        case "$mode" in ambiguous|shell) exit 0 ;; esac
+        exit 1
+        ;;
+    esac
+    exit 0
+    ;;
   kill-window)
     printf '%s\n' "$*" >> "$log"
     : > "$killed"
