@@ -947,6 +947,22 @@ test_return_brief_does_not_report_a_deferred_recovery_as_a_gap() {
   pass "the return brief does not report a recovered watcher's deferred announcement as a gap"
 }
 
+test_return_brief_reports_an_undrained_recovery_wake_despite_an_older_deferred_note() {
+  local dir out
+  dir="$TMP_ROOT/brief-stale-deferred-note"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  printf 'announced:downtime:fixture-generation\n' > "$dir/home/state/.watcher-down"
+  printf '2026-10-08T10:00:00+0000\n' > "$dir/home/state/.watcher-recovered"
+  printf '1\t1\tcheck\tinbox:fixture\tcheck: captain inbox note fixture\n' > "$dir/home/state/.wake-queue"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "a clean fleet with an undrained recovery wake should clear the gate: $out"
+  assert_contains "$out" 'GAP: watcher downtime was detected during the away window (recovery marker present)' "a recovery with queued work was hidden by an older deferred note"
+  assert_not_contains "$out" 'its announcement is deferred to the next drain' "a recovery with queued work was reported as a deferred announcement"
+  pass "the return brief reports a recovery with queued work as a gap even when an older deferred note stands"
+}
+
 test_return_brief_reports_only_an_open_downtime_episode_as_a_gap() {
   local dir out token
   # A wake mid-handling is the ordinary open episode at a return during
@@ -1396,6 +1412,7 @@ test_return_brief_health_leads_with_a_gap
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap
 test_return_brief_reports_only_an_open_downtime_episode_as_a_gap
 test_return_brief_does_not_report_a_deferred_recovery_as_a_gap
+test_return_brief_reports_an_undrained_recovery_wake_despite_an_older_deferred_note
 test_return_brief_reports_an_engine_latch_in_the_window
 test_return_brief_keeps_recovered_trip_when_next_append_is_lost
 test_return_brief_does_not_invent_a_trip_while_recovery_is_being_saved

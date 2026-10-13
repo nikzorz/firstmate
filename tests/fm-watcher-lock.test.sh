@@ -1086,7 +1086,8 @@ test_arm_starts_and_self_heals() {
     while [ "$i" -lt 80 ]; do
       if [ "$row" = dead-pid ]; then
         is_live_non_zombie "$armpid" || break
-        [ -s "$state/.watcher-recovered" ] && break
+        [ -s "$state/.watcher-recovered" ] \
+          && grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
       else
         grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
       fi

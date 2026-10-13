@@ -228,7 +228,7 @@ With an empty queue the watcher defers it instead: it appends the recovery to `s
 The next drain a session reads prints that note as one `WATCHER RECOVERED` line and removes it, so the supervision session reads it where one handles the next wake and main reads it otherwise.
 Presentation runs under the wake queue lock, so concurrent drains print a recovery once.
 The away daemon's drain sets `FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT` and leaves the note in place, because the daemon parses queue rows and shows its drain output to no session.
-While the note stands, the away return brief reports the announced generation as a recovered watcher, not as a gap in the away window.
+While the note stands and the queue is empty, the away return brief reports the announced generation as a recovered watcher, not as a gap in the away window.
 The deferred generation stays announced and unacknowledged until that drain's acknowledgement retires it.
 A row appended after a deferral opens a fresh pending generation, so the live watcher wakes for that work on its next poll.
 A deferral that cannot be recorded falls back to the wake.
