@@ -223,6 +223,13 @@ A non-successor watcher start checks the durable queue and recovery marker under
 If an announced-but-unacknowledged episode has an empty queue, the arm leaves that generation announced, making repeated empty-queue arms idempotent while a long-poll source is merely alive.
 If a durable row arrived after the announcement, the arm opens a fresh pending downtime generation so buried work still resurfaces once.
 
+The announcement reaches a session as a `check: rearm-resurface` wake only when a durable row is queued, because only queued work earns a turn.
+With an empty queue the watcher defers it instead: it appends the recovery to `state/.watcher-recovered`, stays in its poll loop, and wakes nobody.
+The next drain by any actor prints that note as one `WATCHER RECOVERED` line and removes it, so the supervision session reads it where one handles the next wake and main reads it otherwise.
+The deferred generation stays announced and unacknowledged until that drain's acknowledgement retires it.
+A row appended after a deferral opens a fresh pending generation, so the live watcher wakes for that work on its next poll.
+A deferral that cannot be recorded falls back to the wake.
+
 ### Generation reuse
 
 An ordinary watcher close attempts to publish downtime, and every durable queue append publishes it.
@@ -248,7 +255,7 @@ It is a non-fatal result that names its own remedy: re-drain, then acknowledge t
 
 The acknowledgement retires the marker only when no rows remain after sequence-bound consumption.
 A concurrently appended wake has a higher sequence, remains queued, and keeps the episode pending for presentation.
-Consequently, a watcher close during handling republishes the same generation as pending and forces one recovery turn even when no queue row remains, while the outstanding generation-bound acknowledgement stays valid.
+Consequently, a watcher close during handling republishes the same generation as pending and gives it one recovery presentation, [deferred to the next drain](#announcement) when no queue row remains, while the outstanding generation-bound acknowledgement stays valid.
 An acknowledged episode does not freeze the generation, because the next downtime after it opens an episode of its own.
 
 ## Per-actor acknowledgement
