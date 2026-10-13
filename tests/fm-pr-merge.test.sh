@@ -4150,7 +4150,7 @@ test_numeric_repository_name_reads_the_message_as_strings() {
   pass "fm-pr-merge reads the default squash message for an all-digit repository"
 }
 
-# --- Closing-keyword check: advisory, GitHub only ----------------------------
+# --- Closing-keyword check: refuses for the owned issue, GitHub only ---------
 
 # A backlog row for task-x1 whose title carries the given issue URLs, so the
 # links: entry tasks-axi derives from them names each one. Args: case_dir url...
@@ -4365,26 +4365,105 @@ test_queued_merge_reads_no_issue_back() {
 
 # The owned-issue body line is the only ownership signal: an issue it names is
 # checked even when the row's title carries no URL, and a missing keyword for it
-# is reported without the context hedge. It stays a report, never a refusal.
-test_owned_issue_missing_keyword_is_reported_unhedged() {
-  local case_dir
+# refuses before anything reaches the forge.
+test_owned_issue_missing_keyword_refuses() {
+  local case_dir rc
   case_dir=$(make_issue_case owned-missing 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a 'Close issues #7 and #8')
   add_task_row_with_body "$case_dir" '' 'Mode no-mistakes.' "Owns issue: $ISSUE_7"
 
+  set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "owned-missing: a report about an owned issue blocked the merge"
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
 
-  assert_grep "does not close #7 ($ISSUE_7), which task task-x1's record marks as owned" "$case_dir/stderr" \
-    "owned-missing: the owned issue's missing keyword was not reported"
-  assert_grep 'such as "Closes #7"' "$case_dir/stderr" \
-    "owned-missing: the report did not name the keyword line the body needs"
+  expect_code 1 "$rc" "owned-missing: an owned issue the body does not close must refuse the merge"
+  assert_grep "does not close #7 ($ISSUE_7), which task task-x1's record marks as owned; nothing was merged" "$case_dir/stderr" \
+    "owned-missing: the refusal did not name the owned issue"
+  assert_grep 'directly before the reference: Closes #7' "$case_dir/stderr" \
+    "owned-missing: the refusal did not print the line the body needs"
+  assert_grep 'pass --no-closing-keyword' "$case_dir/stderr" \
+    "owned-missing: the refusal did not name the override flag"
   assert_no_grep 'nothing is wrong' "$case_dir/stderr" \
     "owned-missing: an owned issue was reported with the context hedge"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "owned-missing: the forge was asked to merge despite the refusal"
   assert_no_grep 'issue view' "$case_dir/gh.log" \
-    "owned-missing: an issue the body does not close was read back"
-  assert_logged_gh_merge "$case_dir" 50 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
-  pass "fm-pr-merge reports an owned issue's missing keyword without the hedge, and merges"
+    "owned-missing: an issue was read back after a refusal"
+  assert_no_grep 'closing_keyword_override=' "$case_dir/state/task-x1.meta" \
+    "owned-missing: a refused merge recorded an override"
+  pass "fm-pr-merge refuses when the body does not close the task's owned issue, and names the line and the flag"
+}
+
+# The override is for a stage PR that should leave its owned issue open, and it
+# reaches no further than that one refusal: other issues keep their hedge.
+test_no_closing_keyword_overrides_and_is_recorded() {
+  local case_dir
+  case_dir=$(make_issue_case owned-override 4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4e 'Part of #7' "$ISSUE_14")
+  add_task_row_with_body "$case_dir" "$ISSUE_14" "Owns issue: $ISSUE_7"
+  printf '%s\n' "closing_keyword_override=https://github.com/example/repo/pull/40 $ISSUE_7" \
+    >> "$case_dir/state/task-x1.meta"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/53 --no-closing-keyword \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "owned-override: --no-closing-keyword did not merge"$'\n'"$(cat "$case_dir/stderr")"
+
+  assert_logged_gh_merge "$case_dir" 53 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  assert_grep "merging anyway under --no-closing-keyword" "$case_dir/stderr" \
+    "owned-override: the merge did not say the override was used"
+  [ "$(grep -c '^closing_keyword_override=' "$case_dir/state/task-x1.meta")" -eq 2 ] \
+    || fail "owned-override: an earlier pull request's override line did not stay beside the new one"
+  assert_grep "closing_keyword_override=https://github.com/example/repo/pull/40 $ISSUE_7" "$case_dir/state/task-x1.meta" \
+    "owned-override: the earlier pull request's override line was dropped"
+  [ "$(grep -A1 -xF "closing_keyword_override=https://github.com/example/repo/pull/53 $ISSUE_7" "$case_dir/state/task-x1.meta" | tail -1)" \
+    = 'pr=https://github.com/example/repo/pull/53' ] \
+    || fail "owned-override: the record does not name the merged pull request and its issue directly ahead of the pr= line"
+  assert_grep "does not close #14 ($ISSUE_14), which task task-x1's record mentions" "$case_dir/stderr" \
+    "owned-override: the unmarked issue lost its report"
+  assert_no_grep 'issue view' "$case_dir/gh.log" \
+    "owned-override: an issue the body does not close was read back"
+  pass "fm-pr-merge merges an unclosed owned issue under --no-closing-keyword and records the override"
+}
+
+# An override that overrode nothing leaves no record claiming it did, and
+# leaves an earlier pull request's record alone.
+test_no_closing_keyword_unused_records_nothing() {
+  local case_dir earlier
+  case_dir=$(make_issue_case owned-override-unused 4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e 'Closes #7')
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  earlier="closing_keyword_override=https://github.com/example/repo/pull/40 $ISSUE_7"
+  printf '%s\n' "$earlier" >> "$case_dir/state/task-x1.meta"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/54 --no-closing-keyword \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-override-unused: fm-pr-merge failed"
+
+  [ "$(grep '^closing_keyword_override=' "$case_dir/state/task-x1.meta")" = "$earlier" ] \
+    || fail "owned-override-unused: the override lines are not exactly the earlier pull request's one"
+  assert_grep "issue view $ISSUE_7" "$case_dir/gh.log" \
+    "owned-override-unused: the closed owned issue was not read back"
+  pass "fm-pr-merge records no override when the body already closes the owned issue"
+}
+
+# The forge has accepted the merge by then, so the override is on record even
+# when the step after it fails the run.
+test_no_closing_keyword_is_recorded_when_authority_persist_fails() {
+  local case_dir rc
+  case_dir=$(make_issue_case owned-override-persist-fails 4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f 'Part of #7')
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  mkdir "$case_dir/state/task-x1.merge-authority"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/55 --no-closing-keyword \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "owned-override-persist-fails: a failed authority persist must fail the run"
+  assert_grep 'merge authority could not be persisted' "$case_dir/stderr" \
+    "owned-override-persist-fails: the run did not fail at the authority persist"
+  assert_grep "closing_keyword_override=https://github.com/example/repo/pull/55 $ISSUE_7" "$case_dir/state/task-x1.meta" \
+    "owned-override-persist-fails: the override was not recorded before the failed persist"
+  pass "fm-pr-merge records the override even when the merge authority persist fails"
 }
 
 test_owned_issue_closed_is_read_back_and_context_issue_stays_hedged() {
@@ -4418,6 +4497,7 @@ test_unusable_owned_issue_markers_mark_nothing() {
       > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-$label: fm-pr-merge failed"
     assert_no_grep 'does not close' "$case_dir/stderr" \
       "owned-$label: an unusable marker was treated as ownership"
+    assert_logged_gh_merge "$case_dir" 52 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
     [ -z "$expect" ] || assert_grep "$expect" "$case_dir/stderr" \
       "owned-$label: the unusable marker was not reported"
   done <<ROWS
@@ -4481,7 +4561,10 @@ test_unreadable_pr_body_warns_and_merges
 test_issue_not_observed_closed_after_merge_is_reported
 test_unreadable_issue_is_reported_as_unknown
 test_queued_merge_reads_no_issue_back
-test_owned_issue_missing_keyword_is_reported_unhedged
+test_owned_issue_missing_keyword_refuses
+test_no_closing_keyword_overrides_and_is_recorded
+test_no_closing_keyword_unused_records_nothing
+test_no_closing_keyword_is_recorded_when_authority_persist_fails
 test_owned_issue_closed_is_read_back_and_context_issue_stays_hedged
 test_unusable_owned_issue_markers_mark_nothing
 test_gitlab_merge_runs_no_closing_keyword_check

@@ -78,6 +78,7 @@ Each effective `FM_HOME` contains private operational directories.
 - Project and secondmate registries.
 - Captain preferences and optional shared captain preferences.
 - Learnings, backlog, briefs, and scout reports.
+- Each cleaned-up task's status events, archived at `data/<id>/status.log` (`bin/fm-teardown.sh`).
 - Explicitly installed content-addressed extension packages under `data/extensions/packages/`.
 
 `state/` holds runtime records:
@@ -694,6 +695,12 @@ The stable local estimate is `ceil(UTF-8 bytes / 3)` per file, a conservative po
 An inherited `data/captain-shared.md` counts in a secondmate's total but remains primary-owned and read-only there.
 The internal [`/stow` skill](../.agents/skills/stow/SKILL.md) owns curation and its automatic secondmate cascade, which accounts every home against this same per-home allowance separately rather than against a fleet total.
 
+### Entry size (config/startup-memory-entry-size)
+
+`config/startup-memory-entry-size` is an optional local, gitignored per-entry size in estimated tokens, in the same one-value format as the budget file; when it is absent the size is `150`.
+`bin/fm-startup-memory-budget.sh report` ends by listing every entry of the three files over that size, largest first, and `bin/fm-startup-memory-budget.sh check` prints only that list and exits non-zero while it is not empty.
+The size is per home and is not inherited by secondmate homes, and it never changes the budget or what counts toward it.
+
 The helper's header owns exact parsing, publication, and report output mechanics.
 
 ## Stow pass horizon (config/stow-pass-horizon)
@@ -959,7 +966,7 @@ A home that authenticates Claude through environment credentials on purpose shou
 ### Failures, reporting, and inheritance
 
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
-The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, so the session-start digest shows which account each worker launched on.
+The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, `state/<id>.meta`, which is where to read the account a worker launched on; the session-start digest's lane line does not show it.
 
 Pins are not inherited into secondmate homes: a local secondmate agent launches on the launching home's pin, while the secondmate's own workers read the secondmate home's files.
 A remote secondmate is launched on its host from its own home's configuration, so create the file in that remote home.
@@ -2342,8 +2349,9 @@ FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
 FM_ZELLIJ_SESSION=firstmate  # zellij-only: named session for normal backend ops and test isolation (docs/zellij-backend.md)
 CMUX_SOCKET_PASSWORD=   # cmux-only: socket password fallback when config/cmux-socket-password is absent (docs/cmux-backend.md)
-FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/fm-line-cap-lib.sh
-FM_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
+FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per orphan status log in the session-start digest (a lane under way prints only its last line); each line is capped by bin/fm-line-cap-lib.sh
+FM_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded, though a hold reason is (FM_SESSION_START_HOLD_REASON_LIMIT), and done rows are never listed
+FM_SESSION_START_HOLD_REASON_LIMIT=200   # characters of one hold reason printed in the session-start digest's backlog listing; a longer reason is cut there with a pointer to `show <id> --full`, and its row is still listed; zero or invalid values fall back to 200
 FM_SESSION_START_ENDPOINT_TIMEOUT=10   # seconds bounding each per-task endpoint liveness read in the session-start digest (bin/fm-session-start.sh); nonpositive or invalid values fall back to 10; a read that hits the bound or dies becomes that task's own `endpoint: error` line and the digest continues
 FM_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/fm-backlog-transition-lib.sh); nonpositive or invalid values fall back to 10; the first bound hit latches the sweep so later reads return immediately, each still naming its own item
 FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording

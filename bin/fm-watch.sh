@@ -2821,6 +2821,14 @@ resurface_after_downtime() {
     fi
     [ "$FM_RECOVERY_MARKER_ACTION" = recover ] || return 0
   fi
+  # Only queued work earns a turn. With nothing queued the announcement is a
+  # bare liveness fact, so it waits for the next drain; a failed deferral
+  # falls through to the wake rather than dropping it.
+  if [ ! -s "$FM_WAKE_QUEUE" ] && fm_recovery_announcement_defer "$STATE"; then
+    WATCHER_RECOVERY_PENDING=0
+    triage_log "watcher recovery announcement deferred to the next drain: nothing queued"
+    return 0
+  fi
   wake "check: rearm-resurface"
 }
 

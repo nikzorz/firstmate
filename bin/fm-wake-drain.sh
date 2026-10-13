@@ -3,7 +3,8 @@
 # optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
-# newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
+# newer branch outcome, OPEN DECISIONS, captain-call record divergence, a
+# deferred watcher recovery announcement (WATCHER RECOVERED), and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
 #
@@ -16,6 +17,10 @@
 # locked drain rotates such leftovers away before doing anything else.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT, when non-empty, leaves the deferred recovery
+# announcement unclaimed for a later drain: a caller that parses queue rows and
+# shows its output to no session sets it so the announcement is never consumed
+# unread.
 # Usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
 set -u
 
@@ -225,6 +230,13 @@ presented_max_row() { # <rows-file>
   else
     printf '0\n'
   fi
+}
+
+# Runs under the queue lock so one presenter at a time claims the note, which
+# makes every claim file it finds a dead presenter's.
+present_recovery_announcement_locked() {
+  [ -z "${FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT:-}" ] || return 0
+  fm_recovery_announcement_present "$STATE" || true
 }
 
 case "${1:-}" in
@@ -604,10 +616,9 @@ EOF
 #     long ago its row was recorded (the store's "recordedAgo"), because a row
 #     main never acknowledged can come back long after its situation settled
 #     (after a harness or posture switch, or an upgrade whose earlier
-#     presenter never advanced the read cursor), and the section asks main to
-#     check the task's current state first and reply to the captain only
-#     about outcomes still open, as if settled ones had never been listed,
-#     then acknowledge every presented outcome, settled and open alike.
+#     presenter never advanced the read cursor). The section's heading points
+#     at the processing how-to instead of repeating it on every drain;
+#     docs/supervision-protocols/supervision-host.md owns that wording.
 #   - Visible routine outcomes are listed once, for awareness, the way the Pi
 #     branch's routine notes reach main's transcript without a turn; silent
 #     routine outcomes never appear. The newest visible rows that fit a byte
@@ -681,7 +692,7 @@ print_branch_outcomes_section() {
 $captain
 ROWS
   if [ "$shown" -gt 0 ]; then
-    text="BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; each says what was true when it was recorded, so check the task's current state first, including its still-open decisions listed above under OPEN DECISIONS, and sort them into still open and already settled, such as a decision since answered, a PR since merged, or a task since finished - process the still-open ones as firstmate: tell the captain, land or merge what is ready, answer or escalate a decision, or act on a blocker; your reply to the captain covers only those, as if the settled ones had never been listed, and a settled one needs only the acknowledgement):
+    text="BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):
 "
     for line in "${captain_lines[@]}"; do
       text="$text$line
@@ -995,6 +1006,7 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
       ;;
     pending:handling:*|announced:handling:*) RECOVERY_ACK_REQUIRED=true ;;
   esac
+  present_recovery_announcement_locked
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
   (print_status_presentation) || true
@@ -1017,6 +1029,7 @@ if [ "$ACTOR" = main ]; then
     # drain that prints nothing while the queue is visibly non-empty reads as a
     # lost wake, and leaves the caller with no idea who owns what is queued.
     print_branch_held_notice
+    present_recovery_announcement_locked
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
     (print_status_presentation) || true
@@ -1077,6 +1090,7 @@ case "$RECOVERY_MARKER_TOKEN" in
   pending:*|announced:*|acked:*) ;;
   *) echo "wake drain: durable wakes have no recovery generation" >&2; exit 1 ;;
 esac
+present_recovery_announcement_locked
 fm_lock_release "$FM_WAKE_QUEUE_LOCK"
 DRAIN_LOCK_HELD=false
 printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation %s\n' \

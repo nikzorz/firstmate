@@ -1873,7 +1873,7 @@ handle_durable_wakes() {  # <watcher-reason> <state>
   local handled=0 failed=0 ack_through ack_generation
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
-  if ! "$FM_DAEMON_DIR/fm-wake-drain.sh" > "$out" 2> "$err"; then
+  if ! FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT=1 "$FM_DAEMON_DIR/fm-wake-drain.sh" > "$out" 2> "$err"; then
     cat "$err" >&2
     rm -f "$out" "$err"
     return 1
@@ -2029,10 +2029,8 @@ fm_super_main() {
   local TARGET="$FM_SUPERVISOR_TARGET"
 
   # --- validate supervisor target at startup (a missing target is a typo) ---
-  # Dispatches through bin/fm-backend.sh instead of a raw `tmux display-message`
-  # probe, so a herdr supervisor pane is checked via the herdr adapter; for
-  # backend=tmux this runs the exact same `tmux display-message -p -t "$TARGET"
-  # '#{pane_id}'` call as before.
+  # Dispatches through bin/fm-backend.sh instead of a raw tmux probe, so a
+  # herdr supervisor pane is checked via the herdr adapter.
   if ! fm_backend_target_exists "$BACKEND" "$TARGET"; then
     echo "error: supervisor target '$TARGET' does not resolve to a $BACKEND pane; set FM_SUPERVISOR_TARGET" >&2
     log "startup failed: target '$TARGET' not found (backend=$BACKEND)"

@@ -105,6 +105,13 @@ matrix_case B25 deny 'builtin command cd projects/foo'
 matrix_case B26 deny 'command -p cd projects/foo'
 matrix_case B27 deny 'command -- cd projects/foo'
 
+# BLOCK: the wake drain piped into another command without an acknowledgement.
+matrix_case D01 deny-drain 'bin/fm-wake-drain.sh | grep -v x'
+matrix_case D02 deny-drain 'fm-wake-drain.sh | grep -v x'
+matrix_case D03 deny-drain 'bin/fm-wake-drain.sh 2>&1 | tail -20'
+matrix_case D04 deny-drain 'FM_HOME=/home/x bash /home/x/bin/fm-wake-drain.sh |& head'
+matrix_case D05 deny-drain 'git status; bin/fm-wake-drain.sh | grep signal'
+
 # ALLOW: not a persistent top-level cwd change (scoped, data, or non-cd).
 matrix_case A01 allow 'git -C projects/foo status'
 matrix_case A02 allow 'cat /abs/path/file'
@@ -142,12 +149,20 @@ matrix_case A33 allow 'command -v cd'
 matrix_case A34 allow 'command -V cd'
 matrix_case A35 allow 'command -pv cd'
 matrix_case A36 allow 'command -vp cd'
+matrix_case A37 allow 'bin/fm-wake-drain.sh'
+matrix_case A38 allow 'bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 3'
+matrix_case A39 allow 'bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 3 | tail -1'
+matrix_case A40 allow 'bin/fm-wake-drain.sh 2>&1'
+matrix_case A41 allow 'bin/fm-wake-drain.sh && git status | head'
+matrix_case A42 allow 'grep -n ack bin/fm-wake-drain.sh | head'
+matrix_case A43 allow 'echo fm-wake-drain.sh | cat'
 
 MATRIX_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-cd-policy-matrix.XXXXXX")
 FM_TEST_CLEANUP_DIRS+=("$MATRIX_TMP")
 
 run_matrix_entry() {
-  local id=$1 expected=$2 entry=$3 cmd=$4 payload out_file err_file rc
+  local id=$1 expected=$2 entry=$3 cmd=$4 payload out_file err_file rc code=persistent-cd
+  [ "$expected" != deny-drain ] || code=filtered-drain
   out_file="$MATRIX_TMP/$id-$entry.out"
   err_file="$MATRIX_TMP/$id-$entry.err"
 
@@ -184,8 +199,8 @@ run_matrix_entry() {
   fi
 
   [ "$rc" -eq 2 ] || fail "$id via $entry must deny, got exit $rc"
-  jq -e '.hookSpecificOutput.permissionDecision == "deny" and (.systemMessage | test("\\[persistent-cd\\]"))' "$err_file" >/dev/null 2>&1 \
-    || fail "$id via $entry deny must carry the persistent-cd reason code on stderr: $(cat "$err_file")"
+  jq -e --arg code "[$code] " '.hookSpecificOutput.permissionDecision == "deny" and (.systemMessage | startswith($code))' "$err_file" >/dev/null 2>&1 \
+    || fail "$id via $entry deny must carry the $code reason code on stderr: $(cat "$err_file")"
   if [ "$entry" = claude ]; then
     [ ! -s "$out_file" ] || fail "$id via claude deny must leave stdout empty: $(cat "$out_file")"
   elif [ "$entry" = grok ]; then
@@ -366,6 +381,12 @@ test_policy_cli_direct() {
     || fail "policy CLI must allow git -C"
   [ "$(node "$policy" --command '(cd projects/foo && pwd)')" = allow ] \
     || fail "policy CLI must allow a subshell-local cd"
+  [ "$(node "$policy" --command 'bin/fm-wake-drain.sh | grep -v x' | cut -f1,2)" = "deny	filtered-drain" ] \
+    || fail "policy CLI must deny a filtered wake drain under its own reason code"
+  case "$(node "$policy" --command 'bin/fm-wake-drain.sh | grep -v x' | cut -f3)" in
+    *"hide wake rows"*) ;;
+    *) fail "the filtered-drain reason must say why the pipe is blocked" ;;
+  esac
   [ "$(node "$policy")" = allow ] \
     || fail "policy CLI must allow when no command is supplied"
   pass "cd-guard: fm-cd-command-policy.mjs CLI honors the deny/allow output contract"

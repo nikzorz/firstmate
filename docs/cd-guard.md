@@ -14,6 +14,7 @@ The primary firstmate shell persists its working directory across tool calls.
 A stray persistent top-level `cd projects/<clone>` therefore silently relocates the shell, so the next firstmate-owned command - a backlog write, an `fm-*` lifecycle call - runs inside a project clone instead of the home.
 That has actually happened: a persistent top-level `cd` caused a firstmate-owned backlog write to execute inside a project clone rather than the home.
 The seatbelt denies exactly that command shape - a cwd change that persists to the primary shell - before it runs.
+It also denies one unrelated command shape that shares its transport and scope: the wake drain piped into another command, described under [Block vs allow](#block-vs-allow).
 
 This guard is not a general sandbox.
 It classifies shell command positions only; it never evaluates, expands, sources, or runs any byte of the submitted command.
@@ -49,6 +50,9 @@ The guard **allows** everything else, including these safe scoped forms that mus
 - A `command` query such as `command -v cd`, `command -V cd`, or a clustered form such as `command -pv cd`, because it reports command resolution without executing the named builtin.
 - The token `cd` appearing as data: quoted text (`echo "cd projects/foo"`), a comment, a substring of another word (`cdk`, `abcd`, `record`), a `printf` payload, or any later argument word.
 
+The guard also **blocks** `fm-wake-drain.sh` piped into another command (`bin/fm-wake-drain.sh | grep -v x`, `bash bin/fm-wake-drain.sh 2>&1 | tail`), because a filter can hide wake rows that the drain's printed acknowledgement then marks handled without their having been read.
+A bare drain, a drain carrying `--ack-through` (which presents no wake rows), and a command that only names the script as data all stay allowed.
+
 An absolute-path `cd` is blocked on purpose: the ALLOW carve-out for absolute paths is for commands that address a target by absolute path, not for `cd`, which relocates the shell itself regardless of whether its argument is relative or absolute.
 Blocking a top-level `cd` is safe in the strong sense: the guard's steady state is "always at the home", so a return-to-home `cd` is redundant rather than necessary, and the block never causes a wrong-directory write.
 
@@ -68,9 +72,11 @@ Every deny carries one stable code in square brackets before its prose reason.
 | Code | Meaning |
 | --- | --- |
 | `persistent-cd` | A top-level `cd`/`pushd`/`popd` would persistently change the primary shell's own working directory. |
+| `filtered-drain` | `fm-wake-drain.sh` without `--ack-through` is piped into another command, which can hide wake rows. |
 
-The reason directs the caller to reach the target without moving the shell by using `git -C <dir>`, placing an absolute path on the intended command itself, or scoping the `cd` to a subshell.
+The `persistent-cd` reason directs the caller to reach the target without moving the shell by using `git -C <dir>`, placing an absolute path on the intended command itself, or scoping the `cd` to a subshell.
 It does not permit `cd /home/project`, because an absolute-path `cd` remains a persistent directory change and is denied.
+The `filtered-drain` reason directs the caller to run the drain on its own and read all of its output.
 
 ## Transport and fail-open behavior
 
@@ -84,7 +90,7 @@ It does not permit `cd /home/project`, because an absolute-path `cd` remains a p
 - Cursor sends stdin JSON at `.tool_input.command` and adds `--cursor`, which renders the deny as Cursor's own returned decision object.
 
 Processing order is cheapest-first: a strict-superset prefilter, then the primary-checkout scope, then the Node policy owner.
-The prefilter removes ordinary single quotes, double quotes, backslashes, carriage returns, and newlines before fast-allowing any command that carries no `cd`, `pushd`, or `popd` substring and no quoting-decoder marker (`$'` ANSI-C or `$"` locale), so quoted or escaped command-word fragments delegate to the policy while most commands never pay for the git scoping calls or the Node process.
+The prefilter removes ordinary single quotes, double quotes, backslashes, carriage returns, and newlines before fast-allowing any command that carries no `cd`, `pushd`, `popd`, or `fm-wake-drain` substring and no quoting-decoder marker (`$'` ANSI-C or `$"` locale), so quoted or escaped command-word fragments delegate to the policy while most commands never pay for the git scoping calls or the Node process.
 The quoting-decoder marker set is coupled to the classifier's decoder set in `bin/fm-arm-command-policy.mjs`: adding any new quote or expansion form the classifier decodes requires extending the prefilter marker set in the same change, or it stops being a strict superset.
 
 Empty stdin, unparseable JSON, missing `jq` on the stdin path, missing Node, a missing policy owner, or an invalid policy response all fail open with exit 0 and no output.
@@ -95,8 +101,8 @@ A broken hook must never deny every shell tool call.
 Identical in shape to `docs/arm-pretool-check.md`:
 
 - Allow (and inert-outside-primary) returns exit 0 with both streams empty.
-- Deny returns exit 2 and writes `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] reason"}` to stderr.
-- Default deny mode also writes `{"decision":"deny","reason":"[persistent-cd] reason"}` to stdout for Grok.
+- Deny returns exit 2 and writes `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[<code>] reason"}` to stderr.
+- Default deny mode also writes `{"decision":"deny","reason":"[<code>] reason"}` to stdout for Grok.
 - `--claude` suppresses stdout completely because Claude ignores a PreToolUse deny when stdout is nonempty.
 - Codex blocks on exit 2 and displays stderr.
 - OpenCode throws only when the checker exits 2.
@@ -105,8 +111,8 @@ Identical in shape to `docs/arm-pretool-check.md`:
 ## Shared classifier ownership
 
 `bin/fm-cd-command-policy.mjs` imports the shell tokenizer and command-position analysis (`Lexer`, `splitProgram`, `commandPosition`) from `bin/fm-arm-command-policy.mjs`, the sole owner of firstmate's shell classification.
-`basename` remains a private helper of the shared arm classifier because the cd policy identifies shell builtins by exact cooked-word identity.
-The cd-guard never duplicates shell lexing; it adds only the cd-specific decision on top of that shared classifier.
+`basename` remains a private helper of the shared arm classifier because the cd policy identifies shell builtins by exact cooked-word identity; the drain rule matches the script by the last path component of its command word through the policy's own helper.
+The cd-guard never duplicates shell lexing; it adds only its own two decisions on top of that shared classifier.
 `bin/fm-arm-command-policy.mjs` runs its own CLI entry point only when invoked directly, never on import, so the two policies stay independent CLIs over one parser.
 
 ## Harness wiring
