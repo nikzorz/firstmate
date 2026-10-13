@@ -302,7 +302,7 @@ SH
   chmod +x "$fakebin/ps"
 }
 
-# make_fake_tmux <fakebin> <live-target>: display-message succeeds only for
+# make_fake_tmux <fakebin> <live-target>: has-session succeeds only for
 # the given "session:window" target - the exact primitive
 # fm_backend_target_exists uses for a tmux endpoint liveness read.
 make_fake_tmux() {
@@ -311,14 +311,14 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "\${1:-}" in
-  display-message)
+  has-session)
     target=""
     prev=""
     for a in "\$@"; do
       [ "\$prev" = "-t" ] && target="\$a"
       prev="\$a"
     done
-    [ "\$target" = "$live" ] && { printf '%%1\n'; exit 0; }
+    [ "\$target" = "$live" ] && exit 0
     exit 1
     ;;
 esac

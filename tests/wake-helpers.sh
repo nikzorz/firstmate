@@ -170,6 +170,9 @@ make_supercase() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
+  has-session)
+    [ "${FM_FAKE_TMUX_PANE_ALIVE:-1}" = "1" ] || exit 1
+    exit 0 ;;
   display-message)
     [ "${FM_FAKE_TMUX_PANE_ALIVE:-1}" = "1" ] || exit 1
     case "$*" in
@@ -274,6 +277,7 @@ write_composer() {
   printf '╭%s╮\n│ > %s │\n╰%s╯\n' "$border" "$text" "$border" > "$COMPOSER"
 }
 case "${1:-}" in
+  has-session) exit 0 ;;
   display-message)
     print=0
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done

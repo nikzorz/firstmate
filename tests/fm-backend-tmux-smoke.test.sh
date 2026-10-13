@@ -156,11 +156,30 @@ if fm_backend_tmux_resolve_bare_selector "no-such-window-xyz" 2>/dev/null; then
 fi
 pass "real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist"
 
+# --- endpoint existence on a still-running server ----------------------------
+# The server and its session outlive the endpoint in every dead case below, so
+# a probe that only notices a dead server cannot pass them.
+
+fm_backend_target_exists tmux "$TARGET" \
+  || fail "fm_backend_target_exists should read the live window as existing"
+if fm_backend_target_exists tmux "$SESSION:fm-never-created"; then
+  fail "fm_backend_target_exists read a window that is not in the live session as existing"
+fi
+if fm_backend_target_exists tmux "no-such-session:$WINDOW"; then
+  fail "fm_backend_target_exists read a window of a session that does not exist as existing"
+fi
+tmux has-session -t "$SESSION" 2>/dev/null \
+  || fail "the session should still be running after the gone-endpoint probes"
+pass "real tmux: fm_backend_target_exists reads a live window alive and a gone window or gone session dead while the server runs"
+
 # --- kill and recovery-grade missing-window classification ------------------
 
 fm_backend_tmux_kill "$TARGET"
 if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$WINDOW"; then
   fail "fm_backend_tmux_kill did not remove the window"
+fi
+if fm_backend_target_exists tmux "$TARGET"; then
+  fail "fm_backend_target_exists read a killed window as existing while its session still runs"
 fi
 state=$(fm_backend_agent_state tmux "$TARGET")
 [ "$state" = missing ] \
