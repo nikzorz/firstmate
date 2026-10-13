@@ -1,0 +1,172 @@
+== S1: one long + two short entries (default size) ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=7500
+file=data/captain.md bytes=49 estimated_tokens=17 status=present
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/learnings.md bytes=792 estimated_tokens=264 status=present
+total_estimated_tokens=281
+budget_status=within-budget
+entry_size_limit_tokens=150
+oversized_entries=1
+oversized_entry=data/learnings.md line=6 bytes=723 estimated_tokens=241 heading=Supervision
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=1
+oversized_entry=data/learnings.md line=6 bytes=723 estimated_tokens=241 heading=Supervision
+[exit 1]
+
+== S3: base-commit report vs target report (prefix must be identical) ==
+base exit 0
+target exit 0
+first 8 lines byte-identical to base report
+lines added by target:
+entry_size_limit_tokens=150
+oversized_entries=1
+oversized_entry=data/learnings.md line=6 bytes=723 estimated_tokens=241 heading=Supervision
+read: base=7500 target=7500
+
+== S4: configured size 300 clears the 234-token entry; size 50 ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=300
+oversized_entries=0
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=50
+oversized_entries=2
+oversized_entry=data/learnings.md line=6 bytes=723 estimated_tokens=241 heading=Supervision
+oversized_entry=data/captain.md line=6 bytes=503 estimated_tokens=168 heading=Preferences
+[exit 1]
+
+== S5: invalid size settings ==
+-- value '0300'
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+-- value '0'
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+-- value 'abc'
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+-- value ''
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+startup-memory-budget: invalid config/startup-memory-entry-size - value must be one positive decimal integer
+[exit 2]
+-- symlinked setting
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+startup-memory-budget: invalid config/startup-memory-entry-size - file is symlinked
+[exit 2]
+
+== S2: long entry shortened ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=0
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh report
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=7500
+file=data/captain.md bytes=49 estimated_tokens=17 status=present
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/learnings.md bytes=81 estimated_tokens=27 status=present
+total_estimated_tokens=44
+budget_status=within-budget
+entry_size_limit_tokens=150
+oversized_entries=0
+[exit 0]
+
+== S6: boundary: 450 bytes = 150 tokens (not over), 451 bytes = 151 (over) ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=0
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=1
+oversized_entry=data/learnings.md line=2 bytes=451 estimated_tokens=151 heading=Edge
+[exit 1]
+
+== S7: top-level fence after an item is not charged to it; heading ending in # kept; non-list prose ignored ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=0
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=1
+oversized_entry=data/learnings.md line=2 bytes=703 estimated_tokens=235 heading=C#
+[exit 1]
+
+== S8: no memory files, extra args, memory files untouched ==
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check
+entry_size_limit_tokens=150
+oversized_entries=0
+[exit 0]
+
+$ /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VDZHZSXQGFQ0JN723B6PC3/bin/fm-startup-memory-budget.sh check extra
+Read and account for the local startup-memory budget.
+Usage:
+  fm-startup-memory-budget.sh read
+  fm-startup-memory-budget.sh report
+  fm-startup-memory-budget.sh check
+
+`read` prints the one validated effective budget from
+config/startup-memory-budget.  `report` prints the stable local estimate for
+data/captain.md, data/captain-shared.md, and data/learnings.md together.
+Bootstrap owns default materialization; this command never creates or repairs
+configuration, so an absent, malformed, symlinked, hardlinked, or otherwise
+unsafe value is a concrete error rather than an inferred default.
+
+`report` ends with the oversized-entry section, and `check` prints only that
+section:
+  entry_size_limit_tokens=<N>
+  oversized_entries=<count>
+  oversized_entry=data/<file> line=<N> bytes=<N> estimated_tokens=<N> heading=<text>
+with one oversized_entry line per entry whose estimate exceeds the limit,
+largest first.  An entry is one top-level list item with its continuation
+lines; text outside a list item is not an entry.  heading is the nearest
+Markdown heading above the entry, or (none).  The limit is the one positive
+decimal in the optional local config/startup-memory-entry-size, held to the
+budget file's exact format, and 150 estimated tokens when that file is absent.
+
+Exit status: 0 success; 1 `check` found an oversized entry; 2 usage error or
+an unsafe or invalid input.
+[exit 2]
+home tree unchanged after report+check
