@@ -179,9 +179,11 @@
 # is handed to the forge, printing the keyword line the body needs. The check
 # never edits the body. --no-closing-keyword overrides that one refusal, for a
 # stage PR that is "Part of #N" and should not close the issue; once the forge
-# accepts the merge, the override is recorded as a closing_keyword_override=
-# line naming the issue in the task's metadata record. The check acts on
-# exactly one owned
+# accepts the merge, the override is recorded in the task's metadata record as
+# a line reading "closing_keyword_override=<PR URL> <issue URL>", so the line
+# says which merge it speaks for. Nothing removes such a line: one written for
+# an earlier pull request stays beside a later one, and a merge that overrode
+# nothing leaves the record as it was. The check acts on exactly one owned
 # issue: a malformed marker, or lines naming more than one issue, are reported
 # and treated as no marker, so they warn and never refuse. Ownership is never
 # inferred from anything else, including an issue being the only URL on the
@@ -300,10 +302,6 @@ while [ "$#" -gt 0 ]; do
       NO_CLOSING_KEYWORD=true
       shift
       ;;
-    --no-closing-keyword=*)
-      echo "error: --no-closing-keyword takes no value" >&2
-      exit 2
-      ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -314,10 +312,6 @@ if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
 fi
 if [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-missing does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
-  exit 2
-fi
-if [ "$NO_CLOSING_KEYWORD" = true ] && [ "$PROVIDER" = gitlab ]; then
-  echo "error: --no-closing-keyword does not apply to GitLab, where no closing-keyword check runs" >&2
   exit 2
 fi
 
@@ -1424,8 +1418,9 @@ URLS
 # The forge has already accepted the merge, so a failed write is reported and
 # never turned into a failed merge.
 record_closing_keyword_override() {
-  local tmp='' line status=0
+  local tmp='' line record status=0
   [ -n "$CLOSING_KEYWORD_OVERRIDE_ISSUE" ] || return 0
+  record="closing_keyword_override=$URL $CLOSING_KEYWORD_OVERRIDE_ISSUE"
   MERGE_META_LOCK=$(fm_meta_lock_path "$META") || status=1
   if [ "$status" -eq 0 ] && ! fm_lock_acquire_wait "$MERGE_META_LOCK"; then
     MERGE_META_LOCK=
@@ -1436,9 +1431,9 @@ record_closing_keyword_override() {
     tmp=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || status=1
     if [ "$status" -eq 0 ]; then
       while IFS= read -r line || [ -n "$line" ]; do
+        [ "$line" != "$record" ] || continue
         case "$line" in
-          closing_keyword_override=*) continue ;;
-          pr=*) printf 'closing_keyword_override=%s\n' "$CLOSING_KEYWORD_OVERRIDE_ISSUE" ;;
+          pr=*) printf '%s\n' "$record" ;;
         esac
         printf '%s\n' "$line"
       done < "$META" > "$tmp" || status=1
@@ -1447,7 +1442,7 @@ record_closing_keyword_override() {
       chmod 0600 "$tmp" \
         && fm_pr_metadata_identity_parse "$tmp" \
         && [ "$FM_PR_META_URL" = "$URL" ] \
-        && grep -qxF "closing_keyword_override=$CLOSING_KEYWORD_OVERRIDE_ISSUE" "$tmp" \
+        && grep -qxF -- "$record" "$tmp" \
         && mv -f -- "$tmp" "$META" \
         || status=1
     fi
@@ -1804,8 +1799,8 @@ case "$PROVIDER" in
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
     if [ "$merge_status" -eq 0 ]; then
       FM_PR_GITHUB_MERGE_ACCEPTED=true
-      persist_accepted_merge_authority || exit 1
       record_closing_keyword_override
+      persist_accepted_merge_authority || exit 1
       fm_afk_contract_lock_release || true
       fm_lock_release "$MERGE_CONTROL_LOCK" || true
       MERGE_CONTROL_LOCK=
