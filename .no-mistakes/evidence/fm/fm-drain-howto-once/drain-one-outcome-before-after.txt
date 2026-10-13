@@ -1,0 +1,13 @@
+$ bin/fm-wake-drain.sh   # BASE 99375ae, one captain outcome
+rc=0
+BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; each says what was true when it was recorded, so check the task's current state first, including its still-open decisions listed above under OPEN DECISIONS, and sort them into still open and already settled, such as a decision since answered, a PR since merged, or a task since finished - process the still-open ones as firstmate: tell the captain, land or merge what is ready, answer or escalate a decision, or act on a blocker; your reply to the captain covers only those, as if the settled ones had never been listed, and a settled one needs only the acknowledgement):
+[seq 1, recorded 0m ago] demo: PR https://github.com/example/repo/pull/101 is green and ready to merge
+BRANCH OUTCOMES: after processing them run bin/fm-branch-outcome.sh mark-processed --through 1; until then every drain presents them again
+[bytes: 923]
+
+$ bin/fm-wake-drain.sh   # TARGET 4050d07, same home, same outcome (unacknowledged, so presented again)
+rc=0
+BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):
+[seq 1, recorded 0m ago] demo: PR https://github.com/example/repo/pull/101 is green and ready to merge
+BRANCH OUTCOMES: after processing them run bin/fm-branch-outcome.sh mark-processed --through 1; until then every drain presents them again
+[bytes: 528]

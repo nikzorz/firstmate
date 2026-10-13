@@ -1,0 +1,38 @@
+# Claude PreToolUse payload on stdin -> bin/fm-cd-pretool-check.sh --claude, in a plain (non-worktree) clone at 4050d07
+## must deny (exit 2)
+exit=2  bin/fm-wake-drain.sh | grep -v x
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  fm-wake-drain.sh | grep -v x
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/fm-wake-drain.sh 2>&1 | grep -v heartbeat
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/fm-wake-drain.sh 2>&1 | tail -20
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/fm-wake-drain.sh | head
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bash bin/fm-wake-drain.sh |& head
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  FM_HOME=/x ./bin/fm-wake-drain.sh | grep signal
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  git status; bin/fm-wake-drain.sh | grep -v x
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/fm-wake-drain.sh --ack-through=7 | tail
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/'fm-wake'-drain.sh | grep -v x
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+exit=2  bin/fm-wake-drain.sh --recovery-generation 3 | cat
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped."}
+## must allow (exit 0, silent)
+exit=0  bin/fm-wake-drain.sh
+exit=0  bin/fm-wake-drain.sh 2>&1
+exit=0  bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 3
+exit=0  bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 3 | tail -1
+exit=0  bin/fm-wake-drain.sh && git status | head
+exit=0  grep -n ack bin/fm-wake-drain.sh | head
+exit=0  echo "fm-wake-drain.sh | grep -v x"
+exit=0  git log --oneline | head
+## existing rule still holds
+exit=2  cd projects/foo
+   stderr: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] a persistent top-level directory change in the primary firstmate checkout is blocked; it would move the shell out of the home so a later firstmate-owned command runs inside a project clone. Reach the target without moving the shell - use git -C <dir> or an absolute path on the command itself - or scope the cd to a subshell like (cd <dir> && ...)."}
+## scope: same payload in the linked gate worktree is inert
+exit=0  bin/fm-wake-drain.sh | grep -v x

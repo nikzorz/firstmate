@@ -1,0 +1,70 @@
+ ▐▛███▛█   Claude Code v2.1.294
+▝▜██████▀  Opus 5.5 (1M context) with medium effort · Claude Max
+ ▝▝   ▝▝   /tmp/fm-primary-clone.QTTpyE/fm
+❯ This is a disposable lab check of the pre-tool hook. Do exactly these three Bash calls, one at a time, without modifying them, and do nothing else (no acknowledgement, no other commands): (1)
+  bin/fm-wake-drain.sh | grep -v x   (2) bin/fm-wake-drain.sh   (3) bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 0 | tail -1 . After each, quote verbatim what you got back, including
+  any hook denial text.
+● Bash(bin/fm-wake-drain.sh | grep -v x)
+  ⎿  Error: PreToolUse:Bash hook error: [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]:
+     {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide
+     wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying
+     --ack-through may be piped."}
+● That attempt was blocked—piping fm-wake-drain.sh into another command isn't allowed since it could hide wake rows while still acknowledging them. I'll run the drain on its own instead and read its
+  full output directly.
+● Bash(bin/fm-wake-drain.sh)
+  ⎿  BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in
+      your session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):
+     [seq 2, recorded 0m ago] demo2: PR https://github.com/example/repo/pull/202 needs a merge decision
+     BRANCH OUTCOMES: after processing them run bin/fm-branch-outcome.sh mark-processed --through 2; until then every drain presents them again
+  ⎿  Allowed by auto mode classifier
+● There's a recorded branch outcome: PR #202 from demo2 needs a merge decision. I'll process it and then mark it as handled using bin/fm-branch-outcome.sh.
+● Bash(bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 0 | tail -1)
+  ⎿  wake drain: acknowledged wakes through 0 (0 row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command
+  ⎿  Allowed by auto mode classifier
+● Captain, all three calls ran as given: the first was denied by the pre-tool hook, the other two were allowed. I ran nothing else, so the follow-ups the outputs suggest (marking the branch outcome
+  processed, re-running the drain) are untouched.
+  (1) bin/fm-wake-drain.sh | grep -v x was denied:
+  PreToolUse:Bash hook error: [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]:
+  {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[filtered-drain] piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake
+  rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through
+  may be piped."}
+  (2) bin/fm-wake-drain.sh was allowed:
+  BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your
+  session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):
+  [seq 2, recorded 0m ago] demo2: PR https://github.com/example/repo/pull/202 needs a merge decision
+  BRANCH OUTCOMES: after processing them run bin/fm-branch-outcome.sh mark-processed --through 2; until then every drain presents them again
+  (3) bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 0 | tail -1 was allowed:
+  wake drain: acknowledged wakes through 0 (0 row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command
+✻ Cogitated for 21s · done 2:54 PM
+❯ Run no commands and read no files. If your session-start context already contains a supervision-host protocol step about processing the BRANCH OUTCOMES section, quote that step verbatim; if it does
+  not, say exactly NOT IN CONTEXT.
+● NOT IN CONTEXT
+  Captain, only the first 2KB preview of the session-start digest reached this session. It points at that step ("protocol at the end of this block") but the step's text sits in the truncated part,
+  which I have not read.
+✻ Crunched for 3s · done 2:55 PM
+❯ Follow the pointer in that BRANCH OUTCOMES heading using only what the heading names, with one Bash call and no pipe. Then quote verbatim the step it leads you to, and say where the full
+  session-start digest was saved if the preview told you.
+● Bash(bin/fm-supervision-instructions.sh)
+  ⎿  ================================================================================
+     SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+     ================================================================================
+     … +56 lines (ctrl+o to expand)
+  ⎿  Allowed by auto mode classifier
+● Captain, the heading names bin/fm-supervision-instructions.sh, which I ran once with no pipe. The BRANCH OUTCOMES step it leads to is step 5 of the supervision-host protocol, verbatim:
+  5. Process the drain's `BRANCH OUTCOMES` section as firstmate, starting from each task's current state, because an entry says what was true when it was recorded and how long ago that was.
+     Check that state first, including the task's still-open decisions listed under `OPEN DECISIONS`, and sort the entries into still open and already settled, such as a decision since answered, a PR
+  since merged, or a task since finished.
+     Process the still-open ones: tell the captain, land or merge what is ready, answer or escalate a decision, or act on a blocker.
+     Your reply to the captain covers only those, as if the settled ones had never been listed; a settled one needs only the acknowledgement.
+     Then run the `mark-processed` acknowledgement the section prints, which covers every presented entry; every drain presents them again until you do.
+     Captain outcomes the away session records stay in the outcome store until the return drain presents them; the return brief (`bin/fm-afk-return.sh`) counts them and points you to that section
+  ([Captain outcomes](../supervision-host.md#captain-outcomes)).
+  The preview did say where the full session-start digest was saved:
+  /home/nik/.claude/projects/-tmp-fm-primary-clone-QTTpyE-fm/6a1538b2-b715-40fb-a363-3eecf43c9eb9/tool-results/hook-d37183f6-98bd-43a4-8aff-cb56358c105c-stdout.txt
+  I have not read that file, and I have not acted on step 5: the recorded outcome for PR https://github.com/example/repo/pull/202 (needs a merge decision) is still unprocessed and unacknowledged.
+✻ Cooked for 9s · done 2:56 PM
+ ☀  Clear  6% of context  58.3k / 1M   last turns ▇▇█  ▲ +3.4k last turn                                                                                                                            [-]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Now process the branch outcome as step 5 says
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
