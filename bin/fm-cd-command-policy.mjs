@@ -72,7 +72,7 @@ function isUnacknowledgedDrain(position) {
     args = args.slice(script + 1);
   }
   if (name !== DRAIN_SCRIPT) return false;
-  return !args.some((word) => word.value === "--ack-through" || word.value.startsWith("--ack-through="));
+  return !args.some((word) => word.value === "--ack-through");
 }
 
 function deny(code) {
