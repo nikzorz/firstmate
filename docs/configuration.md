@@ -2396,6 +2396,7 @@ FM_CREW_STATE_REMOTE_QUIET_SECS=7200  # the same budget for a step that only mon
 FM_CREW_STATE_REMOTE_STEPS=ci   # space-delimited step names that draw the remote budget; bin/fm-crew-state.sh owns why the two differ
 FM_CREW_STATE_FORGE_PROBE=1   # 1 lets fm-crew-state.sh ask the forge whether what a monitoring ci step waits for can still arrive; anything else, or FM_CREW_STATE_NO_FORGE=1, switches that query off
 FM_CREW_STATE_FORGE_TIMEOUT=10   # seconds allowed for that forge query
+FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=300   # seconds a pull request head must have stood before that query reads an empty check list as checks that never started
 FM_TEARDOWN_NM_RUNS_LIMIT=200  # recent no-mistakes run rows scanned to prove an unresolved-head parked run belongs to teardown's task
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by watcher triage: the working/paused classification, and the wedge timer's parked-gate wait evidence
 FM_CLAUDE_LIMIT_SCAN_LINES=40   # pane tail lines scanned for Claude Code's usage-limit prompt

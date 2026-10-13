@@ -162,6 +162,13 @@
 #      FM_CREW_STATE_NO_FORGE=1), no gh, no recorded pull request, an unread
 #      forge, a timeout, or GitHub's own UNKNOWN mergeability - leaves the
 #      verdict alone.
+#      The same query settles the opposite wait, for checks the step has never
+#      seen: while its log still says none have registered, a mergeable pull
+#      request whose head has stood for FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS
+#      with an empty check list, in a repository whose own workflows start on
+#      that pull request, is `stalled` too, and the detail names the
+#      repository's Actions page and the close-and-reopen step. A conflicting
+#      pull request never is, because the forge starts no workflow for one.
 #   3. Reconcile the status log through fm-classify-lib.sh's status_current_line:
 #      open decisions survive unrelated events and continuation prose cannot
 #      hide a declaration. Ship/scout terminal declarations supersede stale log
@@ -272,6 +279,12 @@ FM_CREW_STATE_REMOTE_STEPS=${FM_CREW_STATE_REMOTE_STEPS:-ci}
 FM_CREW_STATE_FORGE_PROBE=${FM_CREW_STATE_FORGE_PROBE:-1}
 FM_CREW_STATE_FORGE_TIMEOUT=${FM_CREW_STATE_FORGE_TIMEOUT:-10}
 case "$FM_CREW_STATE_FORGE_TIMEOUT" in ''|*[!0-9]*|0) FM_CREW_STATE_FORGE_TIMEOUT=10 ;; esac
+# How long a pull request head must have stood before an empty check list counts
+# as checks that are not coming. Workflows register within seconds, so this only
+# has to outlast the forge's own queueing; a tuning constant like the budgets
+# above.
+FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=${FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS:-300}
+case "$FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS" in ''|*[!0-9]*) FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=300 ;; esac
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -1214,6 +1227,153 @@ EOF
     printf 'the forge holds no checks for the pull request head'
   fi
 }
+
+# --- did the checks the ci step is waiting for ever start? ------------------
+#
+# The opposite wait from the re-run above: the step has seen no checks at all
+# and says so. That is the ordinary shape for the first seconds of every pull
+# request, and the permanent shape of one whose repository stopped handing
+# events to Actions, which the forge's own settings still report as enabled. The
+# step waits out its whole timeout on it without an error, so nothing in the
+# run's own figures ever tells the two apart.
+nm_ci_awaits_first_checks() {
+  local marker
+  nm_ci_log_load
+  marker=$(printf '%s\n' "$CI_LOG" \
+    | grep -E "$NM_CI_CHECKS_MARKER_RE|waiting for CI re-run" | tail -1)
+  case "$marker" in
+    *"no CI checks reported yet"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 when a workflow in the task copy is known to start for a pull request
+# opened against <base-branch>. Known is deliberately narrow, because a false
+# yes sends someone to reopen a healthy pull request: a path filter, an
+# ignore-list, a branch pattern rather than the literal base name, a flow
+# mapping, and an activity-type list without `opened` all read as not known.
+worktree_starts_pr_workflows() {  # <base-branch>
+  local base=$1 file
+  [ -n "$WT" ] && [ -d "$WT/.github/workflows" ] || return 1
+  for file in "$WT"/.github/workflows/*.yml "$WT"/.github/workflows/*.yaml; do
+    [ -f "$file" ] || continue
+    awk -v base="$base" '
+      function indent_of(line) { match(line, /^ */); return RLENGTH }
+      function clean(v) {
+        gsub(/^[ \t"\047]+|[ \t"\047,]+$/, "", v)
+        return v
+      }
+      function note(key, value) {
+        value = clean(value)
+        if (value == "") return
+        if (key == "branches" && value == base) base_listed = 1
+        if (key == "types" && value == "opened") opened_listed = 1
+      }
+      function note_list(key, flow,    n, i, parts) {
+        gsub(/^[ \t]*\[|\][ \t]*$/, "", flow)
+        n = split(flow, parts, ",")
+        for (i = 1; i <= n; i++) note(key, parts[i])
+      }
+      function close_trigger() {
+        if (!in_trigger) return
+        in_trigger = 0
+        if (unknown) return
+        if (has_branches && !base_listed) return
+        if (has_types && !opened_listed) return
+        starts = 1
+      }
+      function open_trigger() {
+        close_trigger()
+        in_trigger = 1; filter_indent = -1; filter = ""
+        unknown = 0; has_branches = 0; base_listed = 0
+        has_types = 0; opened_listed = 0
+      }
+      {
+        sub(/(^|[ \t])#.*$/, "")
+        if ($0 ~ /^[ \t]*$/) next
+        ind = indent_of($0)
+        text = substr($0, ind + 1)
+      }
+      ind == 0 {
+        close_trigger()
+        in_on = 0
+        if (text !~ /^["\047]?on["\047]?[ \t]*:/) next
+        rest = text; sub(/^[^:]*:[ \t]*/, "", rest)
+        if (rest == "") { in_on = 1; event_indent = -1; next }
+        if (rest !~ /^\{/ && rest ~ /(^|[^a-z_])pull_request(_target)?([^a-z_]|$)/) starts = 1
+        next
+      }
+      !in_on { next }
+      {
+        if (event_indent < 0) event_indent = ind
+        if (ind <= event_indent) {
+          close_trigger()
+          if (text ~ /^-[ \t]*["\047]?pull_request(_target)?["\047]?[ \t]*$/) { starts = 1; next }
+          if (text !~ /^["\047]?pull_request(_target)?["\047]?[ \t]*:/) next
+          rest = text; sub(/^[^:]*:[ \t]*/, "", rest)
+          open_trigger()
+          if (rest != "" && rest != "~" && rest != "null" && rest != "{}") unknown = 1
+          next
+        }
+        if (!in_trigger) next
+        if (text ~ /^-/) {
+          item = text; sub(/^-[ \t]*/, "", item)
+          note(filter, item)
+          next
+        }
+        if (filter_indent < 0) filter_indent = ind
+        if (ind > filter_indent) { unknown = 1; next }
+        filter = text; sub(/[ \t]*:.*$/, "", filter); filter = clean(filter)
+        rest = text; sub(/^[^:]*:[ \t]*/, "", rest)
+        if (filter == "branches") has_branches = 1
+        else if (filter == "types") has_types = 1
+        else { unknown = 1; next }
+        if (rest ~ /^\[/) note_list(filter, rest)
+        else note(filter, rest)
+      }
+      END { close_trigger(); exit starts ? 0 : 1 }
+    ' "$file" && return 0
+  done
+  return 1
+}
+
+# Prints the reason and the recovery when checks that should have started never
+# did, and nothing otherwise. As with the re-run probe every absent answer
+# prints nothing, and so does every shape with an ordinary explanation: a head
+# still inside its settle time, a conflicting or not yet computed mergeability,
+# any check at all including a queued one, and a repository with no workflow
+# known to start here.
+forge_ci_zero_checks_blocker() {
+  local url out mergeable='' checks='' age='' base=''
+  [ "$FM_CREW_STATE_FORGE_PROBE" = 1 ] || return 0
+  [ "${FM_CREW_STATE_NO_FORGE:-0}" != 1 ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  nm_ci_awaits_first_checks || return 0
+  [ -n "$WT" ] && [ -d "$WT/.github/workflows" ] || return 0
+  url=$(strip_quotes "$(nm_field pr)")
+  case "$url" in https://github.com/*/pull/*) ;; *) return 0 ;; esac
+  # The head's commit time stands in for its push time, so a fix the pipeline
+  # just pushed gets the same settle time as a pull request just opened.
+  out=$(fm_run_timed "$FM_CREW_STATE_FORGE_TIMEOUT" gh pr view "$url" \
+    --json mergeable,statusCheckRollup,createdAt,commits,baseRefName \
+    -q '[(.mergeable // "UNKNOWN"),
+         ((.statusCheckRollup // []) | length | tostring),
+         ((now - ([.createdAt, ((.commits // []) | last | .committedDate?)]
+                  | map(select(. != null) | fromdateiso8601) | max))
+          | floor | tostring),
+         (.baseRefName // "")] | join("\t")' \
+    2>/dev/null </dev/null) || return 0
+  IFS=$'\t' read -r mergeable checks age base <<EOF
+$(printf '%s' "$out" | head -1)
+EOF
+  [ "$mergeable" = MERGEABLE ] || return 0
+  [ "$checks" = 0 ] || return 0
+  case "$age" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$age" -ge "$FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS" ] || return 0
+  worktree_starts_pr_workflows "$base" || return 0
+  printf '%s has zero Actions checks %s after its head settled, though its workflows start on a pull request: confirm Actions is running at %s/actions, then close and reopen the pull request' \
+    "$url" "$(nm_secs_human "$age")" "${url%/pull/*}"
+}
 # Coarse fallback when the bare `axi status` answer is not this branch's own
 # matching run: either it names another branch (routine once several crews
 # validate the same underlying repo concurrently - a worktree with its own
@@ -1550,6 +1710,12 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ -n "$CI_WAIT_BLOCKER" ]; then
       RUN_STATE=stalled
       RUN_DETAIL="run stopped advancing: ci step waiting on a check re-run that cannot arrive, $CI_WAIT_BLOCKER"
+    else
+      CI_WAIT_BLOCKER=$(forge_ci_zero_checks_blocker)
+      if [ -n "$CI_WAIT_BLOCKER" ]; then
+        RUN_STATE=stalled
+        RUN_DETAIL="run stopped advancing: ci step waiting on checks that never started, $CI_WAIT_BLOCKER"
+      fi
     fi
   fi
 
