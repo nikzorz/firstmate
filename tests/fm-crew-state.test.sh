@@ -229,8 +229,10 @@ case "${1:-}" in
   list-windows)
     # A successful but empty inventory: it omits the crew's window, so absence
     # is proved by the answer rather than by an addressed call failing. Only
-    # reached once display-message has already failed.
+    # reached once has-session has already failed.
     ;;
+  has-session)
+    [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1 ;;
   display-message)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
     printf '%%1\n' ;;
