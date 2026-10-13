@@ -1,0 +1,1068 @@
+== commit 6fd5c2e (cases wrapped by run_case: no) ==
+ok - host: an attended wake the branch may take is handled on the engine, and its routine outcome never wakes main
+PROBE	case=test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main	seconds=9	live_fixture_processes=6
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3370065 sleep 1 
+    survivor pid=3370109 sleep 0.5 
+ok - host: a main-only pass-through leaves the successor watcher running and the close undelivered for main
+PROBE	case=test_main_only_pass_through_leaves_the_successor_watcher_running	seconds=7	live_fixture_processes=9
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3377939 sleep 1 
+    survivor pid=3378054 sleep 0.5 
+    survivor pid=3378224 sleep 1 
+ok - host+hook: an attended main-only pass-through rewakes main and keeps its successor watcher
+PROBE	case=test_claude_stop_hook_delivers_a_main_only_pass_through	seconds=5	live_fixture_processes=15
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3385502/cmdline: No such file or directory
+    survivor pid=3385502 
+    survivor pid=3385659 sleep 1 
+    survivor pid=3385754 sleep 1 
+    survivor pid=3385836 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3385837 bash <fixture>/hook-main-only/bin/fm-inactive-reconcile.sh scan 
+    survivor pid=3385844 sleep 0.1 
+ok - host+hook: the next park takes over the cycle a main-only pass-through left, so one arm owns it
+PROBE	case=test_next_park_takes_over_the_cycle_a_pass_through_left_for_main	seconds=14	live_fixture_processes=18
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3407778/cmdline: No such file or directory
+    survivor pid=3407778 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3407830/cmdline: No such file or directory
+    survivor pid=3407830 
+    survivor pid=3408181 sleep 1 
+    survivor pid=3408555 sleep 0.5 
+    survivor pid=3408781 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3408792/cmdline: No such file or directory
+    survivor pid=3408792 
+ok - host+hook: a park stopped mid take-over leaves the take-over to the next park
+PROBE	case=test_a_park_stopped_mid_take_over_leaves_the_take_over_to_the_next_park	seconds=11	live_fixture_processes=22
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3429209 sleep 1 
+    survivor pid=3429780 sleep 1 
+    survivor pid=3430110 sleep 0.5 
+    survivor pid=3430351 sleep 0.5 
+    survivor pid=3430519 sleep 1 
+ok - host+hook: a successor that cannot be recorded is stopped, and main's next turn end arms a fresh cycle
+PROBE	case=test_unrecorded_successor_is_stopped_rather_than_left_for_main	seconds=7	live_fixture_processes=32
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3443713/cmdline: No such file or directory
+    survivor pid=3443713 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3443758/cmdline: No such file or directory
+    survivor pid=3443758 
+    survivor pid=3443850 sleep 1 
+    survivor pid=3444253 sleep 1 
+    survivor pid=3444426 sleep 0.5 
+    survivor pid=3444467 sleep 1 
+    survivor pid=3444483 sleep 0.5 
+    survivor pid=3444539 sleep 0.5 
+    survivor pid=3444571 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3444574/cmdline: No such file or directory
+    survivor pid=3444574 
+ok - host: an away wake is handled on the engine through the branch contract and never reaches main
+PROBE	case=test_away_wake_is_handled_on_the_engine_and_never_reaches_main	seconds=12	live_fixture_processes=30
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3472387/cmdline: No such file or directory
+    survivor pid=3472387 
+    survivor pid=3472952 sleep 1 
+    survivor pid=3473175 sleep 1 
+    survivor pid=3473313 sleep 1 
+    survivor pid=3473540 sleep 0.5 
+    survivor pid=3473572 sleep 0.5 
+    survivor pid=3473668 sleep 0.5 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3473698/cmdline: No such file or directory
+    survivor pid=3473698 
+ok - host: an engine turn that records no outcome hands its durable wake to main
+PROBE	case=test_away_turn_without_a_report_hands_the_wake_to_main	seconds=7	live_fixture_processes=30
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3487681/cmdline: No such file or directory
+    survivor pid=3487681 
+    survivor pid=3488217 sleep 1 
+    survivor pid=3488557 sleep 1 
+    survivor pid=3488919 sleep 0.5 
+    survivor pid=3488996 sleep 0.5 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3488999/cmdline: No such file or directory
+    survivor pid=3488999 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3489012/cmdline: No such file or directory
+    survivor pid=3489012 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3489014/cmdline: No such file or directory
+    survivor pid=3489014 
+ok - host: a restarted host stops, by recorded identity, the cycle a killed predecessor left running
+PROBE	case=test_restarted_host_stops_what_a_killed_predecessor_left	seconds=5	live_fixture_processes=36
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+    survivor pid=3493465 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3493474 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3494444 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3494520 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3496922/cmdline: No such file or directory
+    survivor pid=3496922 
+    survivor pid=3497162 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3497598/cmdline: No such file or directory
+    survivor pid=3497598 
+    survivor pid=3497682 sleep 0.5 
+    survivor pid=3497961 sleep 0.5 
+    survivor pid=3498039 sleep 1 
+    survivor pid=3498101 sleep 1 
+    survivor pid=3498140 sleep 1 
+    survivor pid=3498365 sleep 1 
+    survivor pid=3498371 sleep 0.5 
+ok - host: a host outside the session-lock owner stands down without arming
+PROBE	case=test_host_outside_the_lock_owner_stands_down	seconds=2	live_fixture_processes=36
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+    survivor pid=3493465 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3493474 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3494444 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3494520 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3501011 sleep 1 
+    survivor pid=3501112 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3501455/cmdline: No such file or directory
+    survivor pid=3501455 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3501537/cmdline: No such file or directory
+    survivor pid=3501537 
+    survivor pid=3501727 sleep 0.5 
+    survivor pid=3502078 sleep 1 
+    survivor pid=3502255 sleep 1 
+    survivor pid=3502265 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3502322/cmdline: No such file or directory
+    survivor pid=3502322 
+    survivor pid=3502333 sleep 0.5 
+ok - host: a host under a superseded auto-arm generation stands down without touching the owner
+PROBE	case=test_superseded_host_leaves_the_owner_untouched	seconds=4	live_fixture_processes=37
+    survivor pid=3361785 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash <fixture>/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash <fixture>/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash <fixture>/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash <fixture>/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash <fixture>/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash <fixture>/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash <fixture>/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash <fixture>/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash <fixture>/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash <fixture>/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash <fixture>/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash <fixture>/hook-successor-unrecorded/bin/fm-watch.sh 
+    survivor pid=3493465 <fixture>/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3493474 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3494444 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3494520 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3509056 sleep 1 
+    survivor pid=3509084 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3509432/cmdline: No such file or directory
+    survivor pid=3509432 
+    survivor pid=3509490 sleep 1 
+    survivor pid=3509502 sleep 0.5 
+    survivor pid=3509628 sleep 0.5 
+    survivor pid=3509683 sleep 1 
+    survivor pid=3509849 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3509945/cmdline: No such file or directory
+    survivor pid=3509945 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2934: /proc/3509946/cmdline: No such file or directory
+    survivor pid=3509946 
+    survivor pid=3509994 sleep 0.5 
+PROBE	after-8s-quiet	live_fixture_processes=39
+    survivor pid=3361785 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3362046 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3364264 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3364293 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3372856 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3372916 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+    survivor pid=3378372 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3382691 bash /tmp/fm-supervision-host.0jtytR/hook-main-only/bin/fm-watch-arm.sh 
+    survivor pid=3382742 bash /tmp/fm-supervision-host.0jtytR/hook-main-only/bin/fm-watch.sh 
+    survivor pid=3394090 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3404476 bash /tmp/fm-supervision-host.0jtytR/hook-takeover/bin/fm-watch-arm.sh 
+    survivor pid=3404567 bash /tmp/fm-supervision-host.0jtytR/hook-takeover/bin/fm-watch.sh 
+    survivor pid=3419710 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3420216 bash /tmp/fm-supervision-host.0jtytR/hook-takeover-interrupted/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3423909 bash /tmp/fm-supervision-host.0jtytR/hook-takeover-interrupted/bin/fm-supervision-host.sh park 
+    survivor pid=3424638 bash /tmp/fm-supervision-host.0jtytR/hook-takeover-interrupted/bin/fm-watch-arm.sh --take-over 3415124 
+    survivor pid=3426226 bash /tmp/fm-supervision-host.0jtytR/hook-takeover-interrupted/bin/fm-watch.sh 
+    survivor pid=3431204 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        "$FM_HOME/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      while [ ! -e "$FM_HOME/session.stop" ]; do
+        if [ -e "$FM_HOME/stop.go" ]; then
+          rm -f "$FM_HOME/stop.go"
+          printf "{\"session_id\":\"sess-host-hook\",\"stop_hook_active\":false}\n" \
+            | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$FM_HOME/hook.out" 2> "$FM_HOME/hook.err"
+          printf "%s\n" "$?" > "$FM_HOME/hook.rc"
+        fi
+        sleep 0.1
+      done
+     
+    survivor pid=3441256 bash /tmp/fm-supervision-host.0jtytR/hook-successor-unrecorded/bin/fm-claude-stop-autoarm.sh 
+    survivor pid=3441453 bash /tmp/fm-supervision-host.0jtytR/hook-successor-unrecorded/bin/fm-supervision-host.sh park 
+    survivor pid=3441906 bash /tmp/fm-supervision-host.0jtytR/hook-successor-unrecorded/bin/fm-watch-arm.sh 
+    survivor pid=3441986 bash /tmp/fm-supervision-host.0jtytR/hook-successor-unrecorded/bin/fm-watch.sh 
+    survivor pid=3493465 /tmp/fm-supervision-host.0jtytR/fakebin/fakebin/claude -c 
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      printf "%s\n" "$$" >> "$FM_HOME/claude-pids"
+      rm -f "$FM_HOME/host.rc"
+      for seed in "$FM_HOME"/mirror-seed.*; do
+        [ -f "$seed" ] || continue
+        FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
+      done
+      "$0" park "$@" > "$FM_HOME/host.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/host.rc"
+     /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh 
+    survivor pid=3493474 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-supervision-host.sh park 
+    survivor pid=3494444 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch-arm.sh 
+    survivor pid=3494520 bash /home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/bin/fm-watch.sh 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3521900/cmdline: No such file or directory
+    survivor pid=3521900 
+    survivor pid=3522366 sleep 1 
+    survivor pid=3522658 sleep 1 
+    survivor pid=3522928 sleep 1 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523067/cmdline: No such file or directory
+    survivor pid=3523067 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523153/cmdline: No such file or directory
+    survivor pid=3523153 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523317/cmdline: No such file or directory
+    survivor pid=3523317 
+    survivor pid=3523318 sleep 1 
+    survivor pid=3523607 sleep 1 
+    survivor pid=3523628 sleep 0.5 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523675/cmdline: No such file or directory
+    survivor pid=3523675 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523676/cmdline: No such file or directory
+    survivor pid=3523676 
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4VMYK984GSFSTEWARESKPT9/tests/.nm-probe-3361698.sh: line 2972: /proc/3523720/cmdline: No such file or directory
+    survivor pid=3523720 
+== test file exit code: 0 ==
+== live fixture processes after the file exited: 0 ==

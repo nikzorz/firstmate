@@ -1,0 +1,26 @@
+== commit 2c7e5ee (cases wrapped by run_case: yes) ==
+ok - host: an attended wake the branch may take is handled on the engine, and its routine outcome never wakes main
+PROBE	case=test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main	seconds=9	live_fixture_processes=0
+ok - host: a main-only pass-through leaves the successor watcher running and the close undelivered for main
+PROBE	case=test_main_only_pass_through_leaves_the_successor_watcher_running	seconds=8	live_fixture_processes=0
+ok - host+hook: an attended main-only pass-through rewakes main and keeps its successor watcher
+PROBE	case=test_claude_stop_hook_delivers_a_main_only_pass_through	seconds=5	live_fixture_processes=0
+ok - host+hook: the next park takes over the cycle a main-only pass-through left, so one arm owns it
+PROBE	case=test_next_park_takes_over_the_cycle_a_pass_through_left_for_main	seconds=13	live_fixture_processes=0
+ok - host+hook: a park stopped mid take-over leaves the take-over to the next park
+PROBE	case=test_a_park_stopped_mid_take_over_leaves_the_take_over_to_the_next_park	seconds=10	live_fixture_processes=0
+ok - host+hook: a successor that cannot be recorded is stopped, and main's next turn end arms a fresh cycle
+PROBE	case=test_unrecorded_successor_is_stopped_rather_than_left_for_main	seconds=8	live_fixture_processes=0
+ok - host: an away wake is handled on the engine through the branch contract and never reaches main
+PROBE	case=test_away_wake_is_handled_on_the_engine_and_never_reaches_main	seconds=12	live_fixture_processes=0
+ok - host: an engine turn that records no outcome hands its durable wake to main
+PROBE	case=test_away_turn_without_a_report_hands_the_wake_to_main	seconds=7	live_fixture_processes=0
+ok - host: a restarted host stops, by recorded identity, the cycle a killed predecessor left running
+PROBE	case=test_restarted_host_stops_what_a_killed_predecessor_left	seconds=5	live_fixture_processes=0
+ok - host: a host outside the session-lock owner stands down without arming
+PROBE	case=test_host_outside_the_lock_owner_stands_down	seconds=2	live_fixture_processes=0
+ok - host: a host under a superseded auto-arm generation stands down without touching the owner
+PROBE	case=test_superseded_host_leaves_the_owner_untouched	seconds=4	live_fixture_processes=0
+PROBE	after-8s-quiet	live_fixture_processes=0
+== test file exit code: 0 ==
+== live fixture processes after the file exited: 0 ==
