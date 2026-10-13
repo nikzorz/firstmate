@@ -17,6 +17,10 @@
 # locked drain rotates such leftovers away before doing anything else.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT, when non-empty, leaves the deferred recovery
+# announcement unclaimed for a later drain: a caller that parses queue rows and
+# shows its output to no session sets it so the announcement is never consumed
+# unread.
 # Usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
 set -u
 
@@ -226,6 +230,13 @@ presented_max_row() { # <rows-file>
   else
     printf '0\n'
   fi
+}
+
+# Runs under the queue lock so one presenter at a time claims the note, which
+# makes every claim file it finds a dead presenter's.
+present_recovery_announcement_locked() {
+  [ -z "${FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT:-}" ] || return 0
+  fm_recovery_announcement_present "$STATE" || true
 }
 
 case "${1:-}" in
@@ -996,9 +1007,9 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
       ;;
     pending:handling:*|announced:handling:*) RECOVERY_ACK_REQUIRED=true ;;
   esac
+  present_recovery_announcement_locked
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
-  fm_recovery_announcement_present "$STATE" || true
   (print_status_presentation) || true
   print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
@@ -1019,9 +1030,9 @@ if [ "$ACTOR" = main ]; then
     # drain that prints nothing while the queue is visibly non-empty reads as a
     # lost wake, and leaves the caller with no idea who owns what is queued.
     print_branch_held_notice
+    present_recovery_announcement_locked
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
-    fm_recovery_announcement_present "$STATE" || true
     (print_status_presentation) || true
     print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
     assert_watcher_liveness
@@ -1080,12 +1091,12 @@ case "$RECOVERY_MARKER_TOKEN" in
   pending:*|announced:*|acked:*) ;;
   *) echo "wake drain: durable wakes have no recovery generation" >&2; exit 1 ;;
 esac
+present_recovery_announcement_locked
 fm_lock_release "$FM_WAKE_QUEUE_LOCK"
 DRAIN_LOCK_HELD=false
 printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
-fm_recovery_announcement_present "$STATE" || true
 (print_status_presentation "$RAW_ROWS") || true
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness

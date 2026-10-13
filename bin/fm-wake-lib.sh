@@ -1116,6 +1116,13 @@ fm_recovery_announcement_defer() {  # <state>
   printf '%s\n' "$stamp" >> "$1/.watcher-recovered"
 }
 
+fm_recovery_announcement_deferred() {  # <state>
+  local note="$1/.watcher-recovered"
+  [ -f "$note" ] && [ -s "$note" ] && [ ! -L "$note" ]
+}
+
+# Callers serialize on the wake queue lock: a claim file is only ever a dead
+# presenter's when no two presenters run at once.
 fm_recovery_announcement_present() {  # <state>
   local note="$1/.watcher-recovered" claimed orphan count latest
   # A presenter that died after its claim left the lines it never printed.
@@ -1123,7 +1130,7 @@ fm_recovery_announcement_present() {  # <state>
     [ -f "$orphan" ] && [ ! -L "$orphan" ] || continue
     cat -- "$orphan" >> "$note" && rm -f -- "$orphan"
   done
-  [ -f "$note" ] && [ -s "$note" ] && [ ! -L "$note" ] || return 0
+  fm_recovery_announcement_deferred "$1" || return 0
   claimed=$(mktemp "$note.presenting.XXXXXX") || return 1
   if ! mv -f -- "$note" "$claimed"; then
     rm -f -- "$claimed"

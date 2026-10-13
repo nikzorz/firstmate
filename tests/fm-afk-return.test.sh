@@ -931,6 +931,22 @@ test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
   pass "the return brief does not report an already-acked watcher-down marker as an open gap"
 }
 
+test_return_brief_does_not_report_a_deferred_recovery_as_a_gap() {
+  local dir out
+  dir="$TMP_ROOT/brief-deferred-recovery"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  printf 'announced:downtime:fixture-generation\n' > "$dir/home/state/.watcher-down"
+  printf '2026-10-08T10:00:00+0000\n' > "$dir/home/state/.watcher-recovered"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "a clean fleet with a deferred recovery should clear the gate: $out"
+  assert_not_contains "$out" 'GAP:' "a deferred recovery announcement was reported as a gap"
+  assert_contains "$out" 'no detected gap' "a deferred recovery announcement hid the clean health line"
+  assert_contains "$out" 'its announcement is deferred to the next drain (recovery marker announced:downtime); not a gap' "the deferred recovery was not reported as information"
+  pass "the return brief does not report a recovered watcher's deferred announcement as a gap"
+}
+
 test_return_brief_reports_only_an_open_downtime_episode_as_a_gap() {
   local dir out token
   # A wake mid-handling is the ordinary open episode at a return during
@@ -1379,6 +1395,7 @@ test_return_guard_refuses_while_the_record_exists
 test_return_brief_health_leads_with_a_gap
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap
 test_return_brief_reports_only_an_open_downtime_episode_as_a_gap
+test_return_brief_does_not_report_a_deferred_recovery_as_a_gap
 test_return_brief_reports_an_engine_latch_in_the_window
 test_return_brief_keeps_recovered_trip_when_next_append_is_lost
 test_return_brief_does_not_invent_a_trip_while_recovery_is_being_saved
