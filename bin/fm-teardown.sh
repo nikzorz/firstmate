@@ -97,8 +97,9 @@
 # destination is checked before the first destructive step, so an unusable one
 # refuses with nothing cleared. The move itself runs after the pane is closed,
 # to take the worker's last lines: the status file is removed only once the
-# archive is verified to end with them, so a failed move retains it and a rerun
-# archives only lines not yet moved.
+# archive is verified to end with them, so a failed move never loses a line. It
+# may leave lines already appended in the status file, and a rerun archives
+# those again.
 # Worktree-slot ownership (teardown-slot-collision): a treehouse pool slot is
 # reused across tasks, so a stale, duplicated, or drifted worktree= record can
 # name a slot a DIFFERENT live task now holds. Cleanup kills every process under
@@ -4135,6 +4136,11 @@ if [ "$KIND" = secondmate ]; then
   preflight_firstmate_home_process_event_tree "$HOME_PATH" "secondmate home" || exit 1
 fi
 
+if ! status_log_archive_destination_check "$STATE" "$DATA" "$ID"; then
+  echo "error: $ID's status log has no usable archive destination at $DATA/$ID/status.log; refusing before anything is cleared" >&2
+  exit 1
+fi
+
 # Above the child sweep and every kill, so a refusal here means the retirement
 # never started.
 if [ "$KIND" = secondmate ] && [ -n "$HOME_PATH" ] && [ -d "$HOME_PATH" ]; then
@@ -4226,11 +4232,6 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       exit 1
     fi
   fi
-fi
-
-if ! status_log_archive_destination_check "$STATE" "$DATA" "$ID"; then
-  echo "error: $ID's status log has no usable archive destination at $DATA/$ID/status.log; refusing before anything is cleared" >&2
-  exit 1
 fi
 
 # Above the backlog close marker, the no-mistakes run abort, the leaked-process
