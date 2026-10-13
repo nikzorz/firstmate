@@ -959,7 +959,7 @@ A home that authenticates Claude through environment credentials on purpose shou
 ### Failures, reporting, and inheritance
 
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
-The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, so the session-start digest shows which account each worker launched on.
+The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, `state/<id>.meta`, which is where to read the account a worker launched on; the session-start digest's lane line does not show it.
 
 Pins are not inherited into secondmate homes: a local secondmate agent launches on the launching home's pin, while the secondmate's own workers read the secondmate home's files.
 A remote secondmate is launched on its host from its own home's configuration, so create the file in that remote home.
