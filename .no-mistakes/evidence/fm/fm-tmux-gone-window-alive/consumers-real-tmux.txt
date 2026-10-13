@@ -1,0 +1,26 @@
+tmux version: tmux 3.6
+recorded lane: window=firstmate:fm-mate kind=secondmate, last status-log line: working: charting the course
+=== 1. window live
+windows now: firstmate:main firstmate:fm-mate firstmate:fm-mate-2 
+  base   fm-crew-state.sh mate -> state: working · source: status-log · charting the course
+  target fm-crew-state.sh mate -> state: working · source: status-log · charting the course
+  base   fm-send.sh firstmate:fm-mate --key Enter -> exit 0 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+●━━━━━━━━━━━━━━━━━━━�
+  target fm-send.sh firstmate:fm-mate --key Enter -> exit 0 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+WARNING: watcher still down (same stale episode; last beat: ne
+=== 2. recorded window killed, prefix sibling fm-mate-2 and the server still live
+windows now: firstmate:main firstmate:fm-mate-2 
+  base   fm-crew-state.sh mate -> state: working · source: status-log · charting the course
+  target fm-crew-state.sh mate -> state: unknown · source: none · backend target gone: firstmate:fm-mate
+  base   fm-send.sh firstmate:fm-mate --key Enter -> exit 0 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+WARNING: watcher still down (same stale episode; last beat: ne
+  target fm-send.sh firstmate:fm-mate --key Enter -> exit 0 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+WARNING: watcher still down (same stale episode; last beat: ne
+=== 3. sibling killed too, session firstmate and server still live
+windows now: firstmate:main 
+  base   fm-crew-state.sh mate -> state: working · source: status-log · charting the course
+  target fm-crew-state.sh mate -> state: unknown · source: none · backend target gone: firstmate:fm-mate
+  base   fm-send.sh firstmate:fm-mate --key Enter -> exit 1 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+WARNING: watcher still down (same stale episode; last beat: ne
+  target fm-send.sh firstmate:fm-mate --key Enter -> exit 1 fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.5q1Wdh
+WARNING: watcher still down (same stale episode; last beat: ne

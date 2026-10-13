@@ -1,0 +1,59 @@
+== BASE: live tmux inventory ==
+  firstmate:fm-live
+  firstmate:fm-mate-2
+== BASE: fm-session-start.sh lane lines ==
+ghost | kind=ship mode=- | endpoint: alive (backend=tmux window=no-such-session:fm-ghost) | last status: working: session gone | record missing: mode
+live | kind=ship mode=- | endpoint: alive (backend=tmux window=firstmate:fm-live) | last status: working: holding course | record missing: mode
+mate | kind=ship mode=- | endpoint: alive (backend=tmux window=firstmate:fm-mate) | last status: working: window gone, sibling fm-mate-2 live | record missing: mode
+== BASE: fm-fleet-snapshot.sh lane lines ==
+      "id": "ghost",
+          "path": "<lab>/state/ghost.meta",
+          "path": "<lab>/state/ghost.status",
+          "path": "<lab>/wt-ghost",
+          "path": "<lab>/data/ghost/report.md",
+      "secondmate_projects": [],
+        "target": "no-such-session:fm-ghost",
+        "agent_alive": "not_checked",
+        "watch": "bin/fm-peek.sh fm-ghost",
+        "steer": "bin/fm-send.sh fm-ghost '<instruction>'",
+      "id": "live",
+          "path": "<lab>/state/live.meta",
+== BASE: fm-send.sh firstmate:fm-mate 'ahoy'  (recorded window, gone) ==
+error: text not submitted to firstmate:fm-mate (delivery unconfirmed; verdict=unknown; tried explicit target 'firstmate:fm-mate' matched <lab>/state/mate.meta; backend=tmux)
+  exit=1
+== BASE: sibling pane firstmate:fm-mate-2 afterwards ==
+  | nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M4VJMWPA2REMV0XCAAFQ
+  | 4RA3$ ahoy
+  | ahoy: command not found
+  | nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M4VJMWPA2REMV0XCAAFQ
+  | 4RA3$
+
+== CHANGE: live tmux inventory ==
+  firstmate:fm-live
+  firstmate:fm-mate-2
+== CHANGE: fm-session-start.sh lane lines ==
+ghost | kind=ship mode=- | endpoint: dead (backend=tmux window=no-such-session:fm-ghost) | last status: working: session gone | record missing: mode
+live | kind=ship mode=- | endpoint: alive (backend=tmux window=firstmate:fm-live) | last status: working: holding course | record missing: mode
+mate | kind=ship mode=- | endpoint: dead (backend=tmux window=firstmate:fm-mate) | last status: working: window gone, sibling fm-mate-2 live | record missing: mode
+== CHANGE: fm-fleet-snapshot.sh lane lines ==
+      "id": "ghost",
+          "path": "<lab>/state/ghost.meta",
+          "path": "<lab>/state/ghost.status",
+          "path": "<lab>/wt-ghost",
+          "path": "<lab>/data/ghost/report.md",
+      "secondmate_projects": [],
+        "detail": "backend target gone: no-such-session:fm-ghost",
+        "raw": "state: unknown · source: none · backend target gone: no-such-session:fm-ghost",
+        "target": "no-such-session:fm-ghost",
+        "agent_alive": "not_checked",
+        "watch": "bin/fm-peek.sh fm-ghost",
+        "steer": "bin/fm-send.sh fm-ghost '<instruction>'",
+== CHANGE: fm-send.sh firstmate:fm-mate 'ahoy'  (recorded window, gone) ==
+error: text not submitted to firstmate:fm-mate (delivery unconfirmed; verdict=unknown; tried explicit target 'firstmate:fm-mate' matched <lab>/state/mate.meta; backend=tmux)
+  exit=1
+== CHANGE: sibling pane firstmate:fm-mate-2 afterwards ==
+  | nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M4VJMWPA2REMV0XCAAFQ
+  | 4RA3$ ahoy
+  | ahoy: command not found
+  | nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M4VJMWPA2REMV0XCAAFQ
+  | 4RA3$

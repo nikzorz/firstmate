@@ -1,0 +1,37 @@
+tmux version: tmux 3.6
+--- before kill:
+firstmate:main %0
+firstmate:fm-auth-fix %1
+firstmate:fm-auth-fix-2 %2
+other:fm-k7 %3
+--- all endpoints live:
+PASS  firstmate:fm-auth-fix         base=alive  target=alive  expect=alive  live window
+PASS  firstmate:fm-auth-fix-2       base=alive  target=alive  expect=alive  live window (longer sibling)
+PASS  firstmate:0                   base=alive  target=alive  expect=alive  live window by index
+PASS  firstmate:fm-auth-fix.0       base=alive  target=alive  expect=alive  live window.pane
+PASS  %2                            base=alive  target=alive  expect=alive  live pane id
+PASS  other:fm-k7                   base=alive  target=alive  expect=alive  live window in second session
+--- after kill-window firstmate:fm-auth-fix and kill-session other (server still running):
+firstmate:main %0
+firstmate:fm-auth-fix-2 %2
+--- raw tmux exit codes on the gone window (the reported defect):
+display-message -t firstmate:fm-never -> exit 0
+display-message -t other:fm-k7 (gone session) -> exit 0
+has-session -t firstmate:fm-never -> exit 1
+has-session -t firstmate:fm-auth-fix (prefix of live fm-auth-fix-2) -> exit 0
+has-session -t =firstmate:=fm-auth-fix -> exit 1
+--- gone endpoints on the running server:
+PASS  firstmate:fm-auth-fix         base=alive  target=dead   expect=dead   gone window, live prefix sibling fm-auth-fix-2
+PASS  firstmate:fm-never            base=alive  target=dead   expect=dead   window never created
+PASS  firstmate:fm-auth             base=alive  target=dead   expect=dead   gone name, prefix of a live window
+PASS  firstmate:fm-auth-fix.0       base=alive  target=dead   expect=dead   window.pane of gone window
+PASS  other:fm-k7                   base=alive  target=dead   expect=dead   gone session
+PASS  first:main                    base=alive  target=dead   expect=dead   gone session, prefix of live session
+PASS  %1                            base=alive  target=dead   expect=dead   pane id of killed window
+PASS  firstmate:99                  base=alive  target=dead   expect=dead   window index that does not exist
+PASS  firstmate:fm-*                base=alive  target=dead   expect=dead   glob must not match a live window
+--- survivors still alive:
+PASS  firstmate:fm-auth-fix-2       base=alive  target=alive  expect=alive  live sibling
+PASS  firstmate:main                base=alive  target=alive  expect=alive  live window
+PASS  %2                            base=alive  target=alive  expect=alive  live pane id
+server + session firstmate still running: yes

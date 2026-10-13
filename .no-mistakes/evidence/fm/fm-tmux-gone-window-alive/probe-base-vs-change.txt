@@ -1,0 +1,16 @@
+tmux version: tmux 3.6; private socket: -L fm-probe-2713398
+live windows: main fm-auth-fix-2 fm-doomed 
+after kill-window fm-doomed: main fm-auth-fix-2 
+TARGET                             BASE       CHANGE     EXPECT
+firstmate:main                     alive      alive      alive (live window)
+firstmate:fm-auth-fix-2            alive      alive      alive (live window)
+firstmate:0                        alive      alive      alive (window index)
+firstmate:fm-doomed                alive      dead       dead (killed window, server running)
+firstmate:fm-never-created         alive      dead       dead (gone window)
+no-such-session:main               alive      dead       dead (gone session)
+firstmate:fm-auth-fix              alive      dead       dead (gone; live prefix sibling fm-auth-fix-2)
+first:main                         alive      dead       dead (gone session; live prefix sibling)
+%0                                 alive      alive      alive (pane id)
+%999                               alive      dead       dead (gone pane id)
+server still running after probes: yes
+private server stopped

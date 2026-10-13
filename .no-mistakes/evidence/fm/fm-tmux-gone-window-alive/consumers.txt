@@ -1,0 +1,49 @@
+live inventory (mate's recorded window firstmate:fm-mate is gone; sibling fm-mate-2 is live):
+  firstmate:fm-live
+  firstmate:fm-mate-2
+
+== BASE ==
+$ fm-crew-state.sh mate   (gone window)
+state: working · source: status-log · charting the reef
+  exit=0
+$ fm-crew-state.sh live   (live window)
+state: working · source: status-log · holding course
+  exit=0
+$ fm-send.sh firstmate:fm-mate 'ahoy'   (explicit gone target)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.q0Potx
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: text not submitted to firstmate:fm-mate (delivery unconfirmed; verdict=unknown; tried explicit target 'firstmate:fm-mate' matched /tmp/fm-lab.q0Potx/state/mate.meta; backend=tmux)
+  exit=1
+$ fm-send.sh no-such-session:fm-live 'ahoy'   (explicit gone session)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.q0Potx
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+can't find session: no-such-session
+error: text not sent to no-such-session:fm-live (tmux send failed; tried meta=/tmp/fm-lab.q0Potx/state/no-such-session:fm-live.meta; metadata window/terminal lookup; backend=tmux; endpoint=verified)
+  exit=1
+
+== CHANGE ==
+$ fm-crew-state.sh mate   (gone window)
+state: unknown · source: none · backend target gone: firstmate:fm-mate
+  exit=0
+$ fm-crew-state.sh live   (live window)
+state: working · source: status-log · holding course
+  exit=0
+$ fm-send.sh firstmate:fm-mate 'ahoy'   (explicit gone target)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.q0Potx
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: text not submitted to firstmate:fm-mate (delivery unconfirmed; verdict=unknown; tried explicit target 'firstmate:fm-mate' matched /tmp/fm-lab.q0Potx/state/mate.meta; backend=tmux)
+  exit=1
+$ fm-send.sh no-such-session:fm-live 'ahoy'   (explicit gone session)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.q0Potx
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: explicit target 'no-such-session:fm-live' is not a live tmux endpoint (tried meta=/tmp/fm-lab.q0Potx/state/no-such-session:fm-live.meta; metadata window/terminal lookup; backend=tmux). Use fm-<id> for a recorded task/lane, or pass a target whose backend endpoint can be verified.
+  exit=1
+
+sibling pane fm-mate-2 after the sends (must not contain 'ahoy'):
+4

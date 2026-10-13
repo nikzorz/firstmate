@@ -1,0 +1,18 @@
+tmux 3.6
+live inventory after killing fm-doomed:
+  firstmate:fm-auth-fix-2 idx=0
+
+TARGET                                         BASE     CHANGE   EXPECT
+firstmate:fm-auth-fix-2 (live window)          alive    alive    alive
+%0 (live pane id)                              alive    alive    alive
+firstmate:0 (live window index)                alive    alive    alive
+firstmate:fm-auth-fix-2.0 (live window.pane)   alive    alive    alive
+firstmate:fm-doomed (killed window)            alive    dead     dead
+%1 (killed pane id)                            alive    dead     dead
+firstmate:fm-never-created (never existed)     alive    dead     dead
+no-such-session:fm-auth-fix-2 (gone session)   alive    dead     dead
+firstmate:fm-auth-fix (gone, prefix of live)   alive    dead     dead
+firstmate:fm-auth* (pattern of live)           alive    dead     dead
+first:fm-auth-fix-2 (session prefix)           alive    dead     dead
+
+server and session firstmate still running after all probes

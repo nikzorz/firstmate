@@ -1,0 +1,15 @@
+tmux version: tmux 3.6
+=== 1. explicit target live
+  base   fm-send.sh firstmate:fm-loose <text> -> exit 1
+         | error: text not submitted to firstmate:fm-loose (delivery unconfirmed; verdict=unknown; tried meta=/tmp/fm-lab.JpnzFR/state/firstmate:fm-loose.meta; metadata window/terminal lookup; backend=tmux; endpoint=verified)
+  target fm-send.sh firstmate:fm-loose <text> -> exit 1
+         | error: text not submitted to firstmate:fm-loose (delivery unconfirmed; verdict=unknown; tried meta=/tmp/fm-lab.JpnzFR/state/firstmate:fm-loose.meta; metadata window/terminal lookup; backend=tmux; endpoint=verified)
+=== 2. explicit target killed; prefix sibling fm-loose-2 and the server still live
+windows now: firstmate:main firstmate:fm-loose-2 
+  base   fm-send.sh firstmate:fm-loose <text> -> exit 1
+         | error: text not submitted to firstmate:fm-loose (delivery unconfirmed; verdict=unknown; tried meta=/tmp/fm-lab.JpnzFR/state/firstmate:fm-loose.meta; metadata window/terminal lookup; backend=tmux; endpoint=verified)
+  target fm-send.sh firstmate:fm-loose <text> -> exit 1
+         | error: explicit target 'firstmate:fm-loose' is not a live tmux endpoint (tried meta=/tmp/fm-lab.JpnzFR/state/firstmate:fm-loose.meta; metadata window/terminal lookup; backend=tmux). Use fm-<id> for a recorded task/lane, or pass a target whose backen
+sibling fm-loose-2 pane content (text that landed in the wrong window):
+         | hello-from-base
+         | hello-from-base
