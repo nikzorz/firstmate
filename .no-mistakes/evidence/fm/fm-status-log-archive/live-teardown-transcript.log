@@ -1,0 +1,182 @@
+
+===== S1 cleanup archives the status log into a data/<id>/ it creates =====
+-- state records for arch-a1: arch-a1.meta arch-a1.status 
+-- tmux window fm-arch-a1: alive
+-- branch fm/arch-a1: present
+-- data/arch-a1: 
+$ $WORKTREE/bin/fm-teardown.sh arch-a1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for arch-a1: 158568 162049
+teardown: force-killing leaked worktree process(es) for arch-a1: 158568
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown arch-a1 complete (window primary:fm-arch-a1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: arch-a1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move arch-a1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for arch-a1: 
+-- tmux window fm-arch-a1: gone
+-- branch fm/arch-a1: deleted
+-- data/arch-a1: drwxrwxr-x 2 nik nik  60 Oct 13 15:36 .;drwxrwxr-x 3 nik nik  60 Oct 13 15:36 ..;-rw-rw-r-- 1 nik nik 130 Oct 13 15:36 status.log;
+$ cat $LAB/data/arch-a1/status.log
+working [at=1760000100]: setup complete
+paused [at=1760000200]: waiting on validation round
+done [at=1760000300]: ready in branch
+[exit 0]
+$ cmp $LAB/expect.s1 $LAB/data/arch-a1/status.log
+[exit 0]
+
+===== S2 relaunch of the same id: second cleanup appends, never overwrites =====
+$ $WORKTREE/bin/fm-teardown.sh arch-a1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for arch-a1: 166213 169423
+teardown: force-killing leaked worktree process(es) for arch-a1: 166213
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown arch-a1 complete (window primary:fm-arch-a1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: arch-a1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move arch-a1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for arch-a1: 
+-- tmux window fm-arch-a1: gone
+-- branch fm/arch-a1: deleted
+-- data/arch-a1: drwxrwxr-x 2 nik nik  60 Oct 13 15:36 .;drwxrwxr-x 3 nik nik  60 Oct 13 15:36 ..;-rw-rw-r-- 1 nik nik 204 Oct 13 15:36 status.log;
+$ cat $LAB/data/arch-a1/status.log
+working [at=1760000100]: setup complete
+paused [at=1760000200]: waiting on validation round
+done [at=1760000300]: ready in branch
+working [at=1760000400]: relaunched
+done [at=1760000500]: relaunch landed
+[exit 0]
+$ cmp $LAB/expect.s2 $LAB/data/arch-a1/status.log
+[exit 0]
+
+===== S3 task with no status file cleans up as before, no archive made =====
+-- state records for nostat-b1: nostat-b1.meta 
+-- tmux window fm-nostat-b1: alive
+-- branch fm/nostat-b1: present
+-- data/nostat-b1: 
+$ $WORKTREE/bin/fm-teardown.sh nostat-b1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for nostat-b1: 174627 179293
+teardown: force-killing leaked worktree process(es) for nostat-b1: 174627
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown nostat-b1 complete (window primary:fm-nostat-b1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: nostat-b1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move nostat-b1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for nostat-b1: 
+-- tmux window fm-nostat-b1: gone
+-- branch fm/nostat-b1: deleted
+-- data/nostat-b1: 
+
+===== S4 unusable archive destination (a directory): refuse before anything is cleared, then retry =====
+$ $WORKTREE/bin/fm-teardown.sh block-c1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+error: $LAB/data/block-c1/status.log is not a regular file
+error: block-c1's status log has no usable archive destination at $LAB/data/block-c1/status.log; refusing before anything is cleared
+[exit 1]
+-- state records for block-c1: block-c1.meta block-c1.status block-c1.turn-ended 
+-- tmux window fm-block-c1: alive
+-- branch fm/block-c1: present
+-- data/block-c1: drwxrwxr-x 3 nik nik 60 Oct 13 15:36 .;drwxrwxr-x 4 nik nik 80 Oct 13 15:36 ..;drwxrwxr-x 2 nik nik 40 Oct 13 15:36 status.log;
+-- worktree still checked out on: fm/block-c1
+$ cmp $LAB/expect.s4 $LAB/state/block-c1.status
+[exit 0]
+-- operator clears the destination and reruns
+$ $WORKTREE/bin/fm-teardown.sh block-c1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for block-c1: 183833 188970
+teardown: force-killing leaked worktree process(es) for block-c1: 183833
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown block-c1 complete (window primary:fm-block-c1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: block-c1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move block-c1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for block-c1: 
+-- tmux window fm-block-c1: gone
+-- branch fm/block-c1: deleted
+-- data/block-c1: drwxrwxr-x 2 nik nik 60 Oct 13 15:36 .;drwxrwxr-x 4 nik nik 80 Oct 13 15:36 ..;-rw-rw-r-- 1 nik nik 78 Oct 13 15:36 status.log;
+$ cmp $LAB/expect.s4 $LAB/data/block-c1/status.log
+[exit 0]
+
+===== S5 read-only existing archive: refuse with the reason, then retry =====
+$ $WORKTREE/bin/fm-teardown.sh ro-d1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+error: $LAB/data/ro-d1/status.log is not writable
+error: ro-d1's status log has no usable archive destination at $LAB/data/ro-d1/status.log; refusing before anything is cleared
+[exit 1]
+-- state records for ro-d1: ro-d1.meta ro-d1.status 
+-- tmux window fm-ro-d1: alive
+-- branch fm/ro-d1: present
+-- data/ro-d1: drwxrwxr-x 2 nik nik  60 Oct 13 15:36 .;drwxrwxr-x 5 nik nik 100 Oct 13 15:36 ..;-r--r--r-- 1 nik nik  38 Oct 13 15:36 status.log;
+$ $WORKTREE/bin/fm-teardown.sh ro-d1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for ro-d1: 193014 198738
+teardown: force-killing leaked worktree process(es) for ro-d1: 193014
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown ro-d1 complete (window primary:fm-ro-d1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: ro-d1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move ro-d1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for ro-d1: 
+-- tmux window fm-ro-d1: gone
+-- branch fm/ro-d1: deleted
+-- data/ro-d1: drwxrwxr-x 2 nik nik  60 Oct 13 15:36 .;drwxrwxr-x 5 nik nik 100 Oct 13 15:36 ..;-rw-r--r-- 1 nik nik  76 Oct 13 15:36 status.log;
+$ cat $LAB/data/ro-d1/status.log
+working [at=1760000750]: first launch
+done [at=1760000800]: ready in branch
+[exit 0]
+
+===== S6 landed-work refusal unchanged: unlanded work, change vs base commit script =====
+-- change under test:
+[exit 1]
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+REFUSED: local-only worktree $LAB/pool/.treehouse/demo-42feee/1/demo has work not yet merged into main and not on any remote.
+commits not yet on main:
+190c6ef work for unl-e1 11366
+Merge the branch into local main first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force.
+-- state records for unl-e1: unl-e1.meta unl-e1.status 
+-- tmux window fm-unl-e1: alive
+-- branch fm/unl-e1: present
+-- data/unl-e1: drwxrwxr-x 2 nik nik  40 Oct 13 15:36 .;drwxrwxr-x 6 nik nik 120 Oct 13 15:36 ..;
+$ cat $LAB/state/unl-e1.status
+working [at=1760000900]: in progress
+[exit 0]
+-- base commit script, same task:
+[exit 1]
+$ diff $LAB/s6.base.err $LAB/s6.new.err
+[exit 0]
+$ diff $LAB/s6.base.out $LAB/s6.new.out
+[exit 0]
+$ diff $LAB/s6.base.rc $LAB/s6.new.rc
+[exit 0]
+-- --force then discards the work and still archives the log:
+$ $WORKTREE/bin/fm-teardown.sh unl-e1 --force
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+teardown: reaping leaked worktree process(es) for unl-e1: 203797 211544
+teardown: force-killing leaked worktree process(es) for unl-e1: 203797
+A new version of treehouse is available: v3.1.2 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown unl-e1 complete (window primary:fm-unl-e1, worktree $LAB/pool/.treehouse/demo-42feee/1/demo)
+Backlog: unl-e1 just finished (this home keeps no markdown backlog at $LAB/data/backlog.md). Update $LAB/data/backlog.md - move unl-e1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
+-- state records for unl-e1: 
+-- tmux window fm-unl-e1: gone
+-- branch fm/unl-e1: deleted
+-- data/unl-e1: drwxrwxr-x 2 nik nik  60 Oct 13 15:36 .;drwxrwxr-x 6 nik nik 120 Oct 13 15:36 ..;-rw-rw-r-- 1 nik nik  37 Oct 13 15:36 status.log;
+$ cat $LAB/data/unl-e1/status.log
+working [at=1760000900]: in progress
+[exit 0]
+
+===== driver finished =====
