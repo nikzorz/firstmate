@@ -616,10 +616,9 @@ EOF
 #     long ago its row was recorded (the store's "recordedAgo"), because a row
 #     main never acknowledged can come back long after its situation settled
 #     (after a harness or posture switch, or an upgrade whose earlier
-#     presenter never advanced the read cursor), and the section asks main to
-#     check the task's current state first and reply to the captain only
-#     about outcomes still open, as if settled ones had never been listed,
-#     then acknowledge every presented outcome, settled and open alike.
+#     presenter never advanced the read cursor). The section's heading points
+#     at the processing how-to instead of repeating it on every drain;
+#     docs/supervision-protocols/supervision-host.md owns that wording.
 #   - Visible routine outcomes are listed once, for awareness, the way the Pi
 #     branch's routine notes reach main's transcript without a turn; silent
 #     routine outcomes never appear. The newest visible rows that fit a byte
@@ -693,7 +692,7 @@ print_branch_outcomes_section() {
 $captain
 ROWS
   if [ "$shown" -gt 0 ]; then
-    text="BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; each says what was true when it was recorded, so check the task's current state first, including its still-open decisions listed above under OPEN DECISIONS, and sort them into still open and already settled, such as a decision since answered, a PR since merged, or a task since finished - process the still-open ones as firstmate: tell the captain, land or merge what is ready, answer or escalate a decision, or act on a blocker; your reply to the captain covers only those, as if the settled ones had never been listed, and a settled one needs only the acknowledgement):
+    text="BRANCH OUTCOMES (captain outcomes the supervision session recorded for you, one line per task, oldest first; how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):
 "
     for line in "${captain_lines[@]}"; do
       text="$text$line
