@@ -502,6 +502,27 @@ EOF
   pass "classification failure retains the complete durable wake batch"
 }
 
+test_daemon_drain_leaves_the_deferred_recovery_announcement() {
+  local dir state out
+  dir=$(make_supercase daemon-holds-announcement); state="$dir/state"
+  printf '2026-10-08T10:00:00+0000\n' > "$state/.watcher-recovered"
+  printf 'working: preparing notes\n' > "$state/hold-r1.status"
+  printf '1\t1\tsignal\thold-r1.status\tsignal: %s\n' "$state/hold-r1.status" > "$state/.wake-queue"
+
+  FM_STATE_OVERRIDE="$state" FM_DAEMON_DIR="$ROOT/bin" handle_durable_wakes fallback "$state" >/dev/null 2>&1 \
+    || fail "the daemon could not handle and acknowledge a durable wake"
+  [ ! -s "$state/.wake-queue" ] || fail "the daemon's drain did not consume its handled wake"
+  [ "$(cat "$state/.watcher-recovered" 2>/dev/null)" = '2026-10-08T10:00:00+0000' ] \
+    || fail "the daemon's drain claimed the deferred recovery announcement no session read"
+
+  out=$(FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" 2>/dev/null) \
+    || fail "the session drain after the daemon failed"
+  case "$out" in *'WATCHER RECOVERED'*) ;;
+    *) fail "the session drain after the daemon did not carry the announcement: $out" ;;
+  esac
+  pass "the away daemon's drain leaves the deferred recovery announcement for a session drain"
+}
+
 test_missing_status_stale_is_acknowledged_without_diagnostic() {
   local dir state fakebin
   dir=$(make_supercase durable-no-status); state="$dir/state"; fakebin="$dir/daemon-bin"
@@ -3972,6 +3993,7 @@ test_busy_inbox_dispatch_preserves_other_stale_reasons
 test_catchall_buffer_failure_preserves_position
 test_durable_wake_failure_retains_entire_batch
 test_missing_status_stale_is_acknowledged_without_diagnostic
+test_daemon_drain_leaves_the_deferred_recovery_announcement
 test_transient_unreadable_signal_recovers_without_advancing
 test_permission_recovery_reclassifies_catchall_status
 test_permanent_classification_failure_is_reported_and_acknowledged

@@ -162,7 +162,7 @@ unset FM_SUPERVISION_ACTOR FM_BRANCH_REPORT_TURN FM_LEASE_HOLDER_PID PI_CODING_A
 HOMES_FILE="$TMP_ROOT/homes"
 # Stop whatever a case left running, by the exact pids its home recorded.
 stop_home_processes() {  # <home>
-  local home=$1 pid arms='' i=0
+  local home=$1 pid cycle arms='' i=0
   if [ -f "$home/state/.supervision-host" ]; then
     arms=$(awk -F '\t' '$1 == "arm" { print $2 }' "$home/state/.supervision-host")
     pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host")
@@ -179,6 +179,19 @@ stop_home_processes() {  # <home>
   [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
   while IFS= read -r pid; do
     if [ -e "$home/session.stop" ]; then
+      # The session reads its stop file only between hooks, and a hook whose
+      # host was stopped starts another that parks on a quiet cycle, so keep
+      # stopping the home's host and watcher until the session is gone.
+      i=0
+      while [ "$i" -lt 150 ] && kill -0 "$pid" 2>/dev/null; do
+        cycle=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host" 2>/dev/null || true)
+        [ -z "$cycle" ] || kill -TERM "$cycle" 2>/dev/null || true
+        cycle=$(cat "$home/state/.watch.lock/pid" 2>/dev/null || true)
+        [ -z "$cycle" ] || kill -TERM "$cycle" 2>/dev/null || true
+        sleep 0.1
+        i=$((i + 1))
+      done
+      kill -TERM "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     else
       kill -TERM "$pid" 2>/dev/null || true
@@ -1763,6 +1776,12 @@ quiet_pass_through_successor() {  # <home>
 }
 
 park_after_stop() {  # <home>
+  # With nothing queued the watcher defers that resurface to the next drain,
+  # so the new park supervises from its first cycle.
+  if [ ! -s "$1/state/.wake-queue" ]; then
+    park_again "$1"
+    return
+  fi
   rm -f "$1/host.rc"
   : > "$1/park.go"
   wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"

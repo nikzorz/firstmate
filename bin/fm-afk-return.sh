@@ -332,13 +332,24 @@ health_snapshot() {  # <evidence-file>
     # (fm-wake-lib.sh _fm_recovery_marker_ack). An open handling episode is
     # the ordinary state of a wake being handled at return
     # (docs/watcher-continuity.md "Recovery episode acknowledgement"), so
-    # only an open downtime episode is a gap. A marker this read cannot
-    # parse is treated as a gap, conservatively.
+    # only an open downtime episode is a gap. An announced downtime whose
+    # announcement is deferred is a watcher that already came back with
+    # nothing queued (docs/watcher-continuity.md "Announcement"), so it is
+    # not a gap either. The deferred note names no generation, and only an
+    # empty queue shows it belongs to this one: a recovery with work queued
+    # is announced as a wake. A marker this read cannot parse is treated as
+    # a gap, conservatively.
     if fm_recovery_marker_snapshot "$STATE/.watcher-down"; then
       state=${FM_RECOVERY_MARKER_TOKEN%:*}
       case "$FM_RECOVERY_MARKER_TOKEN" in
         acked:*) : ;;
         pending:handling:*|announced:handling:*) note="a wake was being handled at return (recovery marker $state); not a gap" ;;
+        announced:downtime:*)
+          if [ ! -s "$FM_WAKE_QUEUE" ] && fm_recovery_announcement_deferred "$STATE"; then
+            note="the watcher recovered with nothing queued and its announcement is deferred to the next drain (recovery marker $state); not a gap"
+          else
+            lines="GAP: watcher downtime was detected during the away window (recovery marker present)"
+          fi ;;
         *) lines="GAP: watcher downtime was detected during the away window (recovery marker present)" ;;
       esac
     else

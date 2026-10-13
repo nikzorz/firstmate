@@ -19,6 +19,42 @@ GUARD="$ROOT/bin/fm-guard.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-tests)
 
 
+test_held_announcement_survives_for_a_session_drain() {
+  local dir state out
+  dir=$(make_case held-announcement)
+  state="$dir/state"
+  printf '2026-10-08T10:00:00+0000\n' > "$state/.watcher-recovered"
+  printf '1\t1\tcheck\tinbox:held\tcheck: held announcement fixture\n' > "$state/.wake-queue"
+
+  out=$(FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT=1 FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null) \
+    || fail "a drain holding the announcement failed"
+  case "$out" in *'WATCHER RECOVERED'*) fail "a drain holding the announcement printed it: $out" ;; esac
+  [ "$(cat "$state/.watcher-recovered")" = '2026-10-08T10:00:00+0000' ] \
+    || fail "a drain holding the announcement claimed or changed the note"
+
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null) || fail "the session drain failed"
+  [ "$(printf '%s\n' "$out" | grep -c '^WATCHER RECOVERED ')" -eq 1 ] \
+    || fail "the session drain did not print the held announcement exactly once: $out"
+  [ ! -e "$state/.watcher-recovered" ] || fail "the session drain left the presented note behind"
+  pass "a drain holding the recovery announcement leaves it for the next session drain"
+}
+
+test_abandoned_announcement_claim_is_presented_once() {
+  local dir state out
+  dir=$(make_case abandoned-announcement-claim)
+  state="$dir/state"
+  printf '2026-10-08T10:00:00+0000\n' > "$state/.watcher-recovered.presenting.dead01"
+  printf '2026-10-08T11:00:00+0000\n' > "$state/.watcher-recovered"
+
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null) || fail "the drain failed"
+  [ "$(printf '%s\n' "$out" | grep -c '^WATCHER RECOVERED ')" -eq 1 ] \
+    || fail "an abandoned claim was not folded into one announcement: $out"
+  case "$out" in *' 2 time(s) '*) ;; *) fail "the abandoned claim's recovery was not counted: $out" ;; esac
+  [ -z "$(find "$state" -maxdepth 1 -name '.watcher-recovered*' -print)" ] \
+    || fail "a presented announcement left note files behind"
+  pass "a dead presenter's claimed recovery announcement is presented once by the next drain"
+}
+
 test_concurrent_append_and_drain() {
   local dir state out1 out2 pids i pid count unique malformed sequence generation
   dir=$(make_case concurrent)
@@ -3476,6 +3512,8 @@ test_recovery_ack_failure_is_reported
 test_interruption_before_and_after_raw_commit
 test_wake_queue_prune_task
 test_drain_rotates_orphaned_scratch
+test_held_announcement_survives_for_a_session_drain
+test_abandoned_announcement_claim_is_presented_once
 test_secondmate_liveness_tick_relaunches_dead_endpoint_once
 test_secondmate_liveness_tick_relaunches_missing_endpoint
 test_secondmate_liveness_tick_relaunches_every_dead_mate_before_waking

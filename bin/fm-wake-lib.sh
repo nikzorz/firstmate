@@ -1105,6 +1105,47 @@ fm_recovery_marker_handover_restore() {  # <marker> <snapshot-token> <snapshot-s
   fm_recovery_transition "$1" handover-restore "$2" "$3"
 }
 
+# The deferred recovery announcement (docs/watcher-continuity.md "Announcement"
+# owns when a recovery is deferred instead of delivered as a wake). The note
+# holds one timestamp line per deferred recovery. Writers only append and the
+# presenter claims the note by rename, so a deferral racing a presentation
+# lands in a fresh note rather than being removed unread.
+fm_recovery_announcement_defer() {  # <state>
+  local stamp
+  stamp=$(date '+%Y-%m-%dT%H:%M:%S%z') || return 1
+  printf '%s\n' "$stamp" >> "$1/.watcher-recovered"
+}
+
+fm_recovery_announcement_deferred() {  # <state>
+  local note="$1/.watcher-recovered"
+  [ -f "$note" ] && [ -s "$note" ] && [ ! -L "$note" ]
+}
+
+# Callers serialize on the wake queue lock: a claim file is only ever a dead
+# presenter's when no two presenters run at once.
+fm_recovery_announcement_present() {  # <state>
+  local note="$1/.watcher-recovered" claimed orphan count latest
+  # A presenter that died after its claim left the lines it never printed.
+  for orphan in "$note".presenting.*; do
+    [ -f "$orphan" ] && [ ! -L "$orphan" ] || continue
+    cat -- "$orphan" >> "$note" && rm -f -- "$orphan"
+  done
+  fm_recovery_announcement_deferred "$1" || return 0
+  claimed=$(mktemp "$note.presenting.XXXXXX") || return 1
+  if ! mv -f -- "$note" "$claimed"; then
+    rm -f -- "$claimed"
+    return 1
+  fi
+  count=$(grep -c . "$claimed") || count=0
+  latest=$(tail -n 1 "$claimed" | tr -cd '0-9T:+-')
+  if ! printf 'WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime %s time(s) with nothing queued, latest at %s.\n' \
+    "$count" "$latest"; then
+    cat -- "$claimed" >> "$note" && rm -f -- "$claimed"
+    return 1
+  fi
+  rm -f -- "$claimed"
+}
+
 # fm_lock_reap_dead_link <lockdir>
 # Remove a link lock whose owner is dead without a nested mutex. Renaming the
 # dead owner directory to this process's tombstone elects exactly one reaper,
