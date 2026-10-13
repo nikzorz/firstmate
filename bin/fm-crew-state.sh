@@ -155,14 +155,14 @@
 #      checks-green evidence, and its own log asks for a re-run of checks it has
 #      already seen, one bounded read-only forge query asks whether that re-run
 #      can still arrive: a pull request the forge calls CONFLICTING, or an empty
-#      check list, is also `stalled`. Nothing short of that re-run wait is
-#      probed at all, because a conflict or an empty list on its own is the
-#      ordinary shape while the pipeline's own recovery is still working.
+#      check list, is also `stalled`. A conflict is probed in no other wait,
+#      and an empty list only in the one below, because either on its own is
+#      the ordinary shape while the pipeline's own recovery is still working.
 #      Every absent answer - probe off (FM_CREW_STATE_FORGE_PROBE, or
 #      FM_CREW_STATE_NO_FORGE=1), no gh, no recorded pull request, an unread
 #      forge, a timeout, or GitHub's own UNKNOWN mergeability - leaves the
 #      verdict alone.
-#      The same query settles the opposite wait, for checks the step has never
+#      A like query settles the opposite wait, for checks the step has never
 #      seen: while its log still says none have registered, a mergeable pull
 #      request whose head was pushed at least ZERO_CHECKS_SETTLE_SECS ago and
 #      still has an empty check list, in a repository whose own workflows start
@@ -275,7 +275,7 @@ FM_CREW_STATE_REMOTE_STEPS=${FM_CREW_STATE_REMOTE_STEPS:-ci}
 # The forge probe below is this reader's only outbound network call whose
 # answer depends on a service firstmate does not run. Set to anything but 1 to
 # switch it off; FM_CREW_STATE_NO_FORGE=1 switches it off too. The reader then
-# keeps the budgets and loses only the spinning-ci shape.
+# keeps the budgets and loses only the ci waits no budget can show.
 FM_CREW_STATE_FORGE_PROBE=${FM_CREW_STATE_FORGE_PROBE:-1}
 FM_CREW_STATE_FORGE_TIMEOUT=${FM_CREW_STATE_FORGE_TIMEOUT:-10}
 case "$FM_CREW_STATE_FORGE_TIMEOUT" in ''|*[!0-9]*|0) FM_CREW_STATE_FORGE_TIMEOUT=10 ;; esac
