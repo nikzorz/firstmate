@@ -164,9 +164,9 @@
 #      verdict alone.
 #      The same query settles the opposite wait, for checks the step has never
 #      seen: while its log still says none have registered, a mergeable pull
-#      request whose head has stood for FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS
-#      with an empty check list, in a repository whose own workflows start on
-#      that pull request, is `stalled` too, and the detail names the
+#      request whose head was pushed at least ZERO_CHECKS_SETTLE_SECS ago and
+#      still has an empty check list, in a repository whose own workflows start
+#      on that pull request, is `stalled` too, and the detail names the
 #      repository's Actions page and the close-and-reopen step. A conflicting
 #      pull request never is, because the forge starts no workflow for one.
 #   3. Reconcile the status log through fm-classify-lib.sh's status_current_line:
@@ -279,12 +279,10 @@ FM_CREW_STATE_REMOTE_STEPS=${FM_CREW_STATE_REMOTE_STEPS:-ci}
 FM_CREW_STATE_FORGE_PROBE=${FM_CREW_STATE_FORGE_PROBE:-1}
 FM_CREW_STATE_FORGE_TIMEOUT=${FM_CREW_STATE_FORGE_TIMEOUT:-10}
 case "$FM_CREW_STATE_FORGE_TIMEOUT" in ''|*[!0-9]*|0) FM_CREW_STATE_FORGE_TIMEOUT=10 ;; esac
-# How long a pull request head must have stood before an empty check list counts
-# as checks that are not coming. Workflows register within seconds, so this only
-# has to outlast the forge's own queueing; a tuning constant like the budgets
-# above.
-FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=${FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS:-300}
-case "$FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS" in ''|*[!0-9]*) FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=300 ;; esac
+# How long ago a pull request head must have been pushed before an empty check
+# list counts as checks that are not coming. Workflows register within seconds,
+# so this only has to outlast the forge's own queueing.
+ZERO_CHECKS_SETTLE_SECS=300
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -840,10 +838,11 @@ nm_run_activity_is_recent() {
 # are located by NAME from the header rather than by position, so a table that
 # reorders, drops (`status`) or adds columns still parses, and the header's own
 # indentation bounds the block exactly as nm_active_steps_rows reads it. A quoted
-# cell may carry commas of its own. Prints one "<step><TAB><last_activity>" line
-# per active step; nothing when the table is absent or names neither column.
-nm_active_step_activity() {
-  printf '%s\n' "$RUN_OUT" | awk '
+# cell may carry commas of its own. Prints one "<step><TAB><cell>" line per
+# active step, the cell being the named column's and `last_activity` by default;
+# nothing when the table is absent or lacks either column.
+nm_active_step_activity() {  # [column]
+  printf '%s\n' "$RUN_OUT" | awk -v want="${1:-last_activity}" '
     function splitrow(s, out,   i, c, cur, inq, n) {
       n = 0; cur = ""; inq = 0
       for (i = 1; i <= length(s); i++) {
@@ -866,7 +865,7 @@ nm_active_step_activity() {
       for (i = 1; i <= n; i++) {
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", cols[i])
         if (cols[i] == "step") si = i
-        if (cols[i] == "last_activity") li = i
+        if (cols[i] == want) li = i
       }
       intab = (si > 0 && li > 0)
       next
@@ -1248,10 +1247,11 @@ nm_ci_awaits_first_checks() {
 }
 
 # 0 when a workflow in the task copy is known to start for a pull request
-# opened against <base-branch>. Known is deliberately narrow, because a false
-# yes sends someone to reopen a healthy pull request: a path filter, an
-# ignore-list, a branch pattern rather than the literal base name, a flow
-# mapping, and an activity-type list without `opened` all read as not known.
+# opened against <base-branch> and again for every head pushed to it. Known is
+# deliberately narrow, because a false yes sends someone to reopen a healthy
+# pull request: a path filter, an ignore-list, a branch pattern rather than the
+# literal base name, a flow mapping, and an activity-type list missing either
+# `opened` or `synchronize` all read as not known.
 worktree_starts_pr_workflows() {  # <base-branch>
   local base=$1 file
   [ -n "$WT" ] && [ -d "$WT/.github/workflows" ] || return 1
@@ -1268,6 +1268,7 @@ worktree_starts_pr_workflows() {  # <base-branch>
         if (value == "") return
         if (key == "branches" && value == base) base_listed = 1
         if (key == "types" && value == "opened") opened_listed = 1
+        if (key == "types" && value == "synchronize") synchronize_listed = 1
       }
       function note_list(key, flow,    n, i, parts) {
         gsub(/^[ \t]*\[|\][ \t]*$/, "", flow)
@@ -1279,14 +1280,14 @@ worktree_starts_pr_workflows() {  # <base-branch>
         in_trigger = 0
         if (unknown) return
         if (has_branches && !base_listed) return
-        if (has_types && !opened_listed) return
+        if (has_types && !(opened_listed && synchronize_listed)) return
         starts = 1
       }
       function open_trigger() {
         close_trigger()
         in_trigger = 1; filter_indent = -1; filter = ""
         unknown = 0; has_branches = 0; base_listed = 0
-        has_types = 0; opened_listed = 0
+        has_types = 0; opened_listed = 0; synchronize_listed = 0
       }
       {
         sub(/(^|[ \t])#.*$/, "")
@@ -1337,6 +1338,24 @@ worktree_starts_pr_workflows() {  # <base-branch>
   return 1
 }
 
+# Seconds the ci step has provably been waiting on the head it is watching: the
+# smallest of the elapsed figures its active row carries, since a step that
+# pushed a fix of its own restarts its round and not its whole run. Nothing
+# when the row carries no figure this reader understands.
+nm_ci_step_waited_secs() {
+  local column step cell secs least=''
+  for column in active_for round_active_for; do
+    while IFS=$'\t' read -r step cell; do
+      [ "$step" = ci ] || continue
+      secs=$(nm_duration_secs "$(trim "$cell")") || continue
+      if [ -z "$least" ] || [ "$secs" -lt "$least" ]; then least=$secs; fi
+    done <<EOF
+$(nm_active_step_activity "$column")
+EOF
+  done
+  printf '%s' "$least"
+}
+
 # Prints the reason and the recovery when checks that should have started never
 # did, and nothing otherwise. As with the re-run probe every absent answer
 # prints nothing, and so does every shape with an ordinary explanation: a head
@@ -1344,16 +1363,19 @@ worktree_starts_pr_workflows() {  # <base-branch>
 # any check at all including a queued one, and a repository with no workflow
 # known to start here.
 forge_ci_zero_checks_blocker() {
-  local url out mergeable='' checks='' age='' base=''
+  local url out mergeable='' checks='' age='' base='' waited
   [ "$FM_CREW_STATE_FORGE_PROBE" = 1 ] || return 0
   [ "${FM_CREW_STATE_NO_FORGE:-0}" != 1 ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
   nm_ci_awaits_first_checks || return 0
   [ -n "$WT" ] && [ -d "$WT/.github/workflows" ] || return 0
+  # A head is committed long before the pipeline pushes it, so the forge's
+  # dates alone overstate how long checks have had to register; the ci step
+  # only starts once the push has landed.
+  waited=$(nm_ci_step_waited_secs)
+  [ -n "$waited" ] && [ "$waited" -ge "$ZERO_CHECKS_SETTLE_SECS" ] || return 0
   url=$(strip_quotes "$(nm_field pr)")
   case "$url" in https://github.com/*/pull/*) ;; *) return 0 ;; esac
-  # The head's commit time stands in for its push time, so a fix the pipeline
-  # just pushed gets the same settle time as a pull request just opened.
   out=$(fm_run_timed "$FM_CREW_STATE_FORGE_TIMEOUT" gh pr view "$url" \
     --json mergeable,statusCheckRollup,createdAt,commits,baseRefName \
     -q '[(.mergeable // "UNKNOWN"),
@@ -1369,9 +1391,10 @@ EOF
   [ "$mergeable" = MERGEABLE ] || return 0
   [ "$checks" = 0 ] || return 0
   case "$age" in ''|*[!0-9]*) return 0 ;; esac
-  [ "$age" -ge "$FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS" ] || return 0
+  [ "$age" -lt "$waited" ] || age=$waited
+  [ "$age" -ge "$ZERO_CHECKS_SETTLE_SECS" ] || return 0
   worktree_starts_pr_workflows "$base" || return 0
-  printf '%s has zero Actions checks %s after its head settled, though its workflows start on a pull request: confirm Actions is running at %s/actions, then close and reopen the pull request' \
+  printf '%s has zero Actions checks at least %s after its head was pushed, though its workflows start on a pull request: confirm Actions is running at %s/actions, then close and reopen the pull request' \
     "$url" "$(nm_secs_human "$age")" "${url%/pull/*}"
 }
 # Coarse fallback when the bare `axi status` answer is not this branch's own

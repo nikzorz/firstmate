@@ -5819,7 +5819,7 @@ run:
 EOF
 }
 
-run_ci_spinning() {  # <branch> <last_activity-cell>
+run_ci_spinning() {  # <branch> <last_activity-cell> [active_for] [round_active_for]
   cat <<EOF
 run:
   id: "01RUN"
@@ -5833,8 +5833,8 @@ run:
     review,completed,0,0
     push,completed,0,0
     ci,running,0,0
-  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,45m0s,$2,"",round 1
+  active_steps[1]{step,status,active_for,${4+round_active_for,}last_activity,agent_pid,round}:
+    ci,running,${3-45m0s},${4+$4,}$2,"",round 1
 EOF
 }
 
@@ -6263,9 +6263,51 @@ YML
   local out; out=$(run_crew_state "$d" zs)
   assert_contains "$out" "state: working" "checks that have had seconds to register are not missing"
 
-  out=$(FM_CREW_STATE_ZERO_CHECKS_SETTLE_SECS=30 run_crew_state "$d" zs)
-  assert_contains "$out" "state: stalled" "the settle time is the configured figure"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t299\tmain'
+  out=$(run_crew_state "$d" zs)
+  assert_contains "$out" "state: working" "a second short of the settle time is still inside it"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t300\tmain'
+  out=$(run_crew_state "$d" zs)
+  assert_contains "$out" "state: stalled" "the settle time is five minutes"
   pass "zero checks inside the settle time stays working"
+}
+
+# The pipeline commits a head long before it pushes it, so the forge's own dates
+# say nothing about how long checks have had to register on an updated pull
+# request. The ci step's wait does.
+test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-pushed zp)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  local activity='"5s ago: log: no CI checks reported yet, waiting for checks to register..."'
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t1200\tmain'
+  local out
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 40s)"
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a head committed long ago but pushed seconds ago is inside its settle time"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a head the ci step had only just started watching"
+  FM_FAKE_GH_CALLS=""
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 4h28m 40s)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a round the ci step just restarted is inside its settle time"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" unknown)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a wait of unknown length is not a settled one"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 6m10s)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: stalled" "a head pushed past the settle time with no checks is flagged"
+  assert_contains "$out" "at least 6m after its head was pushed" "the figure is the wait since the push, not the commit's age"
+  pass "a head just pushed to an older pull request gets the settle time"
 }
 
 test_queued_running_and_conflicting_pull_requests_are_never_flagged() {
@@ -6363,6 +6405,15 @@ jobs: {}
 YML
   out=$(run_crew_state "$d" zw)
   assert_contains "$out" "state: working" "a workflow that opening a pull request does not start is not a missing check"
+
+  write_workflow "$d/wt" greet.yml <<'YML'
+on:
+  pull_request:
+    types: [opened]
+jobs: {}
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a workflow that a pushed head does not start is not a missing check"
 
   FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\trelease'
   out=$(run_crew_state "$d" zw)
@@ -6780,6 +6831,7 @@ test_the_ci_log_tail_is_bought_once_per_invocation
 test_empty_check_list_only_counts_while_a_rerun_is_awaited
 test_zero_checks_after_the_settle_time_reports_stalled_with_the_recovery
 test_zero_checks_inside_the_settle_time_stays_working
+test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time
 test_queued_running_and_conflicting_pull_requests_are_never_flagged
 test_zero_checks_only_counts_where_a_workflow_starts_on_the_pull_request
 test_an_absent_forge_answer_never_manufactures_a_stall
