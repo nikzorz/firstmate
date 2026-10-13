@@ -218,7 +218,9 @@ jobs:
       # npm package and needs no credential, so CI can hold the real thing.
       # The version is pinned, here and in the parallel job, because the
       # typecheck follows the package's types: an unpinned install lets a new
-      # release turn unchanged code red.
+      # release turn unchanged code red. The publish-date cutoff does the same
+      # for the sibling packages it depends on by range, whose types the
+      # typecheck also reads, so a version bump has to move the date with it.
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
