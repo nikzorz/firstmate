@@ -91,6 +91,15 @@
 # name a live quarantined space and is retained for that sweep.
 # data/<id>/ is deliberately left in place: a successor spawn reads brief.md
 # from it.
+# The status log is the one state record that outlives the task: its lines are
+# moved to data/<id>/status.log, creating data/<id>/ when absent, so a
+# relaunched id accumulates one log across incarnations. The archive
+# destination is checked before the first destructive step, so an unusable one
+# refuses with nothing cleared. The move itself runs after the pane is closed,
+# to take the worker's last lines: the status file is removed only once the
+# archive is verified to end with them, so a failed move never loses a line. It
+# may leave lines already appended in the status file, and a rerun archives
+# those again.
 # Worktree-slot ownership (teardown-slot-collision): a treehouse pool slot is
 # reused across tasks, so a stale, duplicated, or drifted worktree= record can
 # name a slot a DIFFERENT live task now holds. Cleanup kills every process under
@@ -1130,6 +1139,47 @@ remote_outbox_cleanup() {
   )
 }
 
+# Prove data/<id>/status.log can take the status file's lines, creating
+# data/<id>/ when there are lines to archive. Changes nothing else.
+status_log_archive_destination_check() {  # <state_dir> <data_dir> <id>
+  local src="$1/$3.status" dir="$2/$3" dest
+  dest="$dir/status.log"
+  [ -f "$src" ] && [ ! -L "$src" ] && [ -s "$src" ] || return 0
+  mkdir -p -- "$dir" || return 1
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    if [ ! -f "$dest" ] || [ -L "$dest" ]; then
+      echo "error: $dest is not a regular file" >&2
+      return 1
+    fi
+    if [ ! -w "$dest" ]; then
+      echo "error: $dest is not writable" >&2
+      return 1
+    fi
+  elif [ ! -w "$dir" ]; then
+    echo "error: $dir is not writable" >&2
+    return 1
+  fi
+}
+
+# Move state/<id>.status onto the end of data/<id>/status.log. The status file
+# is removed only after the archive is verified to end with its bytes, so every
+# line is in exactly one of the two files or in both, never in neither.
+archive_task_status_log() {  # <state_dir> <data_dir> <id>
+  local src="$1/$3.status" dest="$2/$3/status.log" size
+  [ -f "$src" ] && [ ! -L "$src" ] && [ -s "$src" ] || return 0
+  status_log_archive_destination_check "$1" "$2" "$3" || return 1
+  size=$(wc -c < "$src" | tr -d ' ') || return 1
+  if [ -s "$dest" ] && [ -n "$(tail -c 1 -- "$dest")" ]; then
+    printf '\n' >> "$dest" || return 1
+  fi
+  cat -- "$src" >> "$dest" || return 1
+  tail -c "$size" -- "$dest" | cmp -s -- - "$src" || {
+    echo "error: $dest does not end with the lines of $src after the append" >&2
+    return 1
+  }
+  rm -f -- "$src"
+}
+
 remote_secondmate_teardown() {
   local remote_host remote_root remote_home kind route_host route_root route_home out rc tmp
   remote_host=$(fm_meta_get "$META" remote_host)
@@ -1155,6 +1205,8 @@ remote_secondmate_teardown() {
   if [ "$FORCE" != --force ]; then
     secondmate_unresolved_pending_replies_refuse || return 1
   fi
+  status_log_archive_destination_check "$STATE" "$DATA" "$ID" \
+    || { echo "error: $ID's status log has no usable archive destination at $DATA/$ID/status.log; refusing before anything is cleared" >&2; return 1; }
   "$SCRIPT_DIR/fm-procevent-remote-reply.sh" retire-quiesce-locked "$ID" "$FORCE" >/dev/null 2>&1 || {
     echo "REFUSED: remote secondmate $ID still has an unhandled captured reply" >&2
     return 1
@@ -1189,10 +1241,12 @@ remote_secondmate_teardown() {
     || { echo "error: remote pending-reply cleanup failed; preserving the local route for retry" >&2; return 1; }
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
+  [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
+  archive_task_status_log "$STATE" "$DATA" "$ID" \
+    || { echo "error: $ID's status log could not be archived to $DATA/$ID/status.log; retaining $STATE/$ID.status and the local route for retry" >&2; return 1; }
   tmp="$SECONDMATE_REG.tmp.$$"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
-  [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
   status_retire_presentation_task "$STATE" "$ID" || return 1
   fm_backlog_atomic_transition remove "$STATE/$ID.meta" "task record" "$STATE" || return 1
   rm -f -- "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
@@ -4082,6 +4136,11 @@ if [ "$KIND" = secondmate ]; then
   preflight_firstmate_home_process_event_tree "$HOME_PATH" "secondmate home" || exit 1
 fi
 
+if ! status_log_archive_destination_check "$STATE" "$DATA" "$ID"; then
+  echo "error: $ID's status log has no usable archive destination at $DATA/$ID/status.log; refusing before anything is cleared" >&2
+  exit 1
+fi
+
 # Above the child sweep and every kill, so a refusal here means the retirement
 # never started.
 if [ "$KIND" = secondmate ] && [ -n "$HOME_PATH" ] && [ -d "$HOME_PATH" ]; then
@@ -4474,6 +4533,13 @@ if [ "$KIND" = secondmate ]; then
     exit 1
   fi
 fi
+# Opt-in fleet activity ledger (docs/fleet-ledger.md), before the status log is
+# moved out of state so its last lines are captured; off costs one file test.
+[ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
+if ! archive_task_status_log "$STATE" "$DATA" "$ID"; then
+  echo "error: $ID's status log could not be archived to $DATA/$ID/status.log; retaining $STATE/$ID.status so a rerun can retry" >&2
+  exit 1
+fi
 remove_grok_turnend_auth "$STATE" "$ID" || exit 1
 remove_kimi_turnend_auth "$STATE" "$ID" || exit 1
 fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
@@ -4503,9 +4569,6 @@ if [ -n "$LAUNCH_HOME_TOKEN" ]; then
 fi
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
-# Opt-in fleet activity ledger (docs/fleet-ledger.md), before the status log is
-# retired so its last lines are captured; off costs one file test.
-[ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 fm_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
 # Reclamation only: bin/fm-episode-records-lib.sh owns why the guarantee that no
