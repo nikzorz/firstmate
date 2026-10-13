@@ -1,0 +1,16 @@
+TOOL_USE  bin/x.sh
+TOOL_USE  cd . && bin/x.sh
+TOOL_USE  cd ../home && bin/x.sh
+TOOL_USE  cd projects/demo && pwd
+TOOL_USE  pwd
+RESULT    is_error=false  ran
+RESULT    is_error=false  ran
+RESULT    is_error=false  ran
+RESULT    is_error=false  <T>/home
+RESULT    is_error=true  PreToolUse:Bash hook error: [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-
+FINAL     Captain, the hook test ran as expected: four of the five commands ran and one was blocked.
+
+- **Ran:** 1 (`cd <T>/home && bin/x.sh`), 2 (`cd . && bin/x.sh`), 3 (`cd ../home && bin/x.sh`), and 5 (`pwd`, which printed `<T>/home`).
+- **Blocked:** 4 (`cd projects/demo && pwd`). The PreToolUse hook denied it with a `[persistent-cd]` message: a persistent top-level directory change in the primary firstmate checkout is blocked. The hook's suggested alternatives are `git -C <dir>`, an absolute path, or a subshell such as `(cd <dir> && ...)`.
+
+Commands 1 to 3 pass because their cd target resolves to the directory the session is already in. Command 4 moves the shell into a different directory, so the hook stops it.

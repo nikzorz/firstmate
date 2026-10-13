@@ -1,0 +1,121 @@
+# fixture: plain clone of e1a869d at <T>/home ; <T>/link-home -> home ; <T>/link-else -> <T>/elsewhere ; home/sneaky -> <T>/elsewhere
+## S1 own dir, absolute
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd <T>/home && bin/x.sh
+## S2 elsewhere
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/elsewhere && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd projects/demo && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/home/projects/demo && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+## S3 relative spellings resolving to cwd
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd . && bin/x.sh
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd ./ && bin/x.sh
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd ../home && bin/x.sh
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd ./sub/.. && bin/x.sh
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd -- <T>/home && bin/x.sh
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd "<T>/home" && bin/x.sh
+## S4 symlink spellings
+ALLOW   rc=0  cwd=<T>/home
+        cmd: cd <T>/link-home && bin/x.sh
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/link-else && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd ./sneaky && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd sneaky/../home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd ./sneaky/.. && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd ./sneaky/../home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+## S5 adversarial
+DENY    rc=2  cwd=<T>/home
+        cmd: cd .. && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd ./sub && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd - && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd $PWD && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd $(pwd) && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd ~ && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd -P <T>/home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/home <T>/elsewhere
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/home/nope && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: pushd <T>/home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/home && cd <T>/elsewhere && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/home; cd projects/demo
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=<T>/home
+        cmd: cd <T>/elsewh* && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+## S6 session cwd is NOT the home (session sits in projects/demo)
+ALLOW   rc=0  cwd=<T>/home/projects/demo
+        cmd: cd <T>/home/projects/demo && ls
+DENY    rc=2  cwd=<T>/home/projects/demo
+        cmd: cd <T>/home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+ALLOW   rc=0  cwd=<T>/home/sub
+        cmd: cd . && ls
+DENY    rc=2  cwd=
+        cmd: cd <T>/home && bin/x.sh
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+DENY    rc=2  cwd=relative/dir
+        cmd: cd . && ls
+        out: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-...
+## S7 --command entry form (no payload cwd; falls back to check's start dir)
+ALLOW   rc=0  startdir=<T>/home
+        cmd: cd <T>/home && bin/x.sh
+DENY    rc=2  startdir=<T>/home
+        cmd: cd <T>/elsewhere && bin/x.sh
+DENY    rc=2  startdir=<T>/elsewhere
+        cmd: cd <T>/home && bin/x.sh
+ALLOW   rc=0  startdir=<T>/elsewhere
+        cmd: cd . && ls
+## S8 unchanged: subshell cd allowed, plain non-cd allowed
+ALLOW   rc=0  cwd=<T>/home
+        cmd: (cd projects/demo && ls)
+ALLOW   rc=0  cwd=<T>/home
+        cmd: git -C projects/demo status
+## full deny message
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] a persistent top-level directory change in the primary firstmate checkout is blocked; it would move the shell out of the home so a later firstmate-owned command runs inside a project clone. Reach the target without moving the shell - use git -C <dir> or an absolute path on the command itself - or scope the cd to a subshell like (cd <dir> && ...). Only a cd whose literal target resolves to the directory the session is already in passes."}

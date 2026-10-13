@@ -1,0 +1,28 @@
+TOOL_USE  bin/x.sh
+RESULT    is_error=false  ran
+TOOL_USE  cd <T>/elsewhere && bin/x.sh
+RESULT    is_error=true  PreToolUse:Bash hook error: [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] a persistent top-level directory change in the primary firstmate c
+TOOL_USE  cd <T>/link-home && bin/x.sh
+RESULT    is_error=false  ran
+TOOL_USE  cd <T>/link-else && bin/x.sh
+RESULT    is_error=true  PreToolUse:Bash hook error: [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] a persistent top-level directory change in the primary firstmate c
+ASSISTANT Captain, all four commands ran as written. Two were blocked by the PreToolUse hook.
+
+| # | Command | Result | Block code |
+|---|---------|--------|------------|
+| 1 | `cd <T>/home && bin/x.sh` | Ran | n/a |
+| 2 | `cd <T>/elsewhere && bin/x.sh` | Blocked | `[persistent-cd]` |
+| 3 | `cd <T>/link-home && bin/x.sh` | Ran | n/a |
+| 4 | `cd <T>/link-else && bin/x.sh` | Blocked | `[persistent-cd]` |
+
+The block message for 2 and 4 read: "a persistent top-level directory change in the primary firstmate checkout is blocked." The hook treats a bare `cd` to a directory other than the session's own as a shell move out of the home. Command 3 passed, which suggests the hook resolves the `link-home` symlink to the session's own directory.
+FINAL     Captain, all four commands ran as written. Two were blocked by the PreToolUse hook.
+
+| # | Command | Result | Block code |
+|---|---------|--------|------------|
+| 1 | `cd <T>/home && bin/x.sh` | Ran | n/a |
+| 2 | `cd <T>/elsewhere && bin/x.sh` | Blocked | `[persistent-cd]` |
+| 3 | `cd <T>/link-home && bin/x.sh` | Ran | n/a |
+| 4 | `cd <T>/link-else && bin/x.sh` | Blocked | `[persistent-cd]` |
+
+The block message for 2 and 4 read: "a persistent top-level directory change in the primary firstmate checkout is blocked." The hook treats a bare `cd` to a directory other than the session's own as a shell move out of the home. Command 3 passed, which suggests the hook resolves the `link-home` symlink to the session's own directory.
