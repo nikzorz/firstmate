@@ -1,0 +1,51 @@
+gh in use: /home/nik/.local/bin/gh
+
+### S1 zero checks, mergeable, base main, ci step waiting 48m
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 has zero Actions checks at least 48m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/cgrupooxo-ops/mi-primer-pr/actions, then close and reopen the pull request
+
+### S2 same pull request, ci step waiting only 40s (inside settle time)
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=40s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: working · source: run-step · ci running
+
+### S2b same pull request, ci step waiting 4m59s (one second short)
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=4m59s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: working · source: run-step · ci running
+
+### S2c same pull request, ci step waiting 5m0s (boundary)
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=5m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 has zero Actions checks at least 5m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/cgrupooxo-ops/mi-primer-pr/actions, then close and reopen the pull request
+
+### S3 healthy pull request with registered checks, ci log still stale
+pr=https://github.com/nikzorz/firstmate/pull/79 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-13T17:36:53Z checks=18
+state: working · source: run-step · ci running
+
+### S4 zero checks but base branch no workflow here names
+pr=https://github.com/TISUnion/Task/pull/14 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=master createdAt=2026-10-03T05:43:20Z checks=0
+state: working · source: run-step · ci running
+
+### S5 zero-check pull request, but the ci step already saw checks running
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: working · source: run-step · ci running
+
+### S6 forge probe disabled (FM_CREW_STATE_NO_FORGE=1)
+
+### S6 zero checks, 48m, forge reads off
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: working · source: run-step · ci running
+
+### S7 zero checks, 48m, task copy has no workflows at all
+pr=https://github.com/cgrupooxo-ops/mi-primer-pr/pull/1 ci-step-active_for=48m0s
+forge now: state=OPEN mergeable=MERGEABLE base=main createdAt=2026-10-06T08:52:48Z checks=0
+state: working · source: run-step · ci running
+### S8 conflicting pull request with zero checks, ci step waiting 48m
+forge now: state=OPEN mergeable=CONFLICTING base=main checks=0
+state: working · source: run-step · ci running
