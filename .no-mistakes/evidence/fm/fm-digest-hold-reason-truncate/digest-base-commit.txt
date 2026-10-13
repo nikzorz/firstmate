@@ -1,0 +1,143 @@
+
+================================================================================
+SESSION START - /tmp/fm-lab.Ekvfbx
+================================================================================
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 1861546
+
+BOOTSTRAP
+--------------------------------------------------------------------------------
+(silent - all good)
+
+WAKE QUEUE
+--------------------------------------------------------------------------------
+(no queued wakes)
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+================================================================================
+Current state:
+- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+- Away/quiet mode: inactive.
+- X mode: inactive; use the default watcher cadence.
+- Supervision host: on; it takes away-posture wakes and, where the dialog mirror is verified, eligible attended wakes itself, and hands the rest to you (protocol at the end of this block).
+- Ordinary wake: the Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.
+
+/tmp/fm-base.24BW1o/bin/fm-supervision-instructions.sh: line 141: /tmp/fm-base.24BW1o/docs/supervision-protocols/unknown.md: No such file or directory
+
+================================================================================
+READ-ONCE CONTRACT
+================================================================================
+Everything below is printed for this session start: one line per state/*.meta
+lane with its last state/*.status line, a compact data/backlog.md listing,
+a bounded tail of every orphan state/*.status, data/projects.md,
+data/secondmates.md, data/captain.md, data/captain-shared.md, and
+data/learnings.md.
+Do NOT re-read any of them after reading this digest, and do NOT bulk-read
+data/backlog.md or state/*.status: re-reading everything defeats the entire
+point of this command.
+
+Go to a source directly only when:
+  - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
+  - its contents looked unparseable or corrupt,
+  - an individual full status log is needed for older wake-event history, or a
+    status line was capped and its tail matters (state/<id>.status),
+  - a lane's line does not carry the record field this turn needs
+    (state/<id>.meta),
+  - a full task body is needed (bin/fm-tasks-axi.sh show <id> --full, or data/backlog.md),
+  - the backlog listing disclosed omitted queued items and this turn needs them,
+  - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
+    turn needs their verdict (bin/fm-startup-network.sh report),
+  - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
+    which case that stage's sources were never emitted and must be reconciled.
+
+================================================================================
+FLEET STATE
+================================================================================
+
+data/backlog.md
+--------------------------------------------------------------------------------
+compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to 20; task bodies omitted)
+
+in flight:
+count: 2
+tasks[2]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:
+  lab-flightheld-h8,in_flight,task,"-",in flight and held long,none,captain,"é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" "
+  lab-flight-a1,in_flight,task,"-",in flight lane work,none,"-","-"
+
+held (captain- or time-gated; an in-flight item that is also held appears in both groups):
+count: 5
+tasks[5]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:
+  lab-flightheld-h8,in_flight,task,"-",in flight and held long,none,captain,"é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" é, \"q\" "
+  lab-short-b2,queued,task,"-",held with a short reason,none,captain,"waiting on captain: pick a road"
+  lab-long-c3,queued,task,"-",held with a 1200 byte reason,none,captain,"Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship n"
+  lab-until-d4,queued,task,"-",held with long reason and until date,none,captain,"UNTIL-Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship now) and option B, hold. Captain must choose between option A (ship n"
+  lab-exact-g7,queued,task,"-",held with exactly 200 char reason,none,captain,"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+blocked queued:
+count: 1
+tasks[1]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:
+  lab-blocked-e5,queued,task,"-",blocked queued work,lab-flight-a1,"-","-"
+
+ready queued (dispatchable now):
+count: 1
+ready[1]{id,state,kind,repo,title}:
+  lab-ready-f6,queued,task,"-",plain ready work
+ready_public_followups: 0 delivery-ready obligations
+(shown 1 of 1 ready queued item(s))
+Full task bodies remain available on demand: bin/fm-tasks-axi.sh show <id> --full when compatible tasks-axi is available, or data/backlog.md.
+
+Work under way (one line per lane; raw record: state/<id>.meta, full status log: state/<id>.status)
+--------------------------------------------------------------------------------
+(none)
+
+Orphan status logs (state/*.status without matching .meta)
+--------------------------------------------------------------------------------
+(none)
+
+AFK
+--------------------------------------------------------------------------------
+absent
+
+================================================================================
+NETWORK CHECKS
+================================================================================
+IN PROGRESS - the deferred network checks have not finished yet.
+NOT yet confirmed: GitHub authentication, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, project clone refresh with its drift reporting, and inactive terminal-outcome reconciliation.
+Started 2s ago, bounded at 120s.
+Only a FAILED or otherwise actionable result arrives as a `check: startup-network` wake; a clean success stays silent.
+The durable result is readable on demand with /tmp/fm-base.24BW1o/bin/fm-startup-network.sh report; until it finishes, treat none of it as confirmed.
+
+================================================================================
+CONTEXT
+================================================================================
+
+data/projects.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/secondmates.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+ABSENT
+
+data/learnings.md
+--------------------------------------------------------------------------------
+ABSENT
+
+================================================================================
+NEXT STEP
+================================================================================
+Follow the supervision operating instructions block above for harness 'claude'.
+This script never starts supervision itself.
+
+The digest above is complete for this session start. The READ-ONCE CONTRACT
+section near the top of it governs what may still be read from disk.

@@ -1,0 +1,2 @@
+jq: error: Could not open file /tmp/fm-session-start-tests.B6rNWX/context-digest/home/state/home-summary.json: No such file or directory
+not ok - a locked session start did not publish the home summary ledger

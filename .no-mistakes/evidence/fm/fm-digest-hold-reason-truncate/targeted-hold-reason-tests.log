@@ -1,0 +1,6 @@
+ok - compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row
+ok - an over-long hold reason is bounded to one line with its pointer while every row is kept
+ok - manual backlog rendering bounds an over-long hold reason and keeps every held title line
+ok - manual backlog rendering bounds a quote-led plain reason and a tab-bulleted title line
+ok - manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest
+ok - unavailable or incompatible tasks-axi falls back to compact manual backlog rendering
