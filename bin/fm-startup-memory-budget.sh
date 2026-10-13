@@ -88,12 +88,14 @@ list_entries() {
     {
       size = length($0) + 1
       if ($0 ~ /^[ \t]*(```|~~~)/) {
+        if (!fenced && $0 !~ /^[ \t]/) flush()
         fenced = !fenced
       } else if (!fenced && $0 ~ /^#+[ \t]/) {
         flush()
         heading = $0
-        sub(/^#+[ \t]+/, "", heading)
-        sub(/[ \t#]+$/, "", heading)
+        sub(/[ \t]+#+[ \t]*$/, "", heading)
+        sub(/^#+[ \t]*/, "", heading)
+        sub(/[ \t]+$/, "", heading)
         gsub(/\t/, " ", heading)
         if (heading == "") heading = "(none)"
         next
@@ -115,12 +117,10 @@ list_entries() {
   ' "$1"
 }
 
+# report_oversized_entries <limit>
 # Prints the oversized-entry section and returns 1 when it lists any entry.
 report_oversized_entries() {
-  local limit file entries="" listed count=0 bytes tokens line label heading
-  if ! limit=$(read_entry_size_limit); then
-    return 2
-  fi
+  local limit=$1 file entries="" listed count=0 bytes tokens line label heading
   for file in captain.md captain-shared.md learnings.md; do
     if ! fm_startup_memory_measure_file "$DATA/$file" >/dev/null; then
       print_error "$FM_STARTUP_MEMORY_BUDGET_ERROR"
@@ -149,8 +149,9 @@ report_oversized_entries() {
 }
 
 report() {
-  local budget bytes tokens presence total=0 shared_tokens=0 role=primary
-  if ! budget=$(read_budget); then
+  local budget entry_limit bytes tokens presence total=0 shared_tokens=0 role=primary
+  local entries_status=0
+  if ! budget=$(read_budget) || ! entry_limit=$(read_entry_size_limit); then
     return 2
   fi
 
@@ -185,7 +186,16 @@ report() {
     printf 'exception=primary-owned-shared-file-alone-exceeds-budget\n'
   fi
   # Only `check` turns an oversized entry into a failing status.
-  report_oversized_entries || [ "$?" -eq 1 ]
+  report_oversized_entries "$entry_limit" || entries_status=$?
+  [ "$entries_status" -le 1 ] || return "$entries_status"
+}
+
+check() {
+  local entry_limit
+  if ! entry_limit=$(read_entry_size_limit); then
+    return 2
+  fi
+  report_oversized_entries "$entry_limit"
 }
 
 case "${1:-}" in
@@ -199,7 +209,7 @@ case "${1:-}" in
     ;;
   check)
     [ "$#" -eq 1 ] || { usage >&2; exit 2; }
-    report_oversized_entries
+    check
     ;;
   -h|--help)
     usage
