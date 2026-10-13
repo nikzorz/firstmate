@@ -1,0 +1,75 @@
+2026-10-13T22:43:05.9885063Z FM_TEST_BEGIN 2026-10-13T22:43:05Z tests/fm-supervision-host.test.sh family=afk expected_gate_skip=none
+2026-10-13T22:43:12.4716893Z ok - host+hook: a successor closed before exit_to_main does not suppress the branch-outcome rewake
+2026-10-13T22:43:18.7323228Z ok - host+hook: a successor that closes during a held engine turn does not suppress the branch-outcome rewake
+2026-10-13T22:43:24.8315617Z ok - host+hook: a refused hand-back becomes a delivered failure notice
+2026-10-13T22:43:30.9501036Z ok - host+hook: a refused hand-back on an announced handling marker becomes a delivered failure notice
+2026-10-13T22:43:32.7223835Z ok - host: parked child-exit sampling uses ordinary half-second sleeps
+2026-10-13T22:43:33.2155804Z ok - report surface: only the branch actor's current turn may report, and only on the tasks its wake names
+2026-10-13T22:43:34.3639542Z ok - report surface: visible late outcomes queue a relay, while silent outcomes remain stored without a wake or note
+2026-10-13T22:43:35.4244698Z ok - dispatch entry: the host reads branch eligibility, the offer rule, and the wake prompt from the Pi branch's own owner
+2026-10-13T22:43:37.4412745Z ok - drain: BRANCH OUTCOMES runs on a Claude home by default and on another primary with the file, never with off, and never on Pi
+2026-10-13T22:43:39.2689687Z ok - drain: captain outcomes come first, and routine overflow collapses into a count one drain clears
+2026-10-13T22:43:42.0896984Z ok - drain: repeated captain outcomes collapse per task, and the byte cap presents only the run its acknowledgement covers
+2026-10-13T22:43:46.6371673Z ok - drain: a long away window costs one short drain, captain outcomes collapsed per task and routine overflow counted, and nothing from it is shown again
+2026-10-13T22:43:48.5222100Z ok - drain: the BRANCH OUTCOMES budgets count bytes, cutting multibyte summaries by whole characters in any locale
+2026-10-13T22:43:49.5378879Z ok - drain: branch outcomes stay unread when a projection of the store fails
+2026-10-13T22:43:55.4225440Z ok - drain: branch outcomes stay unread and the drain fails when jq is missing
+2026-10-13T22:43:56.7785172Z ok - drain: branch outcomes stay unread when the drain cannot print them
+2026-10-13T22:43:57.3127591Z ok - drain: a legacy backlog is presented with each outcome's age and a pointer to the check-first how-to, never adopted
+2026-10-13T22:43:58.9654289Z ok - drain: a keyed decision survives acknowledgement through a newer outcome for its task
+2026-10-13T22:43:59.8460155Z ok - drain: an outcome carried across a switch off Pi comes back with its age, never adopted
+2026-10-13T22:44:01.3305514Z ok - drain: an outcome nothing has shown is presented until acknowledged, and a repeated acknowledgement changes nothing
+2026-10-13T22:44:02.4021273Z ok - drain: an outcome the host drain presented but main never acknowledged stays unprocessed across a switch to Pi
+2026-10-13T22:44:04.1615561Z ok - drain: an outcome the host drain presented but main never acknowledged survives an outcome index repair
+2026-10-13T22:44:10.2057679Z ok - host: an attended wake the branch may take is handled on the engine, and its routine outcome never wakes main
+2026-10-13T22:44:18.0049727Z ok - host: an attended captain outcome wakes main once and stays in its drain until main acknowledges it
+2026-10-13T22:44:24.2090585Z ok - host: a captain outcome recorded after the captain left waits for the return, then reaches main's drain
+2026-10-13T22:44:33.5320253Z ok - host: a quiet record without its daemon is a present captain, so outcomes and decisions reach main
+2026-10-13T22:44:36.4238224Z ok - host: an attended decision close stays main's exactly as the plain arm delivers it
+2026-10-13T22:44:38.5040964Z ok - host: an off written while the host is parked sends the next attended close to main, naming the opt-out
+2026-10-13T22:44:43.4069964Z ok - host: a main-only pass-through leaves the successor watcher running and the close undelivered for main
+2026-10-13T22:44:45.3768924Z ok - host: an attended close whose main session cannot be identified reaches main and runs no engine turn
+2026-10-13T22:44:48.7046693Z ok - host: a decision close accepted away whose turn starts attended still reaches main unchanged
+2026-10-13T22:44:52.0059538Z ok - host: an attended close whose task turns main-only before its turn still reaches main unchanged
+2026-10-13T22:44:55.2122409Z ok - host+hook: an attended main-only pass-through rewakes main and keeps its successor watcher
+2026-10-13T22:45:01.7323500Z ok - host+hook: a captain outcome beside a quiet record rewakes the present captain with no away note
+2026-10-13T22:45:10.4296089Z ok - host+hook: a Claude home without config/supervision-host runs the host at the default engine, and an off file restores the plain arm
+2026-10-13T22:45:14.0563861Z ok - host+hook: a close that turns main-only at its turn rewakes main and keeps its successor watcher
+2026-10-13T22:45:17.7784235Z ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+2026-10-13T22:45:25.9727569Z ok - host+hook: a successor close that lands during main's turn is delivered at the next turn end
+2026-10-13T22:45:36.6046513Z ok - host+hook: the next park takes over the cycle a main-only pass-through left, so one arm owns it
+2026-10-13T22:45:43.6887082Z ok - host+hook: a park stopped mid take-over leaves the take-over to the next park
+2026-10-13T22:45:49.5551637Z ok - host+hook: a successor that cannot be recorded is stopped, and main's next turn end arms a fresh cycle
+2026-10-13T22:46:04.1615314Z ok - host: a primary with no verified dialog mirror keeps every attended close on main, and its away posture still runs
+2026-10-13T22:46:13.6462676Z ok - host: each wake carries the captain's dialog since the last wake, without operational input
+2026-10-13T22:46:19.2197384Z ok - host: the dialog mirror, its feed, and the wake file are owner-only
+2026-10-13T22:47:03.9809158Z ok - host: dialog a turn never completed with its report (a park boundary, a stopped turn, no report) reaches the next turn
+2026-10-13T22:47:29.0165362Z ok - host: an attended wake whose mirror is missing, cannot be read (at the feed or at the prompt), or holds a malformed entry reaches main before any engine turn, and the cursor stays put
+2026-10-13T22:47:38.5568331Z ok - host: an away wake is handled on the engine through the branch contract and never reaches main
+2026-10-13T22:47:42.9978319Z ok - host: an engine turn that records no outcome hands its durable wake to main
+2026-10-13T22:47:47.9435495Z ok - host: a captain return during an engine turn hands that turn's outcomes to main
+2026-10-13T22:47:57.7437085Z ok - host: silent outcomes are excluded from both captain-return handoff paths
+2026-10-13T22:48:03.3067080Z ok - host: an early visible outcome survives more than 1,000 same-turn receipts
+2026-10-13T22:48:08.2452723Z ok - host: an outcome lookup failure forces a visible main handoff
+2026-10-13T22:48:15.4285587Z ok - host: an outcome recorded after the return reaches main even when its host dies at the turn's end
+2026-10-13T22:48:21.5783278Z ok - host: a killed predecessor's engine is reaped and the next host removes its turn files
+2026-10-13T22:48:26.1301713Z ok - host: a turn that reports but leaves its granted rows queued hands the wake to main
+2026-10-13T22:48:31.0714870Z ok - host: a captain return during a failed engine turn still hands that turn's outcomes to main
+2026-10-13T22:48:35.8145303Z ok - host: an engine turn whose result is incomplete hands its wake to main
+2026-10-13T22:49:04.2051062Z ok - host: two engine errors latch the session, main keeps every away wake in the cooldown, a failed probe doubles it up to its cap, and a report recovers it silently
+2026-10-13T22:49:21.0133446Z ok - host: an attended close in a latched session reaches main as the arm printed it and leaves the latch as it was, and a home that opted out with off never reads it
+2026-10-13T22:49:53.4533626Z ok - host: attended, two engine errors latch the session, main keeps every close unchanged in the cooldown, a failed probe doubles it up to its cap, and a routine probe's recovery stays in the ledger, off main
+2026-10-13T22:50:03.3824121Z ok - host: an engine turn is bounded, and tool processes outside its process group are reaped
+2026-10-13T22:50:05.3687516Z ok - host: a restarted host stops, by recorded identity, the cycle a killed predecessor left running
+2026-10-13T22:50:07.9465337Z ok - host: the park ends itself with a boundary wake and a stopped watcher
+2026-10-13T22:50:13.3289863Z ok - host: waiting closes cannot carry the park past its boundary
+2026-10-13T22:50:17.0900962Z ok - host: a close whose margin runs out while the successor starts reaches main at the boundary without a turn
+2026-10-13T22:50:21.9751020Z ok - host: the park's test clock is inert without the test marker
+2026-10-13T22:50:31.7548391Z ok - host: a park at or beyond the Stop-hook registration falls back to the default boundary
+2026-10-13T22:50:42.8119513Z ok - host: an owner's later park limit lets a turn outlive the boundary, and no other limit does
+2026-10-13T22:51:15.7169162Z ok - host: the first cycle's status streams once, --restart replaces a stale watcher, and an owner predecessor makes a handling successor
+2026-10-13T22:51:29.8838122Z ok - host: an unchanged held outcome reaches the captain once across cadences, and a later decision on the task still does
+2026-10-13T22:51:31.9743610Z ok - host: a home naming an unverified engine hands every away wake to main with the reason
+2026-10-13T22:51:32.3320411Z ok - host: a host outside the session-lock owner stands down without arming
+2026-10-13T22:51:33.9700269Z ok - host: a host under a superseded auto-arm generation stands down without touching the owner
+2026-10-13T22:51:34.3225065Z FM_TEST_END 2026-10-13T22:51:34Z tests/fm-supervision-host.test.sh exit=0 duration_ms=508327 gate_skip=false

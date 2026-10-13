@@ -1,0 +1,22 @@
+5s ok - host+hook: a successor closed before exit_to_main does not suppress the branch-outcome rewake
+12s ok - host+hook: a successor that closes during a held engine turn does not suppress the branch-outcome rewake
+18s ok - host+hook: a refused hand-back becomes a delivered failure notice
+25s ok - host+hook: a refused hand-back on an announced handling marker becomes a delivered failure notice
+27s ok - host: parked child-exit sampling uses ordinary half-second sleeps
+28s ok - report surface: only the branch actor's current turn may report, and only on the tasks its wake names
+29s ok - report surface: visible late outcomes queue a relay, while silent outcomes remain stored without a wake or note
+30s ok - dispatch entry: the host reads branch eligibility, the offer rule, and the wake prompt from the Pi branch's own owner
+32s ok - drain: BRANCH OUTCOMES runs on a Claude home by default and on another primary with the file, never with off, and never on Pi
+34s ok - drain: captain outcomes come first, and routine overflow collapses into a count one drain clears
+37s ok - drain: repeated captain outcomes collapse per task, and the byte cap presents only the run its acknowledgement covers
+43s ok - drain: a long away window costs one short drain, captain outcomes collapsed per task and routine overflow counted, and nothing from it is shown again
+45s ok - drain: the BRANCH OUTCOMES budgets count bytes, cutting multibyte summaries by whole characters in any locale
+46s ok - drain: branch outcomes stay unread when a projection of the store fails
+47s ok - drain: branch outcomes stay unread and the drain fails when jq is missing
+48s ok - drain: a legacy backlog is presented with each outcome's age and a pointer to the check-first how-to, never adopted
+49s ok - drain: a keyed decision survives acknowledgement through a newer outcome for its task
+50s ok - drain: an outcome carried across a switch off Pi comes back with its age, never adopted
+52s ok - drain: an outcome nothing has shown is presented until acknowledged, and a repeated acknowledgement changes nothing
+53s ok - drain: an outcome the host drain presented but main never acknowledged stays unprocessed across a switch to Pi
+55s ok - drain: an outcome the host drain presented but main never acknowledged survives an outcome index repair
+62s ok - host: an attended wake the branch may take is handled on the engine, and its routine outcome never wakes main

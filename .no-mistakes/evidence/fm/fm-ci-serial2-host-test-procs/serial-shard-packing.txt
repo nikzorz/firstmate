@@ -1,0 +1,51 @@
+## base 90f7cfd
+FM_TEST_COVERAGE ok total=256 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=216 serial_shards=9 serial_unhinted=10 serial_max_ms=1074843 serial_budget_ms=1200000 herdr=16
+tests/fm-supervision-host.test.sh
+tests/fm-extra-usage.test.sh
+tests/fm-send-inbox.test.sh
+tests/fm-turnend-guard.test.sh
+tests/fm-voice-relay.test.sh
+tests/fm-spawn-compact-adviser-disable.test.sh
+tests/fm-remote-doctor.test.sh
+tests/fm-timeout-lib.test.sh
+tests/fm-tangle-guard.test.sh
+tests/fm-send-secondmate-marker.test.sh
+tests/fm-pi-windows-shell-invocation.test.sh
+tests/fm-test-isolation-proof.test.sh
+tests/fm-git-strip-ai-trailers.test.sh
+tests/fm-episode-records-lib.test.sh
+tests/fm-nm-test-contract.test.sh
+tests/fm-remote-entrypoint.test.sh
+tests/fm-cmux-claude-composer-live-e2e.test.sh
+tests/fm-harness-adapter-instructions-live-e2e.test.sh
+tests/fm-rovo-signals-live-e2e.test.sh
+tests/fm-devin-signals-live-e2e.test.sh
+tests/fm-grok-continuity-live-e2e.test.sh
+
+## target 19effdf
+FM_TEST_COVERAGE ok total=256 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=216 serial_shards=9 serial_unhinted=10 serial_max_ms=1074843 serial_budget_ms=1200000 herdr=16
+tests/fm-supervision-host.test.sh
+tests/fm-control.test.sh
+tests/fm-claude-stop-autoarm.test.sh
+tests/fm-pi-watch-extension.test.sh
+tests/fm-send-resolve-key.test.sh
+tests/fm-limit-resume.test.sh
+tests/fm-teardown-endpoint-safety.test.sh
+tests/fm-home-summary-refresh.test.sh
+tests/fm-procevent-when.test.sh
+tests/fm-backend.test.sh
+tests/fm-bearings-board-render.test.sh
+tests/fm-host-mirror.test.sh
+tests/fm-timeout-lib.test.sh
+tests/fm-shared-captain-inheritance.test.sh
+tests/fm-ci-workflow.test.sh
+tests/fm-busy-state.test.sh
+tests/fm-remote-job-orphan-reap.test.sh
+tests/fm-harness-liveness-drift-live-e2e.test.sh
+tests/fm-peek-remote.test.sh
+tests/fm-pr-state.test.sh
+tests/fm-send-inbox-doorbell-live-e2e.test.sh
+tests/fm-stat-shadowing.test.sh
+tests/fm-herdr-pi-stale-registration-live-e2e.test.sh
+tests/fm-herdr-version-floor-live-e2e.test.sh
+tests/fm-pi-branch-live-e2e.test.sh

@@ -1,0 +1,1 @@
+exit=1 duration_s=51 live_after_file_exit=0
