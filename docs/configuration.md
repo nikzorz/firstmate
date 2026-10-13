@@ -694,6 +694,12 @@ The stable local estimate is `ceil(UTF-8 bytes / 3)` per file, a conservative po
 An inherited `data/captain-shared.md` counts in a secondmate's total but remains primary-owned and read-only there.
 The internal [`/stow` skill](../.agents/skills/stow/SKILL.md) owns curation and its automatic secondmate cascade, which accounts every home against this same per-home allowance separately rather than against a fleet total.
 
+### Entry size (config/startup-memory-entry-size)
+
+`config/startup-memory-entry-size` is an optional local, gitignored per-entry size in estimated tokens, in the same one-value format as the budget file; when it is absent the size is `150`.
+`bin/fm-startup-memory-budget.sh report` ends by listing every entry of the three files over that size, largest first, and `bin/fm-startup-memory-budget.sh check` prints only that list and exits non-zero while it is not empty.
+The size is per home and is not inherited by secondmate homes, and it never changes the budget or what counts toward it.
+
 The helper's header owns exact parsing, publication, and report output mechanics.
 
 ## Stow pass horizon (config/stow-pass-horizon)
