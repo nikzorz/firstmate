@@ -115,7 +115,7 @@ jobs:
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          npm install -g @earendil-works/pi-coding-agent@1.1.0 --before=2026-10-12T00:00:00Z
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
         run: |
@@ -216,10 +216,15 @@ jobs:
       # The Pi extension tests read the installed Pi package's own types and
       # runtime, so without it they gate-skip and pass silently. It is a public
       # npm package and needs no credential, so CI can hold the real thing.
+      # The version is pinned, here and in the parallel job, because the
+      # typecheck follows the package's types: an unpinned install lets a new
+      # release turn unchanged code red. The publish-date cutoff does the same
+      # for the sibling packages it depends on by range, whose types the
+      # typecheck also reads, so a version bump has to move the date with it.
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          npm install -g @earendil-works/pi-coding-agent@1.1.0 --before=2026-10-12T00:00:00Z
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
