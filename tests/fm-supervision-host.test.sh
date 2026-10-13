@@ -738,10 +738,10 @@ outcome_row() {  # <seq> <epoch> <task> <verdict> <summary>
 # briefs had shown every outcome without advancing the read cursor, so the
 # first drain on the new code found days-old outcomes unread. They are still
 # presented and never adopted as processed, but each says how long ago it was
-# recorded and the section asks for the current state first, so a PR that was
-# merged since cannot read as newly ready.
+# recorded and the section points at the how-to that asks for the current state
+# first, so a PR that was merged since cannot read as newly ready.
 test_branch_outcomes_date_a_legacy_backlog_without_adopting_it() {
-  local home now drained
+  local home now drained howto
   home="$TMP_ROOT/drain-legacy"
   mkdir -p "$home/state" "$home/config"
   : > "$home/config/supervision-host"
@@ -755,13 +755,17 @@ test_branch_outcomes_date_a_legacy_backlog_without_adopting_it() {
   assert_contains "$drained" "[seq 1, recorded 6d ago] alpha: alpha PR https://github.com/example/repo/pull/101" \
     "a days-old captain outcome must say when it was recorded"
   assert_contains "$drained" "[seq 3, recorded 3d ago] beta: beta PR" "every captain outcome must say when it was recorded"
-  assert_contains "$drained" "check the task's current state first" "the section must ask main to check the current state before acting"
-  assert_contains "$drained" "your reply to the captain covers only those, as if the settled ones had never been listed, and a settled one needs only the acknowledgement" \
-    "the section must keep settled outcomes out of the reply to the captain"
+  assert_contains "$drained" "how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your session-start supervision instructions" \
+    "the section must point main at the check-first how-to"
+  howto=$(FM_HOME="$home" bash "$ROOT/bin/fm-supervision-instructions.sh" --harness claude)
+  assert_contains "$howto" "Check that state first, including the task's still-open decisions listed under \`OPEN DECISIONS\`" \
+    "the pointed-at how-to must ask main to check the current state before acting"
+  assert_contains "$howto" "Your reply to the captain covers only those, as if the settled ones had never been listed; a settled one needs only the acknowledgement." \
+    "the pointed-at how-to must keep settled outcomes out of the reply to the captain"
   assert_contains "$drained" "mark-processed --through 3;" "the backlog must still carry its acknowledgement"
   [ -n "$(FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" unprocessed)" ] \
     || fail "the drain adopted a legacy captain outcome as processed"
-  pass "drain: a legacy backlog is presented with each outcome's age and a check-first instruction, never adopted"
+  pass "drain: a legacy backlog is presented with each outcome's age and a pointer to the check-first how-to, never adopted"
 }
 
 # A newer settled branch line must not close an older keyed status decision.
@@ -777,7 +781,6 @@ test_branch_ack_keeps_older_keyed_decision_open() {
   assert_contains "$drained" 'OPEN DECISIONS' "the status decision must appear in the first drain"
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "the older decision must remain open"
   assert_contains "$drained" '[seq 2, newest of 2 for this task' "the branch line must collapse to the newest outcome"
-  assert_contains "$drained" "including its still-open decisions listed above under OPEN DECISIONS" "the check-first instruction must include the older keyed decision"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 2 >/dev/null || fail "fixture: acknowledgement refused"
   drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "acknowledging the newer branch line closed the older keyed decision"
@@ -916,7 +919,7 @@ test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main() {
 }
 
 test_attended_captain_outcome_reaches_main_through_branch_outcomes() {
-  local home drained
+  local home drained howto
   home=$(make_home attended-captain attended)
   echo captain > "$home/stub-mode"
   start_host "$home"
@@ -937,6 +940,12 @@ test_attended_captain_outcome_reaches_main_through_branch_outcomes() {
   assert_contains "$drained" "[seq 1, recorded " "the section must carry the outcome's row and when it was recorded"
   assert_contains "$drained" " ago] demo: stub escalated: " "the section must carry the outcome's task and summary"
   assert_contains "$drained" "run bin/fm-branch-outcome.sh mark-processed --through 1" "the section must print its exact acknowledgement"
+  assert_contains "$drained" "how to process them: the BRANCH OUTCOMES step of the supervision-host protocol in your session-start supervision instructions, reprinted by bin/fm-supervision-instructions.sh):" \
+    "the heading must point at the processing how-to"
+  assert_not_contains "$drained" "had never been listed" "the drain must not repeat the processing how-to"
+  assert_not_contains "$drained" "sort the" "the drain must not repeat the processing how-to"
+  howto=$(FM_HOME="$home" bash "$ROOT/bin/fm-supervision-instructions.sh" --harness claude)
+  assert_contains "$howto" "Then run the \`mark-processed\` acknowledgement the section prints" "the heading's pointer must reach the full how-to"
   drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" " ago] demo: stub escalated: " "an unacknowledged captain outcome must be presented again"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 1 >/dev/null \

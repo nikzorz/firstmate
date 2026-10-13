@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // Semantic policy for the cd-guard: does a shell command persistently change the
-// PRIMARY firstmate shell's own working directory?
+// PRIMARY firstmate shell's own working directory, or pipe the wake drain into
+// another command?
 //
 // A stray persistent top-level `cd projects/<clone>` silently relocates the
 // primary shell, so the next firstmate-owned command (a backlog write, an
 // fm-* lifecycle call, tasks-axi) runs inside a project clone instead of the
-// home. This policy blocks exactly that class of command; the environmental
+// home. A wake drain piped into a filter can hide wake rows that the drain's
+// printed acknowledgement then marks handled without their having been read.
+// This policy blocks exactly those two classes of command; the environmental
 // scoping to the real primary checkout lives in the bin/fm-cd-pretool-check.sh
 // transport, not here. See docs/cd-guard.md for the full contract.
 //
@@ -22,7 +25,14 @@ import { fileURLToPath } from "node:url";
 const REASONS = {
   "persistent-cd":
     "a persistent top-level directory change in the primary firstmate checkout is blocked; it would move the shell out of the home so a later firstmate-owned command runs inside a project clone. Reach the target without moving the shell - use git -C <dir> or an absolute path on the command itself - or scope the cd to a subshell like (cd <dir> && ...).",
+  "filtered-drain":
+    "piping bin/fm-wake-drain.sh into another command is blocked; a filter can hide wake rows, and the acknowledgement the drain prints would then mark them handled without their having been read. Run the drain on its own and read all of its output; only a drain carrying --ack-through may be piped.",
 };
+
+const DRAIN_SCRIPT = "fm-wake-drain.sh";
+
+// Interpreters that run a script named as their first operand.
+const SCRIPT_INTERPRETERS = new Set(["sh", "bash", "zsh"]);
 
 // Directory-changing builtins that mutate the calling shell's own cwd.
 const CD_BUILTINS = new Set(["cd", "pushd", "popd"]);
@@ -44,6 +54,25 @@ function nodePersists(separators, index) {
   if (separators[index] === "&") return false;
   if (isPipe(separators[index]) || isPipe(separators[index - 1])) return false;
   return true;
+}
+
+function basename(value) {
+  return value.split("/").filter(Boolean).at(-1) || value;
+}
+
+// A drain that acknowledges prints no wake rows, so piping it hides nothing.
+function isUnacknowledgedDrain(position) {
+  if (!position.command) return false;
+  let args = position.words.slice(position.index + 1);
+  let name = basename(position.command.value);
+  if (SCRIPT_INTERPRETERS.has(name)) {
+    const script = args.findIndex((word) => !word.value.startsWith("-"));
+    if (script < 0) return false;
+    name = basename(args[script].value);
+    args = args.slice(script + 1);
+  }
+  if (name !== DRAIN_SCRIPT) return false;
+  return !args.some((word) => word.value === "--ack-through" || word.value.startsWith("--ack-through="));
 }
 
 function deny(code) {
@@ -78,6 +107,9 @@ function decision(command) {
 
   const { nodes, separators } = splitProgram(lexed.tokens);
   for (let index = 0; index < nodes.length; index += 1) {
+    if (isPipe(separators[index]) && isUnacknowledgedDrain(commandPosition(nodes[index]))) {
+      return deny("filtered-drain");
+    }
     if (!nodePersists(separators, index)) continue;
     // commandPosition ignores subshell/brace groups, quoted data, comments, and
     // substitutions (they contribute no top-level command word), and skips
