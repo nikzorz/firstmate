@@ -206,7 +206,9 @@ stop_home_processes() {  # <home>
 stop_registered_homes() {
   local home
   while IFS= read -r home; do
-    [ -n "$home" ] && stop_home_processes "$home"
+    [ -n "$home" ] || continue
+    : > "$home/session.stop"
+    stop_home_processes "$home"
   done < <(cat "$HOMES_FILE" 2>/dev/null)
   : > "$HOMES_FILE"
 }
