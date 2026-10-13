@@ -1,0 +1,22 @@
+❯ Go ahead: run bin/fm-session-start.sh exactly once and nothing else, then quote verbatim in one code block the "Work under way" heading line and every lane line under it, and say in one sentence    
+  which lane has no window recorded and which record is missing fields. Do not act on anything else in the digest.                                                                                      
+● Bash(bin/fm-session-start.sh)                      
+  ⎿  ================================================================================
+     SESSION START - /tmp/fm-lab.MG0TPc                                                                                                                                                                
+     ================================================================================
+     … +168 lines (ctrl+o to expand)                                                                                                                                                                    
+  ⎿  Allowed by auto mode classifier                                                                                                                                                                   
+● Applied: Captain, the session-start command ran once and produced the digest. Nothing else was touched.                                                                                               
+  Work under way (one line per lane; raw record: state/<id>.meta, full status log: state/<id>.status)                                                                                                   
+  --------------------------------------------------------------------------------
+  lane-a-healthy | kind=ship mode=no-mistakes | endpoint: alive (backend=tmux window=fm-sess:live) | last status: needs-decision: [key=db] pick the migration strategy                                  
+  lane-b-nowindow | kind=scout mode=- | endpoint: unknown (no window recorded) | last status: paused: waiting on validation | record missing: window
+  lane-c-thin | kind=? mode=- | endpoint: alive (backend=tmux window=fm-sess:gone) | last status: (no status file yet) | record missing: kind, mode                                                     
+  lane-b-nowindow has no window recorded (its record is missing window), and lane-c-thin's record is missing the kind and mode fields.
+  One thing you should know even though I'm not acting on it: the digest reports another live session holds the fleet lock, so this session is read-only.
+✻ Crunched for 7s · done 10:17 AM                            
+ ☀  Clear  6% of context  61.5k / 1M   last turns ▆▇█  ▲ +5.6k last turn                                                                                                                            [-]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                                                                                                                                                                                                       
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents                                                                                                                                                   

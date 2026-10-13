@@ -1,0 +1,21 @@
+Work under way (one line per lane; raw record: state/<id>.meta, full status log: state/<id>.status)
+--------------------------------------------------------------------------------
+lane-a-healthy | kind=ship mode=no-mistakes | endpoint: alive (backend=tmux window=fm-sess:live) | last status: needs-decision: [key=db] pick the migration strategy
+lane-b-nowindow | kind=scout mode=- | endpoint: unknown (no window recorded) | last status: paused: waiting on validation | record missing: window
+lane-c-thin | kind=? mode=- | endpoint: alive (backend=tmux window=fm-sess:gone) | last status: (no status file yet) | record missing: kind, mode
+lane-d-long | kind=ship mode=direct-PR | endpoint: alive (backend=tmux window=fm-sess:live) | last status: blocked: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [truncated]
+lane-e-empty | kind=secondmate mode=local-only | endpoint: alive (backend=tmux window=fm-sess:live) | last status: (empty status log)
+lane-f-blankwindow | kind=ship mode=no-mistakes | endpoint: unknown (no window recorded) | last status: (no status file yet) | record missing: window
+lane-g-emptyrecord | kind=? mode=- | endpoint: unknown (no window recorded) | last status: (no status file yet) | record missing: kind, mode, window
+
+Orphan status logs (state/*.status without matching .meta)
+--------------------------------------------------------------------------------
+
+--- orphan-x ---
+status tail (last 5 line(s), each capped at 220 characters, wake-EVENT history, not current state; full log: /tmp/fm-lab.MG0TPc/state/orphan-x.status):
+o3
+o4
+o5
+o6
+o7
+
