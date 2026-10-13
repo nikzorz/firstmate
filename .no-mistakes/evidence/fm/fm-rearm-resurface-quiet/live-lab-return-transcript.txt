@@ -1,0 +1,76 @@
+
+=== R1 deferred recovery, then the captain returns before any drain: must not read as a gap
+arm: STILL LIVE after 10s (no wake)
+--- arm output:
+watcher: started pid=3165722 (beacon fresh)
+--- marker: acked:handling:3149654.1791917781.bHYZON | queue rows: 0 | note: 
+$ fm-afk-contract.sh enter
+rc=0
+$ fm-afk-return.sh begin
+rc=0
+fm-afk-launch: away-posture record archived at /tmp/fm-lab.mOCiDi/state/afk-contracts/1791917804.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+=== Return brief (away 2026-10-13T18:56:44Z -> 2026-10-13T18:56:45Z, 1s) ===
+Supervisor health:
+  - supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+Your instructions:
+  (no away instructions recorded)
+  the away session took no action under them.
+Waiting on you:
+  (nothing)
+Tried and failed, or could not be fixed:
+  (nothing)
+Landed, cleanup due:
+  (nothing)
+Handled while away:
+  0 outcome(s) handled by the away session (0 routine, 0 escalated above)
+  (no routine outcomes recorded in the store for this window)
+Cost: 0 supervision outcome(s) recorded (0 routine, 0 captain); 0 task(s) live at return.
+catch-up health: supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+fm-afk-return: catch-up clear; ordinary captain work may proceed
+--- marker: acked:handling:3149654.1791917781.bHYZON | queue rows: 0 | note: 
+(no ack required)
+--- marker: acked:handling:3149654.1791917781.bHYZON | queue rows: 0 | note: 
+
+=== R2 adversarial: an older deferred note stands, then a recovery WITH queued work is undrained at return: must read as a GAP
+arm: STILL LIVE after 10s (no wake)
+--- arm output:
+watcher: started pid=3183602 (beacon fresh)
+--- marker: announced:downtime:3165722.1791917805.CHFdXH | queue rows: 0 | note: 2026-10-13T12:56:46-0600 
+arm: EXITED rc=0 (wake)
+--- arm output:
+watcher: started pid=3190702 (beacon fresh)
+check: rearm-resurface
+--- marker: announced:downtime:3190445.1791917816.SUk28v | queue rows: 1 | note: 2026-10-13T12:56:46-0600 
+$ fm-afk-contract.sh enter
+rc=0
+$ fm-afk-return.sh begin
+rc=0
+fm-afk-launch: away-posture record archived at /tmp/fm-lab.mOCiDi/state/afk-contracts/1791917817.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+=== Return brief (away 2026-10-13T18:56:57Z -> 2026-10-13T18:56:58Z, 1s) ===
+Supervisor health:
+  - GAP: watcher downtime was detected during the away window (recovery marker present)
+Your instructions:
+  (no away instructions recorded)
+  the away session took no action under them.
+Waiting on you:
+  (nothing)
+Tried and failed, or could not be fixed:
+  (nothing)
+Landed, cleanup due:
+  (nothing)
+Handled while away:
+  0 outcome(s) handled by the away session (0 routine, 0 escalated above)
+  (no routine outcomes recorded in the store for this window)
+Cost: 0 supervision outcome(s) recorded (0 routine, 0 captain); 0 task(s) live at return.
+catch-up health: GAP: watcher downtime was detected during the away window (recovery marker present)
+catch-up wake: 1791917816 3 check lab-probe-2 check: lab-probe-2 queued while the watcher was down
+catch-up wake: WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-13T12:56:46-0600.
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 3190445.1791917816.SUk28v
+fm-afk-return: catch-up clear; ordinary captain work may proceed
+--- marker: announced:handling:3190445.1791917816.SUk28v | queue rows: 1 | note: 
+$ fm-wake-drain.sh --ack-through 3 --recovery-generation 3190445.1791917816.SUk28v
+rc=0
+--- marker: acked:handling:3190445.1791917816.SUk28v | queue rows: 0 | note: 
+lab watcher pid at end: 

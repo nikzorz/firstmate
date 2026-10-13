@@ -1,0 +1,40 @@
+=== R1 a live watcher goes down, comes back with nothing queued (deferred), captain returns before any drain
+watcher: started pid=3205329 (beacon fresh)
+--- marker: acked:handling:3190445.1791917816.SUk28v | queue rows: 0 | note: 
+--- marker: pending:downtime:3205329.1791917840.fN6Z1z | queue rows: 0 | note: 
+arm: STILL LIVE (no wake)
+watcher: started pid=3210345 (beacon fresh)
+--- marker: announced:downtime:3205329.1791917840.fN6Z1z | queue rows: 0 | note: 2026-10-13T12:57:21-0600 
+$ fm-afk-contract.sh enter
+rc=0
+$ fm-afk-return.sh begin
+rc=0
+fm-afk-launch: away-posture record archived at /tmp/fm-lab.mOCiDi/state/afk-contracts/1791917850.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+=== Return brief (away 2026-10-13T18:57:30Z -> 2026-10-13T18:57:32Z, 2s) ===
+Supervisor health:
+  - supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+  - the watcher recovered with nothing queued and its announcement is deferred to the next drain (recovery marker announced:downtime); not a gap
+Your instructions:
+  (no away instructions recorded)
+  the away session took no action under them.
+Waiting on you:
+  (nothing)
+Tried and failed, or could not be fixed:
+  (nothing)
+Landed, cleanup due:
+  (nothing)
+Handled while away:
+  0 outcome(s) handled by the away session (0 routine, 0 escalated above)
+  (no routine outcomes recorded in the store for this window)
+Cost: 0 supervision outcome(s) recorded (0 routine, 0 captain); 0 task(s) live at return.
+catch-up health: supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+catch-up health: the watcher recovered with nothing queued and its announcement is deferred to the next drain (recovery marker announced:downtime); not a gap
+catch-up wake: WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-13T12:57:21-0600.
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 3205329.1791917840.fN6Z1z
+fm-afk-return: catch-up clear; ordinary captain work may proceed
+--- marker: announced:handling:3205329.1791917840.fN6Z1z | queue rows: 0 | note: 
+$ fm-wake-drain.sh --ack-through 0 --recovery-generation 3205329.1791917840.fN6Z1z
+rc=0
+--- marker: acked:handling:3205329.1791917840.fN6Z1z | queue rows: 0 | note: 
+lab watcher pid at end: 

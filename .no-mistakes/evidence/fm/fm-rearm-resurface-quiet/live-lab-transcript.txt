@@ -1,0 +1,122 @@
+
+=== S0 baseline: a live watcher cycle in the lab home
+watcher pid 2960085
+--- marker: 
+--- queue rows: 0
+--- .watcher-recovered: (absent)
+
+=== S1 watcher goes down and is re-armed with NOTHING queued
+--- marker: pending:downtime:2960085.1791917669.XrrHqt
+--- queue rows: 0
+--- .watcher-recovered: (absent)
+arm pid 2983852: STILL LIVE after 12s (no wake, no turn)
+--- arm output:
+watcher: started pid=2983873 (beacon fresh)
+--- marker: announced:downtime:2960085.1791917669.XrrHqt
+--- queue rows: 0
+--- .watcher-recovered: 2026-10-13T12:54:31-0600 
+[2026-10-13T12:54:31-0600] watcher recovery announcement deferred to the next drain: nothing queued
+
+=== S2 recovery-loop guard: repeated empty-queue re-arms of the same announced generation
+arm pid 2996354: STILL LIVE after 8s (no wake, no turn)
+--- arm output:
+watcher: started pid=2996428 (beacon fresh)
+--- marker: announced:downtime:2960085.1791917669.XrrHqt
+--- queue rows: 0
+--- .watcher-recovered: 2026-10-13T12:54:31-0600 
+arm pid 3011913: STILL LIVE after 8s (no wake, no turn)
+--- arm output:
+watcher: started pid=3011962 (beacon fresh)
+--- marker: announced:downtime:2960085.1791917669.XrrHqt
+--- queue rows: 0
+--- .watcher-recovered: 2026-10-13T12:54:31-0600 
+arm pid 3027548: STILL LIVE after 8s (no wake, no turn)
+--- arm output:
+watcher: started pid=3027611 (beacon fresh)
+--- marker: announced:downtime:2960085.1791917669.XrrHqt
+--- queue rows: 0
+--- .watcher-recovered: 2026-10-13T12:54:31-0600 
+
+=== S3 away-daemon style drain (FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT=1) must leave the note
+$ fm-wake-drain.sh FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT=1
+rc=0
+--- stdout:
+--- stderr:
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 2960085.1791917669.XrrHqt
+--- marker: announced:handling:2960085.1791917669.XrrHqt
+--- queue rows: 0
+0
+--- .watcher-recovered: 2026-10-13T12:54:31-0600 
+
+=== S4 next session drain carries the announcement once, then never again
+$ fm-wake-drain.sh X=1
+rc=0
+--- stdout:
+WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-13T12:54:31-0600.
+--- stderr:
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 2960085.1791917669.XrrHqt
+--- marker: announced:handling:2960085.1791917669.XrrHqt
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+$ fm-wake-drain.sh --ack-through 0 --recovery-generation 2960085.1791917669.XrrHqt
+rc=0
+$ fm-wake-drain.sh X=1
+rc=0
+--- stdout:
+--- stderr:
+--- marker: acked:handling:2960085.1791917669.XrrHqt
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+watcher still live: yes
+
+=== S5 watcher goes down, a wake is queued, re-arm: one turn, for the wake
+--- marker: pending:downtime:3027611.1791917712.Aj0YUc
+--- queue rows: 1
+--- .watcher-recovered: (absent)
+arm pid 3046859: EXITED rc=0 (a wake: one session turn)
+--- arm output:
+watcher: started pid=3046924 (beacon fresh)
+check: rearm-resurface
+--- marker: announced:downtime:3027611.1791917712.Aj0YUc
+--- queue rows: 1
+--- .watcher-recovered: (absent)
+$ fm-wake-drain.sh X=1
+rc=0
+--- stdout:
+1791917714	1	check	lab-probe	check: lab-probe queued while the watcher was down
+--- stderr:
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3027611.1791917712.Aj0YUc
+$ fm-wake-drain.sh --ack-through 1 --recovery-generation 3027611.1791917712.Aj0YUc
+rc=0
+--- marker: acked:handling:3027611.1791917712.Aj0YUc
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+
+=== S5b the successor after that turn stays quiet (no second turn, no recursion)
+arm pid 3050448: STILL LIVE after 8s (no wake, no turn)
+--- arm output:
+watcher: started pid=3050509 (beacon fresh)
+--- marker: acked:handling:3027611.1791917712.Aj0YUc
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+
+=== S6 adversarial: deferral cannot be recorded (note path is a directory) -> must fall back to the wake
+--- marker: pending:downtime:3050509.1791917724.hDf3tF
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+arm pid 3065788: EXITED rc=0 (a wake: one session turn)
+--- arm output:
+/home/nik/.no-mistakes/worktrees/50866b63a668/01M4V9GK0HXS1HP7Z9DWDHMRXP/bin/fm-wake-lib.sh: line 1116: /tmp/fm-lab.mOCiDi/state/.watcher-recovered: Is a directory
+watcher: started pid=3065835 (beacon fresh)
+check: rearm-resurface
+--- marker: announced:downtime:3050509.1791917724.hDf3tF
+--- queue rows: 0
+0
+--- .watcher-recovered: (absent)
+
+lab watcher pid at end: 
