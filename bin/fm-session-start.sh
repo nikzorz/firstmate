@@ -154,7 +154,7 @@
 #     reason is cut there and closed with the marker tasks-axi gives a long
 #     title, which names the command that prints the rest, so one long reason
 #     costs a line rather than kilobytes on every session start.
-#   - Only the plain queued (dispatchable-now) listing is bounded, by
+#   - Only the plain queued (dispatchable-now) listing has its ROWS bounded, by
 #     FM_SESSION_START_QUEUED_LIMIT, default 20. Anything it omits is disclosed
 #     with an exact remainder count and the command that shows the rest, so a
 #     deep queue costs a counter rather than kilobytes.
