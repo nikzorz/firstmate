@@ -1,0 +1,87 @@
+
+### S1 checkless mergeable PR (base main), this repo's own workflows, ci step waiting 6m10s
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/Qbix/Users/pull/37 has zero Actions checks at least 6m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/Qbix/Users/actions, then close and reopen the pull request
+[exit 0]
+
+### S2a same PR, ci step waiting only 40s (inside settle time)
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: working · source: run-step · ci running
+[exit 0]
+
+### S2b same PR, run 4h28m old but ci round restarted 40s ago
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: working · source: run-step · ci running
+[exit 0]
+
+### S2c same PR, ci step waiting 4m59s (one second short)
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: working · source: run-step · ci running
+[exit 0]
+
+### S2d same PR, ci step waiting exactly 5m0s
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/Qbix/Users/pull/37 has zero Actions checks at least 5m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/Qbix/Users/actions, then close and reopen the pull request
+[exit 0]
+
+### S3a same PR parked 3h (past the 2h ci quiet budget)
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/Qbix/Users/pull/37 has zero Actions checks at least 3h6m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/Qbix/Users/actions, then close and reopen the pull request
+[exit 0]
+
+### S3b same parked PR with the forge probe off (FM_CREW_STATE_NO_FORGE=1)
+state: stalled · source: run-step · run stopped advancing: ci step quiet 3h5m, past its 2h0m budget
+
+### S4a PR that HAS checks on the forge, ci step waiting 45m
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=19 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: working · source: run-step · ci running
+[exit 0]
+
+### S4b checkless PR whose base is master; this repo's workflows only name main
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=master
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s1
+state: working · source: run-step · ci running
+[exit 0]
+
+### S5a checkless PR, task copy has no workflows at all
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s5
+state: working · source: run-step · ci running
+[exit 0]
+
+### S5b checkless PR, only workflow is path-filtered
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s5
+state: working · source: run-step · ci running
+[exit 0]
+
+### S5c plus a workflow no pull request starts
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s5
+state: working · source: run-step · ci running
+[exit 0]
+
+### S6 ci log has since seen checks running (forge still says zero for this PR)
+$ gh pr view <pr> (real forge answer): MERGEABLE checks=0 base=main
+$ which gh (inside the run): /home/nik/.local/bin/gh
+$ bin/fm-crew-state.sh s6
+state: working · source: run-step · ci running
+[exit 0]
