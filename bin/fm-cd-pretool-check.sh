@@ -6,12 +6,13 @@
 # backlog write, an fm-* lifecycle call, tasks-axi) runs inside a project clone
 # instead of the home. This seatbelt denies such a command before it runs, and
 # likewise a wake drain piped into another command, whose filter can hide wake
-# rows the drain's acknowledgement then marks handled.
+# rows the drain's acknowledgement then marks handled. A `cd` that resolves to
+# the directory the session is already in moves nothing and passes.
 # bin/fm-cd-command-policy.mjs is the sole owner of the block/allow decision; it
 # reuses the shell classifier owned by bin/fm-arm-command-policy.mjs. This
 # wrapper only scopes the guard to the real primary checkout, acquires the
-# harness payload, invokes that policy, and renders the established harness
-# responses. It never executes, sources, evaluates, or expands the command.
+# harness payload and the session's working directory, invokes that policy, and
+# renders the established harness responses. It never executes, sources, evaluates, or expands the command.
 # See docs/cd-guard.md for the complete contract and validation record.
 #
 # Usage:
@@ -23,6 +24,9 @@
 # adapters extract the exact command string. --cursor selects Cursor's own deny
 # rendering and marks this invocation as the Cursor registration rather than the
 # Claude-settings duplicate Cursor also loads.
+#
+# The session's working directory is the payload's .cwd when stdin carries one,
+# otherwise the directory this check was started in.
 #
 # Exit/output contract (identical shape to bin/fm-arm-pretool-check.sh):
 #   ALLOW - exit 0 and no output.
@@ -44,6 +48,7 @@ set -u
 
 CMD=""
 CMD_SET=0
+SESSION_CWD=""
 CLAUDE_MODE=0
 CURSOR_MODE=0
 
@@ -57,6 +62,8 @@ Fires only in the real primary firstmate checkout; it is a silent no-op in a
 crewmate/scout task worktree or any non-firstmate repo.
 Exits 0 to allow and 2 to deny a persistent top-level cwd change, or
 fm-wake-drain.sh piped into another command without --ack-through.
+A cd that resolves to the session's own working directory (the payload's cwd,
+else the directory this check runs in) is allowed.
 The deny reason is written to stderr, with a Grok decision object on stdout
 unless --claude is supplied.
 With --cursor, a deny is Cursor's own decision object on stdout and exit 0,
@@ -111,6 +118,7 @@ if [ "$CMD_SET" -eq 0 ]; then
     exit 0
   fi
   CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.toolInput.command // .tool_input.command // empty)' 2>/dev/null) || exit 0
+  SESSION_CWD=$(printf '%s' "$PAYLOAD" | jq -r '(.cwd | strings) // empty' 2>/dev/null) || SESSION_CWD=""
 fi
 
 [ -n "$CMD" ] || exit 0
@@ -143,6 +151,10 @@ case "$CMD" in
     ;;
 esac
 
+# Captured before anything here changes directory. Left empty when unknown,
+# which the policy reads as a session directory it cannot resolve.
+[ -n "$SESSION_CWD" ] || SESSION_CWD=$(pwd -P 2>/dev/null) || SESSION_CWD=""
+
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
 FM_ROOT=${FM_ROOT_OVERRIDE:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P)} || exit 0
 
@@ -166,7 +178,7 @@ POLICY="$FM_ROOT/bin/fm-cd-command-policy.mjs"
 command -v node >/dev/null 2>&1 || exit 0
 [ -f "$POLICY" ] || exit 0
 
-POLICY_OUTPUT=$(node "$POLICY" --command "$CMD" 2>/dev/null) || exit 0
+POLICY_OUTPUT=$(node "$POLICY" --command "$CMD" --cwd "$SESSION_CWD" 2>/dev/null) || exit 0
 [ -n "$POLICY_OUTPUT" ] || exit 0
 
 TAB=$(printf '\t')
