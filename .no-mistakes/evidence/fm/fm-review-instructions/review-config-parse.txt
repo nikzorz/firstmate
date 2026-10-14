@@ -1,0 +1,19 @@
+top-level keys: ['disable_project_settings', 'review', 'document', 'commands', 'test']
+disable_project_settings: True
+{
+ "path_instructions": [
+  {
+   "path": "*",
+   "instructions": "Grade any reachable wrong result at least a warning, never info (error when it should not merge), including a residual a fix round left.\nBefore raising or dismissing a placement or structure finding, read the \"Knowledge-placement decision tree\" and \"One-owner rule\" sections of .agents/skills/firstmate-coding-guidelines/SKILL.md and judge against them.\n"
+  }
+ ]
+}
+18:## Knowledge-placement decision tree
+41:## One-owner rule
+49:## Inline-stub pattern
+58:## Size discipline
+67:## Trigger hygiene
+77:## Compatibility and enforcement
+109:## Documentation change review
+116:## No-mistakes test configuration
+122:## Repo style rules
