@@ -122,7 +122,8 @@
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
-#                          status, unless afk is active
+#                          status; emitted unconditionally on the heartbeat
+#                          cadence while afk is active or an away record exists
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
@@ -3446,8 +3447,11 @@ EOF
     # turns up a captain-relevant status the per-wake path missed. Absorb the
     # no-change case (advance the schedule and back off exactly as wake() would,
     # without exiting); the away-mode daemon, when present, owns triage and wants
-    # every heartbeat.
-    if afk_present; then
+    # every heartbeat. An away record with no daemon (the supervision host or the
+    # Pi branch is the away session) wants every heartbeat too: once the fleet
+    # empties no other wake arrives, so an absorbed heartbeat would leave the
+    # away session no turn in which to refill free worker slots.
+    if afk_present || away_record_present; then
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"

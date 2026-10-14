@@ -931,7 +931,7 @@ test_turn_ended_provably_working_absorbed() {
 # pipeline, so the wake must surface instead of being absorbed.
 
 test_turn_ended_not_working_surfaced() {
-  local dir state fakebin out drain_out pid
+  local dir state fakebin out drain_out pid i
   dir=$(make_case turn-ended-stopped); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
   : > "$state/task.turn-ended"
@@ -1691,7 +1691,7 @@ test_working_note_not_working_surfaced() {
 }
 
 test_secondmate_status_note_surfaced_despite_busy_agent() {
-  local dir state fakebin out drain_out pid
+  local dir state fakebin out drain_out pid i
   dir=$(make_case secondmate-note-surfaced); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
   printf 'kind=secondmate\n' > "$state/mate.meta"
@@ -6959,6 +6959,44 @@ test_captain_held_rechecked_under_a_quiet_record() {
   pass "quiet mode's record silences no captain-held recheck, on the watcher's cadence or through a quiet daemon's one-shot"
 }
 
+# With no away daemon (the supervision host or the Pi branch is the away
+# session), an empty fleet produces no wake but the heartbeat, so absorbing it
+# would leave the away session no turn to refill free worker slots. Quiet
+# mode's record is a present captain and keeps the ordinary absorb.
+test_heartbeat_wakes_an_empty_fleet_while_away_record_exists() {
+  local dir state fakebin out drain_out pid i
+  dir=$(make_case heartbeat-away-empty-fleet); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  write_away_record "$state"
+  [ ! -e "$state/.afk" ] || fail "fixture: an away daemon flag would make this case vacuous"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "an empty fleet's heartbeat was absorbed while the away record exists"; }
+  grep -Fx "heartbeat" "$out" >/dev/null || fail "the away heartbeat did not exit with a heartbeat wake: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the away heartbeat failed"
+  grep "$(printf '\theartbeat\t')" "$drain_out" >/dev/null || fail "the away heartbeat was not queued"
+
+  dir=$(make_case heartbeat-quiet-empty-fleet); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  write_quiet_record "$state"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -0 "$pid" 2>/dev/null || fail "an empty fleet's heartbeat woke firstmate beside quiet mode's record: $(cat "$out")"
+  [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] || fail "the heartbeat beside quiet mode's record never ran"
+  [ ! -s "$out" ] || fail "the heartbeat beside quiet mode's record printed a wake reason: $(cat "$out")"
+  reap "$pid"
+  pass "an empty fleet's heartbeat wakes the away session while the away record exists, and stays absorbed beside quiet mode's record"
+}
+
 test_live_captain_held_first_sight_silenced_by_away_record() {
   local dir state fakebin out capture_file statusf window key sig pid
   dir=$(make_case away-record-held-live); state="$dir/state"; fakebin="$dir/fakebin"
@@ -7265,6 +7303,7 @@ test_procevent_marker_failure_exits_and_replays
 test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
+test_heartbeat_wakes_an_empty_fleet_while_away_record_exists
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
 test_afk_present_reverts_watcher_to_one_shot
