@@ -1,0 +1,5 @@
+('push', '', '1', 'refs/heads/main') -> ('ci-CI-push-refs/heads/main', 'true')
+('push', '', '2', 'refs/heads/main') -> ('ci-CI-push-refs/heads/main', 'true')
+('pull_request', '108', '3', 'refs/pull/108/merge') -> ('ci-CI-pull_request-108', 'true')
+('pull_request', '108', '4', 'refs/pull/108/merge') -> ('ci-CI-pull_request-108', 'true')
+('pull_request', '109', '5', 'refs/pull/109/merge') -> ('ci-CI-pull_request-109', 'true')
