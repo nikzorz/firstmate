@@ -6841,9 +6841,10 @@ iso_utc_at() {  # <epoch>
   date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
 }
 
-write_away_record() {  # <state>
-  if ! FM_HOME="$(dirname "$1")" FM_STATE_OVERRIDE="$1" "$ROOT/bin/fm-afk-contract.sh" enter >/dev/null 2>&1; then
-    fail "could not write the away-posture record in $1"
+write_away_record() {  # <state> [enter-args...]
+  local state=$1; shift
+  if ! FM_HOME="$(dirname "$state")" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-afk-contract.sh" enter "$@" >/dev/null 2>&1; then
+    fail "could not write the away-posture record in $state"
   fi
 }
 
@@ -6995,6 +6996,32 @@ test_heartbeat_wakes_an_empty_fleet_while_away_record_exists() {
   [ ! -s "$out" ] || fail "the heartbeat beside quiet mode's record printed a wake reason: $(cat "$out")"
   reap "$pid"
   pass "an empty fleet's heartbeat wakes the away session while the away record exists, and stays absorbed beside quiet mode's record"
+}
+
+# Once every worker slot the away record allows is taken, the away session has
+# nothing to dispatch, so the heartbeat keeps the ordinary absorb.
+test_heartbeat_absorbed_while_away_slots_are_full() {
+  local dir state fakebin out pid i
+  dir=$(make_case heartbeat-away-full-slots); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  write_away_record "$state" --spend 1
+  printf 'kind=ship\n' > "$state/busy.meta"
+  printf 'kind=secondmate\n' > "$state/mate.meta"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -0 "$pid" 2>/dev/null || fail "a heartbeat woke the away session with every worker slot taken: $(cat "$out")"
+  [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] || fail "the heartbeat with full away slots never ran"
+  [ ! -s "$out" ] || fail "the heartbeat with full away slots printed a wake reason: $(cat "$out")"
+  reap "$pid"
+  pass "a heartbeat stays absorbed while the away record's worker slots are all taken"
 }
 
 test_live_captain_held_first_sight_silenced_by_away_record() {
@@ -7304,6 +7331,7 @@ test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
 test_heartbeat_wakes_an_empty_fleet_while_away_record_exists
+test_heartbeat_absorbed_while_away_slots_are_full
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
 test_afk_present_reverts_watcher_to_one_shot

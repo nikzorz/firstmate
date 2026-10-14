@@ -1348,7 +1348,7 @@ n=0
 [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
 n=\$((n + 1))
 printf '%s\n' "\$n" > "\$COUNT"
-if [ "\$n" -eq 2 ]; then
+if [ "\$n" -eq 1 ]; then
   "\$REAL" archive >/dev/null
 fi
 exec "\$REAL" "\$@"
@@ -1507,8 +1507,8 @@ test_away_spend_cap_is_rechecked_under_the_task_set_lock() {
 #!/usr/bin/env bash
 set -eu
 REAL="$ROOT/bin/fm-afk-contract.sh"
-COUNT="$home/contract-field-count"
-if [ "\${1:-}" = field ]; then
+COUNT="$home/contract-slots-count"
+if [ "\${1:-}" = slots ]; then
   n=0
   [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
   n=\$((n + 1))

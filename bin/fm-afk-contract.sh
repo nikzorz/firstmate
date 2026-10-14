@@ -99,6 +99,10 @@
 #   fm-afk-contract.sh field <name> [--path <record>]
 #   fm-afk-contract.sh words [--path <record>]
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
+#   fm-afk-contract.sh slots
+#     Print `<live> <cap>`: this home's ordinary task records (every
+#     state/*.meta whose kind is not secondmate) and a valid away record's spend
+#     cap; exit 1 with no valid away record.
 #   fm-afk-contract.sh archive              move the record aside; print its path
 #   fm-afk-contract.sh archived <entered_epoch>   print that archived record's path
 #
@@ -122,7 +126,7 @@
 # Sourceable: with the BASH_SOURCE guard, other scripts get the path, presence,
 # posture, and lock helpers (fm_afk_contract_path, fm_afk_contract_present,
 # fm_afk_contract_mode, fm_afk_contract_away_present,
-# fm_afk_contract_archive_dir,
+# fm_afk_contract_archive_dir, fm_afk_contract_away_slots,
 # fm_afk_contract_lock_hold, fm_afk_contract_lock_release) without running main.
 set -u
 
@@ -184,6 +188,22 @@ fm_afk_contract_mode() {  # [state-dir]
 # True only while an away record exists; a quiet record is a present captain.
 fm_afk_contract_away_present() {  # [state-dir]
   [ "$(fm_afk_contract_mode "$@")" = away ]
+}
+
+fm_afk_contract_away_slots() {  # [state-dir]
+  local state=${1:-$FM_AFK_CONTRACT_STATE} path cap live meta
+  path=$(fm_afk_contract_path "$state")
+  fm_afk_contract_validate "$path" >/dev/null 2>&1 || return 1
+  [ "$(fm_afk_contract_record_mode "$path")" = away ] || return 1
+  cap=$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers) || return 1
+  case "$cap" in ''|*[!0-9]*|0) return 1 ;; esac
+  live=0
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    live=$((live + 1))
+  done
+  printf '%s %s\n' "$live" "$cap"
 }
 
 fm_afk_contract_lock_path() {  # [state-dir]
@@ -638,6 +658,9 @@ fm_afk_contract_main() {
     validate)
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_validate "$path" ;;
+    slots)
+      [ "$#" -eq 0 ] || { fm_afk_contract_usage >&2; return 2; }
+      fm_afk_contract_away_slots ;;
     clauses|flags|refused|grants)
       fm_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;
