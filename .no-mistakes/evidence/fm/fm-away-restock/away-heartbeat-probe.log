@@ -1,0 +1,20 @@
+## 1. No away record, empty fleet
+watcher still running after 8s (heartbeat absorbed), streak=3
+## 2. Enter away with the incident words, spend cap 2
+entered; mode=away
+slots: 0 2
+## 3. Away, empty fleet (0/2 slots)
+watcher exited rc=0 stdout=[heartbeat]
+drained queue:
+1791990541^I1^Iheartbeat^Iheartbeat^Iheartbeat$
+WATCHER RECOVERED (deferred announcement, nothing to act on): the watcher came back from downtime 1 time(s) with nothing queued, latest at 2026-10-14T09:09:01-0600.$
+## 4. Away, one ship task + one secondmate (1/2 slots)
+slots: 1 2
+watcher exited rc=0 stdout=[heartbeat]
+## 5. Away, slots full (2/2)
+slots: 2 2
+watcher still running after 8s (heartbeat absorbed), streak=3
+## 6. Archive away record (captain back), empty fleet
+slots exit=1
+watcher exited rc=0 stdout=[check: rearm-resurface]
+lab removed: yes
