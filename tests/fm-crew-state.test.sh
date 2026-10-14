@@ -5821,7 +5821,7 @@ run:
 EOF
 }
 
-run_ci_spinning() {  # <branch> <last_activity-cell>
+run_ci_spinning() {  # <branch> <last_activity-cell> [active_for] [round_active_for]
   cat <<EOF
 run:
   id: "01RUN"
@@ -5835,8 +5835,8 @@ run:
     review,completed,0,0
     push,completed,0,0
     ci,running,0,0
-  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,45m0s,$2,"",round 1
+  active_steps[1]{step,status,active_for,${4+round_active_for,}last_activity,agent_pid,round}:
+    ci,running,${3-45m0s},${4+$4,}$2,"",round 1
 EOF
 }
 
@@ -6204,6 +6204,281 @@ test_empty_check_list_only_counts_while_a_rerun_is_awaited() {
   out=$(run_crew_state "$d" nck)
   assert_contains "$out" "state: working" "an empty check list before any re-run was asked for is not a stall"
   pass "an empty check list only counts while a re-run is awaited"
+}
+
+# A pull request the ci step has seen no checks for, in the step's own words.
+CI_LOG_AWAITING_FIRST_CHECKS='monitoring CI for PR #368 (timeout: 168h0m0s)
+no CI checks reported yet, waiting for checks to register...'
+
+write_workflow() {  # <worktree> <name> ; body on stdin
+  mkdir -p "$1/.github/workflows"
+  cat > "$1/.github/workflows/$2"
+}
+
+zero_checks_case() {  # <name> <id> -> echoes case dir, ci step awaiting its first checks
+  local d; d=$(new_case "$1")
+  make_repo_on_branch "$d/wt" "fm/feat-$2"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/$2.meta" "window=fm:fm-$2" "worktree=$d/wt" "kind=ship"
+  printf '%s\n' "$d"
+}
+
+test_zero_checks_after_the_settle_time_reports_stalled_with_the_recovery() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-flag zf)
+  write_workflow "$d/wt" ci.yml <<'YML'
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs: {}
+YML
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zf '"5s ago: log: no CI checks reported yet, waiting for checks to register..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\tmain'
+  local out; out=$(run_crew_state "$d" zf)
+  assert_contains "$out" "state: stalled" "a settled pull request with no checks is not a working run"
+  assert_contains "$out" "https://github.com/o/r/pull/368 has zero Actions checks" "the detail names the pull request and the missing checks"
+  assert_contains "$out" "https://github.com/o/r/actions" "the detail names the page to confirm"
+  assert_contains "$out" "close and reopen the pull request" "the detail names the recovery step"
+
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_BIN="$CREW_STATE" \
+    crew_is_provably_working zf \
+    && fail "a pull request whose checks never started was absorbed as provably working"
+  pass "zero checks after the settle time reports stalled with the recovery"
+}
+
+test_zero_checks_inside_the_settle_time_stays_working() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-settle zs)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zs '"5s ago: log: no CI checks reported yet, waiting for checks to register..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t40\tmain'
+  local out; out=$(run_crew_state "$d" zs)
+  assert_contains "$out" "state: working" "checks that have had seconds to register are not missing"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t299\tmain'
+  out=$(run_crew_state "$d" zs)
+  assert_contains "$out" "state: working" "a second short of the settle time is still inside it"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t300\tmain'
+  out=$(run_crew_state "$d" zs)
+  assert_contains "$out" "state: stalled" "the settle time is five minutes"
+  pass "zero checks inside the settle time stays working"
+}
+
+# The pipeline commits a head long before it pushes it, so the forge's own dates
+# say nothing about how long checks have had to register on an updated pull
+# request. The ci step's wait does.
+test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-pushed zp)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  local activity='"5s ago: log: no CI checks reported yet, waiting for checks to register..."'
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t1200\tmain'
+  local out
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 40s)"
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a head committed long ago but pushed seconds ago is inside its settle time"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a head the ci step had only just started watching"
+  FM_FAKE_GH_CALLS=""
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 4h28m 40s)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a round the ci step just restarted is inside its settle time"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" unknown)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: working" "a wait of unknown length is not a settled one"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zp "$activity" 6m10s)"
+  out=$(run_crew_state "$d" zp)
+  assert_contains "$out" "state: stalled" "a head pushed past the settle time with no checks is flagged"
+  assert_contains "$out" "at least 6m after its head was pushed" "the figure is the wait since the push, not the commit's age"
+  pass "a head just pushed to an older pull request gets the settle time"
+}
+
+# A first-checks wait can outlast the inactivity budget, so a pull request
+# parked for hours trips that budget too. The budget's own detail names neither
+# the cause nor the recovery.
+test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-parked zk)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zk '"3h5m ago: log: no CI checks reported yet, waiting for checks to register..."' 3h6m0s)"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t11160\tmain'
+  local out; out=$(run_crew_state "$d" zk)
+  assert_contains "$out" "state: stalled" "a pull request parked for hours with no checks is not a working run"
+  assert_contains "$out" "https://github.com/o/r/pull/368 has zero Actions checks" "the detail still names the missing checks past the quiet budget"
+  assert_contains "$out" "https://github.com/o/r/actions" "the detail still names the page to confirm past the quiet budget"
+  assert_contains "$out" "close and reopen the pull request" "the detail still names the recovery step past the quiet budget"
+  assert_not_contains "$out" "past its 2h0m budget" "the budget detail does not replace the cause"
+
+  # With the forge unread the quiet step is still a stalled one, on its own figures.
+  FM_FAKE_GH_FAILS=1
+  out=$(run_crew_state "$d" zk)
+  assert_contains "$out" "state: stalled" "an unread forge does not make a quiet step a working one"
+  assert_contains "$out" "ci step quiet 3h5m" "the budget detail stands when the forge gives no answer"
+  FM_FAKE_GH_FAILS=0
+  pass "zero checks outlasting the quiet budget still names the recovery"
+}
+
+# Workflows held for maintainer approval have run no job either, but Actions is
+# healthy and reopening the pull request changes nothing.
+test_workflows_held_for_maintainer_approval_are_never_flagged() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-held zh)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"'
+CI workflows are held awaiting maintainer approval - no jobs have run, waiting...'
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\tmain'
+  local out
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zh '"5s ago: log: CI workflows are held awaiting maintainer approval - no jobs have run, waiting..."')"
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  out=$(run_crew_state "$d" zh)
+  assert_contains "$out" "state: working" "workflows held for approval are not checks that never started"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a pull request whose workflows are held for approval"
+  FM_FAKE_GH_CALLS=""
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zh '"3h5m ago: log: CI workflows are held awaiting maintainer approval - no jobs have run, waiting..."' 3h6m0s)"
+  out=$(run_crew_state "$d" zh)
+  assert_contains "$out" "ci step quiet 3h5m" "a held wait past the quiet budget keeps the budget detail"
+  assert_not_contains "$out" "close and reopen the pull request" "a held wait never gets the reopen advice"
+  pass "workflows held for maintainer approval are never flagged"
+}
+
+test_queued_running_and_conflicting_pull_requests_are_never_flagged() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-ordinary zo)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: pull_request
+jobs: {}
+YML
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zo '"5s ago: log: no CI checks reported yet, waiting for checks to register..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+  local out
+
+  # A queued check is an entry in the forge's list like any other.
+  FM_FAKE_GH_OUT=$'MERGEABLE\t1\t2880\tmain'
+  out=$(run_crew_state "$d" zo)
+  assert_contains "$out" "state: working" "a queued check is a check"
+
+  FM_FAKE_GH_OUT=$'CONFLICTING\t0\t2880\tmain'
+  out=$(run_crew_state "$d" zo)
+  assert_contains "$out" "state: working" "the forge starts no workflow for a conflicting pull request"
+
+  FM_FAKE_GH_OUT=$'UNKNOWN\t0\t2880\tmain'
+  out=$(run_crew_state "$d" zo)
+  assert_contains "$out" "state: working" "an uncomputed mergeability is not a mergeable pull request"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\tmain'
+  FM_FAKE_GH_FAILS=1
+  out=$(run_crew_state "$d" zo)
+  assert_contains "$out" "state: working" "an unread forge is not zero checks"
+  FM_FAKE_GH_FAILS=0
+
+  # Once the step has seen checks it says so, and the forge is not asked.
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS
+CI checks running, waiting for results..."
+  out=$(run_crew_state "$d" zo)
+  assert_contains "$out" "state: working" "running checks are a working run"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about checks the step had already seen"
+  pass "queued, running and conflicting pull requests are never flagged"
+}
+
+test_zero_checks_only_counts_where_a_workflow_starts_on_the_pull_request() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-workflows zw)
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zw '"5s ago: log: no CI checks reported yet, waiting for checks to register..."')"
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\tmain'
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  local out
+
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a repository with no workflows has no checks to miss"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a repository with no workflows"
+
+  write_workflow "$d/wt" release.yml <<'YML'
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    steps:
+      - run: echo pull_request
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a workflow no pull request starts is not a missing check"
+
+  write_workflow "$d/wt" docs.yml <<'YML'
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+jobs: {}
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a path filter may have skipped this pull request"
+
+  write_workflow "$d/wt" stable.yml <<'YML'
+on:
+  pull_request:
+    branches:
+      - release
+    types: [opened, synchronize]
+jobs: {}
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a workflow for another base branch does not start here"
+
+  write_workflow "$d/wt" label.yml <<'YML'
+on:
+  pull_request_target:
+    types: [labeled]
+jobs: {}
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a workflow that opening a pull request does not start is not a missing check"
+
+  write_workflow "$d/wt" greet.yml <<'YML'
+on:
+  pull_request:
+    types: [opened]
+jobs: {}
+YML
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: working" "a workflow that a pushed head does not start is not a missing check"
+
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\trelease'
+  out=$(run_crew_state "$d" zw)
+  assert_contains "$out" "state: stalled" "the same repository flags a pull request against the branch its workflow names"
+  pass "zero checks only counts where a workflow starts on the pull request"
 }
 
 test_an_absent_forge_answer_never_manufactures_a_stall() {
@@ -6614,6 +6889,13 @@ test_spinning_ci_step_on_a_conflicting_pr_reports_stalled
 test_a_conflict_the_pipeline_is_still_fixing_is_not_a_stall
 test_the_ci_log_tail_is_bought_once_per_invocation
 test_empty_check_list_only_counts_while_a_rerun_is_awaited
+test_zero_checks_after_the_settle_time_reports_stalled_with_the_recovery
+test_zero_checks_inside_the_settle_time_stays_working
+test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery
+test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time
+test_workflows_held_for_maintainer_approval_are_never_flagged
+test_queued_running_and_conflicting_pull_requests_are_never_flagged
+test_zero_checks_only_counts_where_a_workflow_starts_on_the_pull_request
 test_an_absent_forge_answer_never_manufactures_a_stall
 test_the_forge_is_asked_nothing_it_need_not_answer
 test_usage_limit_prompt_outranks_active_run

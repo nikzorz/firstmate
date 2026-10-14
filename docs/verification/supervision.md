@@ -1018,3 +1018,61 @@ Both fields are selectable on `gh pr view --json` (they appear in its own field 
 The projection returns exactly one tab-separated line, which is the whole parse.
 And this capture is of a MERGED pull request, which reports `UNKNOWN` mergeability rather than a value: GitHub computes mergeability lazily and reports `UNKNOWN` whenever it has not, so `UNKNOWN` is a routine answer and never evidence of a conflict.
 Only the definite `CONFLICTING` value escalates, and only while the step's own log is asking for a re-run of checks it has already seen: no-mistakes resolves its own merge conflicts, so a conflict it has not finished with is a non-event rather than a wake.
+
+### The zero-checks arm's forge fields and ci wait figures
+
+The arm that flags a pull request whose checks never started selects three more forge fields in the same query and reads two elapsed columns from `active_steps`.
+Measured 2026-10-13 against gh 2.102.0 and the installed no-mistakes v1.84.0.
+
+The query, exactly as the reader sends it, against a MERGED pull request:
+
+```sh
+gh pr view https://github.com/nikzorz/firstmate/pull/74 \
+  --json mergeable,statusCheckRollup,createdAt,commits,baseRefName \
+  -q '[(.mergeable // "UNKNOWN"),
+       ((.statusCheckRollup // []) | length | tostring),
+       ((now - ([.createdAt, ((.commits // []) | last | .committedDate?)]
+                | map(select(. != null) | fromdateiso8601) | max))
+        | floor | tostring),
+       (.baseRefName // "")] | join("\t")' | cat -A
+```
+
+```
+UNKNOWN^I20^I771590^Imain$
+```
+
+All five fields are selectable on `gh pr view --json`, and the projection returns exactly one line of four tab-separated cells, which is the whole parse.
+The third cell is whole seconds since the later of `createdAt` and the last commit's `committedDate`.
+For this pull request those read `2026-10-04T13:49:15Z` and `2026-10-04T19:37:57Z`, and the query ran at about `2026-10-13T17:57:48Z`, so the figure counts from the commit date as intended.
+A merged pull request reports `UNKNOWN` mergeability and 20 checks, so this capture shows the fields and the parse and not a flagged reading: the arm acts only on `MERGEABLE` with a count of 0.
+
+The elapsed columns, from a running pipeline:
+
+```sh
+no-mistakes axi status --run 01M4V586VBEH6FST7NE0BB5B9D
+```
+
+```
+  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    document,fixing,2m47s,14s,"7s ago: claude producing output","1620913",fix 1
+```
+
+Both `active_for` and `round_active_for` are present by name and carry durations in the `2m47s` shape the reader already parses.
+The round figure is the smaller of the two once a step has started a new round, which is why the arm takes the least of them.
+This row is a `document` step, since the capture was taken before the run reached ci; a ci row uses the same header and columns.
+
+The wait lines the arm tells apart, from the stored ci log of a run whose workflows were held before they started:
+
+```sh
+grep -v '^$' ~/.no-mistakes/logs/<run-id>/ci.log | sed -n 3,5p
+```
+
+```
+no CI checks reported yet, waiting for checks to register...
+CI workflows are held awaiting maintainer approval - no jobs have run, waiting...
+CI checks running, waiting for results...
+```
+
+The step names the held wait in its own line after the first-checks one, so the most recent of these lines says which wait is current.
+The arm asks the forge only while that line is the first one.
+Not measured here: the forge's check count during a hold, which the arm never reads because the held line already rules the query out.
