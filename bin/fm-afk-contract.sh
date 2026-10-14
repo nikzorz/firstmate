@@ -34,8 +34,9 @@
 # are recorded verbatim, read back as plain sentences by firstmate after entry,
 # and acted on by the supervision session's own judgment at the
 # moment an event makes them relevant, through the guarded scripts and under the
-# standing authority it already has (bin/fm-branch-prompt.sh "Postures" owns the
-# execution rules). NO PARSER, TOKENIZER, CLASSIFIER, OR GRAMMAR READS THE WORDS
+# standing authority it already has, which merges a green yolo=on task with
+# words or without (bin/fm-branch-prompt.sh "Postures" owns the execution
+# rules). NO PARSER, TOKENIZER, CLASSIFIER, OR GRAMMAR READS THE WORDS
 # HERE, BY THE CAPTAIN'S MANDATE: this script never tokenizes, classifies, or
 # semantically validates them, records no clause fields, ids, or verbs, and keeps
 # no per-task merge-grant list. What stays mechanical is exactly what a script can

@@ -65,6 +65,13 @@ test_branch_prompt_is_byte_stable_and_above_cache_floor() {
     *"A worker whose pull request has landed is finished, not stuck"*"\`check: merge landed:\` wake names exactly that moment"*"\`bin/fm-teardown.sh <task>\` with no flags"*"never forced, worked around, or repaired by hand"*) ;;
     *) fail "branch prompt lost the landed-work cleanup rule" ;;
   esac
+  # An away window with no words left green yolo PRs unmerged for hours while
+  # the words were the only merge trigger; a yolo=on merge is standing
+  # authority the words' silence must not hold.
+  case "$out_a" in
+    *"A task whose \`state/<id>.meta\` records \`yolo=on\` is MAIN's standing merge authority, not an action under the words"*"with words or without, unless the words name a hold on that merge"*"their silence, or no words at all, never holds a standing \`yolo=on\` merge"*"Report a standing \`yolo=on\` merge with verdict captain, its summary opening with \"under standing merge authority:\" and carrying the PR's full URL"*) ;;
+    *) fail "branch prompt lost the standing yolo merge rule for the away posture" ;;
+  esac
   case "$out_a" in
     *"A second mate's status log is a relay channel for its child work"*"retiring a second mate is MAIN's alone"*"Report a second mate's signal wake from the status lines that wake newly presents"*"A second mate's stale wake is a liveness event: report it even when it presents no new status lines."*) ;;
     *) fail "branch prompt lost the second-mate relay, signal-span, or stale-liveness rule" ;;
