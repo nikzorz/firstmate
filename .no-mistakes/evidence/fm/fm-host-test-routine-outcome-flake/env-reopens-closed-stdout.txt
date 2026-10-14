@@ -1,0 +1,9 @@
+$ env --version
+env (uutils coreutils) 0.10.0
+--- via env shebang (stdout closed):
+l-wx------ 1 nik nik 64 Oct 14 01:27 /proc/self/fd/1 -> pipe:[6196193]
+rc=0
+--- bash direct (stdout closed):
+l-wx------ 1 nik nik 64 Oct 14 01:27 /proc/self/fd/1 -> pipe:[6196193]
+bash: line 1: echo: write error: Bad file descriptor
+rc=1

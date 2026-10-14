@@ -1,0 +1,3 @@
+# target test with the drain routed back through the env shebang (guard must name the fixture fault):
+not ok - fixture: the drain's output was not closed, so its print succeeded
+exit=1

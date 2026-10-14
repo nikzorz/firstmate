@@ -1,0 +1,6 @@
+old (base a58def8 vs target f5fb6eb), taskset -c 0,1, 25 runs: pass=0 fail=25
+new (base a58def8 vs target f5fb6eb), taskset -c 0,1, 25 runs: pass=25 fail=0
+not ok - a routine outcome a drain could not print must follow on the next drain (missing: '[seq 1] demo: merged the docs fix')
+--- output ---
+
+ok - drain: branch outcomes stay unread when the drain cannot print them
