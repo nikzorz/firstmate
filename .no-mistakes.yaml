@@ -17,7 +17,7 @@ review:
   path_instructions:
     - path: "*"
       instructions: |
-        Grade any reachable wrong result as a warning, never info, including a residual a fix round left.
+        Grade any reachable wrong result at least a warning, never info (error when it should not merge), including a residual a fix round left.
         Before raising or dismissing a placement or structure finding, read the "Knowledge-placement decision tree" and "One-owner rule" sections of .agents/skills/firstmate-coding-guidelines/SKILL.md and judge against them.
 
 # Trusted documentation placement policy for the Document step.
