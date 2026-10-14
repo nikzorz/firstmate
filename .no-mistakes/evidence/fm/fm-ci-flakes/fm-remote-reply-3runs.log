@@ -1,0 +1,21 @@
+== run 1
+ok - a quiet reply window publishes the caught-up watermark the reply guard reads
+ok - a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake
+ok - truncation is detected, escalated once, and not silently rebased
+ok - remote reply retirement quiesces and refuses unhandled captured results
+ALL TESTS PASSED
+exit 0
+== run 2
+ok - a quiet reply window publishes the caught-up watermark the reply guard reads
+ok - a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake
+ok - truncation is detected, escalated once, and not silently rebased
+ok - remote reply retirement quiesces and refuses unhandled captured results
+ALL TESTS PASSED
+exit 0
+== run 3
+ok - a quiet reply window publishes the caught-up watermark the reply guard reads
+ok - a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake
+ok - truncation is detected, escalated once, and not silently rebased
+ok - remote reply retirement quiesces and refuses unhandled captured results
+ALL TESTS PASSED
+exit 0
