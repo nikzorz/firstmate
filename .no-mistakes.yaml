@@ -33,11 +33,16 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
+# Honored from the default branch only: a pull request that edits these rules is
+# still tested under the copy already merged.
 # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
 # The evidence is not committed to the feature or default branch.
 test:
   instructions: |
-    Target tests to the run intent and the changed behavior, running only the tests that cover them, and never walk the whole tests/ suite, because CI owns broad regression coverage.
+    Run the colocated tests/<script>.test.sh files that cover the run intent and the changed behavior, and never walk the whole tests/ suite. Leave the full suite to CI.
+    Drive a scenario live only through a harness that already exists: the guarded Herdr lab (bin/fm-herdr-lab.sh), and only when the change is lifecycle behavior, or the disposable lab home below. Build no new driver.
+    Write nothing inside the worktree outside the evidence directory. A one-off probe goes in the evidence directory.
+    Report a scenario that only a test covers as untested, naming that test as its reason.
     Run live Herdr scenarios only through bin/fm-herdr-lab.sh with a named non-default fm-lab-* session, following that helper's prepare, provision, run, and teardown contract exactly.
     Never touch the live default Herdr session or fleet panes.
     Prefer a throwaway lab for spawn, long-launch, and Claude-path proofs, and tear it down in the same evidence turn.
