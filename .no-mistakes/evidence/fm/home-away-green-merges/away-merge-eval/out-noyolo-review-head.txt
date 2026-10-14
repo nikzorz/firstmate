@@ -1,0 +1,23 @@
+DECISION: HOLD
+
+Commands, in order:
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+3. `bin/fm-branch-report.sh` with task `arena-1562`, verdict `captain`, and the summary below.
+4. The exact `--ack-through` command the drain printed as `WAKE_ACK_REQUIRED`.
+
+No lease is claimed because nothing about the task is changed.
+
+Why this is a hold:
+
+- **No standing merge authority.** The task records `yolo=off`, so there is no standing authority to merge.
+- **The away words do not call for a merge.** "I'll review what you've got when I'm back" names a review on return, not a merge. Reading a merge into it would be acting by analogy.
+- **No other action is needed.** Merge authority stays with the captain, and nothing else needs doing.
+
+Report:
+
+- **task:** arena-1562
+- **verdict:** captain
+- **silent:** false
+- **summary:** The arena fix is ready for your review. PR https://github.com/example/arena/pull/1562 has all required checks passing at its latest commit and can be merged. It was not merged while you were away because it needs your approval to merge.

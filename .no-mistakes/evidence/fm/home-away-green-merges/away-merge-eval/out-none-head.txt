@@ -1,0 +1,17 @@
+DECISION: MERGE
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562`
+6. `bin/fm-teardown.sh arena-1562`, with no flags. If it refuses, I stop and report its exact reason. I would not force it or work around it.
+7. `bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "<summary below>"`
+8. Run the exact `--ack-through` command that step 1 printed as WAKE_ACK_REQUIRED.
+9. `bin/fm-lease.sh release arena-1562`
+
+Report:
+- **task:** arena-1562
+- **verdict:** captain
+- **silent:** false
+- **summary:** under standing merge authority: merged the arena fix at https://github.com/example/arena/pull/1562 once all required checks passed at its latest commit, then cleaned up the finished worker. You left no away instructions that hold this merge.

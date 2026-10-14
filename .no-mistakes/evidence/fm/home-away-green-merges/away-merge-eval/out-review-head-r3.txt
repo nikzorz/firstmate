@@ -1,0 +1,23 @@
+DECISION: MERGE
+
+```
+bin/fm-wake-drain.sh
+bin/fm-lease.sh claim arena-1562
+bin/fm-crew-state.sh arena-1562
+bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-teardown.sh arena-1562
+bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "under standing merge authority: merged the arena fix PR https://github.com/example/arena/pull/1562 once every required check passed on its latest commit, then cleaned up the finished worker. It is ready for your review on return."
+<exact WAKE_ACK_REQUIRED --ack-through command printed by the drain>
+bin/fm-lease.sh release arena-1562
+```
+
+Report: verdict **captain**. Summary: "under standing merge authority: merged the arena fix PR https://github.com/example/arena/pull/1562 once every required check passed on its latest commit, then cleaned up the finished worker. It is ready for your review on return."
+
+Why this is a merge and not a hold:
+- The task's record has `yolo=on`, which is MAIN's standing merge authority. Merging it is not an action taken under the away words.
+- The away words, "I'll review what you've got when I'm back.", are a plan to review on return. They do not say "don't merge" or "wait before merging", so they do not hold the merge.
+- No captain hold is recorded.
+- The PR is green at its live head and mergeable.
+
+If the merge script refuses, or the cleanup script refuses, I would report that refusal with its exact reason under verdict captain. I would not force or work around either one.

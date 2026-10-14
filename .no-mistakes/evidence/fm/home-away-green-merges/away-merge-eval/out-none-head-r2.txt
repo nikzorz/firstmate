@@ -1,0 +1,20 @@
+DECISION: MERGE
+
+Commands, in order:
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562`
+6. `bin/fm-teardown.sh arena-1562` (no flags, run only after the merge succeeds; I would report any refusal verbatim and not force it)
+7. `bin/fm-branch-report.sh` with task `arena-1562`, verdict `captain`, and the summary below
+8. The exact `--ack-through` command the drain printed as `WAKE_ACK_REQUIRED`
+9. `bin/fm-lease.sh release arena-1562`
+
+Report:
+
+- **Task:** arena-1562
+- **Verdict:** captain
+- **Silent:** false
+- **Summary:** under standing merge authority: the arena fix PR https://github.com/example/arena/pull/1562 was green on every required check at its latest commit, so I merged it and cleaned up its worker. Your away instructions held nothing back, and none of them were used here.

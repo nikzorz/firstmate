@@ -1,0 +1,23 @@
+DECISION: MERGE
+
+```
+bin/fm-wake-drain.sh
+bin/fm-lease.sh claim arena-1562
+bin/fm-crew-state.sh arena-1562
+bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-teardown.sh arena-1562
+bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "under standing merge authority: merged the arena PR https://github.com/example/arena/pull/1562 once every required check passed at its latest commit, then cleaned up the finished worker. Your away words plan a review on return and name no hold on merging."
+<exact WAKE_ACK_REQUIRED --ack-through command printed by the drain>
+bin/fm-lease.sh release arena-1562
+```
+
+Report:
+
+- **Verdict:** captain
+- **Summary:** under standing merge authority: merged the arena PR https://github.com/example/arena/pull/1562 once every required check passed at its latest commit, then cleaned up the finished worker. Your away words ("I'll review what you've got when I'm back") plan a review on return and do not ask to hold the merge, so the project's standing merge permission applied.
+
+Notes:
+
+- If `fm-pr-merge.sh` refuses, I do not run teardown. I report the refusal verbatim with verdict captain instead.
+- If teardown refuses, I report its exact reason and do not force it.

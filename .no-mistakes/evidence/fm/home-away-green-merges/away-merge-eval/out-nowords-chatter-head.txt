@@ -1,0 +1,27 @@
+DECISION: MERGE
+
+Commands, in order:
+```
+bin/fm-wake-drain.sh
+bin/fm-lease.sh claim arena-1562
+bin/fm-crew-state.sh arena-1562
+bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-teardown.sh arena-1562
+bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "under standing merge authority: merged the arena PR https://github.com/example/arena/pull/1562 once every required check passed at its latest commit, then cleaned up the finished worker. Nothing needs your action."
+<the exact --ack-through command the drain printed as WAKE_ACK_REQUIRED>
+bin/fm-lease.sh release arena-1562
+```
+
+Report:
+- **Verdict:** captain
+- **Summary:** under standing merge authority: merged the arena PR https://github.com/example/arena/pull/1562 once every required check passed at its latest commit, then cleaned up the finished worker. Nothing needs your action.
+
+Why this decision:
+- **Authority:** the task records `yolo=on`, which is MAIN's standing merge authority. It applies whether or not the away words mention it.
+- **No hold:** "Heading out for the day." does not say to skip or delay the merge, and no captain hold is recorded on the task.
+- **Green:** the PR check confirms every required check passed at the live head and the PR is mergeable. `bin/fm-pr-merge.sh` checks this again itself.
+- **Not under the words:** the merge comes from standing authority, so the summary opens "under standing merge authority:" rather than "per your away instructions:".
+- **Contingencies:**
+  - If `bin/fm-pr-merge.sh` refuses, I skip cleanup and report its exact reason with verdict captain.
+  - If `bin/fm-teardown.sh` refuses after a successful merge, I report that refusal word for word and never force it.

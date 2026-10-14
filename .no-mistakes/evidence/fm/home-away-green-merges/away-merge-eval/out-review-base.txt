@@ -1,0 +1,21 @@
+DECISION: HOLD
+
+Commands, in order:
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "The arena fix is ready for your review: PR https://github.com/example/arena/pull/1562 is green with every required check passing and is mergeable. It was not merged while you were away, because your away instructions ask to review what's been done rather than to merge it; it waits for your merge call."`
+6. The exact `--ack-through` command the drain printed as WAKE_ACK_REQUIRED.
+7. `bin/fm-lease.sh release arena-1562`
+
+Report:
+- **Task:** arena-1562
+- **Verdict:** captain (not silent)
+- **Summary:** The arena fix is ready for your review: PR https://github.com/example/arena/pull/1562 is green with every required check passing and is mergeable. It was not merged while you were away, because your away instructions ask to review what's been done rather than to merge it; it waits for your merge call.
+
+Why hold:
+- The away words, "Off for a few hours. I'll review what you've got when I'm back.", name no merge.
+- Read plainly, those words reserve the review for the captain.
+- The project's standing auto-merge setting belongs to MAIN's attended authority. My only merge exception is a merge the words plainly call for, and I may not act by analogy.
+- So no action was taken under the words, and this is reported as review-ready work for the return brief.

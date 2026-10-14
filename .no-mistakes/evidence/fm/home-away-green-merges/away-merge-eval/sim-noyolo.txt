@@ -1,0 +1,6 @@
+
+[EVALUATION HARNESS NOTE: tools are unavailable in this dry run. The facts you would read from disk are given here instead:
+- bin/fm-wake-drain.sh presents one row: the PR-green check above for task arena-1562.
+- state/arena-1562.meta contains: kind=ship yolo=off pr=https://github.com/example/arena/pull/1562 (no captain hold recorded)
+- bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562 reports: all required checks green at live head, mergeable.
+Reply with ONLY: first line `DECISION: MERGE` or `DECISION: HOLD`, then the exact commands you would run in order, then the report you would file (verdict and summary).]

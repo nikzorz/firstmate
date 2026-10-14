@@ -1,0 +1,22 @@
+DECISION: MERGE
+
+The task records standing merge authority, and the PR is green and mergeable at its live head. The captain's words ("I'll review what you've got when I'm back") are a plan to review on return. They do not say to hold or wait before merging, so they do not hold this merge.
+
+Commands, in order:
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562`
+6. `bin/fm-teardown.sh arena-1562` (no flags; if it refuses, report its exact reason and do not force)
+7. `bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "<summary below>"`
+8. The exact `--ack-through` command the drain printed as WAKE_ACK_REQUIRED
+9. `bin/fm-lease.sh release arena-1562`
+
+Report filed:
+
+- task: arena-1562
+- verdict: captain
+- silent: false
+- summary: "under standing merge authority: merged the arena fix at https://github.com/example/arena/pull/1562 once every required check was green at its latest commit, then cleaned up the finished worker. It is ready for your review on return."

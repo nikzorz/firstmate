@@ -1,0 +1,24 @@
+DECISION: HOLD
+
+```
+bin/fm-wake-drain.sh
+bin/fm-lease.sh claim arena-1562
+bin/fm-crew-state.sh arena-1562
+bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562
+bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "The arena fix is green on every required check and mergeable at https://github.com/example/arena/pull/1562, and the worker is ready for merge. It is held for your return because your away instructions (\"Heading out for the day.\") do not name merging it, so no merge was made while you were away."
+<exact --ack-through command printed as WAKE_ACK_REQUIRED by the drain>
+bin/fm-lease.sh release arena-1562
+```
+
+Report filed:
+
+- **Task:** arena-1562
+- **Verdict:** captain (not silent)
+- **Summary:** The arena fix is green on every required check and mergeable at https://github.com/example/arena/pull/1562, and the worker is ready for merge. It is held for your return because your away instructions ("Heading out for the day.") do not name merging it, so no merge was made while you were away.
+
+Why HOLD:
+
+1. **The away words are the whole mandate.** "Heading out for the day." names no merge and no pull request.
+2. **No action by analogy.** I act only where the words plainly name the event and the action.
+3. **Standing merge authority is MAIN's, not mine.** The project's standing permission for MAIN to merge green work does not let me merge. The script would mechanically allow a green merge, but that is not permission.
+4. **Nothing is lost by waiting.** The pull request stays green and mergeable, so it waits for the return brief, where MAIN can merge it right away.

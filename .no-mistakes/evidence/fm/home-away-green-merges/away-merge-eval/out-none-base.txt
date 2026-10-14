@@ -1,0 +1,15 @@
+DECISION: HOLD
+
+Commands, in order:
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-branch-report.sh` with task `arena-1562`, verdict `captain`, silent false, and the summary below.
+6. The exact `--ack-through` command the drain printed as WAKE_ACK_REQUIRED.
+7. `bin/fm-lease.sh release arena-1562`
+
+Report:
+- **Task:** arena-1562
+- **Verdict:** captain
+- **Summary:** The arena fix is ready to merge. All required checks pass at its latest commit: https://github.com/example/arena/pull/1562. It was not merged while you were away because you left no away instructions, and standing merge permission does not extend to this supervision role. It is left for your return or for the main session to merge.

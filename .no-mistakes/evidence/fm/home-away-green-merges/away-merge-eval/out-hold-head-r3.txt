@@ -1,0 +1,24 @@
+DECISION: HOLD
+
+Commands, in order:
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-crew-state.sh arena-1562`
+3. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+4. `bin/fm-branch-report.sh --task arena-1562 --verdict captain --summary "<summary below>"`
+5. `<the exact --ack-through command the drain printed as WAKE_ACK_REQUIRED>`
+
+No lease is claimed. Nothing about the task is changed: no merge, steer, or backlog move.
+
+Report:
+
+- **task:** arena-1562
+- **verdict:** captain
+- **silent:** false
+- **summary:** The arena PR https://github.com/example/arena/pull/1562 is green and mergeable, and its worker reports it ready to merge. It is held unmerged because your away instruction "Do not merge anything until I'm back." holds even the project's standing merge authority, so it waits for your merge call on return.
+
+Why HOLD:
+
+- The task records `yolo=on`, which would normally mean I merge it once it is green.
+- The captain's away words explicitly say not to merge. That is exactly the kind of hold that overrides the standing merge authority.
+- So the PR goes to the return brief as ready for review and merge.

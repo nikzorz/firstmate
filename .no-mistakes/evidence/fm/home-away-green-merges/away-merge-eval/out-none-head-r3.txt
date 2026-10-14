@@ -1,0 +1,27 @@
+DECISION: MERGE
+
+Commands, in order:
+
+1. `bin/fm-wake-drain.sh`
+2. `bin/fm-lease.sh claim arena-1562`
+3. `bin/fm-crew-state.sh arena-1562`
+4. `bin/fm-pr-check.sh arena-1562 https://github.com/example/arena/pull/1562`
+5. `bin/fm-pr-merge.sh arena-1562 https://github.com/example/arena/pull/1562`
+6. `bin/fm-teardown.sh arena-1562`, only after the merge is proven landed. I would run it with no flags and report any refusal verbatim.
+7. `bin/fm-branch-report.sh` with the report below.
+8. The exact `--ack-through` command the drain printed as `WAKE_ACK_REQUIRED`.
+9. `bin/fm-lease.sh release arena-1562`
+
+Report:
+
+- **task:** arena-1562
+- **verdict:** captain
+- **silent:** false
+- **summary:** under standing merge authority: merged the arena fix PR https://github.com/example/arena/pull/1562 because all required checks were green at its live head and no hold applied; the worker's copy was cleaned up after the merge was confirmed.
+
+Why merge:
+
+- The task records `yolo=on`, which is standing merge authority.
+- The PR is green at its live head and mergeable.
+- The captain left no away words, so nothing names a hold on this merge.
+- Silence or missing words never holds a standing `yolo=on` merge.

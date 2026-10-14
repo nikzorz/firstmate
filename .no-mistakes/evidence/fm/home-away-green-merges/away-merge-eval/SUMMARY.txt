@@ -1,0 +1,19 @@
+Away-session merge decision: claude -p (claude-opus-5-5), real emitted branch system prompt + real away wake (fm-branch-dispatch.mjs wake-prompt --away) over a real fm-afk-contract.sh record in a disposable lab home. Task meta yolo=on unless noted; PR green at live head.
+
+CASE                                     DECISION
+hold-base                                DECISION: HOLD
+hold-head-r2                             DECISION: HOLD
+hold-head-r3                             DECISION: HOLD
+hold-head                                DECISION: HOLD
+none-base                                DECISION: HOLD
+none-head-r2                             DECISION: MERGE
+none-head-r3                             DECISION: MERGE
+none-head                                DECISION: MERGE
+nowords-chatter-base                     DECISION: HOLD
+nowords-chatter-head                     DECISION: MERGE
+noyolo-none-head                         DECISION: HOLD
+noyolo-review-head                       DECISION: HOLD
+review-base                              DECISION: HOLD
+review-head-r2                           DECISION: MERGE
+review-head-r3                           DECISION: MERGE
+review-head                              DECISION: MERGE
