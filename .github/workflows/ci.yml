@@ -9,18 +9,18 @@ on:
 permissions:
   contents: read
 
-# Per-PR supersession: a new push to the same PR replaces that PR's in-flight
-# CI instead of letting superseded heads keep the full hosted-runner fan-out.
-# The group uses the PR number for pull_request events, so every run of one PR
-# shares a group, and falls back to the unique run id for push events, so each
-# main push gets its own group and is never cancelled. Cancellation is likewise
-# limited to pull_request events. Evidence and rationale: the September 12
-# Actions starvation report, section 3 "Workflow mechanics to ship first".
+# Supersession: a newer head replaces any in-flight CI for the same history
+# instead of letting the superseded run keep the full hosted-runner fan-out.
+# Runs of one PR share a group keyed on the PR number. Pushes to main share
+# one group keyed on the ref, so each merge cancels the previous main run:
+# the newer run tests a superset of that history, and no consumer reads
+# per-commit main results, while an uncancelled main run per merge queued
+# the next PRs' runs behind it.
 # The compliance workflow deliberately keeps its own event-specific groups; do
 # not collapse it onto this simpler shape.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 # Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
