@@ -1,0 +1,5 @@
+base-pinned-1 cpus=6,7 rc=1 secs=487
+base-pinned-2 cpus=8,9 rc=1 secs=488
+new-pinned-3 cpus=4,5 rc=0 secs=578
+new-pinned-2 cpus=2,3 rc=1 secs=578
+new-pinned-1 cpus=0,1 rc=0 secs=579
