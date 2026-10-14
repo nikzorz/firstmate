@@ -6312,9 +6312,9 @@ YML
   pass "a head just pushed to an older pull request gets the settle time"
 }
 
-# The step logs its first-checks wait once and then falls silent, so a pull
-# request parked for hours trips the inactivity budget too. The budget's own
-# detail names neither the cause nor the recovery.
+# A first-checks wait can outlast the inactivity budget, so a pull request
+# parked for hours trips that budget too. The budget's own detail names neither
+# the cause nor the recovery.
 test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery() {
   reset_fakes
   local d; d=$(zero_checks_case zero-parked zk)
@@ -6340,6 +6340,34 @@ YML
   assert_contains "$out" "ci step quiet 3h5m" "the budget detail stands when the forge gives no answer"
   FM_FAKE_GH_FAILS=0
   pass "zero checks outlasting the quiet budget still names the recovery"
+}
+
+# Workflows held for maintainer approval have run no job either, but Actions is
+# healthy and reopening the pull request changes nothing.
+test_workflows_held_for_maintainer_approval_are_never_flagged() {
+  reset_fakes
+  local d; d=$(zero_checks_case zero-held zh)
+  write_workflow "$d/wt" ci.yml <<'YML'
+on: [push, pull_request]
+jobs: {}
+YML
+  FM_FAKE_CI_LOGS="$CI_LOG_AWAITING_FIRST_CHECKS"'
+CI workflows are held awaiting maintainer approval - no jobs have run, waiting...'
+  FM_FAKE_GH_OUT=$'MERGEABLE\t0\t2880\tmain'
+  local out
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zh '"5s ago: log: CI workflows are held awaiting maintainer approval - no jobs have run, waiting..."')"
+  FM_FAKE_GH_CALLS="$d/gh.calls"
+  out=$(run_crew_state "$d" zh)
+  assert_contains "$out" "state: working" "workflows held for approval are not checks that never started"
+  [ ! -s "$FM_FAKE_GH_CALLS" ] || fail "the forge was asked about a pull request whose workflows are held for approval"
+  FM_FAKE_GH_CALLS=""
+
+  FM_FAKE_AXI_STATUS="$(run_ci_spinning fm/feat-zh '"3h5m ago: log: CI workflows are held awaiting maintainer approval - no jobs have run, waiting..."' 3h6m0s)"
+  out=$(run_crew_state "$d" zh)
+  assert_contains "$out" "ci step quiet 3h5m" "a held wait past the quiet budget keeps the budget detail"
+  assert_not_contains "$out" "close and reopen the pull request" "a held wait never gets the reopen advice"
+  pass "workflows held for maintainer approval are never flagged"
 }
 
 test_queued_running_and_conflicting_pull_requests_are_never_flagged() {
@@ -6865,6 +6893,7 @@ test_zero_checks_after_the_settle_time_reports_stalled_with_the_recovery
 test_zero_checks_inside_the_settle_time_stays_working
 test_zero_checks_outlasting_the_quiet_budget_still_names_the_recovery
 test_a_head_just_pushed_to_an_older_pull_request_gets_the_settle_time
+test_workflows_held_for_maintainer_approval_are_never_flagged
 test_queued_running_and_conflicting_pull_requests_are_never_flagged
 test_zero_checks_only_counts_where_a_workflow_starts_on_the_pull_request
 test_an_absent_forge_answer_never_manufactures_a_stall

@@ -1235,11 +1235,15 @@ EOF
 # events to Actions, which the forge's own settings still report as enabled. The
 # step waits out its whole timeout on it without an error, so nothing in the
 # run's own figures ever tells the two apart.
+#
+# Workflows held for maintainer approval are a third wait the step names in its
+# own words. No job has run then either, but Actions is healthy and reopening
+# changes nothing, so that line supersedes the first-checks one.
 nm_ci_awaits_first_checks() {
   local marker
   nm_ci_log_load
   marker=$(printf '%s\n' "$CI_LOG" \
-    | grep -E "$NM_CI_CHECKS_MARKER_RE|waiting for CI re-run" | tail -1)
+    | grep -E "$NM_CI_CHECKS_MARKER_RE|waiting for CI re-run|held awaiting maintainer approval" | tail -1)
   case "$marker" in
     *"no CI checks reported yet"*) return 0 ;;
     *) return 1 ;;
@@ -1728,8 +1732,8 @@ if [ "$HAVE_RUN" = 1 ]; then
   # costs no query, and after every checks-green route so a finished crew
   # waiting out the captain on a merge is never probed. The one stalled run
   # still asked is a ci step quiet past its budget: a step awaiting its first
-  # checks logs that once and falls silent, and the budget's detail names
-  # neither the cause nor the recovery.
+  # checks can outlast that budget, and the budget's detail names neither the
+  # cause nor the recovery.
   if [ "$RUN_SOURCE" = full ] && [ "$CI_STEP_STATUS" = running ] \
      && [ "$CI_LOG_STATE" != green ]; then
     if [ "$RUN_STATE" = working ]; then
