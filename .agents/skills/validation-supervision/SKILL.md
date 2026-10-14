@@ -1,6 +1,6 @@
 ---
 name: validation-supervision
-description: Load when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change or finding, and before deciding or answering any ask-user finding.
+description: Load when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change, finding, or red CI step, and before deciding or answering any ask-user finding.
 user-invocable: false
 metadata:
   internal: true
@@ -31,3 +31,8 @@ A `stalled` run has stopped advancing and needs attention rather than waiting ou
 Workers parked at approval or fix-review must follow the active gate help.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership outside the supersession sequence above; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
+
+A red CI step is ruled by the test that failed, not by the job that ran it.
+When that test is known flaky on main, meaning the same test failed on a main-branch run whose change was unrelated to it, and this pull request changes neither that test nor the code it exercises, steer the worker to rerun only the failed jobs once with no code change, and neither escalate nor ask the captain.
+A second failure of that test on the same head, or a failure that matches no known main flake, gets an ordinary ruling.
+Every flake gets a backlog ticket naming the test and the failing run, whether it was rerun or ruled, unless an open ticket already covers that test.
