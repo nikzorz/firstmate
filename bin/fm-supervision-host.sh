@@ -28,11 +28,14 @@
 # lines. A "supervision-host:" line is a wake in its own right (the park
 # boundary prints nothing else); "supervision-host stood down: ..." means this
 # session or generation no longer owns supervision and the owner stands down
-# silently; an exit status above 128, or no output at all, means the host
-# itself died and the owner retries it. Any other close is judged exactly as
-# the arm's. --restart starts the first cycle with fm-watch-arm.sh --restart,
-# and an FM_WATCH_PREDECESSOR_ARM_PID the owner passes reaches that first
-# cycle only, for owners that start their own successor after every close
+# silently; "supervision-host hand-back failed: ..." with a nonzero status
+# means a main-only close could not be made deliverable and is not a wake;
+# the Claude Stop hook reports it as its failure notice; an exit status
+# above 128, or no output at all, means the host itself died and the owner
+# retries it. Any other close is judged exactly as the arm's. --restart
+# starts the first cycle with fm-watch-arm.sh --restart, and an
+# FM_WATCH_PREDECESSOR_ARM_PID the owner passes reaches that first cycle
+# only, for owners that start their own successor after every close
 # (OpenCode, omp).
 #
 # THE LOOP. It owns watcher cycles through bin/fm-watch-arm.sh. The posture is
@@ -1140,6 +1143,10 @@ while :; do
     if [ -n "$SUCCESSOR_GENERATION" ] \
       && ! fm_recovery_marker_publish "$STATE/.watcher-down" downtime >/dev/null 2>&1; then
       log_line "pass-through	downtime-unrestored	$(printf '%s\n' "$REASON" | head -n 1)"
+      # Without the close: its reason line would read as a deliverable wake
+      # while the marker still says handling. Never silent either, because
+      # the first cycle's status line may not have been printed yet.
+      printf '%s\n' 'supervision-host hand-back failed: watcher downtime could not be restored for the main-only close; it stays queued'
       exit 1
     fi
     emit
