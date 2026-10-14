@@ -1060,3 +1060,19 @@ no-mistakes axi status --run 01M4V586VBEH6FST7NE0BB5B9D
 Both `active_for` and `round_active_for` are present by name and carry durations in the `2m47s` shape the reader already parses.
 The round figure is the smaller of the two once a step has started a new round, which is why the arm takes the least of them.
 This row is a `document` step, since the capture was taken before the run reached ci; a ci row uses the same header and columns.
+
+The wait lines the arm tells apart, from the stored ci log of a run whose workflows were held before they started:
+
+```sh
+grep -v '^$' ~/.no-mistakes/logs/<run-id>/ci.log | sed -n 3,5p
+```
+
+```
+no CI checks reported yet, waiting for checks to register...
+CI workflows are held awaiting maintainer approval - no jobs have run, waiting...
+CI checks running, waiting for results...
+```
+
+The step names the held wait in its own line after the first-checks one, so the most recent of these lines says which wait is current.
+The arm asks the forge only while that line is the first one.
+Not measured here: the forge's check count during a hold, which the arm never reads because the held line already rules the query out.
