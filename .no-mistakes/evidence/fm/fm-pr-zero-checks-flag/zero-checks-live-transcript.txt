@@ -1,0 +1,105 @@
+=== 1. settled PR, zero checks, workflow starts on pull_request -> flagged with Actions page and recovery
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/octocat/Hello-World/pull/11546 has zero Actions checks at least 12m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/octocat/Hello-World/actions, then close and reopen the pull request
+--- exit=0  real gh queries sent: 1
+
+=== 2. same PR, ci step waiting only 2m10s (inside the 300s settle time) -> not flagged, forge not asked
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=2m10s round_active_for=2m10s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 0
+
+=== 3. head pushed to an existing PR: step 40m old but its current round only 1m30s -> not flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=40m0s round_active_for=1m30s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 0
+
+=== 4. parked past the 2h quiet budget -> still stalled WITH the Actions page, not the generic quiet detail
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=3h6m0s round_active_for=3h6m0s  last_activity="quiet 3h5m ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/octocat/Hello-World/pull/11546 has zero Actions checks at least 3h6m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/octocat/Hello-World/actions, then close and reopen the pull request
+--- exit=0  real gh queries sent: 1
+
+=== 5. workflows held for maintainer approval -> not flagged, forge not asked
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: CI workflows are held awaiting maintainer approval - no jobs have run, waiting..."
+    ci log last line: CI workflows are held awaiting maintainer approval - no jobs have run, waiting...
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 0
+
+=== 6. checks registered afterwards (log moved on) -> not flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: CI checks running"
+    ci log last line: CI checks running
+    workflow trigger: on:   pull_request:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 0
+
+=== 7. real PR that HAS checks on the forge -> not flagged
+    pr=https://github.com/nikzorz/firstmate/pull/80  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [main] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 1
+
+=== 8. merged PR (forge mergeability UNKNOWN) -> not flagged
+    pr=https://github.com/nikzorz/firstmate/pull/74  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [main] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 1
+
+=== 9. zero-checks PR against master, but the only workflow targets main -> not flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     branches: [main] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 1
+
+=== 10. zero-checks PR, workflow has a path filter (start not known) -> not flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   pull_request:     paths: ['src/**'] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 1
+
+=== 11. zero-checks PR, repository has only a push workflow -> not flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on:   push:     branches: [master] jobs: {} 
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 1
+
+=== 12. forge probe switched off -> not flagged, forge not asked
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on: [push, pull_request] jobs: {} 
+    env: FM_CREW_STATE_NO_FORGE=1
+--- fm-crew-state.sh live
+state: working · source: run-step · ci running
+--- exit=0  real gh queries sent: 0
+
+=== 13. control: same fixture as 12 with the probe on -> flagged
+    pr=https://github.com/octocat/Hello-World/pull/11546  ci active_for=12m4s round_active_for=12m4s  last_activity="5s ago: log: no CI checks reported yet, waiting for checks to register..."
+    ci log last line: no CI checks reported yet, waiting for checks to register...
+    workflow trigger: on: [push, pull_request] jobs: {} 
+--- fm-crew-state.sh live
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/octocat/Hello-World/pull/11546 has zero Actions checks at least 12m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/octocat/Hello-World/actions, then close and reopen the pull request
+--- exit=0  real gh queries sent: 1
+
