@@ -29,9 +29,10 @@
 # boundary prints nothing else); "supervision-host stood down: ..." means this
 # session or generation no longer owns supervision and the owner stands down
 # silently; "supervision-host hand-back failed: ..." with a nonzero status
-# means a main-only close could not be made deliverable, is not a wake, and
-# is the owner's failure to report; an exit status above 128, or no output at
-# all, means the host itself died and the owner retries it. Any other close
+# means a main-only close could not be made deliverable and is not a wake;
+# the Claude Stop hook reports it as a failure, the one owner that does; an
+# exit status above 128, or no output at all, means the host itself died and
+# the owner retries it. Any other close
 # is judged exactly as the arm's. --restart starts the first cycle with fm-watch-arm.sh --restart,
 # and an FM_WATCH_PREDECESSOR_ARM_PID the owner passes reaches that first
 # cycle only, for owners that start their own successor after every close
