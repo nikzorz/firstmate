@@ -2160,6 +2160,9 @@ const readback = contract(["readback"]);
 if (!readback.endsWith("    merge task-d when green, then cut the prerelease\n    \n")) throw new Error(`the read-back lost the captain's words or their trailing blank line: ${JSON.stringify(readback)}`);
 if (!awayPrompt.includes("act on them by your own judgment")) throw new Error(`the away tail lost the words-execution rule: ${awayPrompt}`);
 if (awayPrompt.includes("does not execute them")) throw new Error(`the away tail still calls the words inert: ${awayPrompt}`);
+if (!awayPrompt.includes("records yolo=on is MAIN's standing merge authority, not an action under the words") || !awayPrompt.includes("with words or without, unless the words name a hold on that merge") || !awayPrompt.includes("opening \"under standing merge authority:\"")) {
+  throw new Error(`the away tail lost the standing yolo merge rule: ${awayPrompt}`);
+}
 if (!awayPrompt.endsWith(`The record, verbatim:\n${readback}`)) throw new Error(`the tail does not end with the record's read-back verbatim, trailing whitespace included: ${JSON.stringify(awayPrompt)}`);
 const snapshot = readFileSync(`${home}/state/.branch-eligible-rows`, "utf8").trim().split("\n").join(",");
 if (snapshot !== "1,2,3") throw new Error(`the away wake claimed rows ${snapshot}, not every row`);

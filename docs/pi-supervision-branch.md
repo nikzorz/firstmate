@@ -601,12 +601,14 @@ The captain's away words are the whole mandate:
 
 `bin/fm-branch-prompt.sh` "Postures" owns those execution rules.
 It requires every action taken under the words to open its outcome summary with "per your away instructions:".
+A green pull request of a task recorded `yolo=on` is main's standing merge authority rather than an action under the words, so it merges with words or without unless the words name a hold on it, and its outcome opens with "under standing merge authority:".
+A plan to review the work on return does not hold a standing `yolo=on` merge; only words that explicitly say not to merge, or to wait before merging, hold it.
 
 Each relocated script keeps its own gate, enforcing exactly what a script can check without reading words:
 
 | Script | Gate while away |
 | --- | --- |
-| `bin/fm-pr-merge.sh` | Merges any pull request green at its live head, synchronously, under the record lock, and refuses `--allow-red` and `--allow-missing` while away, so the green gate is absolute in this posture; which pull request the words meant is the branch's reading. |
+| `bin/fm-pr-merge.sh` | Merges any pull request green at its live head, synchronously, under the record lock, and refuses `--allow-red` and `--allow-missing` while away, so the green gate is absolute in this posture; which pull request to merge - a `yolo=on` task's, or one the words meant - is the branch's reading. |
 | `bin/fm-spawn.sh` | Dispatches only queued work whose blockers cleared - already queued, or filed by the branch because the words explicitly call for it; refuses a fresh ordinary spawn for either actor once the home holds as many ordinary task records as the record's spend cap (relaunches and secondmates exempt). |
 | `bin/fm-send.sh --resolve-key` | Answers a decision the words pre-answer, or one `ask-user-authority`'s judgment (carried verbatim in the branch prompt) lets firstmate decide. |
 | `bin/fm-merge-local.sh` | Never relocated. |
