@@ -421,6 +421,17 @@ finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
     || fail "projected spawn $id retry failed after task-set publication completed: $(cat "$err")"
 }
 
+# A resume refused for the session lock mutated nothing, so it is retried once
+# the other resume has released the lock; any other failure stays a failure.
+finish_concurrent_recovery() {  # <id> <home> <status> <stdout> <stderr>
+  local id=$1 home=$2 status=$3 out=$4 err=$5
+  [ "$status" -ne 0 ] || return 0
+  grep -F "refusing a concurrent resume" "$err" >/dev/null 2>&1 \
+    || fail "concurrent recovery $id failed unexpectedly: $(cat "$err")"
+  spawn_task "$id" "$home" "$RECOVERY_PROJECT_DIR" > "$out" 2> "$err" \
+    || fail "concurrent recovery $id retry failed after the session lock cleared: $(cat "$err")"
+}
+
 finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
   local id=$1 status=$2 out=$3 err=$4
   [ "$status" -ne 0 ] || fail "post-create abort fixture $id unexpectedly succeeded"
@@ -1295,7 +1306,11 @@ teardown_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" > "$TMP_ROOT/cross-restart-te
 pass "real Herdr lab: secondmate restart binding and reclaim stay isolated to the exact child home and parent"
 
 # Two homes recovering concurrently serialize on the named session lock and
-# each replace only their own exact husk.
+# each replace only their own exact husk. A resume waits a bounded time for
+# that lock and is then refused, and one resume holds it for about as long as
+# that wait, so which of the two outcomes the later resume gets depends on host
+# speed. Both are the contract: the refusal is forced once below, and the
+# concurrent pair then accepts either.
 PRIMARY_WAVE_ID=resume-wave-primary
 BRAVO_WAVE_ID=resume-wave-bravo
 mkdir -p "$HOME_DIR/data/$PRIMARY_WAVE_ID" "$SECOND_HOME_B/data/$BRAVO_WAVE_ID"
@@ -1318,12 +1333,52 @@ PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION" >/dev/
 PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not reprovision the isolated session for concurrent recovery"
 CONCURRENT_RECOVERY_FOCUS=$(focus_snapshot)
+RESUME_LOCK_READY="$TMP_ROOT/resume-lock-ready"
+RESUME_LOCK_RELEASE="$TMP_ROOT/resume-lock-release"
+RESUME_LOCK_PATH=$(session_presentation_lock_path) \
+  || fail "could not resolve the session lock for the refused resume"
+ROOT="$ROOT" READY="$RESUME_LOCK_READY" RELEASE="$RESUME_LOCK_RELEASE" LOCK="$RESUME_LOCK_PATH" bash -c '
+  . "$ROOT/bin/fm-wake-lib.sh"
+  fm_lock_try_acquire "$LOCK" || exit 1
+  : > "$READY"
+  while [ ! -e "$RELEASE" ]; do sleep 0.05; done
+  fm_lock_release "$LOCK"
+' &
+LOCK_CONTENTION_OWNER_PID=$!
+while [ ! -e "$RESUME_LOCK_READY" ] && kill -0 "$LOCK_CONTENTION_OWNER_PID" 2>/dev/null; do sleep 0.01; done
+[ -e "$RESUME_LOCK_READY" ] || fail "could not hold the session presentation lock for the refused resume"
+REFUSED_RESUME_START=$(log_line_count)
+if spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$RECOVERY_PROJECT_DIR" > "$TMP_ROOT/bravo-wave-refused.out" 2> "$TMP_ROOT/bravo-wave-refused.err"; then
+  REFUSED_RESUME_STATUS=0
+else
+  REFUSED_RESUME_STATUS=$?
+fi
+: > "$RESUME_LOCK_RELEASE"
+wait "$LOCK_CONTENTION_OWNER_PID" || fail "refused-resume session lock owner failed"
+LOCK_CONTENTION_OWNER_PID=
+[ "$REFUSED_RESUME_STATUS" -ne 0 ] \
+  || fail "a resume under a held session lock was not refused"
+grep -F "could not acquire its session lock; refusing a concurrent resume" "$TMP_ROOT/bravo-wave-refused.err" >/dev/null 2>&1 \
+  || fail "a resume under a held session lock failed for another reason: $(cat "$TMP_ROOT/bravo-wave-refused.err")"
+assert_no_projection_mutation_since "$REFUSED_RESUME_START" "refused concurrent resume"
+[ "$(grep '^herdr_pane_id=' "$BRAVO_WAVE_META" | cut -d= -f2-)" = "$BRAVO_WAVE_OLD_PANE" ] \
+  || fail "refused concurrent resume rewrote the task's recorded pane"
+lab pane get "$BRAVO_WAVE_OLD_PANE" >/dev/null 2>&1 \
+  || fail "refused concurrent resume removed the husk pane"
+[ -f "$SECOND_HOME_B/state/$BRAVO_WAVE_ID.herdr-presentation" ] \
+  || fail "refused concurrent resume retired the presentation journal"
+assert_focus_is "$CONCURRENT_RECOVERY_FOCUS" "refused concurrent resume"
+
 spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" > "$TMP_ROOT/primary-wave-resume.out" 2> "$TMP_ROOT/primary-wave-resume.err" &
 PRIMARY_WAVE_PID=$!
 spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$RECOVERY_PROJECT_DIR" > "$TMP_ROOT/bravo-wave-resume.out" 2> "$TMP_ROOT/bravo-wave-resume.err" &
 BRAVO_WAVE_PID=$!
-wait "$PRIMARY_WAVE_PID" || fail "concurrent primary recovery failed: $(cat "$TMP_ROOT/primary-wave-resume.err")"
-wait "$BRAVO_WAVE_PID" || fail "concurrent secondmate recovery failed: $(cat "$TMP_ROOT/bravo-wave-resume.err")"
+if wait "$PRIMARY_WAVE_PID"; then PRIMARY_WAVE_STATUS=0; else PRIMARY_WAVE_STATUS=$?; fi
+if wait "$BRAVO_WAVE_PID"; then BRAVO_WAVE_STATUS=0; else BRAVO_WAVE_STATUS=$?; fi
+finish_concurrent_recovery "$PRIMARY_WAVE_ID" "$HOME_DIR" "$PRIMARY_WAVE_STATUS" \
+  "$TMP_ROOT/primary-wave-resume.out" "$TMP_ROOT/primary-wave-resume.err"
+finish_concurrent_recovery "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$BRAVO_WAVE_STATUS" \
+  "$TMP_ROOT/bravo-wave-resume.out" "$TMP_ROOT/bravo-wave-resume.err"
 PRIMARY_WAVE_NEW_WT=$(remember_meta_worktree "$PRIMARY_WAVE_META")
 BRAVO_WAVE_NEW_WT=$(remember_meta_worktree "$BRAVO_WAVE_META")
 PRIMARY_WAVE_NEW_PANE=$(grep '^herdr_pane_id=' "$PRIMARY_WAVE_META" | cut -d= -f2-)
