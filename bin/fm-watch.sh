@@ -122,7 +122,9 @@
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
-#                          status, unless afk is active
+#                          status; emitted unconditionally on the heartbeat
+#                          cadence while afk is active, or while an away record
+#                          exists with a free worker slot
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
@@ -434,6 +436,15 @@ afk_present() { [ -e "$STATE/.afk" ]; }
 # rechecks of captain-held items as pure noise). Declared external waits keep
 # their condition-aware cadence in both postures.
 away_record_present() { fm_afk_contract_away_present "$STATE"; }
+
+# away_worker_slot_free: 0 while an away record exists and this home holds fewer
+# ordinary tasks than its spend cap, the count bin/fm-spawn.sh refuses at.
+away_worker_slot_free() {
+  local slots live cap
+  slots=$(fm_afk_contract_away_slots "$STATE") || return 1
+  read -r live cap <<<"$slots"
+  [ "$live" -lt "$cap" ]
+}
 
 # captain_held_silenced <status-line>: 0 when the line declares a captain-held
 # transfer and an away record exists, so every stale path absorbs the pane
@@ -3446,8 +3457,11 @@ EOF
     # turns up a captain-relevant status the per-wake path missed. Absorb the
     # no-change case (advance the schedule and back off exactly as wake() would,
     # without exiting); the away-mode daemon, when present, owns triage and wants
-    # every heartbeat.
-    if afk_present; then
+    # every heartbeat. An away record with no daemon (the supervision host or the
+    # Pi branch is the away session) wants every heartbeat while a worker slot is
+    # free: once the fleet empties no other wake arrives, so an absorbed
+    # heartbeat would leave the away session no turn in which to refill it.
+    if afk_present || away_worker_slot_free; then
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"
