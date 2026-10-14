@@ -602,6 +602,7 @@ The captain's away words are the whole mandate:
 `bin/fm-branch-prompt.sh` "Postures" owns those execution rules.
 It requires every action taken under the words to open its outcome summary with "per your away instructions:".
 A green pull request of a task recorded `yolo=on` is main's standing merge authority rather than an action under the words, so it merges with words or without unless the words name a hold on it, and its outcome opens with "under standing merge authority:".
+A plan to review the work on return does not hold a standing `yolo=on` merge; only words that explicitly say not to merge, or to wait before merging, hold it.
 
 Each relocated script keeps its own gate, enforcing exactly what a script can check without reading words:
 
