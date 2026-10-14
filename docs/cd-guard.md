@@ -14,10 +14,11 @@ The primary firstmate shell persists its working directory across tool calls.
 A stray persistent top-level `cd projects/<clone>` therefore silently relocates the shell, so the next firstmate-owned command - a backlog write, an `fm-*` lifecycle call - runs inside a project clone instead of the home.
 That has actually happened: a persistent top-level `cd` caused a firstmate-owned backlog write to execute inside a project clone rather than the home.
 The seatbelt denies exactly that command shape - a cwd change that persists to the primary shell - before it runs.
+A `cd` that resolves to the directory the session is already in changes nothing and passes; [Own-directory cd](#own-directory-cd) owns that rule.
 It also denies one unrelated command shape that shares its transport and scope: the wake drain piped into another command, described under [Block vs allow](#block-vs-allow).
 
 This guard is not a general sandbox.
-It classifies shell command positions only; it never evaluates, expands, sources, or runs any byte of the submitted command.
+It classifies shell command positions and resolves a literal `cd` target against the filesystem; it never evaluates, expands, sources, or runs any byte of the submitted command.
 Its threat model is agent mistakes, the same as the watcher-arm seatbelt: an accidental bare `cd projects/foo`, not a deliberately obfuscated bypass.
 
 ## Scope: plain firstmate checkouts only
@@ -39,6 +40,7 @@ Secondmate child crew and scout worktrees are likewise inert under the linked-wo
 The discriminator is persistence to the parent shell's cwd, not the mere presence of the token `cd`.
 
 The guard **blocks** a `cd`, `pushd`, or `popd` builtin that runs in an executed top-level position in the parent shell, because such a command persistently changes the primary shell's own working directory.
+The one exception is a `cd` that passes the [own-directory](#own-directory-cd) test.
 This covers a bare `cd projects/foo`, `cd ..`, `cd`, `cd -`, an absolute `cd /some/path` (still a persistent relocation of the parent shell), `pushd <dir>`, `popd`, a leading-assignment form such as `X=1 cd foo`, quoted or escaped command-word fragments that cook to a bare builtin, and any list form where the builtin runs in the parent shell (`cd x && cmd`, `cmd; cd x`, `cmd || cd x`, `command cd x`, `command -p cd x`, `command -- cd x`, `builtin cd x`, `command builtin cd x`, `cd x >/dev/null`, and newline-separated lists).
 
 The guard **allows** everything else, including these safe scoped forms that must never be blocked:
@@ -48,13 +50,26 @@ The guard **allows** everything else, including these safe scoped forms that mus
 - A `cd` behind a forking or exec'ing wrapper (`env`, `sudo`, `nohup`, `timeout`, `gtimeout`, `exec`), which runs in a child and never persists (and generally just fails, since `cd` is a builtin with no external program).
 - A path-qualified external command named `cd`, `command`, or `builtin`, such as `./cd`, `/usr/bin/cd`, `./command`, `/usr/bin/command`, or `./builtin`, because it runs as a child process and cannot change the parent shell's cwd.
 - A `command` query such as `command -v cd`, `command -V cd`, or a clustered form such as `command -pv cd`, because it reports command resolution without executing the named builtin.
+- A top-level `cd` whose target resolves to the session's own working directory, under [Own-directory cd](#own-directory-cd).
 - The token `cd` appearing as data: quoted text (`echo "cd projects/foo"`), a comment, a substring of another word (`cdk`, `abcd`, `record`), a `printf` payload, or any later argument word.
 
 The guard also **blocks** `fm-wake-drain.sh` piped into another command (`bin/fm-wake-drain.sh | grep -v x`, `bash bin/fm-wake-drain.sh 2>&1 | tail`), because a filter can hide wake rows that the drain's printed acknowledgement then marks handled without their having been read.
 A bare drain, a drain carrying `--ack-through` (which presents no wake rows), and a command that only names the script as data all stay allowed.
 
-An absolute-path `cd` is blocked on purpose: the ALLOW carve-out for absolute paths is for commands that address a target by absolute path, not for `cd`, which relocates the shell itself regardless of whether its argument is relative or absolute.
-Blocking a top-level `cd` is safe in the strong sense: the guard's steady state is "always at the home", so a return-to-home `cd` is redundant rather than necessary, and the block never causes a wrong-directory write.
+An absolute-path `cd` to any other directory is blocked on purpose: the ALLOW carve-out for absolute paths is for commands that address a target by absolute path, not for `cd`, which relocates the shell itself regardless of whether its argument is relative or absolute.
+Blocking a top-level `cd` is safe in the strong sense: the guard's steady state is "always at the home", so the block never causes a wrong-directory write.
+
+### Own-directory cd
+
+A top-level `cd` passes when its target resolves to the session's current working directory, because it leaves the shell where it already is: `cd <cwd> && bin/x.sh`, `cd .`, `cd ../<own name>`, or a symlink that points at the current directory.
+The session's working directory is the `.cwd` field of the stdin payload when the harness sends one, and otherwise the directory the check itself was started in.
+
+The allowance holds only when every part of the answer is certain; anything else is denied as before:
+
+- Only `cd` qualifies, never `pushd` or `popd`, and it takes exactly one target, optionally after `--`. A bare `cd`, `cd -`, any other option, or a second operand is denied.
+- The target is literal text. A target carrying a variable, a command substitution, a glob or brace pattern, or a tilde is denied, since the guard expands nothing.
+- The target is absolute or begins with `.` or `..`. The shell searches `CDPATH` for any other relative spelling, and the guard cannot see the shell's `CDPATH`.
+- The target and the session directory both resolve on disk, and the target resolves to the session directory both when `..` is folded before symlinks are followed and when it is folded after. A symlink or `..` spelling that lands elsewhere under either reading is denied, as is a missing target or an unknown session directory.
 
 ### Accepted non-goals
 
@@ -75,7 +90,7 @@ Every deny carries one stable code in square brackets before its prose reason.
 | `filtered-drain` | `fm-wake-drain.sh` without `--ack-through` is piped into another command, which can hide wake rows. |
 
 The `persistent-cd` reason directs the caller to reach the target without moving the shell by using `git -C <dir>`, placing an absolute path on the intended command itself, or scoping the `cd` to a subshell.
-It does not permit `cd /home/project`, because an absolute-path `cd` remains a persistent directory change and is denied.
+It does not permit `cd /home/project`, because an absolute-path `cd` to another directory remains a persistent directory change and is denied.
 The `filtered-drain` reason directs the caller to run the drain on its own and read all of its output.
 
 ## Transport and fail-open behavior
@@ -88,6 +103,8 @@ The `filtered-drain` reason directs the caller to run the drain on its own and r
 - OpenCode sends the exact command string through `--command <exact string>`.
 - Pi, pi-signed, and omp send the exact command string through `--command <exact string>`.
 - Cursor sends stdin JSON at `.tool_input.command` and adds `--cursor`, which renders the deny as Cursor's own returned decision object.
+
+The stdin forms also carry the session's working directory at `.cwd` when the harness supplies it; the transport hands that, or its own starting directory, to the policy as `--cwd`.
 
 Processing order is cheapest-first: a strict-superset prefilter, then the primary-checkout scope, then the Node policy owner.
 The prefilter removes ordinary single quotes, double quotes, backslashes, carriage returns, and newlines before fast-allowing any command that carries no `cd`, `pushd`, `popd`, or `fm-wake-drain` substring and no quoting-decoder marker (`$'` ANSI-C or `$"` locale), so quoted or escaped command-word fragments delegate to the policy while most commands never pay for the git scoping calls or the Node process.
@@ -134,7 +151,7 @@ Every shell variable reference in the Grok hook command carries an inline defaul
 
 `tests/fm-cd-pretool-check.test.sh` owns the acceptance matrix.
 Every block and allow case runs through Codex-shaped stdin, Claude-shaped stdin, Grok-shaped stdin, OpenCode-shaped CLI, and Pi-shaped CLI entry forms.
-The suite also proves the end-to-end cwd-leak regression (a firstmate-owned backlog write leaking into a project clone, then denied at the exact command), the checkout scoping (fires in a git-cloned secondmate fixture, inert in a crewmate/scout linked worktree, inert outside a firstmate checkout, inert outside a git repo), the fail-open transport behavior, the prefilter fast path, the policy CLI output contract, and the per-harness wiring.
+The suite also proves the end-to-end cwd-leak regression (a firstmate-owned backlog write leaking into a project clone, then denied at the exact command), the own-directory allowance (absolute, relative, and symlinked spellings that resolve to the session directory pass; spellings that resolve elsewhere or cannot be resolved are denied), the checkout scoping (fires in a git-cloned secondmate fixture, inert in a crewmate/scout linked worktree, inert outside a firstmate checkout, inert outside a git repo), the fail-open transport behavior, the prefilter fast path, the policy CLI output contract, and the per-harness wiring.
 
 Run:
 

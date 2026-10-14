@@ -9,7 +9,8 @@
 # proves the decision matrix, the harness-output shaping, the primary-checkout
 # scoping (including the deliberate secondmate-home difference from the turn-end
 # guard), the fail-open transport behavior, the prefilter fast path, the
-# end-to-end cwd-leak regression, and the per-harness wiring. No harness is
+# own-directory allowance, the end-to-end cwd-leak regression, and the
+# per-harness wiring. No harness is
 # spawned; live per-harness evidence lives in docs/cd-guard.md.
 set -u
 
@@ -219,6 +220,88 @@ test_full_acceptance_matrix() {
   pass "cd-guard acceptance matrix: ${#MATRIX_IDS[@]} cases x 5 harness entry forms, block/allow all correct"
 }
 
+# --- a cd to the session's own directory ------------------------------------
+
+# own_dir_case <label> <expected: allow|deny> <session dir> <command>
+# Drives the Claude stdin form (the session directory is the payload's cwd) and
+# the CLI form (the session directory is the one the check is started in).
+own_dir_case() {
+  local label=$1 expected=$2 session=$3 cmd=$4 payload out rc want=0
+  [ "$expected" = allow ] || want=2
+  payload=$(jq -cn --arg command "$cmd" --arg cwd "$session" '{tool_name:"Bash",cwd:$cwd,tool_input:{command:$command}}')
+  out=$(printf '%s' "$payload" | "$CHECK" --claude 2>&1); rc=$?
+  expect_code "$want" "$rc" "own-directory $label via payload cwd must $expected: $cmd"
+  [ "$expected" = deny ] || [ -z "$out" ] || fail "own-directory $label allow via payload cwd produced output: $out"
+  out=$(cd "$session" && "$CHECK" --command "$cmd" 2>&1); rc=$?
+  expect_code "$want" "$rc" "own-directory $label via the check's own directory must $expected: $cmd"
+  [ "$expected" = deny ] || [ -z "$out" ] || fail "own-directory $label allow via the check's own directory produced output: $out"
+}
+
+test_cd_to_own_directory() {
+  local base here elsewhere payload out rc
+  base="$TMP_ROOT/own"
+  here="$base/here"
+  elsewhere="$base/elsewhere"
+  mkdir -p "$here/sub" "$elsewhere/sub"
+  ln -s "$here" "$base/link-to-here"
+  ln -s "$elsewhere" "$base/link-to-elsewhere"
+  ln -s . "$here/self"
+  ln -s "$elsewhere/sub" "$here/out"
+
+  own_dir_case absolute allow "$here" "cd $here && bin/x.sh"
+  own_dir_case quoted allow "$here" "cd \"$here\" && bin/x.sh"
+  own_dir_case dot allow "$here" 'cd . && bin/x.sh'
+  own_dir_case dot-slash allow "$here" 'cd ./'
+  own_dir_case dotdot-back allow "$here" 'cd ../here && bin/x.sh'
+  own_dir_case child-dotdot allow "$here" 'cd ./sub/..'
+  own_dir_case absolute-dotdot allow "$here" "cd $here/sub/.."
+  own_dir_case symlink allow "$here" "cd $base/link-to-here && bin/x.sh"
+  own_dir_case relative-symlink allow "$here" 'cd ./self'
+  own_dir_case double-dash allow "$here" "cd -- $here"
+  own_dir_case command-prefix allow "$here" "command cd $here"
+  own_dir_case later-in-list allow "$here" "git status; cd $here"
+
+  own_dir_case elsewhere deny "$here" "cd $elsewhere && bin/x.sh"
+  own_dir_case dotdot deny "$here" 'cd .. && bin/x.sh'
+  own_dir_case dotdot-elsewhere deny "$here" 'cd ../elsewhere'
+  own_dir_case child deny "$here" 'cd ./sub'
+  own_dir_case symlink-elsewhere deny "$here" "cd $base/link-to-elsewhere"
+  own_dir_case relative-symlink-elsewhere deny "$here" 'cd ./out'
+  # Folding `..` first gives the session directory; following the symlink first
+  # gives its target's parent.
+  own_dir_case symlink-then-dotdot deny "$here" 'cd ./out/..'
+  own_dir_case missing deny "$here" "cd $here/absent"
+  own_dir_case cdpath-searched deny "$here" 'cd self'
+  own_dir_case variable deny "$here" 'cd "$PWD"'
+  own_dir_case substitution deny "$here" 'cd $(pwd)'
+  own_dir_case tilde deny "$here" 'cd ~'
+  own_dir_case glob deny "$here" "cd $base/her?"
+  own_dir_case option deny "$here" "cd -P $here"
+  own_dir_case two-operands deny "$here" "cd $here $here"
+  own_dir_case empty deny "$here" 'cd ""'
+  own_dir_case no-operand deny "$here" 'cd'
+  own_dir_case pushd deny "$here" "pushd $here"
+  own_dir_case then-elsewhere deny "$here" "cd $here && cd $elsewhere"
+
+  # The payload's directory is the session's, wherever the check itself runs.
+  payload=$(jq -cn --arg command "cd $here" --arg cwd "$elsewhere" '{cwd:$cwd,tool_input:{command:$command}}')
+  out=$(cd "$here" && printf '%s' "$payload" | "$CHECK" --claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a cd to the check's own directory must deny when the payload names another session directory"
+  payload=$(jq -cn --arg command "cd $elsewhere" --arg cwd "$elsewhere" '{cwd:$cwd,tool_input:{command:$command}}')
+  out=$(cd "$here" && printf '%s' "$payload" | "$CHECK" --claude 2>&1); rc=$?
+  expect_code 0 "$rc" "a cd to the payload's session directory must allow from any directory"
+
+  # A session directory that cannot be resolved denies even `cd .`.
+  for payload in "$base/absent" 'relative/dir'; do
+    payload=$(jq -cn --arg cwd "$payload" '{cwd:$cwd,tool_input:{command:"cd ."}}')
+    out=$(printf '%s' "$payload" | "$CHECK" --claude 2>&1); rc=$?
+    expect_code 2 "$rc" "cd . must deny when the session directory is unresolvable: $payload"
+  done
+  [ "$(node "$ROOT/bin/fm-cd-command-policy.mjs" --command 'cd .' | cut -f1)" = deny ] \
+    || fail "policy CLI must deny cd . when no session directory is supplied"
+  pass "cd-guard: a cd passes only when its target resolves to the session's own directory"
+}
+
 # --- primary-checkout scoping ----------------------------------------------
 
 test_fires_in_secondmate_home() {
@@ -407,6 +490,7 @@ test_scripts_are_shellcheck_clean() {
 }
 
 test_full_acceptance_matrix
+test_cd_to_own_directory
 test_fires_in_secondmate_home
 test_inert_in_child_worktree
 test_inert_when_not_firstmate_repo
