@@ -1,0 +1,16 @@
+=== under load: 24 busy-loop hogs on 12 CPUs
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+run 1 rc=0 elapsed=27s
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+run 2 rc=0 elapsed=27s
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+run 3 rc=0 elapsed=28s
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+run 4 rc=0 elapsed=28s
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+run 5 rc=0 elapsed=28s

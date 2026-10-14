@@ -1,0 +1,4 @@
+=== host reverted to base 39cdce0 (no hand-back failed line)
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+not ok - hook write failure: the Stop hook did not finish
+rc=1

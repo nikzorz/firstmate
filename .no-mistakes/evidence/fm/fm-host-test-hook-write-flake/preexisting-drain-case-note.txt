@@ -1,0 +1,1 @@
+test_branch_outcomes_stay_unread_when_the_drain_cannot_print fails 3/3 alone at HEAD 3f1dc6d AND 3/3 with base 39cdce0 test file + host on this WSL2 host; it exercises bin/fm-wake-drain.sh, which this change does not touch. The full file aborts at that case (16th), so it is pre-existing and environmental here.

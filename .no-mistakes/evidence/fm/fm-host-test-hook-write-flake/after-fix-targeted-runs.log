@@ -1,0 +1,12 @@
+=== run 1 (23:33:32)
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+rc=0 elapsed=7s
+=== run 2 (23:33:39)
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+rc=0 elapsed=8s
+=== run 3 (23:33:47)
+ok - host+hook: failed at-turn downtime write notifies main despite a healthy successor
+ok - host+hook: failed at-turn downtime write notifies main when the first cycle closed before its status line was printed
+rc=0 elapsed=7s
