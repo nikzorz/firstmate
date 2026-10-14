@@ -9,6 +9,17 @@
 # HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
 disable_project_settings: true
 
+# Honored from the default branch only. A pattern with no slash matches by
+# basename at any depth, so "*" covers every changed file.
+# The coding guideline owns the placement rules; this only points the reviewer
+# at them because project settings are disabled above.
+review:
+  path_instructions:
+    - path: "*"
+      instructions: |
+        Grade any reachable wrong result at least a warning, never info (error when it should not merge), including a residual a fix round left.
+        Before raising or dismissing a placement or structure finding, read the "Knowledge-placement decision tree" and "One-owner rule" sections of .agents/skills/firstmate-coding-guidelines/SKILL.md and judge against them.
+
 # Trusted documentation placement policy for the Document step.
 # The audience inventory and coding guideline own the detail; keep this as a
 # pointer so gate instructions cannot become a second prose policy.
