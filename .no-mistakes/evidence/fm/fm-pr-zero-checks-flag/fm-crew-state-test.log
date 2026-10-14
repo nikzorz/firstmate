@@ -304,6 +304,7 @@ ok - zero checks after the settle time reports stalled with the recovery
 ok - zero checks inside the settle time stays working
 ok - zero checks outlasting the quiet budget still names the recovery
 ok - a head just pushed to an older pull request gets the settle time
+ok - workflows held for maintainer approval are never flagged
 ok - queued, running and conflicting pull requests are never flagged
 ok - zero checks only counts where a workflow starts on the pull request
 ok - an absent forge answer never manufactures a stall
@@ -323,4 +324,7 @@ ok - a recorded pull request keeps a bare done line reading done
 ok - a pull request announced in an earlier event keeps a bare done line reading done
 ok - local-only ship and scout done lines are untouched
 all fm-crew-state tests passed
-exit=0
+
+real	1m58.265s
+user	0m43.485s
+sys	0m35.922s

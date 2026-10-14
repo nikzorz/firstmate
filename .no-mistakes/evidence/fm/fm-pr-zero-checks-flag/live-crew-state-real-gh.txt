@@ -1,0 +1,36 @@
+real forge answer for https://github.com/r-lgbtq/conference2027/pull/3:
+MERGEABLE 0 2026-10-11T19:23:39Z main
+real forge answer for https://github.com/wei/socialify/pull/885:
+MERGEABLE 5 master
+
+### S1 zero checks, ci waited 45m
+$ fm-crew-state.sh za   (gh=/home/nik/.local/bin/gh)
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/r-lgbtq/conference2027/pull/3 has zero Actions checks at least 45m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/r-lgbtq/conference2027/actions, then close and reopen the pull request
+
+### S2 zero checks, ci waited 40s (inside settle)
+$ fm-crew-state.sh za   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
+
+### S3 zero checks, ci quiet past 2h budget
+$ fm-crew-state.sh za   (gh=/home/nik/.local/bin/gh)
+state: stalled · source: run-step · run stopped advancing: ci step waiting on checks that never started, https://github.com/r-lgbtq/conference2027/pull/3 has zero Actions checks at least 3h0m after its head was pushed, though its workflows start on a pull request: confirm Actions is running at https://github.com/r-lgbtq/conference2027/actions, then close and reopen the pull request
+
+### S4 healthy PR with checks (base master; workflow on main)
+$ fm-crew-state.sh zb   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
+
+### S4b healthy PR with checks, unfiltered pull_request workflow
+$ fm-crew-state.sh zb   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
+
+### S5 zero checks, repo workflows start only on push
+$ fm-crew-state.sh zc   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
+
+### S6 zero checks, workflows held for maintainer approval
+$ fm-crew-state.sh za   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
+
+### S7 zero checks, FM_CREW_STATE_NO_FORGE=1
+$ fm-crew-state.sh za   (gh=/home/nik/.local/bin/gh)
+state: working · source: run-step · ci running
