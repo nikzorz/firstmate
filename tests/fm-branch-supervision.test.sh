@@ -72,6 +72,13 @@ test_branch_prompt_is_byte_stable_and_above_cache_floor() {
     *"A task whose \`state/<id>.meta\` records \`yolo=on\` is MAIN's standing merge authority, not an action under the words"*"with words or without, unless the words name a hold on that merge"*"their silence, or no words at all, never holds a standing \`yolo=on\` merge"*"Report a standing \`yolo=on\` merge with verdict captain, its summary opening with \"under standing merge authority:\" and carrying the PR's full URL"*) ;;
     *) fail "branch prompt lost the standing yolo merge rule for the away posture" ;;
   esac
+  # The 2026-10-15 away window: the fleet sat empty with free slots because the
+  # captain's waiver and standing keep-the-fleet-stocked preference lived only
+  # in the saved preference files the away session never read.
+  case "$out_a" in
+    *"or a saved captain preference file (under \"Postures\") records a standing preference to keep the fleet stocked that the words do not hold or narrow, dispatch queued, unheld, unblocked backlog items"*"or nothing ready remains."*"Away, when a slot stays free and you dispatch nothing, that event's outcome summary names each ready item you passed over and the one reason, with silent false even on an otherwise no-op pass"*"attended, a free slot adds no note."*"the home's saved captain preference files are standing captain instructions, never discounted, that apply unless the words hold or narrow them: \`data/captain.md\`, \`data/captain-shared.md\` when present, and \`data/captain-<project>.md\`"*"A standing ruling recorded there, such as a waived requirement or a pre-approved kind of look, answers the matching decision as the words would, unless the words hold or narrow it, including over a backlog note that still asks for what it waived"*"calls for any queued, unheld, unblocked item, never for filing a new one."*"a decision the words or a standing ruling in the preference files pre-answer"*"The never-set is absolute for every actor in every posture"*) ;;
+    *) fail "branch prompt lost the saved-preference reading or the free-slot refill rule for the away posture" ;;
+  esac
   case "$out_a" in
     *"A second mate's status log is a relay channel for its child work"*"retiring a second mate is MAIN's alone"*"Report a second mate's signal wake from the status lines that wake newly presents"*"A second mate's stale wake is a liveness event: report it even when it presents no new status lines."*) ;;
     *) fail "branch prompt lost the second-mate relay, signal-span, or stale-liveness rule" ;;
