@@ -462,6 +462,8 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "finish with the bin/fm-branch-report.sh command." "the wake prompt must name the host's report surface"
   assert_contains "$out" "POSTURE: AWAY." "an away wake prompt must carry the posture tail"
   assert_contains "$out" "    merge nothing" "the away tail must carry the record's read-back verbatim"
+  assert_contains "$out" "The home's saved captain preference files (data/captain.md, data/captain-shared.md when present, and data/captain-<project>.md for the project being decided) are standing captain instructions beside the words" "the away tail must point the engine at the saved captain preferences"
+  assert_contains "$out" "a standing keep-the-fleet-stocked preference fills each free slot from queued, unheld, unblocked backlog items within the spend cap, or the outcome names each ready item passed over and the one reason" "the away tail must carry the free-slot refill reading"
   pass "dispatch entry: the host reads branch eligibility, the offer rule, and the wake prompt from the Pi branch's own owner"
 }
 
