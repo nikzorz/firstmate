@@ -50,6 +50,10 @@ transcript -work-pool-1-arena/heredoc.jsonl "$WT" 2026-10-15T13:00:00Z 2026-10-1
   '"Bash","input":{"command":"cd docs && cat > design.md <<'"'"'EOF'"'"'\nThe frame budget is unit_budget_ms.\nEOF"}}'
 transcript -work-pool-1-arena/redirect.jsonl "$WT" 2026-10-15T14:00:00Z 2026-10-15T14:30:00Z "append a row" \
   '"Bash","input":{"command":"printf x >> docs/ledger.tsv"}}'
+transcript -work-pool-1-arena/script.jsonl "$WT" 2026-10-15T15:00:00Z 2026-10-15T15:30:00Z "patch it" \
+  '"Bash","input":{"command":"python3 - <<'"'"'EOF'"'"'\np = '"'"'tools/ci/setup.sh'"'"'\ns = open(p).read()\nopen(p, '"'"'w'"'"').write(s)\nEOF"}}'
+transcript -work-pool-1-arena/script-read.jsonl "$WT" 2026-10-15T15:40:00Z 2026-10-15T15:50:00Z "count it" \
+  '"Bash","input":{"command":"python3 -c \"print(open('"'"'tools/ci/setup.sh'"'"').read().count(chr(10)))\""}}'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -92,6 +96,9 @@ test_shell_writes_count_as_writes() {
   out=$(sessions find docs/ledger.tsv)
   assert_contains "$(line_for "$out" redirect.jsonl)" WROTE "a redirect onto the path is a write"
   assert_contains "$(line_for "$out" review.jsonl)" mentions "reading the path is only a mention"
+  out=$(sessions find tools/ci/setup.sh)
+  assert_contains "$(line_for "$out" script.jsonl)" WROTE "an inline script that opens the path for writing is a write"
+  assert_contains "$(line_for "$out" script-read.jsonl)" mentions "an inline script that only reads the path is a mention"
   out=$(sessions find scripts/motion.gd)
   assert_contains "$(line_for "$out" reader.jsonl)" mentions "a grep of the path redirected elsewhere is not a write to it"
   pass "shell-made writes are reported as WROTE and reads as mentions"

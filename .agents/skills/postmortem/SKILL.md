@@ -155,7 +155,7 @@ The breadth of the debt is a reason to ratchet, not to settle for prose.
 
 Before proposing, look for a heal that already exists:
 
-- the project's issues and PRs in every state, through `gh-axi search`; a closed one records a heal that was tried or turned down
+- the project's issues and PRs, open and closed, through `gh-axi search`; a closed one records a heal that was tried or turned down
 - the rulebook, review block and lint config on the default branch
 - this home's log of misses, `data/misses.md`
 - `data/learnings*.md` and the home's playbooks

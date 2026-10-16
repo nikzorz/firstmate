@@ -26,6 +26,10 @@ WRITE_VERB = re.compile(
     r"|sed\s+(?:-[a-zA-Z]*i|--in-place)|perl\s+-[a-zA-Z]*i)\b")
 REDIRECT = re.compile(r"(?<![<>0-9&])>{1,2}\|?\s*([^\s;|&<>]+)")
 HEREDOC = re.compile(r"<<-?\s*['\"]?\w+")
+# An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
+SCRIPT = re.compile(r"(?:^|[\s(;&|])(?:python3?|perl|node|ruby)\b")
+SCRIPT_WRITE = re.compile(
+    r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_text\(|\.write_bytes\(|writeFileSync|appendFileSync|File\.write")
 SEGMENT = re.compile(r"&&|\|\||;|\n")
 
 
@@ -89,15 +93,19 @@ def tool_uses(r):
 
 
 def write_shaped(command):
-    """True when a shell command changes files: a write verb, a redirection to a file, or a heredoc written out."""
+    """True when a shell command changes files: a write verb, a redirection to a file, or an inline script that writes one."""
     if any(t != "/dev/null" for t in REDIRECT.findall(command)):
+        return True
+    if SCRIPT.search(command) and SCRIPT_WRITE.search(command):
         return True
     return any(WRITE_VERB.search(seg) for seg in SEGMENT.split(command))
 
 
 def bash_writes(command, needle):
-    """True when a shell command writes the needle: names it in a write-shaped segment or redirect target, or writes it in a heredoc."""
+    """True when a shell command writes the needle: names it in a write-shaped segment or redirect target, writes it in a heredoc, or names it in an inline script that writes files."""
     if any(needle in t for t in REDIRECT.findall(command)):
+        return True
+    if needle in command and SCRIPT.search(command) and SCRIPT_WRITE.search(command):
         return True
     lines = command.split("\n")
     for n, line in enumerate(lines):
