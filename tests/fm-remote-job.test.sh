@@ -393,6 +393,7 @@ NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 pass "worker identity binds the canonical configured code root"
 
 CRASHED_WORKER_PID=$NEW_WORKER_PID
+CRASHED_WORKER_CHILDREN=$(ps -A -o pid= -o ppid= | awk -v parent="$CRASHED_WORKER_PID" '$2 == parent { print $1 }')
 kill -KILL "$CRASHED_WORKER_PID"
 wait "$CRASHED_WORKER_PID" 2>/dev/null || true
 assert_present "$STATE_ROOT/worker.lock" "an unclean exit did not retain the worker ownership lock"
@@ -400,6 +401,16 @@ sleep 20 &
 OTHER_PID=$!
 printf '%s\n' "$OTHER_PID" > "$STATE_ROOT/worker.pid"
 printf '%s\n' "$OTHER_PID" > "$STATE_ROOT/worker.lock/pid"
+# The crashed worker's heartbeat can finish one in-flight refresh after the
+# kill; backdating the ready file before it exits would let that refresh pass
+# the replacement's readiness probe while the persisted pid is still stale.
+for child in $CRASHED_WORKER_CHILDREN; do
+  for _ in $(seq 1 100); do
+    case "$(ps -o state= -p "$child" 2>/dev/null | cut -c1)" in ''|Z) break ;; esac
+    sleep 0.05
+  done
+  case "$(ps -o state= -p "$child" 2>/dev/null | cut -c1)" in ''|Z) ;; *) fail "the crashed worker's heartbeat did not stop" ;; esac
+done
 touch -t 200001010000 "$STATE_ROOT/worker.ready" "$STATE_ROOT/worker.lock"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
   || fail "$FM_REMOTE_JOB_ERROR"
