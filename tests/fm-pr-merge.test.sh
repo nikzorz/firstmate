@@ -4660,13 +4660,13 @@ write_nm_run_1713() {
       {name: "document", order: 5, rounds: [{round: 1, source: null}, {round: 2, source: null}]}]}')"
 }
 
-# Args: case_dir run finding-id...
+# Args: case_dir run step round finding-id...
 write_nm_decision_line() {
-  local case_dir=$1 run=$2 ids
-  shift 2
+  local case_dir=$1 run=$2 step=$3 round=$4 ids
+  shift 4
   ids=$(IFS=,; printf '%s' "$*")
-  printf 'needs-decision [at=1792000000] [key=nm-%s-review]: ask-user findings=%s file=%s\n' \
-    "$run" "$ids" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+  printf 'needs-decision [at=1792000000] [key=nm-%s-%s]: ask-user round=%s findings=%s file=%s\n' \
+    "$run" "$step" "$round" "$ids" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
 }
 
 # Runs the merge of PR 70 for a case, leaving its exit code in NM_MERGE_RC.
@@ -4685,8 +4685,9 @@ test_approved_ask_user_finding_no_decision_named_refuses_merge() {
   case_dir=$(make_case nm-1704-unruled)
   add_gh_mocks "$case_dir" 5151515151515151515151515151515151515151
   write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" \
-    release-claim-narrowed verdict-assert-dropped second-story-loop boot-teardown-copied
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 \
+    release-claim-narrowed verdict-assert-dropped second-story-loop
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 boot-teardown-copied
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-1704-unruled: an approved ask-user finding no decision named must refuse"
@@ -4704,8 +4705,8 @@ test_named_findings_and_granted_no_live_surface_finding_merge() {
   case_dir=$(make_case nm-1704-named)
   add_gh_mocks "$case_dir" 5252525252525252525252525252525252525252
   write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" release-claim-narrowed verdict-assert-dropped second-story-loop
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" boot-teardown-copied,release-scan-misses-fight-dirs
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 release-claim-narrowed verdict-assert-dropped second-story-loop
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 boot-teardown-copied,release-scan-misses-fight-dirs
   run_nm_merge "$case_dir"
 
   expect_code 0 "$NM_MERGE_RC" "nm-1704-named: the merge failed: $(cat "$case_dir/stderr")"
@@ -4718,7 +4719,7 @@ test_ask_user_finding_a_fix_round_left_unselected_refuses_merge() {
   case_dir=$(make_case nm-1704-fix-unselected)
   add_gh_mocks "$case_dir" 5050505050505050505050505050505050505050
   write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" boot-teardown-copied,release-scan-misses-fight-dirs
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 boot-teardown-copied,release-scan-misses-fight-dirs
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-1704-fix-unselected: an ask-user finding a fix round left unselected must refuse"
@@ -4788,7 +4789,7 @@ test_approved_round_refuses_every_unnamed_finding_whatever_its_action() {
   assert_no_grep "'fixed-1'" "$case_dir/stderr" "nm-approved-no-op: a finding a fix round selected was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-approved-no-op: gh pr merge ran over an unruled finding"
 
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" note-1 left-1
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 note-1 left-1
   run_nm_merge "$case_dir"
   expect_code 0 "$NM_MERGE_RC" "nm-approved-no-op: the merge failed once a decision request named both: $(cat "$case_dir/stderr")"
   pass "fm-pr-merge refuses every finding of an approved round, whatever its action, until a decision request names it"
@@ -4870,18 +4871,22 @@ test_approved_coverage_park_needs_a_decision_request() {
   assert_no_grep "round 1 was approved" "$case_dir/stderr" "nm-coverage: a coverage park answered with fix was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-coverage: gh pr merge ran over an approved coverage park"
 
-  printf 'needs-decision [at=1791000000] [key=nm-%s-review]: ask-user findings=fixed-1 file=%s\n' \
-    "$NM_RUN_1704" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 fixed-1
   run_nm_merge "$case_dir"
-  expect_code 1 "$NM_MERGE_RC" "nm-coverage: an earlier review escalation of another finding cleared a later coverage park"
+  expect_code 1 "$NM_MERGE_RC" "nm-coverage: a review escalation of another finding cleared the coverage park"
   assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
     "$case_dir/stderr" "nm-coverage: the coverage park was not named once only an unrelated review escalation existed"
 
-  printf 'needs-decision [at=1792000000] [key=nm-%s-review]: ask-user findings=coverage file=%s\n' \
-    "$NM_RUN_1704" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 coverage
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-coverage: a round-1 coverage escalation cleared round 2's coverage park"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+    "$case_dir/stderr" "nm-coverage: round 2's coverage park was not named once only round 1's coverage was escalated"
+
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 coverage
   run_nm_merge "$case_dir"
   expect_code 0 "$NM_MERGE_RC" "nm-coverage: the merge failed once a decision request named the coverage park: $(cat "$case_dir/stderr")"
-  pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run"
+  pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run and round"
 }
 
 test_unreadable_review_log_refuses_merge() {
@@ -4909,7 +4914,7 @@ test_decision_named_in_another_run_does_not_rule_a_reused_id() {
         {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]}]},
       {name: "review", order: 3, run: $second, rounds: [
         {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]}]}]}')"
-  write_nm_decision_line "$case_dir" "$first" review-1
+  write_nm_decision_line "$case_dir" "$first" review 1 review-1
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-reused-id: a reused id named only in the earlier run must refuse"
@@ -4919,10 +4924,116 @@ test_decision_named_in_another_run_does_not_rule_a_reused_id() {
     "nm-reused-id: the earlier run's named finding was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-reused-id: gh pr merge ran over an unruled finding"
 
-  write_nm_decision_line "$case_dir" "$second" review-1
+  write_nm_decision_line "$case_dir" "$second" review 1 review-1
   run_nm_merge "$case_dir"
   expect_code 0 "$NM_MERGE_RC" "nm-reused-id: the merge failed once both runs named the id: $(cat "$case_dir/stderr")"
   pass "fm-pr-merge binds a decision request's findings to the run its key names"
+}
+
+# Run 01M4YEVV4E9FV28D0PZ3ZCCN86's shape: review round 1 and round 4 each
+# raise a finding with id review-1, and both rounds are approved.
+write_nm_reused_round_id() {
+  write_nm_db "$1" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 2, source: null},
+        {round: 3, source: null},
+        {round: 4, source: "user_declined", findings: [["review-1", "ask-user", ""]]}]}]}')"
+}
+
+test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another() {
+  local case_dir
+  case_dir=$(make_case nm-reused-round-id)
+  add_gh_mocks "$case_dir" 6060606060606060606060606060606060606060
+  write_nm_reused_round_id "$case_dir"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-reused-round-id: a round-1 decision must not rule round 4's reused id"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 4 declined ask-user finding 'review-1'" \
+    "$case_dir/stderr" "nm-reused-round-id: round 4's unnamed finding was not refused"
+  assert_no_grep "round 1 declined" "$case_dir/stderr" \
+    "nm-reused-round-id: round 1's named finding was refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-reused-round-id: gh pr merge ran over an unruled finding"
+
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 4 review-1
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-reused-round-id: the merge failed once both rounds were named: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge binds a decision request's findings to the round it names"
+}
+
+test_decision_naming_another_step_does_not_rule_its_round() {
+  local case_dir
+  case_dir=$(make_case nm-round-other-step)
+  add_gh_mocks "$case_dir" 6161616161616161616161616161616161616161
+  write_nm_reused_round_id "$case_dir"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 review-1
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" test 4 review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-round-other-step: a decision for another step must not rule review round 4"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 4 declined ask-user finding 'review-1'" \
+    "$case_dir/stderr" "nm-round-other-step: review round 4's unnamed finding was not refused"
+  pass "fm-pr-merge binds a decision request's round to the step its key names"
+}
+
+test_decision_without_a_valid_round_rules_nothing() {
+  local case_dir label round_token
+  for label in roundless not-a-number trailing-comma; do
+    case "$label" in
+      roundless) round_token= ;;
+      not-a-number) round_token='round=r1 ' ;;
+      trailing-comma) round_token='round=1, ' ;;
+    esac
+    case_dir=$(make_case "nm-round-$label")
+    add_gh_mocks "$case_dir" 6262626262626262626262626262626262626262
+    write_nm_reused_round_id "$case_dir"
+    printf 'needs-decision [at=1792000000] [key=nm-%s-review]: ask-user %sfindings=review-1 file=%s\n' \
+      "$NM_RUN_1704" "$round_token" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+    run_nm_merge "$case_dir"
+
+    expect_code 1 "$NM_MERGE_RC" "nm-round-$label: a decision line with no valid round must rule nothing"
+    assert_grep "no-mistakes run $NM_RUN_1704 step review round 1 declined ask-user finding 'review-1'" \
+      "$case_dir/stderr" "nm-round-$label: round 1's finding was ruled by a line with no valid round"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-round-$label: gh pr merge ran over an unruled finding"
+  done
+  pass "fm-pr-merge lets a decision request with a missing or malformed round rule nothing"
+}
+
+# Args: case_dir run rounds finding-id...
+write_nm_same_theme_line() {
+  local case_dir=$1 run=$2 rounds=$3 ids
+  shift 3
+  ids=$(IFS=,; printf '%s' "$*")
+  printf 'needs-decision [at=1792000000] [key=nm-%s-same-theme]: same theme fixed again findings=%s rounds=%s\n' \
+    "$run" "$ids" "$rounds" >> "$case_dir/state/task-x1.status"
+}
+
+test_same_theme_decision_rules_exactly_its_listed_rounds() {
+  local case_dir
+  case_dir=$(make_case nm-same-theme)
+  add_gh_mocks "$case_dir" 6363636363636363636363636363636363636363
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 2, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 3, source: "user_declined", findings: [["review-1", "ask-user", ""]]}]}]}')"
+  write_nm_same_theme_line "$case_dir" "$NM_RUN_1704" 1,3 review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-same-theme: a same-theme line must not rule a round it does not list"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 declined ask-user finding 'review-1'" \
+    "$case_dir/stderr" "nm-same-theme: the unlisted round's finding was not refused"
+  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 1 ] \
+    || fail "nm-same-theme: a listed round's finding was refused: $(cat "$case_dir/stderr")"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-same-theme: gh pr merge ran over an unruled finding"
+
+  write_nm_same_theme_line "$case_dir" "$NM_RUN_1704" 2 review-1
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-same-theme: the merge failed once every round was listed: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge lets a same-theme decision request rule its ids for exactly the rounds it lists"
 }
 
 test_unruled_finding_is_reported_with_other_conditions() {
@@ -5032,6 +5143,10 @@ test_test_step_grant_matches_only_the_pipelines_live_validation_question
 test_approved_coverage_park_needs_a_decision_request
 test_unreadable_review_log_refuses_merge
 test_decision_named_in_another_run_does_not_rule_a_reused_id
+test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another
+test_decision_naming_another_step_does_not_rule_its_round
+test_decision_without_a_valid_round_rules_nothing
+test_same_theme_decision_rules_exactly_its_listed_rounds
 test_unruled_finding_is_reported_with_other_conditions
 test_unreadable_run_record_refuses_merge
 test_gitlab_merge_refuses_unruled_finding
