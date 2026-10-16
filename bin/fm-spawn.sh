@@ -24,7 +24,10 @@
 #   `## Captain's intent` line opening with a Captain label or address. A line
 #   that is only `{TASK}` anywhere in the brief counts as unfilled, so a legacy
 #   `# Task` body or a leftover line under filled intent is refused too; prose
-#   that merely names the placeholder is not.
+#   that merely names the placeholder is not. A fresh ship spawn also refuses a
+#   brief whose `## Firstmate spec` bullet adds scope `## Captain's intent` does
+#   not name, or whose spec cannot be judged; bin/fm-spec-intent-check.sh owns
+#   that check and its `[justified: <reason>]` marker.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
 #   it also carries the current `--intent` contract and the extracted captain
 #   intent. A legacy mixed Task is accepted there only under bin/fm-dod-lib.sh's
@@ -1594,6 +1597,33 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: another lifecycle action is already running for task $ID" >&2
     exit 1
   fi
+fi
+# A fresh ship's spec bullets must trace to the captain's intent (AGENTS.md
+# section 11). The judge is a model call lasting seconds to minutes, so it runs
+# before this spawn takes the home's task-set lock, which every other fresh
+# spawn and a forced teardown try-acquire and would be refused by. A brief the
+# cheaper checks below refuse is left to them, a legacy # Task brief has no
+# spec to separate from its intent, and a relaunch re-launches a brief that
+# already launched once.
+SPEC_INTENT_BRIEF="$DATA/$ID/brief.md"
+if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] && [ -f "$SPEC_INTENT_BRIEF" ] &&
+  fm_brief_task_heading_present "$SPEC_INTENT_BRIEF" "## Firstmate spec" &&
+  ! fm_brief_task_placeholders_present "$SPEC_INTENT_BRIEF" && fm_brief_task_content_valid "$SPEC_INTENT_BRIEF"; then
+  SPEC_INTENT_RECORD="$DATA/$ID/spec-intent-check.txt"
+  SPEC_INTENT_STATUS=0
+  SPEC_INTENT_FLAGGED=$("$FM_ROOT/bin/fm-spec-intent-check.sh" "$SPEC_INTENT_BRIEF" "$SPEC_INTENT_RECORD") || SPEC_INTENT_STATUS=$?
+  case $SPEC_INTENT_STATUS in
+    0 | 3) ;;
+    1)
+      printf '%s\n' "$SPEC_INTENT_FLAGGED" >&2
+      echo "error: $SPEC_INTENT_BRIEF ## Firstmate spec adds scope with no matching words in ## Captain's intent (above); cut each flagged bullet's addition, or end the bullet with [justified: <reason>], then spawn again; the judge's full answer is in $SPEC_INTENT_RECORD" >&2
+      exit 1
+      ;;
+    *)
+      echo "error: $ID cannot launch until the spec-intent check of $SPEC_INTENT_BRIEF can run (see the refusal above)" >&2
+      exit 1
+      ;;
+  esac
 fi
 if [ "$RELAUNCH" -eq 0 ]; then
   mkdir -p "$STATE" || {

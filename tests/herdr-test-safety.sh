@@ -13,6 +13,12 @@ set -u
 # which the no-mistakes gate runs from a gate worktree, must be exempt).
 export FM_GATE_REFUSE_BYPASS=1
 
+# The same suites drive fresh ship spawns, which ask a model whether each spec
+# stays inside the captain's intent; answer with tests/lib.sh's stub judge so a
+# real-Herdr run never reaches a paid, nondeterministic model.
+export FM_SPEC_INTENT_CHECK_CLAUDE_BIN
+FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/spec-intent-judge-stub.sh"
+
 HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "$HERDR_TEST_SAFETY_DIR/bin/fm-herdr-lab.sh"
