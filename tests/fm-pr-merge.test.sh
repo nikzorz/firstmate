@@ -545,6 +545,7 @@ run_pr_merge() {
   FM_TEST_GLAB_LOG="$case_dir/glab.log" \
   FM_TEST_GLAB_JSON="$case_dir/mr.json" \
   HOME="${FM_TEST_USER_HOME:-$case_dir/user-home}" \
+  NM_HOME="$case_dir/nm" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -4543,6 +4544,276 @@ test_scratch_files_are_removed_on_every_exit() {
   pass "fm-pr-merge removes its scratch files and releases its locks on every exit"
 }
 
+NM_RUN_1704=01M51JNVA446VH0VQZS32E5XW1
+NM_RUN_1713=01M51MVCQA1KF02JHJ93P7EVSC
+NM_NO_LIVE_SURFACE='this change has no live-validatable surface; proceed without live validation? (0 of 6 scenarios were driven live against the product)'
+
+# A no-mistakes state database holding the one run the JSON shape describes,
+# on the task's branch in the repository its project= names, beside a run on
+# the same branch in another repository that must never be read for this task.
+# The shape is {"run": id, "steps": [{"name", "order", "approval", "skip",
+# "rounds": [{"round", "source", "selected", "findings": [[id, action,
+# description], ...]}]}]}; a "raw" key on a round replaces its findings_json.
+# Args: case_dir shape_json
+write_nm_db() {
+  local case_dir=$1
+  printf '%s\n' "branch=fm/task-x1" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/nm"
+  python3 -I - "$case_dir/nm/state.sqlite" "$case_dir/project" "$2" <<'PY' \
+    || fail "could not write the no-mistakes fixture"
+import json
+import sqlite3
+import sys
+
+db_path, project, shape = sys.argv[1:]
+shape = json.loads(shape)
+shape["steps"].append({"name": "review", "order": 3, "run": "OTHERREPORUN", "rounds": [
+    {"round": 1, "source": "user_declined", "findings": [["other-repo-finding", "ask-user", ""]]}]})
+
+db = sqlite3.connect(db_path)
+db.executescript("""
+CREATE TABLE repos (id TEXT PRIMARY KEY, working_path TEXT NOT NULL UNIQUE);
+CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE step_results (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_name TEXT NOT NULL,
+  step_order INTEGER NOT NULL, approval_reason TEXT, skip_reason TEXT);
+CREATE TABLE step_rounds (id TEXT PRIMARY KEY, step_result_id TEXT NOT NULL, round INTEGER NOT NULL,
+  findings_json TEXT, selected_finding_ids TEXT, selection_source TEXT);
+""")
+db.execute("INSERT INTO repos VALUES ('r1', ?)", (project,))
+db.execute("INSERT INTO repos VALUES ('r2', '/elsewhere/other-repo')")
+db.execute("INSERT INTO runs VALUES (?, 'r1', 'fm/task-x1', 1)", (shape["run"],))
+db.execute("INSERT INTO runs VALUES ('OTHERREPORUN', 'r2', 'fm/task-x1', 2)")
+for s, step in enumerate(shape["steps"]):
+    db.execute("INSERT INTO step_results VALUES (?, ?, ?, ?, ?, ?)",
+               ("s%d" % s, step.get("run", shape["run"]), step["name"], step["order"],
+                step.get("approval"), step.get("skip")))
+    for r, rnd in enumerate(step["rounds"]):
+        found = rnd.get("raw") or json.dumps({"findings": [
+            {"id": i, "action": a, "severity": "warning", "description": d} for i, a, d in rnd.get("findings", [])]})
+        db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, ?, ?)",
+                   ("s%dr%d" % (s, r), "s%d" % s, rnd["round"], found,
+                    json.dumps(rnd.get("selected", [])), rnd.get("source")))
+db.commit()
+PY
+}
+
+# Run 01M51JNVA446VH0VQZS32E5XW1's gate shape: review round 1 fixes two of its
+# three ask-user findings and leaves the third, round 2 is approved over an
+# ask-user finding beside an auto-fix one, the test step is approved over the
+# granted no-live-surface finding with the given reason, and an ask-user finding
+# the ci step's own auto-fix carried forward is fixed by its next round.
+# Args: case_dir test_approval_reason [round-2 findings_json override]
+write_nm_run_1704() {
+  local case_dir=$1 reason=$2 raw=${3:-}
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" --arg reason "$reason" --arg raw "$raw" \
+    --arg nolive "$NM_NO_LIVE_SURFACE" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["verdict-assert-dropped", "second-story-loop"],
+         findings: [["release-claim-narrowed", "ask-user", ""], ["verdict-assert-dropped", "ask-user", ""],
+                    ["second-story-loop", "ask-user", ""]]},
+        ({round: 2, source: "user_declined",
+          findings: [["boot-teardown-copied", "auto-fix", ""], ["release-scan-misses-fight-dirs", "ask-user", ""]]}
+         + (if $raw == "" then {} else {raw: $raw} end))]},
+      {name: "test", order: 4, approval: $reason, rounds: [
+        {round: 1, source: "user_declined", findings: [["test-1", "ask-user", $nolive]]}]},
+      {name: "ci", order: 9, rounds: [
+        {round: 1, source: "auto_fix", selected: ["ci-1"],
+         findings: [["ci-1", "auto-fix", ""], ["ci-2", "ask-user", ""]]},
+        {round: 2, source: "user", selected: ["ci-2"], findings: [["ci-2", "ask-user", ""]]}]}]}')"
+}
+
+# Run 01M51MVCQA1KF02JHJ93P7EVSC's shape: review round 1 fixes its auto-fix
+# finding, round 3 raises an auto-fix info finding and never parks, beside a
+# no-op info note that never parks either, and test round 2 is approved with a
+# reason over a no-op warning and a granted live-validation-verdict finding.
+write_nm_run_1713() {
+  write_nm_db "$1" "$(jq -nc --arg run "$NM_RUN_1713" '
+    {run: $run, steps: [
+      {name: "review", order: 3, approval: "", rounds: [
+        {round: 1, source: "user", selected: ["pace-contract-slowed-script-off-table"],
+         findings: [["pace-contract-slowed-script-off-table", "auto-fix", ""]]},
+        {round: 2, source: null},
+        {round: 3, source: null,
+         findings: [["pace-min-boundary-untested", "auto-fix", ""], ["pace-note", "no-op", ""]]}]},
+      {name: "test", order: 4, approval: "Contention scenario driven live on real exports.", rounds: [
+        {round: 1, source: null},
+        {round: 2, source: "user_declined",
+         findings: [["test-1", "no-op", "Under heavy overload, contention alone can still push a script over."],
+                    ["test-2", "ask-user", "live validation verdict: pass on 3 of 3 scenarios"]]}]}]}')"
+}
+
+# Args: case_dir run finding-id...
+write_nm_decision_line() {
+  local case_dir=$1 run=$2 ids
+  shift 2
+  ids=$(IFS=,; printf '%s' "$*")
+  printf 'needs-decision [at=1792000000] [key=nm-%s-review]: ask-user findings=%s file=%s\n' \
+    "$run" "$ids" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+}
+
+# Runs the merge of PR 70 for a case, leaving its exit code in NM_MERGE_RC.
+run_nm_merge() {
+  local case_dir=$1
+  : > "$case_dir/gh-axi.log"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  NM_MERGE_RC=$?
+  set -e
+}
+
+test_approved_ask_user_finding_no_decision_named_refuses_merge() {
+  local case_dir
+  case_dir=$(make_case nm-1704-unruled)
+  add_gh_mocks "$case_dir" 5151515151515151515151515151515151515151
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" \
+    release-claim-narrowed verdict-assert-dropped second-story-loop boot-teardown-copied
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-1704-unruled: an approved ask-user finding no decision named must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 approved finding 'release-scan-misses-fight-dirs'" \
+    "$case_dir/stderr" "nm-1704-unruled: the refusal did not name the run, step, round and id"
+  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 1 ] \
+    || fail "nm-1704-unruled: a named, fixed, granted, later-fixed or other-repository finding was refused: $(cat "$case_dir/stderr")"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "nm-1704-unruled: gh pr merge ran over an unruled finding"
+  pass "fm-pr-merge refuses an ask-user finding a gate approved that no decision request named"
+}
+
+test_named_findings_and_granted_no_live_surface_finding_merge() {
+  local case_dir
+  case_dir=$(make_case nm-1704-named)
+  add_gh_mocks "$case_dir" 5252525252525252525252525252525252525252
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" release-claim-narrowed verdict-assert-dropped second-story-loop
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" boot-teardown-copied,release-scan-misses-fight-dirs
+  run_nm_merge "$case_dir"
+
+  expect_code 0 "$NM_MERGE_RC" "nm-1704-named: the merge failed: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  pass "fm-pr-merge merges once every unruled finding was named, excepting a no-live-surface test finding approved with a reason"
+}
+
+test_granted_test_finding_needs_an_approval_reason() {
+  local case_dir
+  case_dir=$(make_case nm-1704-test-no-reason)
+  add_gh_mocks "$case_dir" 5353535353535353535353535353535353535353
+  write_nm_run_1704 "$case_dir" "   "
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-1704-test-no-reason: a granted-class test finding approved without a reason must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1704 step test round 1 approved finding 'test-1'" \
+    "$case_dir/stderr" "nm-1704-test-no-reason: the test-step finding was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "nm-1704-test-no-reason: gh pr merge ran over an unruled test-step finding"
+  pass "fm-pr-merge excepts a granted-class test-step finding only when its approval carries a reason"
+}
+
+test_unfixed_and_approved_findings_of_any_action_refuse_merge() {
+  local case_dir
+  case_dir=$(make_case nm-1713-unruled)
+  add_gh_mocks "$case_dir" 5656565656565656565656565656565656565656
+  write_nm_run_1713 "$case_dir"
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-1713-unruled: an unfixed info finding and an approved no-op finding must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1713 step review round 3 left unfixed finding 'pace-min-boundary-untested'" \
+    "$case_dir/stderr" "nm-1713-unruled: the never-parked auto-fix finding was not named"
+  assert_grep "no-mistakes run $NM_RUN_1713 step test round 2 approved finding 'test-1'" \
+    "$case_dir/stderr" "nm-1713-unruled: the approved no-op test finding was not named"
+  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 2 ] \
+    || fail "nm-1713-unruled: a fixed, never-parked no-op, or live-validation-verdict finding was refused: $(cat "$case_dir/stderr")"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1713-unruled: gh pr merge ran over unruled findings"
+
+  case_dir=$(make_case nm-1713-named)
+  add_gh_mocks "$case_dir" 5757575757575757575757575757575757575757
+  write_nm_run_1713 "$case_dir"
+  printf 'needs-decision [at=1792000001] [key=nm-%s-same-theme]: same theme fixed again findings=pace-min-boundary-untested rounds=1,3\n' \
+    "$NM_RUN_1713" >> "$case_dir/state/task-x1.status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1713" test-1
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1713-named: the merge failed: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge refuses an unfixed auto-fix finding and an approved no-op one until a decision request names them"
+}
+
+test_skipped_step_findings_refuse_merge() {
+  local case_dir
+  case_dir=$(make_case nm-skipped)
+  add_gh_mocks "$case_dir" 5858585858585858585858585858585858585858
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1713" '
+    {run: $run, steps: [{name: "document", order: 5, skip: "skipped by the worker", rounds: [
+      {round: 1, source: null, findings: [["doc-1", "no-op", ""]]}]}]}')"
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-skipped: a finding of a skipped step must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1713 step document round 1 skipped finding 'doc-1'" \
+    "$case_dir/stderr" "nm-skipped: the skipped step's finding was not named"
+  pass "fm-pr-merge refuses a finding on a step a worker skipped until a decision request names it"
+}
+
+test_unruled_finding_is_reported_with_other_conditions() {
+  local case_dir
+  case_dir=$(make_case nm-unruled-and-red)
+  add_gh_mocks "$case_dir" 5454545454545454545454545454545454545454
+  write_github_red_json "$case_dir" 5454545454545454545454545454545454545454 ci
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-unruled-and-red: must refuse"
+  assert_grep "check 'ci' is not green" "$case_dir/stderr" "nm-unruled-and-red: the red check was not reported"
+  assert_grep "round 1 left unfixed finding 'release-claim-narrowed'" "$case_dir/stderr" \
+    "nm-unruled-and-red: round 1's unfixed finding was not reported beside the red check"
+  assert_grep "round 2 approved finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
+    "nm-unruled-and-red: round 2's approved finding was not reported beside the red check"
+  pass "fm-pr-merge reports unruled findings together with the other failing conditions"
+}
+
+test_unreadable_run_record_refuses_merge() {
+  local case_dir label
+  for label in absent malformed; do
+    case_dir=$(make_case "nm-unreadable-$label")
+    add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+    if [ "$label" = absent ]; then
+      printf '%s\n' "branch=fm/task-x1" >> "$case_dir/state/task-x1.meta"
+    else
+      write_nm_run_1704 "$case_dir" "reason" '{"findings": "not a list"'
+    fi
+    run_nm_merge "$case_dir"
+
+    expect_code 1 "$NM_MERGE_RC" "nm-unreadable-$label: an unreadable run record must refuse"
+    case "$label" in
+      absent) assert_grep "the no-mistakes state database $case_dir/nm/state.sqlite (absent) could not be read" \
+        "$case_dir/stderr" "nm-unreadable-$label: the missing database was not named" ;;
+      malformed) assert_grep "the findings of no-mistakes run $NM_RUN_1704 step review round 2 could not be read" \
+        "$case_dir/stderr" "nm-unreadable-$label: the unreadable round was not named" ;;
+    esac
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "nm-unreadable-$label: gh pr merge ran over an unreadable run record"
+  done
+  pass "fm-pr-merge refuses, naming what it could not read, when a no-mistakes run record is unreadable"
+}
+
+test_gitlab_merge_refuses_unruled_finding() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case nm-gitlab-unruled)
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "nm-gitlab-unruled: must refuse"
+  assert_grep "approved finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
+    "nm-gitlab-unruled: the approved finding was not named"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+    || fail "nm-gitlab-unruled: glab merged over an unruled finding"
+  pass "fm-pr-merge refuses an unruled finding on a GitLab merge too"
+}
+
 test_squash_message_drops_agent_attribution
 test_non_squash_merge_supplies_no_message
 test_caller_written_squash_body_is_kept
@@ -4579,3 +4850,12 @@ test_allow_missing_follows_the_allow_red_rules
 test_required_producer_identity
 test_app_bound_required_status_context_matches_by_name
 test_required_partial_reads_report_all_failures
+
+test_approved_ask_user_finding_no_decision_named_refuses_merge
+test_named_findings_and_granted_no_live_surface_finding_merge
+test_granted_test_finding_needs_an_approval_reason
+test_unfixed_and_approved_findings_of_any_action_refuse_merge
+test_skipped_step_findings_refuse_merge
+test_unruled_finding_is_reported_with_other_conditions
+test_unreadable_run_record_refuses_merge
+test_gitlab_merge_refuses_unruled_finding

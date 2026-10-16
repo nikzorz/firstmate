@@ -96,6 +96,34 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
+# On either forge a no-mistakes task (task record mode=no-mistakes) is also
+# refused while its pipeline left a finding unruled that no decision request
+# named, because nothing else stands between a finding a worker approved
+# unseen, or one no round fixed, and the merge. Every round of every
+# no-mistakes run of the task's recorded branch=, in the repository whose
+# working path is the task's project=, is read live, and a finding the round's
+# own selection did not pick for a fix is unruled when either holds:
+#   - its round was answered with approve or skip: the round's selection was
+#     declined, or it is the step's last round and the step carries an approval
+#     or skip reason; this holds whatever the finding's action;
+#   - its action is auto-fix or ask-user and neither its round nor any later
+#     round of the step selected it, whether or not its round ever parked.
+# An unruled finding's id must appear in a `needs-decision ... findings=<id>,...`
+# line of the task's status log. The one exception is the captain's granted
+# test-step class: a test-step finding whose description begins "live
+# validation verdict:" or "this change has no live-validatable surface", in a
+# step approved with a non-empty reason. A no-op finding no response answered
+# stays out. no-mistakes' axi surface does not expose per-round findings, so
+# they are read from its state database (NM_HOME, default ~/.no-mistakes)
+# opened read-only. A database, round record, or status log that cannot be read
+# refuses, naming what could not be read; a repository no-mistakes holds no
+# record for, or a branch with no run, has nothing to rule. A task record with
+# no branch= binds no run; every ship spawn records one. Each refusal names the
+# run, step, round, and finding id, once per run, step, and id at its first
+# unruled round, and is reported with the other failing conditions. A review
+# step that parked on incomplete coverage is not judged here: the record keeps
+# coverage as no finding a decision request could name.
+#
 # Before either forge merge, the task's existing per-task control lock
 # serializes the captain-hold check through the forge command. A still-held or
 # unreadable row refuses before that command, so a captain approval must be
@@ -229,6 +257,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-attribution-lib.sh
 . "$SCRIPT_DIR/fm-attribution-lib.sh"
 
@@ -626,6 +656,7 @@ FIELDS
   [ "$pipeline_sha" = "$live_head" ] \
     || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
+  refusals="$refusals$UNRULED_FINDING_REFUSALS"
 
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
@@ -927,6 +958,8 @@ EOF
 $missing
 EOF
   fi
+
+  refusals="$refusals$UNRULED_FINDING_REFUSALS"
 
   if [ -n "$mergeable_refusal" ]; then
     if [ -z "$refusals" ] && [ "$mergeable" = UNKNOWN ]; then
@@ -1496,6 +1529,151 @@ require_released_captain_hold() {
   esac
 }
 
+# Prints run<TAB>step<TAB>round<TAB>id<TAB>how for every finding the
+# no-mistakes runs of one branch left unruled (see the header), once per run,
+# step, and id at its first such round, leaving out the granted test-step class.
+# Exits nonzero, naming what could not be read, rather than printing a partial
+# set.
+nm_unruled_findings() {  # <state-db> <project> <branch>
+  fm_nm_bounded "$STATE" 30 python3 -I - "$@" <<'PY'
+import json
+import os
+import re
+import sqlite3
+import sys
+from contextlib import closing
+from pathlib import Path
+
+db_path, project, branch = sys.argv[1:]
+SAFE = re.compile(r"[^\s,]+")
+GRANTED_TEST_PREFIXES = ("live validation verdict:", "this change has no live-validatable surface")
+
+
+def unreadable(what):
+    print(what, file=sys.stderr)
+    sys.exit(1)
+
+
+def given(reason):
+    return isinstance(reason, str) and reason.strip() != ""
+
+
+if not os.path.isfile(db_path):
+    unreadable("the no-mistakes state database %s (absent)" % db_path)
+try:
+    with closing(sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+        db.execute("BEGIN")
+        want = os.path.realpath(project)
+        repo_ids = [repo_id for repo_id, path in db.execute("SELECT id, working_path FROM repos")
+                    if isinstance(path, str) and os.path.realpath(path) == want]
+        rows = []
+        for repo_id in repo_ids:
+            rows += db.execute(
+                "SELECT ru.id, s.id, s.step_name, s.approval_reason, s.skip_reason, r.round,"
+                " r.selection_source, r.selected_finding_ids, r.findings_json"
+                " FROM runs ru JOIN step_results s ON s.run_id = ru.id"
+                " JOIN step_rounds r ON r.step_result_id = s.id"
+                " WHERE ru.repo_id = ? AND ru.branch = ?"
+                " ORDER BY ru.created_at, ru.id, s.step_order, r.round",
+                (repo_id, branch)).fetchall()
+except sqlite3.Error as error:
+    unreadable("the no-mistakes state database %s (%s)" % (db_path, error))
+
+steps = {}
+for run, step_id, step, approval, skip, round_no, source, selected, findings in rows:
+    where = "no-mistakes run %s step %s round %s" % (run, step, round_no)
+    if not (isinstance(run, str) and SAFE.fullmatch(run) and isinstance(step, str) and SAFE.fullmatch(step)
+            and isinstance(round_no, int)):
+        unreadable("a no-mistakes round record of branch %s" % branch)
+    try:
+        selected = json.loads(selected) if selected else []
+        record = json.loads(findings) if findings else {}
+        if not isinstance(selected, list) or not isinstance(record, dict):
+            raise ValueError
+        listed = record.get("findings") or []
+        if not isinstance(listed, list) or not all(isinstance(f, dict) for f in listed):
+            raise ValueError
+    except ValueError:
+        unreadable("the findings of %s" % where)
+    entry = steps.setdefault(step_id, {"run": run, "step": step, "approval": approval, "skip": skip, "rounds": []})
+    entry["rounds"].append((round_no, source, selected, listed, where))
+
+reported = set()
+for entry in steps.values():
+    run, step, rounds = entry["run"], entry["step"], entry["rounds"]
+    last = max(r[0] for r in rounds)
+    for index, (round_no, source, selected, listed, where) in enumerate(rounds):
+        fixed_from_here = {i for r in rounds[index:] for i in r[2]}
+        for finding in listed:
+            finding_id = finding.get("id")
+            if finding_id in selected:
+                continue
+            if round_no == last and given(entry["skip"]):
+                how = "skipped"
+            elif source == "user_declined" or (round_no == last and given(entry["approval"])):
+                how = "approved"
+            elif finding.get("action") in ("auto-fix", "ask-user") and finding_id not in fixed_from_here:
+                how = "left unfixed"
+            else:
+                continue
+            if not (isinstance(finding_id, str) and SAFE.fullmatch(finding_id)):
+                unreadable("the id of a finding in %s" % where)
+            description = finding.get("description")
+            if (step == "test" and given(entry["approval"]) and isinstance(description, str)
+                    and description.lstrip().startswith(GRANTED_TEST_PREFIXES)):
+                continue
+            if (run, step, finding_id) in reported:
+                continue
+            reported.add((run, step, finding_id))
+            print("%s\t%s\t%s\t%s\t%s" % (run, step, round_no, finding_id, how))
+PY
+}
+
+# Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
+# run left unruled with no decision request naming it, or to one line saying
+# what could not be read. Empty when the task is not a no-mistakes task or
+# records no branch, which binds no run.
+UNRULED_FINDING_REFUSALS=
+collect_unruled_finding_refusals() {
+  local mode branch project status_file db unruled named='' run step round finding_id how
+  local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
+  UNRULED_FINDING_REFUSALS=
+  mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+  branch=$(grep '^branch=' "$META" | tail -1 | cut -d= -f2- || true)
+  [ "$mode" = no-mistakes ] && [ -n "$branch" ] || return 0
+  project=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+  if [ -z "$project" ]; then
+    UNRULED_FINDING_REFUSALS="  - task $ID records no project, so its no-mistakes runs cannot be read, $cannot
+"
+    return 0
+  fi
+  status_file="$STATE/$ID.status"
+  if [ -e "$status_file" ] || [ -L "$status_file" ]; then
+    if [ ! -f "$status_file" ] || [ ! -r "$status_file" ]; then
+      UNRULED_FINDING_REFUSALS="  - the status log $status_file could not be read, $cannot
+"
+      return 0
+    fi
+    named=$(sed -n 's/^needs-decision[^:]*:.*[[:space:]]findings=\([^[:space:]]*\).*/\1/p' "$status_file" | tr ',' '\n')
+  fi
+  db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
+  if ! merge_scratch_file reader_err nm-reader \
+    || ! unruled=$(nm_unruled_findings "$db" "$project" "$branch" 2>"$reader_err"); then
+    what=$(sed -n '$p' "${reader_err:-/dev/null}" 2>/dev/null || true)
+    UNRULED_FINDING_REFUSALS="  - ${what:-the no-mistakes state database $db} could not be read, $cannot
+"
+    return 0
+  fi
+  while IFS=$'\t' read -r run step round finding_id how; do
+    [ -n "$finding_id" ] || continue
+    printf '%s\n' "$named" | grep -qxF -- "$finding_id" && continue
+    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round $how finding '$finding_id', which no needs-decision line of task $ID's status log names
+"
+  done <<EOF
+$unruled
+EOF
+}
+
 FM_PR_MERGE_AUTHORITY=
 # The authority read. bin/fm-merge-authority-lib.sh owns what the away-posture
 # record's presence means; this function owns what a merge run may do about it,
@@ -1742,6 +1920,7 @@ require_current_away_authority || away_status=$?
 require_recorded_pr_identity || exit 1
 record_pr_metadata || exit 1
 require_released_captain_hold || exit 1
+collect_unruled_finding_refusals
 
 # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an
 # oversight: if this lock-owning shell dies while its gh or glab child lives,
