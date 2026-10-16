@@ -1,0 +1,29 @@
+$ sessions.py --root <live project dir> find settle_frames_qz7 --at 2026-10-15T23:07:58-06:00
+WROTE AT    2026-10-16 05:07-05:07Z  session                                  ~/.claude/projects/-tmp-fm-pm-live-cZcP5g-repo/50258c7b-e201-4401-b06b-a364b80ff471.jsonl
+            Read motion.gd, then use the Edit tool to append the line 'var settle_frames_qz7 = 2' to it. Then run the shell command: printf 'zz\n' >> le
+exit=0
+
+$ sessions.py find ledger_qz7.tsv --at ...
+WROTE AT    2026-10-16 05:07-05:07Z  session                                  ~/.claude/projects/-tmp-fm-pm-live-cZcP5g-repo/50258c7b-e201-4401-b06b-a364b80ff471.jsonl
+            Read motion.gd, then use the Edit tool to append the line 'var settle_frames_qz7 = 2' to it. Then run the shell command: printf 'zz\n' >> le
+exit=0
+
+$ sessions.py find settle_frames_qz7 --at 2026-10-10T00:00:00Z (wrong time)
+No session matched. Widen --slack, or drop --at.
+exit=1
+
+$ sessions.py show <transcript>
+== session, 2026-10-16 05:07:50Z to 2026-10-16 05:07:58Z, cwd /tmp/fm-pm-live.cZcP5g/repo
+   Read motion.gd, then use the Edit tool to append the line 'var settle_frames_qz7 = 2' to it. Then run the shell command: printf 'zz\n' >> le
+== Loaded at start (1)
+   User     ~/.claude/CLAUDE.md
+== Rules loaded on demand (0)
+== Skills invoked (0)
+== Files read (1)
+   /tmp/fm-pm-live.cZcP5g/repo/motion.gd
+== Files edited (1)
+   /tmp/fm-pm-live.cZcP5g/repo/motion.gd
+== Commands run (2)
+         find /tmp/fm-pm-live.cZcP5g/repo -name motion.gd -not -path '*/.git/*'; ls -la /tmp/fm-pm-live.cZcP5g/repo
+   WRITE printf 'zz\n' >> ledger_qz7.tsv && echo done
+exit=0

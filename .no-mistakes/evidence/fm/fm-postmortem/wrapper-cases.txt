@@ -1,0 +1,15 @@
+timeout 5 rg install scripts/settle.gd
+  -> mentions 2026-10-15
+rg -l x | xargs grep -n patch scripts/settle.gd
+  -> mentions 2026-10-15
+grep -c '>' scripts/settle.gd
+  -> mentions 2026-10-15
+sudo -n cp a scripts/settle.gd
+  -> WROTE 2026-10-15
+for f in a; do sed -i s/x/y/ scripts/settle.gd; done
+  -> WROTE 2026-10-15
+rg -l x | xargs sed -i s/x/y/ scripts/settle.gd
+  -> WROTE 2026-10-15
+command -v rm (show)
+== Commands run (1)
+         command -v rm
