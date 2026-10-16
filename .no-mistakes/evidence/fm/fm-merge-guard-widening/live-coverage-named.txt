@@ -1,0 +1,16 @@
+$ fm-pr-merge.sh task-x1 https://gitlab.example/group/project/-/merge_requests/7   # scenario: coverage-named
+-- status log:
+needs-decision [at=1792000000] [key=nm-01PROBERUN0000000000000001-review]: ask-user findings=F file=/x
+needs-decision [at=1792000001] [key=nm-01PROBERUN0000000000000001-review]: ask-user findings=coverage file=/x
+-- fm-pr-merge stderr/stdout:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+verified: https://gitlab.example/group/project/-/merge_requests/7 is open and mergeable, with a successful pipeline at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+-- exit code: 0
+-- forge merge invoked: 1

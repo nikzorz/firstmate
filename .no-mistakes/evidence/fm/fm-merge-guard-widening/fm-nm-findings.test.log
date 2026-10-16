@@ -1,0 +1,4 @@
+ok - fm-nm-findings prints a 1,427-character description whole with every field
+ok - fm-nm-findings prints every round of the named run only
+ok - fm-nm-findings exits nonzero naming a finding id it cannot find
+ok - fm-nm-findings exits nonzero naming an unknown run, step, or database

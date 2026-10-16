@@ -1,0 +1,15 @@
+$ fm-pr-merge.sh task-x1 https://gitlab.example/group/project/-/merge_requests/7   # scenario: grant-plus-other-test-finding
+-- status log:
+-- fm-pr-merge stderr/stdout:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+error: refusing to merge https://gitlab.example/group/project/-/merge_requests/7
+  - no-mistakes run 01PROBERUN0000000000000001 step test round 1 declined no-op finding 'test-2', which no needs-decision line of task task-x1's status log names for that run
+-- exit code: 1
+-- forge merge invoked: 0

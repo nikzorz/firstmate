@@ -1,0 +1,3 @@
+{"run":"01PROBERUN0000000000000001","steps":[{"name":"review","order":3,"rounds":[{"round":1,"source":null}]},
+ {"name":"test","order":4,"approval":"Contention scenario driven live on real exports.","rounds":[
+  {"round":1,"source":"user_declined","verdict":"go","findings":[["test-1","no-op","Under heavy overload, contention alone can still push a script over."]]}]}]}

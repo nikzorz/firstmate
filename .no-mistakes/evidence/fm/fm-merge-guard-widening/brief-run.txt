@@ -1,0 +1,1 @@
+scaffolded: /tmp/fm-lab.C5w3vk/data/probe1/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})

@@ -1,0 +1,2 @@
+{"run":"01PROBERUN0000000000000001","steps":[{"name":"document","order":5,"skip":"skipped by worker","status":"skipped","rounds":[
+  {"round":1,"source":null,"findings":[["doc-1","auto-fix","README stale"]]}]}]}

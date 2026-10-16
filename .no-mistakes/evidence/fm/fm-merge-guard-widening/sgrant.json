@@ -1,0 +1,2 @@
+{"run":"01PROBERUN0000000000000001","steps":[{"name":"test","order":4,"approval":"Granted: inconclusive live validation.","rounds":[
+  {"round":1,"source":"user_declined","verdict":"inconclusive","findings":[["test-1","ask-user","live validation verdict: inconclusive (2 of 5 scenarios were driven live against the product)"]]}]}]}

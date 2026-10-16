@@ -1,0 +1,3 @@
+{"run":"01PROBERUN0000000000000001","steps":[{"name":"review","order":3,"rounds":[
+  {"round":1,"source":"user","selected":["A"],"findings":[["A","auto-fix","fixed one"],["B","auto-fix","not selected, later gone"]]},
+  {"round":2,"source":null}]}]}
