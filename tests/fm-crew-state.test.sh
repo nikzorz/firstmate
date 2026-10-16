@@ -6652,6 +6652,7 @@ test_direct_pr_done_gate_reads_the_pull_request_anywhere() {
   for line in \
     "done: PR https://github.com/o/r/pull/12" \
     "done: raised https://gitlab.com/g/s/p/-/merge_requests/9." \
+    "done: PR opened at https://forgejo.example.org/o/r/pulls/9" \
     "done: shipped (https://github.com/o/r/pull/12)" \
     "done: PR <https://github.com/o/r/pull/12>" \
     "done: shipped [PR](https://github.com/o/r/pull/12)" \

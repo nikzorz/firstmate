@@ -934,7 +934,7 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
 # decides whether the span names a real one. Taking the matched span makes the
 # wrapping prose irrelevant by construction (parentheses, a markdown link, a
 # trailing comma, `/files`), with no list of marks to keep up to date.
-FM_DOD_PR_URL_SPAN_RE='https://[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+)*/(pull|-/merge_requests|\+)/[1-9][0-9]*'
+FM_DOD_PR_URL_SPAN_RE='https://[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+)*/(pulls?|-/merge_requests|\+)/[1-9][0-9]*'
 
 # How many URL-bearing status lines the stream scan reads, counted from the END.
 # It runs on every crew-state read of a direct-PR done, including each task of a

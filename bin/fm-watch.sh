@@ -3488,7 +3488,7 @@ EOF
           else
             task=$(window_to_task "$w" "$STATE")
             if [ ! -e "$pf" ] && declared_working_memo_holds "$key" "$task"; then
-              wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task" "$h"
+              wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task" "$h" "$dialog"
             elif [ -e "$pf" ] || status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")"; then
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;

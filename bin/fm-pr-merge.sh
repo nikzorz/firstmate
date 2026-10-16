@@ -102,7 +102,7 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
-# On either forge a no-mistakes task (task record mode=no-mistakes) is also
+# On every forge a no-mistakes task (task record mode=no-mistakes) is also
 # refused while its pipeline left a finding unruled that no decision request
 # named, because nothing else stands between a finding a worker approved unseen
 # and the merge. Every round of every no-mistakes run of the task's recorded
@@ -879,10 +879,12 @@ FIELDS
   [ "$ci_state" = success ] \
     || refusals="$refusals  - the combined commit status is \"$ci_state\", not success
 "
+  refusals="$refusals$UNRULED_FINDING_REFUSALS"
 
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
+    print_unruled_finding_clearing_lines
     return 1
   fi
   printf 'verified: %s is open and mergeable, with a successful combined status at head %s\n' \

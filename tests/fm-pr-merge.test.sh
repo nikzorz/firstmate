@@ -5739,6 +5739,27 @@ test_gitlab_merge_refuses_unruled_finding() {
   pass "fm-pr-merge refuses an unruled finding on a GitLab merge too"
 }
 
+test_forgejo_merge_refuses_unruled_finding() {
+  local case_dir rc
+  case_dir=$(make_forgejo_case nm-forgejo-unruled)
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$FJ_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "nm-forgejo-unruled: must refuse"
+  assert_grep "declined ask-user finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
+    "nm-forgejo-unruled: the approved finding was not named"
+  assert_grep "append these lines to $case_dir/state/task-x1.status" "$case_dir/stderr" \
+    "nm-forgejo-unruled: the lines that clear the finding were not printed"
+  [ -z "$(tea_merge_line "$case_dir/tea.log")" ] \
+    || fail "nm-forgejo-unruled: tea merged over an unruled finding"
+  pass "fm-pr-merge refuses an unruled finding on a Forgejo merge too"
+}
+
 test_squash_message_drops_agent_attribution
 test_non_squash_merge_supplies_no_message
 test_caller_written_squash_body_is_kept
@@ -5797,3 +5818,4 @@ test_finding_carried_through_rounds_is_refused_in_one_attempt_with_lines_that_cl
 test_unruled_finding_is_reported_with_other_conditions
 test_unreadable_run_record_refuses_merge
 test_gitlab_merge_refuses_unruled_finding
+test_forgejo_merge_refuses_unruled_finding
