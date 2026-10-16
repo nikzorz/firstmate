@@ -135,9 +135,6 @@ test_never_announced_recovery_is_announced_once() {
   out="$home/out.txt"
   err="$home/err.txt"
   printf 'pending:downtime:unreported.1.aaa\n' > "$home/state/.watcher-down"
-  # An empty queue defers the announcement to the next drain; queued work earns the turn.
-  append_wake "$home/state" check buried 'check: unacknowledged durable wake' \
-    || fail "could not append the unacknowledged durable wake"
 
   status=0
   FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \

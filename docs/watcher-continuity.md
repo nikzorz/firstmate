@@ -228,6 +228,7 @@ Its ordinary arm check still announces a never-announced generation, including o
 
 The announcement reaches a session as a `check: rearm-resurface` wake only when a durable row is queued, because only queued work earns a turn.
 With an empty queue the watcher defers it instead: it appends the recovery to `state/.watcher-recovered`, stays in its poll loop, and wakes nobody.
+A foreground checkpoint never defers, because it is itself the session's bounded wait: it surfaces a never-announced recovery once as that wake, queue or not.
 The next drain a session reads prints that note as one `WATCHER RECOVERED` line and removes it, so the supervision session reads it where one handles the next wake and main reads it otherwise.
 Presentation runs under the wake queue lock, so concurrent drains print a recovery once.
 The away daemon's drain sets `FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT` and leaves the note in place, because the daemon parses queue rows and shows its drain output to no session.

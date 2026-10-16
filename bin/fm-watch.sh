@@ -2940,8 +2940,11 @@ resurface_after_downtime() {
   fi
   # Only queued work earns a turn. With nothing queued the announcement is a
   # bare liveness fact, so it waits for the next drain; a failed deferral
-  # falls through to the wake rather than dropping it.
-  if [ ! -s "$FM_WAKE_QUEUE" ] && fm_recovery_announcement_defer "$STATE"; then
+  # falls through to the wake rather than dropping it. A foreground checkpoint
+  # is the session's own bounded wait, so it surfaces the announcement once
+  # instead of deferring past the very wait that would present it.
+  if [ "${FM_WATCH_FOREGROUND_CHECKPOINT:-0}" != 1 ] && [ ! -s "$FM_WAKE_QUEUE" ] \
+    && fm_recovery_announcement_defer "$STATE"; then
     WATCHER_RECOVERY_PENDING=0
     triage_log "watcher recovery announcement deferred to the next drain: nothing queued"
     return 0
