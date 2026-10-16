@@ -1,0 +1,153 @@
+ok - fm-pr-merge reports exact queue retry flags after a zero-exit false success
+ok - fm-pr-merge omits merge-queue retry guidance for a closed GitHub PR
+ok - fm-pr-merge aggregates agreeing merge-queue rules
+ok - fm-pr-merge reports ambiguity for conflicting merge-queue rules
+ok - fm-pr-merge records pr= and pr_head= for a verified GitHub merge
+ok - fm-pr-merge records pr= before the forge call can land the merge
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge refuses a GitHub merge call that leaves the PR open and unqueued
+ok - fm-pr-merge retries a bounded number of times when mergeable is UNKNOWN and merges once it resolves
+ok - fm-pr-merge reports mergeability still pending after its bounded UNKNOWN retry is spent
+ok - fm-pr-merge refuses on the UNKNOWN re-check when a check turned red between reads
+ok - fm-pr-merge refuses a genuine mergeable conflict immediately, without retrying
+ok - fm-pr-merge keeps PR bookkeeping when it cannot read a successful merge call's outcome
+ok - fm-pr-merge refuses with the forge's own output quoted apart from its verdict
+ok - fm-pr-merge quotes the forge output when it cannot read the outcome either
+ok - fm-pr-merge does not echo back queue flags the caller already used
+ok - fm-pr-merge still names retry flags when the caller used a different method
+ok - fm-pr-merge names the queue requirement even when its method is unrecognised
+ok - fm-pr-merge distinguishes unreadable branch rules from a base with no merge queue
+ok - fm-pr-merge reads a plan-gated 403 on branch rules as no merge queue, not unreadable
+ok - fm-pr-merge says nothing about a merge queue when the base branch has no queue rule
+ok - fm-pr-merge accepts only a proved merge from the gh-axi fallback
+ok - fm-pr-merge explains an armed auto-merge that landed nothing on a queue-less base
+ok - fm-pr-merge never reports auto-merge as armed when the merge command failed
+ok - fm-pr-merge claims no acceptance for a failed merge command carrying queue flags
+ok - fm-pr-merge falls back to the gh-axi view when gh's read fails
+ok - fm-pr-merge names a landed state hiding behind a failed GitHub merge command
+ok - fm-pr-merge refuses a GitHub merge when gh is missing, before recording
+ok - fm-pr-merge refuses a GitHub merge when gh is missing rather than merging blind
+ok - fm-pr-merge verifies a genuinely merged GitHub pull request
+ok - fm-pr-merge refuses to claim a merge when poll recording fails
+ok - fm-pr-merge accepts and accurately reports a GitHub merge-queue entry
+ok - fm-pr-merge explains how to retry with the required GitHub merge queue method
+ok - fm-pr-merge refuses branch deletion unless --attended-override is passed
+ok - fm-pr-merge refuses before merging when task meta is missing
+ok - fm-pr-merge refuses malformed PR URLs before calling gh-axi
+ok - fm-pr-merge refuses unsafe PR URL segments before recording state
+ok - fm-pr-merge refuses repo override args before recording state
+ok - fm-pr-merge refuses a bundled short-option repo override and refuses -d unless attended
+ok - fm-pr-merge does not add default --squash when the caller passes an explicit merge method
+ok - fm-pr-merge respects --method=<value> as an explicit merge method
+ok - fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments
+ok - fm-pr-merge refuses a caller --sha on GitHub because the head comes from the live read
+ok - fm-pr-merge merges a GitLab merge request through glab instead of refusing it
+ok - fm-pr-merge takes the GitLab instance from the URL rather than assuming one
+ok - fm-pr-merge imposes no merge method on GitLab, leaving the project's own one
+ok - fm-pr-merge refuses GitLab source-branch deletion unless --attended-override is passed
+ok - fm-pr-merge propagates a real glab merge failure without silently succeeding
+ok - fm-pr-merge refuses on each GitLab pre-merge condition independently
+ok - fm-pr-merge reports every failing GitLab condition, not only the first
+ok - fm-pr-merge reports a stale recorded head and verifies the live one
+ok - fm-pr-merge refuses an unreadable GitLab merge request state rather than merging blind
+ok - fm-pr-merge refuses a GitLab head commit it cannot validate
+ok - fm-pr-merge refuses before recording anything when glab or jq is absent
+ok - fm-pr-merge refuses a GitLab head override before recording state
+ok - a merge a secondmate home performs itself is reported upward exactly once
+ok - a locally routed secondmate home reports the landed PR into its parent's own channel
+ok - a landed GitLab merge request is reported upward on the same channel
+ok - a queued GitLab merge stays silent and leaves confirmation to the armed poll
+ok - a refused or failed merge reports no outcome
+ok - a GitLab merge refused before the forge call reports no outcome
+ok - a merge a main home performs itself leaves one durable wake naming the PR
+ok - a queued GitHub merge stays silent and leaves confirmation to the armed poll
+ok - distinct merged PRs for one task retain distinct captain-facing wakes
+ok - an uncommitted marker retry preserves at least one durable outcome
+ok - a secondmate home that cannot report upward says so instead of merging in silence
+ok - fm-pr-merge proceeds when the home carries no backlog at all
+ok - fm-pr-merge refuses when the backlog exists but cannot be read
+ok - fm-pr-merge refuses when its configured backend cannot be read
+ok - fm-pr-merge refuses when its user backend configuration cannot be read
+ok - fm-pr-merge refuses when its user backend configuration directory cannot be traversed
+ok - fm-pr-merge proceeds once when its user configuration directory and backlog are genuinely absent
+ok - fm-pr-merge honors a backend override over an unreadable user configuration
+ok - fm-pr-merge refuses red GitHub checks and waives only a named --allow-red check
+ok - fm-pr-merge refuses a draft pull request and one with no boolean draft state
+ok - fm-pr-merge merges when a failed check run was replaced by a passing re-run
+ok - fm-pr-merge never lets a check run supersede a legacy status context
+ok - fm-pr-merge still refuses when a check's current run failed after an earlier pass
+ok - fm-pr-merge uses start order when the old success finishes last
+ok - fm-pr-merge supersedes an old cancellation that finishes last
+ok - fm-pr-merge keeps a check red while its re-run is still in flight
+ok - fm-pr-merge never lets one check's pass clear another check's failure
+ok - fm-pr-merge clears a failure only on a proven later pass of the same check
+ok - fm-pr-merge keeps --allow-red scoped to its named check beside a superseded failure
+ok - fm-pr-merge rechecks away presence before an attended red merge
+ok - fm-pr-merge keeps a quiet-mode home's merges attended, the named red-check waiver included
+ok - fm-pr-merge accepts exactly one separately named red-check waiver
+ok - while the away-posture record exists any green merge lands under away authority, yolo or not, and attended merges stay untagged
+ok - under the away-posture record the branch merges a green task, is refused on a red check with or without --allow-red, and is refused at the partition while attended
+ok - a branch merge refuses under the lock when the away record is archived during preflight
+ok - away posture permits immediate merges but refuses every asynchronous path
+ok - away merge proceeds on a plan-gated 403 because that repository cannot have a merge queue
+ok - the away record does not bypass red checks, and a recorded pr= must match the URL
+ok - an unreadable away-posture record refuses the merge instead of skipping the record
+ok - no away-record archive or replacement lands between the authority read and the merge
+ok - a record made unreadable before the merge's own authority read refuses the merge
+ok - a merge that cannot lock the away record refuses instead of merging unlocked
+ok - fm-pr-merge refuses --allow-red on GitLab
+ok - fm-pr-merge supplies the forge's default squash message without agent attribution
+ok - fm-pr-merge supplies no squash message when the caller merges without squashing
+ok - fm-pr-merge leaves a caller-written squash body alone
+ok - fm-pr-merge supplies the stripped default body under a caller-written subject
+ok - fm-pr-merge leaves the squash message to the forge in a home that keeps AI trailers
+ok - fm-pr-merge refuses to merge when the forge's default squash message cannot be read
+ok - fm-pr-merge treats a null default headline or body as unreadable
+ok - fm-pr-merge refuses --auto only where it would supply the squash message
+ok - fm-pr-merge reads the default squash message for an all-digit repository
+ok - fm-pr-merge runs no closing-keyword report for a task that names no issue
+ok - fm-pr-merge warns about a closing keyword that does not precede its reference, and merges
+ok - fm-pr-merge accepts every well-formed closing keyword spelling and reference form
+ok - fm-pr-merge reads only a reference GitHub itself would resolve to the issue
+ok - fm-pr-merge names each issue the body misses and reads back only the ones it closes
+ok - fm-pr-merge reports a closing-keyword check it could not run, and merges
+ok - fm-pr-merge reports an issue not yet observed closed after the merge
+ok - fm-pr-merge reports an issue it could not read back as unknown
+ok - fm-pr-merge reads no issue back for a queued merge
+ok - fm-pr-merge refuses when the body does not close the task's owned issue, and names the line and the flag
+ok - fm-pr-merge merges an unclosed owned issue under --no-closing-keyword and records the override
+ok - fm-pr-merge records no override when the body already closes the owned issue
+ok - fm-pr-merge records the override even when the merge authority persist fails
+ok - fm-pr-merge reads back a closed owned issue and keeps other issues hedged
+ok - fm-pr-merge treats a missing, malformed, or multiple owned-issue marker as no ownership
+ok - fm-pr-merge runs the closing-keyword check on GitHub merges only
+ok - fm-pr-merge removes its scratch files and releases its locks on every exit
+ok - fm-pr-merge refuses when a required check from branch protection or a ruleset never reported
+ok - fm-pr-merge merges when every required check reported and is green
+ok - fm-pr-merge reports a red check and an unreported required check together with every other failure
+ok - fm-pr-merge refuses when the required checks cannot be read, and tells a plan without rules apart
+ok - fm-pr-merge --allow-missing waives only its named unreported check
+ok - fm-pr-merge --allow-missing is single use, attended-only, and GitHub-only like --allow-red
+ok - fm-pr-merge enforces required producer identity and named waivers
+ok - fm-pr-merge matches an app-bound required commit status by name
+ok - fm-pr-merge reports known missing checks and all independent read errors
+ok - fm-pr-merge refuses an ask-user finding a gate approved that no decision request named
+ok - fm-pr-merge merges once every declined ask-user finding was named, excepting a test finding approved with a reason
+ok - fm-pr-merge refuses an ask-user finding a fix round left unselected that no decision request named
+ok - fm-pr-merge excepts a test-step finding only when its approval carries a reason
+ok - fm-pr-merge refuses the merged PR 1713 run's approved no-op test finding
+ok - fm-pr-merge refuses every finding of an approved round, whatever its action, until a decision request names it
+ok - fm-pr-merge refuses the findings of a skipped step that no decision request named
+ok - fm-pr-merge excepts only the inconclusive or not-driven-live question a reasoned test approval answered
+ok - fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run and round
+ok - fm-pr-merge refuses, naming the round, when a review log that could hold a coverage park cannot be read
+ok - fm-pr-merge binds a decision request's findings to the run its key names
+ok - fm-pr-merge binds a decision request's findings to the round it names
+ok - fm-pr-merge binds a decision request's round to the step its key names
+ok - fm-pr-merge lets a decision request with a missing or malformed round rule nothing
+ok - fm-pr-merge lets a same-theme decision request rule its ids for exactly the rounds it lists
+ok - fm-pr-merge refuses every unnamed round of a carried finding at once and prints the lines that clear them
+ok - fm-pr-merge reports unruled findings together with the other failing conditions
+ok - fm-pr-merge refuses, naming what it could not read, when a no-mistakes run record is unreadable
+ok - fm-pr-merge refuses an unruled finding on a GitLab merge too
+rc=0

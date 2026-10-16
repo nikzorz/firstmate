@@ -1,0 +1,23 @@
+### attempt 1
+rc=1
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: refusing to merge https://github.com/example/repo/pull/70
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 1 declined ask-user finding 'review-1', which no needs-decision line of task task-x1's status log names for that run and round
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 2 was approved while parked on incomplete review coverage, which no needs-decision line of task task-x1's status log names as coverage for that run and round
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 3 declined no-op finding 'review-2', which no needs-decision line of task task-x1's status log names for that run and round
+### gh.log merge calls: 0
+### attempt 2 after appending printed lines
+rc=1
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: refusing to merge https://github.com/example/repo/pull/70
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 1 declined ask-user finding 'review-1', which no needs-decision line of task task-x1's status log names for that run and round
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 2 was approved while parked on incomplete review coverage, which no needs-decision line of task task-x1's status log names as coverage for that run and round
+  - no-mistakes run 01M51JNVA446VH0VQZS32E5XW1 step review round 3 declined no-op finding 'review-2', which no needs-decision line of task task-x1's status log names for that run and round
+armed: state/task-x1.check.sh
+### gh.log merge calls: 0
