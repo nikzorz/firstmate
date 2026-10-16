@@ -1,6 +1,6 @@
 ---
 name: postmortem
-description: Load when a ship PR has merged, before its cleanup, to postmortem every miss that PR had, and when asked to postmortem one miss or to rehearse a postmortem as a dry run. A miss is a no-mistakes finding that held or was refuted, a red CI job the change caused, a firstmate ruling that rejected a worker's approach, or a captain correction of firstmate or a worker. Finds each miss's root cause in the setup that let it through and ships one heal where every future agent and reviewer meets it.
+description: Load when a ship PR has merged, before its cleanup, to postmortem every miss that PR had, and when asked to rehearse that postmortem as a dry run. A miss is a no-mistakes finding that held or was refuted, a red CI job the change caused, a firstmate ruling that rejected a worker's approach, or a captain correction of firstmate or a worker. Finds each miss's root cause in the setup that let it through and ships one heal where every future agent and reviewer meets it.
 user-invocable: false
 metadata:
   internal: true
@@ -19,7 +19,6 @@ A heal that only says "be more careful" heals nothing.
 ## When and who
 
 One postmortem runs per ship PR at merge, before cleanup, and covers every miss that PR had; each miss still gets its own side, cause, heal and log entry.
-It also runs on request for a single miss, which is how to check one finding before trusting the rest.
 
 In a **dry run** (named by the request), stop after step 4: write the report, file nothing, and add no log entry.
 
@@ -45,8 +44,7 @@ Classify each item:
 
 - **Miss:** a finding that held (fixed, or accepted as a known limitation because it is true), a finding that was refuted (ruled wrong, or a fix round that changed nothing because the claim did not hold), a red job the change caused, a firstmate ruling that rejected the worker's or a fix round's approach, or a captain correction.
 - **Pipeline event, not a miss:** an item that makes no claim about the change, such as an agent's budget cut, a lost runner, a red job the change did not cause, the pipeline asking to confirm a change has no live surface, or a refusal over work an interrupted agent left.
-  List each as a side finding and give it a one-line entry in the log of misses.
-  When that log already holds the same event on an earlier PR, the side finding says it recurred, so the pattern reaches the captain.
+  List each as a side finding.
 
 Done when every item has a class and each miss has an id: the finding id, `ci-<job>`, `ruling-<n>`, or `captain-<n>`.
 
@@ -202,7 +200,7 @@ Tell the captain the filed heal issues by URL in the landing outcome, and ask se
 ### The log of misses
 
 `data/misses.md` is this home's private log, one entry per miss, appended after the heal ships.
-A PR with no misses gets one entry saying so, so a skipped postmortem is distinguishable from a clean PR, and each pipeline event gets a one-line entry so a recurrence shows.
+A PR with no misses gets one entry saying so, so a skipped postmortem is distinguishable from a clean PR.
 
 ```
 ## <YYYY-MM-DD> <project> <PR url> <miss id>
@@ -216,7 +214,6 @@ A PR with no misses gets one entry saying so, so a skipped postmortem is disting
 
 ```
 ## <YYYY-MM-DD> <project> <PR url> no misses
-## <YYYY-MM-DD> <project> <PR url> event: <what happened, such as a test agent's budget cut>
 ```
 
 Done when every heal has shipped (an issue URL, the edited file, or a held captain question) and every miss has its log entry.
