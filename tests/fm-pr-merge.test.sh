@@ -4678,7 +4678,7 @@ test_approved_ask_user_finding_no_decision_named_refuses_merge() {
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-1704-unruled: an approved ask-user finding no decision named must refuse"
-  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 approved ask-user finding 'release-scan-misses-fight-dirs'" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 declined ask-user finding 'release-scan-misses-fight-dirs'" \
     "$case_dir/stderr" "nm-1704-unruled: the refusal did not name the run, step, round and id"
   [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 1 ] \
     || fail "nm-1704-unruled: a named, fixed, granted, unparked, auto-fix or other-repository finding was refused: $(cat "$case_dir/stderr")"
@@ -4692,13 +4692,31 @@ test_named_findings_and_granted_no_live_surface_finding_merge() {
   case_dir=$(make_case nm-1704-named)
   add_gh_mocks "$case_dir" 5252525252525252525252525252525252525252
   write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
-  write_nm_decision_line "$case_dir" "$NM_RUN_1704" verdict-assert-dropped
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" release-claim-narrowed verdict-assert-dropped second-story-loop
   write_nm_decision_line "$case_dir" "$NM_RUN_1704" boot-teardown-copied,release-scan-misses-fight-dirs
   run_nm_merge "$case_dir"
 
   expect_code 0 "$NM_MERGE_RC" "nm-1704-named: the merge failed: $(cat "$case_dir/stderr")"
   assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
-  pass "fm-pr-merge merges once every approved ask-user finding was named, excepting a test finding approved with a reason"
+  pass "fm-pr-merge merges once every declined ask-user finding was named, excepting a test finding approved with a reason"
+}
+
+test_ask_user_finding_a_fix_round_left_unselected_refuses_merge() {
+  local case_dir
+  case_dir=$(make_case nm-1704-fix-unselected)
+  add_gh_mocks "$case_dir" 5050505050505050505050505050505050505050
+  write_nm_run_1704 "$case_dir" "Test-only change with no live product surface."
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" boot-teardown-copied,release-scan-misses-fight-dirs
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-1704-fix-unselected: an ask-user finding a fix round left unselected must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 1 declined ask-user finding 'release-claim-narrowed'" \
+    "$case_dir/stderr" "nm-1704-fix-unselected: the unselected finding was not named"
+  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 1 ] \
+    || fail "nm-1704-fix-unselected: a selected or named finding was refused: $(cat "$case_dir/stderr")"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "nm-1704-fix-unselected: gh pr merge ran over an unselected ask-user finding"
+  pass "fm-pr-merge refuses an ask-user finding a fix round left unselected that no decision request named"
 }
 
 test_granted_test_finding_needs_an_approval_reason() {
@@ -4709,7 +4727,7 @@ test_granted_test_finding_needs_an_approval_reason() {
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-1704-test-no-reason: an ask-user test finding approved without a reason must refuse"
-  assert_grep "no-mistakes run $NM_RUN_1704 step test round 1 approved ask-user finding 'test-1'" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step test round 1 declined ask-user finding 'test-1'" \
     "$case_dir/stderr" "nm-1704-test-no-reason: the test-step finding was not named"
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "nm-1704-test-no-reason: gh pr merge ran over an unruled test-step finding"
@@ -4725,7 +4743,7 @@ test_only_approved_ask_user_findings_refuse_merge() {
 
   expect_code 0 "$NM_MERGE_RC" "nm-1713-merges: an approved auto-fix or no-op, an unparked or skipped ask-user, or a reasoned test finding refused: $(cat "$case_dir/stderr")"
   assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
-  pass "fm-pr-merge refuses on no finding but an approved ask-user one outside the test-step grant"
+  pass "fm-pr-merge refuses on no finding but a declined ask-user one outside the test-step grant"
 }
 
 test_decision_named_in_another_run_does_not_rule_a_reused_id() {
@@ -4742,7 +4760,7 @@ test_decision_named_in_another_run_does_not_rule_a_reused_id() {
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-reused-id: a reused id named only in the earlier run must refuse"
-  assert_grep "no-mistakes run $second step review round 1 approved ask-user finding 'review-1'" \
+  assert_grep "no-mistakes run $second step review round 1 declined ask-user finding 'review-1'" \
     "$case_dir/stderr" "nm-reused-id: the later run's unnamed finding was not refused"
   assert_no_grep "no-mistakes run $first " "$case_dir/stderr" \
     "nm-reused-id: the earlier run's named finding was refused"
@@ -4764,7 +4782,7 @@ test_unruled_finding_is_reported_with_other_conditions() {
 
   expect_code 1 "$NM_MERGE_RC" "nm-unruled-and-red: must refuse"
   assert_grep "check 'ci' is not green" "$case_dir/stderr" "nm-unruled-and-red: the red check was not reported"
-  assert_grep "round 2 approved ask-user finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
+  assert_grep "round 2 declined ask-user finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
     "nm-unruled-and-red: round 2's approved finding was not reported beside the red check"
   pass "fm-pr-merge reports unruled findings together with the other failing conditions"
 }
@@ -4806,7 +4824,7 @@ test_gitlab_merge_refuses_unruled_finding() {
   set -e
 
   expect_code 1 "$rc" "nm-gitlab-unruled: must refuse"
-  assert_grep "approved ask-user finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
+  assert_grep "declined ask-user finding 'release-scan-misses-fight-dirs'" "$case_dir/stderr" \
     "nm-gitlab-unruled: the approved finding was not named"
   [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
     || fail "nm-gitlab-unruled: glab merged over an unruled finding"
@@ -4852,6 +4870,7 @@ test_required_partial_reads_report_all_failures
 
 test_approved_ask_user_finding_no_decision_named_refuses_merge
 test_named_findings_and_granted_no_live_surface_finding_merge
+test_ask_user_finding_a_fix_round_left_unselected_refuses_merge
 test_granted_test_finding_needs_an_approval_reason
 test_only_approved_ask_user_findings_refuse_merge
 test_decision_named_in_another_run_does_not_rule_a_reused_id

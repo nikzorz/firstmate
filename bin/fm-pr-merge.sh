@@ -102,9 +102,9 @@
 # worker approved unseen and the merge. Every round of every no-mistakes run of
 # the task's recorded branch=, in the repository whose working path is the
 # task's project=, is read live. An ask-user finding the round's own selection
-# did not pick for a fix is unruled when its round was answered with approve:
-# the round's selection was declined, or it is the step's last round and the
-# step carries an approval reason. An unruled finding must appear in a
+# did not pick for a fix is unruled when its round declined it: the round was
+# answered with fix and left it unselected, its selection was declined, or it
+# is the step's last round and the step carries an approval reason. An unruled finding must appear in a
 # `needs-decision [key=nm-<run>-...] ... findings=<id>,...` line of the task's
 # status log whose key names the finding's own run, since finding ids repeat
 # across runs. The one exception is the captain's grant: a test-step finding in
@@ -1598,7 +1598,7 @@ for entry in steps.values():
         continue
     last = max(r[0] for r in entry["rounds"])
     for round_no, source, selected, listed, where in entry["rounds"]:
-        if not (source == "user_declined" or (round_no == last and approved)):
+        if not (source in ("user", "user_declined") or (round_no == last and approved)):
             continue
         for finding in listed:
             finding_id = finding.get("id")
@@ -1652,7 +1652,7 @@ collect_unruled_finding_refusals() {
   while IFS=$'\t' read -r run step round finding_id; do
     [ -n "$finding_id" ] || continue
     printf '%s\n' "$named" | grep -qxF -- "$run"$'\t'"$finding_id" && continue
-    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round approved ask-user finding '$finding_id', which no needs-decision line of task $ID's status log names for that run
+    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round declined ask-user finding '$finding_id', which no needs-decision line of task $ID's status log names for that run
 "
   done <<EOF
 $unruled
