@@ -4925,6 +4925,75 @@ test_decision_named_in_another_run_does_not_rule_a_reused_id() {
   pass "fm-pr-merge binds a decision request's findings to the run its key names"
 }
 
+# Args: case_dir run step round finding-id...
+write_nm_round_decision_line() {
+  local case_dir=$1 run=$2 step=$3 round=$4 ids
+  shift 4
+  ids=$(IFS=,; printf '%s' "$*")
+  printf 'needs-decision [at=1792000000] [key=nm-%s-%s]: ask-user round=%s findings=%s file=%s\n' \
+    "$run" "$step" "$round" "$ids" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+}
+
+# Run 01M4YEVV4E9FV28D0PZ3ZCCN86's shape: review round 1 and round 4 each
+# raise a finding with id review-1, and both rounds are approved.
+write_nm_reused_round_id() {
+  write_nm_db "$1" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 2, source: null},
+        {round: 3, source: null},
+        {round: 4, source: "user_declined", findings: [["review-1", "ask-user", ""]]}]}]}')"
+}
+
+test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another() {
+  local case_dir
+  case_dir=$(make_case nm-reused-round-id)
+  add_gh_mocks "$case_dir" 6060606060606060606060606060606060606060
+  write_nm_reused_round_id "$case_dir"
+  write_nm_round_decision_line "$case_dir" "$NM_RUN_1704" review 1 review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-reused-round-id: a round-1 decision must not rule round 4's reused id"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 4 declined ask-user finding 'review-1'" \
+    "$case_dir/stderr" "nm-reused-round-id: round 4's unnamed finding was not refused"
+  assert_no_grep "round 1 declined" "$case_dir/stderr" \
+    "nm-reused-round-id: round 1's named finding was refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-reused-round-id: gh pr merge ran over an unruled finding"
+
+  write_nm_round_decision_line "$case_dir" "$NM_RUN_1704" review 4 review-1
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-reused-round-id: the merge failed once both rounds were named: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge binds a decision request's findings to the round it names"
+}
+
+test_decision_naming_another_step_does_not_rule_its_round() {
+  local case_dir
+  case_dir=$(make_case nm-round-other-step)
+  add_gh_mocks "$case_dir" 6161616161616161616161616161616161616161
+  write_nm_reused_round_id "$case_dir"
+  write_nm_round_decision_line "$case_dir" "$NM_RUN_1704" review 1 review-1
+  write_nm_round_decision_line "$case_dir" "$NM_RUN_1704" test 4 review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-round-other-step: a decision for another step must not rule review round 4"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 4 declined ask-user finding 'review-1'" \
+    "$case_dir/stderr" "nm-round-other-step: review round 4's unnamed finding was not refused"
+  pass "fm-pr-merge binds a decision request's round to the step its key names"
+}
+
+test_decision_without_a_round_rules_every_round_of_its_run() {
+  local case_dir
+  case_dir=$(make_case nm-roundless-line)
+  add_gh_mocks "$case_dir" 6262626262626262626262626262626262626262
+  write_nm_reused_round_id "$case_dir"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review-1
+  run_nm_merge "$case_dir"
+
+  expect_code 0 "$NM_MERGE_RC" "nm-roundless-line: a decision line with no round must keep ruling the id in every round: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge keeps a decision request with no round ruling its ids in every round of its run"
+}
+
 test_unruled_finding_is_reported_with_other_conditions() {
   local case_dir
   case_dir=$(make_case nm-unruled-and-red)
@@ -5032,6 +5101,9 @@ test_test_step_grant_matches_only_the_pipelines_live_validation_question
 test_approved_coverage_park_needs_a_decision_request
 test_unreadable_review_log_refuses_merge
 test_decision_named_in_another_run_does_not_rule_a_reused_id
+test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another
+test_decision_naming_another_step_does_not_rule_its_round
+test_decision_without_a_round_rules_every_round_of_its_run
 test_unruled_finding_is_reported_with_other_conditions
 test_unreadable_run_record_refuses_merge
 test_gitlab_merge_refuses_unruled_finding
