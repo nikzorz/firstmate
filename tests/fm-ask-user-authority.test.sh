@@ -39,4 +39,14 @@ test_primary_and_secondmate_instruction_generation() {
   pass "primary workers and secondmates receive the authority rule through generated instructions"
 }
 
+test_skill_names_every_policy_actor() {
+  local skill="$ROOT/.agents/skills/ask-user-authority/SKILL.md"
+  assert_grep 'bin/fm-dod-lib.sh' "$skill" \
+    "ask-user-authority omits the no-mistakes worker that answers non-ask-user gates"
+  assert_grep 'bin/fm-branch-prompt.sh' "$skill" \
+    "ask-user-authority omits the away-posture supervision branch that applies it"
+  pass "ask-user-authority names every actor that applies finding policy"
+}
+
 test_primary_and_secondmate_instruction_generation
+test_skill_names_every_policy_actor
