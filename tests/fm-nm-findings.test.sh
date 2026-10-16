@@ -36,7 +36,7 @@ db = sqlite3.connect(db_path)
 db.executescript("""
 CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE step_results (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_name TEXT NOT NULL,
-  step_order INTEGER NOT NULL, approval_reason TEXT);
+  step_order INTEGER NOT NULL, status TEXT, approval_reason TEXT, skip_reason TEXT, log_path TEXT);
 CREATE TABLE step_rounds (id TEXT PRIMARY KEY, step_result_id TEXT NOT NULL, round INTEGER NOT NULL,
   findings_json TEXT, selected_finding_ids TEXT, selection_source TEXT);
 """)
@@ -56,7 +56,8 @@ rounds = [
     ("s3", "01OTHERRUN", "review", 3, 1, [finding("other-run-only", "ask-user", "other run")]),
 ]
 for i, (sid, rid, step, order, rnd, found) in enumerate(rounds):
-    db.execute("INSERT OR IGNORE INTO step_results VALUES (?, ?, ?, ?, NULL)", (sid, rid, step, order))
+    db.execute("INSERT OR IGNORE INTO step_results VALUES (?, ?, ?, ?, 'completed', NULL, NULL, NULL)",
+               (sid, rid, step, order))
     db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, '[]', 'user')",
                ("r%d" % i, sid, rnd, json.dumps({"findings": found})))
 db.commit()

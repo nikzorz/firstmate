@@ -604,6 +604,17 @@ test_ask_user_escalation_format() {
   assert_grep "The status line only points at the file; it never restates or summarizes a finding's content." "$brief" \
     "ship rule 6 must forbid paraphrasing ask-user findings into the status line"
 
+  # Approving or skipping a gate leaves its findings to the merge guard, which
+  # refuses any finding of such a round, or any approved coverage park, that no
+  # decision request names; the worker must escalate the whole gate first.
+  assert_grep "Before you approve or skip any gate, escalate every finding on it in that same shape, whatever its action" "$brief" \
+    "ship rule 6 must escalate every finding of a gate the worker would approve or skip"
+  assert_grep "unless this brief names that finding's class as one you may approve yourself" "$brief" \
+    "ship rule 6 must except only a finding class the brief grants"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'a review gate parked on incomplete review coverage escalates under its `nm-<run>-review` key even when it holds no finding' "$brief" \
+    "ship rule 6 must escalate a coverage park under the key the merge guard reads"
+
   # The DOD's own ask-user paragraph must point back at rule 6's format
   # (one-owner rule) rather than restating or bare-citing it.
   assert_grep "escalate to firstmate using rule 6's ask-user format" "$brief" \

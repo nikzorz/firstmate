@@ -279,6 +279,8 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
    For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
    \`needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$data/$id/nm-<run>-findings.txt\`
    naming every ask-user finding id from that gate. The status line only points at the file; it never restates or summarizes a finding's content.
+   Before you approve or skip any gate, escalate every finding on it in that same shape, whatever its action, with the snapshot and \`findings=\` holding all of them, unless this brief names that finding's class as one you may approve yourself; a review gate parked on incomplete review coverage escalates under its \`nm-<run>-review\` key even when it holds no finding, with the unverified files in the snapshot.
+   The merge is refused over any finding of an approved or skipped round, and any approved coverage park, that no such line names.
 EOF
 }
 
