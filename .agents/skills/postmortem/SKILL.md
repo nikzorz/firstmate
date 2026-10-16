@@ -34,7 +34,7 @@ Read every source, because each one holds misses the others miss:
 
 - The task's status log, `state/<id>.status`, or `data/<id>/status.log` after cleanup: every keyed `needs-decision` and the `resolved` answer that ruled it.
 - The findings snapshots the worker wrote at each escalated gate, `data/<id>/nm-<run>-*findings.txt`, verbatim.
-- The PR body's pipeline section (`gh-axi pr view <PR url>`): each step's findings and fix rounds for the final run.
+- The PR body's pipeline section (`gh-axi pr view <number> --repo <owner>/<repo>`): each step's findings and fix rounds for the final run.
 - Earlier runs, whose auto-fixed findings appear nowhere else: `no-mistakes runs`, then `no-mistakes axi status --run <id>` and `no-mistakes axi logs --run <id> --step <step>`, run read-only from the project's clone.
 - Red CI jobs on the PR and the job logs that name the failing test.
 - Firstmate's steers and rulings: the `resolved` lines and the handled messages in the task's steering inbox.
@@ -42,11 +42,13 @@ Read every source, because each one holds misses the others miss:
 
 Classify each item:
 
-- **Miss:** a finding that held (fixed, or accepted as a known limitation because it is true), a finding that was refuted (ruled wrong, or a fix round that changed nothing because the claim did not hold), a red job the change caused, a firstmate ruling that rejected the worker's or a fix round's approach, or a captain correction.
+- **Miss:** a finding that held (fixed, filed as a follow-up, or accepted as a known limitation because it is true), a finding that was refuted (ruled wrong, or a fix round that changed nothing because the claim did not hold), a red job the change caused, a firstmate ruling that rejected the worker's or a fix round's approach, or a captain correction.
 - **Pipeline event, not a miss:** an item that makes no claim about the change, such as an agent's budget cut, a lost runner, a red job the change did not cause, the pipeline asking to confirm a change has no live surface, or a refusal over work an interrupted agent left.
   List each as a side finding.
 
-Done when every item has a class and each miss has an id: the finding id, `ci-<job>`, `ruling-<n>`, or `captain-<n>`.
+A validation run that hit the same-theme cutoff in `validation-supervision`, or fixed the same theme again in a repeat the cutoff missed, is also one miss of its own, besides the misses its findings already are: the loop itself, traced like any other.
+
+Done when every item has a class and each miss has an id: the finding id, `ci-<job>`, `ruling-<n>`, `captain-<n>`, or `loop-<run>`.
 
 ## 1. Side
 
