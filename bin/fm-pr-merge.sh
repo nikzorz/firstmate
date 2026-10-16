@@ -97,32 +97,26 @@
 # absent stops the merge before any state is recorded.
 #
 # On either forge a no-mistakes task (task record mode=no-mistakes) is also
-# refused while its pipeline left a finding unruled that no decision request
-# named, because nothing else stands between a finding a worker approved
-# unseen, or one no round fixed, and the merge. Every round of every
-# no-mistakes run of the task's recorded branch=, in the repository whose
-# working path is the task's project=, is read live, and a finding the round's
-# own selection did not pick for a fix is unruled when either holds:
-#   - its round was answered with approve or skip: the round's selection was
-#     declined, or it is the step's last round and the step carries an approval
-#     or skip reason; this holds whatever the finding's action;
-#   - its action is auto-fix or ask-user and neither its round nor any later
-#     round of the step selected it, whether or not its round ever parked.
-# An unruled finding's id must appear in a `needs-decision ... findings=<id>,...`
-# line of the task's status log. The one exception is the captain's granted
-# test-step class: a test-step finding whose description begins "live
-# validation verdict:" or "this change has no live-validatable surface", in a
-# step approved with a non-empty reason. A no-op finding no response answered
-# stays out. no-mistakes' axi surface does not expose per-round findings, so
-# they are read from its state database (NM_HOME, default ~/.no-mistakes)
-# opened read-only. A database, round record, or status log that cannot be read
-# refuses, naming what could not be read; a repository no-mistakes holds no
-# record for, or a branch with no run, has nothing to rule. A task record with
-# no branch= binds no run; every ship spawn records one. Each refusal names the
-# run, step, round, and finding id, once per run, step, and id at its first
-# unruled round, and is reported with the other failing conditions. A review
-# step that parked on incomplete coverage is not judged here: the record keeps
-# coverage as no finding a decision request could name.
+# refused while its pipeline left an ask-user finding unruled that no decision
+# request named, because nothing else stands between an ask-user finding a
+# worker approved unseen and the merge. Every round of every no-mistakes run of
+# the task's recorded branch=, in the repository whose working path is the
+# task's project=, is read live. An ask-user finding the round's own selection
+# did not pick for a fix is unruled when its round was answered with approve:
+# the round's selection was declined, or it is the step's last round and the
+# step carries an approval reason. An unruled finding must appear in a
+# `needs-decision [key=nm-<run>-...] ... findings=<id>,...` line of the task's
+# status log whose key names the finding's own run, since finding ids repeat
+# across runs. The one exception is the captain's grant: a test-step finding in
+# a step approved with a non-empty reason. no-mistakes' axi surface does not
+# expose per-round findings, so they are read from its state database (NM_HOME,
+# default ~/.no-mistakes) opened read-only. A database, round record, or status
+# log that cannot be read refuses, naming what could not be read; a repository
+# no-mistakes holds no record for, or a branch with no run, has nothing to rule.
+# A task record with no branch= binds no run; every ship spawn records one.
+# Each refusal names the run, step, round, and finding id, once per run, step,
+# and id at its first unruled round, and is reported with the other failing
+# conditions.
 #
 # Before either forge merge, the task's existing per-task control lock
 # serializes the captain-hold check through the forge command. A still-held or
@@ -1529,9 +1523,9 @@ require_released_captain_hold() {
   esac
 }
 
-# Prints run<TAB>step<TAB>round<TAB>id<TAB>how for every finding the
+# Prints run<TAB>step<TAB>round<TAB>id for every ask-user finding the
 # no-mistakes runs of one branch left unruled (see the header), once per run,
-# step, and id at its first such round, leaving out the granted test-step class.
+# step, and id at its first such round, leaving out the granted test step.
 # Exits nonzero, naming what could not be read, rather than printing a partial
 # set.
 nm_unruled_findings() {  # <state-db> <project> <branch>
@@ -1546,7 +1540,6 @@ from pathlib import Path
 
 db_path, project, branch = sys.argv[1:]
 SAFE = re.compile(r"[^\s,]+")
-GRANTED_TEST_PREFIXES = ("live validation verdict:", "this change has no live-validatable surface")
 
 
 def unreadable(what):
@@ -1569,7 +1562,7 @@ try:
         rows = []
         for repo_id in repo_ids:
             rows += db.execute(
-                "SELECT ru.id, s.id, s.step_name, s.approval_reason, s.skip_reason, r.round,"
+                "SELECT ru.id, s.id, s.step_name, s.approval_reason, r.round,"
                 " r.selection_source, r.selected_finding_ids, r.findings_json"
                 " FROM runs ru JOIN step_results s ON s.run_id = ru.id"
                 " JOIN step_rounds r ON r.step_result_id = s.id"
@@ -1580,7 +1573,7 @@ except sqlite3.Error as error:
     unreadable("the no-mistakes state database %s (%s)" % (db_path, error))
 
 steps = {}
-for run, step_id, step, approval, skip, round_no, source, selected, findings in rows:
+for run, step_id, step, approval, round_no, source, selected, findings in rows:
     where = "no-mistakes run %s step %s round %s" % (run, step, round_no)
     if not (isinstance(run, str) and SAFE.fullmatch(run) and isinstance(step, str) and SAFE.fullmatch(step)
             and isinstance(round_no, int)):
@@ -1595,47 +1588,38 @@ for run, step_id, step, approval, skip, round_no, source, selected, findings in 
             raise ValueError
     except ValueError:
         unreadable("the findings of %s" % where)
-    entry = steps.setdefault(step_id, {"run": run, "step": step, "approval": approval, "skip": skip, "rounds": []})
+    entry = steps.setdefault(step_id, {"run": run, "step": step, "approval": approval, "rounds": []})
     entry["rounds"].append((round_no, source, selected, listed, where))
 
 reported = set()
 for entry in steps.values():
-    run, step, rounds = entry["run"], entry["step"], entry["rounds"]
-    last = max(r[0] for r in rounds)
-    for index, (round_no, source, selected, listed, where) in enumerate(rounds):
-        fixed_from_here = {i for r in rounds[index:] for i in r[2]}
+    run, step, approved = entry["run"], entry["step"], given(entry["approval"])
+    if step == "test" and approved:
+        continue
+    last = max(r[0] for r in entry["rounds"])
+    for round_no, source, selected, listed, where in entry["rounds"]:
+        if not (source == "user_declined" or (round_no == last and approved)):
+            continue
         for finding in listed:
             finding_id = finding.get("id")
-            if finding_id in selected:
-                continue
-            if round_no == last and given(entry["skip"]):
-                how = "skipped"
-            elif source == "user_declined" or (round_no == last and given(entry["approval"])):
-                how = "approved"
-            elif finding.get("action") in ("auto-fix", "ask-user") and finding_id not in fixed_from_here:
-                how = "left unfixed"
-            else:
+            if finding.get("action") != "ask-user" or finding_id in selected:
                 continue
             if not (isinstance(finding_id, str) and SAFE.fullmatch(finding_id)):
                 unreadable("the id of a finding in %s" % where)
-            description = finding.get("description")
-            if (step == "test" and given(entry["approval"]) and isinstance(description, str)
-                    and description.lstrip().startswith(GRANTED_TEST_PREFIXES)):
-                continue
             if (run, step, finding_id) in reported:
                 continue
             reported.add((run, step, finding_id))
-            print("%s\t%s\t%s\t%s\t%s" % (run, step, round_no, finding_id, how))
+            print("%s\t%s\t%s\t%s" % (run, step, round_no, finding_id))
 PY
 }
 
-# Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
-# run left unruled with no decision request naming it, or to one line saying
-# what could not be read. Empty when the task is not a no-mistakes task or
+# Sets UNRULED_FINDING_REFUSALS to one refusal line per ask-user finding a
+# no-mistakes run left unruled with no decision request of that run naming it,
+# or to one line saying what could not be read. Empty when the task is not a no-mistakes task or
 # records no branch, which binds no run.
 UNRULED_FINDING_REFUSALS=
 collect_unruled_finding_refusals() {
-  local mode branch project status_file db unruled named='' run step round finding_id how
+  local mode branch project status_file db unruled named='' run step round finding_id
   local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
   UNRULED_FINDING_REFUSALS=
   mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
@@ -1654,7 +1638,8 @@ collect_unruled_finding_refusals() {
 "
       return 0
     fi
-    named=$(sed -n 's/^needs-decision[^:]*:.*[[:space:]]findings=\([^[:space:]]*\).*/\1/p' "$status_file" | tr ',' '\n')
+    named=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-[^:]*:.*[[:space:]]findings=\([^[:space:]]*\).*/\1 \2/p' "$status_file" \
+      | awk '{ n = split($2, ids, ","); for (i = 1; i <= n; i++) print $1 "\t" ids[i] }')
   fi
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
   if ! merge_scratch_file reader_err nm-reader \
@@ -1664,10 +1649,10 @@ collect_unruled_finding_refusals() {
 "
     return 0
   fi
-  while IFS=$'\t' read -r run step round finding_id how; do
+  while IFS=$'\t' read -r run step round finding_id; do
     [ -n "$finding_id" ] || continue
-    printf '%s\n' "$named" | grep -qxF -- "$finding_id" && continue
-    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round $how finding '$finding_id', which no needs-decision line of task $ID's status log names
+    printf '%s\n' "$named" | grep -qxF -- "$run"$'\t'"$finding_id" && continue
+    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round approved ask-user finding '$finding_id', which no needs-decision line of task $ID's status log names for that run
 "
   done <<EOF
 $unruled
