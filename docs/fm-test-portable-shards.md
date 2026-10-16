@@ -70,7 +70,7 @@ Refresh the hints whenever a serial member grows materially or the lane gains sc
 Its header and `--help` own the modeled-budget check and output fields; read the current estimates from `--check-coverage` instead of retaining copied lane sums here.
 [`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh), in `test_portable_serial_packing_budget_boundary`, verifies acceptance exactly at the budget and refusal one millisecond above it through the executable runner.
 The floor for this layout is the slowest single serial script, which `bin/fm-test-run.sh --check-coverage` bounds through `serial_max_ms`; read the current floor from the hint table and that output rather than from this doc.
-`PORTABLE_SERIAL_MAX_WEIGHT_MS` must sit above that floor and under `CHANGED_DEFAULT_TIMEOUT_SECS`.
+The `CHANGED_DEFAULT_TIMEOUT_SECS` comment in the `bin/fm-test-run.sh` header owns where `PORTABLE_SERIAL_MAX_WEIGHT_MS` must sit relative to that floor.
 The estimates use per-file maxima from different runs, not measured rebalanced jobs or an end-to-end latency guarantee.
 At the 2026-10-15 refresh the host samples ranged from 963355 to 1291797 ms and the watch-triage samples from 944375 to 1234757 ms, while each observed completed portable job adds at most 30 seconds beyond its summed scripts in these runs.
 Even so, maxima from five runs do not establish a P95 or guarantee future headroom.
