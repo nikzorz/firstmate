@@ -264,6 +264,43 @@ record_watcher_lock() {
 
 # --- registration contract ----------------------------------------------------
 
+# A /clear ends the conversation without a Stop, so a cycle that closes with a
+# wake after the clear reaches no conversation unless some hook is parked on
+# it. Only an asyncRewake hook's exit 2 wakes an idle Claude session, and
+# Claude fires the SessionStart groups whose matcher matches the source, so this
+# dispatches the tracked registration the way Claude does for source=clear and
+# requires one of those hooks to deliver the wake of the cycle it attached to.
+test_clear_rearms_through_tracked_session_start_registration() {
+  local dir payload cmd out status delivered=0 count=0
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  dir=$(make_primary_dir "$TMP_ROOT/clear-rearm")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" attached-delivered
+  payload='{"session_id":"sess-after-clear","hook_event_name":"SessionStart","source":"clear"}'
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    count=$((count + 1))
+    status=0
+    out=$(printf '%s\n' "$payload" \
+      | FM_HOME="$dir" CLAUDE_PROJECT_DIR="$dir" FM_CLEAR_CMD="$cmd" "$FAKE_CLAUDE" -c '
+          printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+          sh -c "$FM_CLEAR_CMD"
+        ' 2>&1) || status=$?
+    if [ "$status" -eq 2 ] && printf '%s\n' "$out" | grep -q '^signal: task.status done: fixture peer cycle ended'; then
+      delivered=$((delivered + 1))
+    fi
+  done < <(jq -r '
+    .hooks.SessionStart[]?
+    | select((.matcher // "") as $m | $m == "" or ("clear" | test("^(" + $m + ")$")))
+    | .hooks[] | select(.asyncRewake == true) | .command
+  ' "$ROOT/.claude/settings.json")
+  [ "$count" -gt 0 ] || fail "a /clear fires no asyncRewake SessionStart hook, so a wake after the clear leaves no live cycle"
+  [ "$delivered" -eq 1 ] || fail "exactly one clear-time hook must deliver the attached cycle's wake, saw $delivered of $count"
+  [ -e "$dir/state/arm-ran" ] || fail "the clear-time hook never foregrounded the arm"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: a /clear parks the tracked arm owner, so a cycle closing after the clear still rewakes the session"
+}
+
 # --- scope and gates ----------------------------------------------------------
 
 test_inert_in_child_worktree() {
@@ -1708,6 +1745,7 @@ test_fm_lock_status_still_works_with_shared_lib() {
   pass "fm-lock: shared session-lock lib preserves the status path"
 }
 
+test_clear_rearms_through_tracked_session_start_registration
 test_inert_in_child_worktree
 test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming

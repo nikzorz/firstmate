@@ -506,6 +506,24 @@ The timeout hook trapped `TERM`, backgrounded `sleep 300`, waited, and on `TERM`
 | Control, exit 2 before the timeout | started +2, exited 2 at +12 | `Stop hook feedback` followed by the requested reply |
 | Timeout, exit 2 from the `TERM` handler | started +2, `TERM` and exit 2 at +32 | no `Stop hook feedback` and no reply, still idle at +111 |
 
+### Claude rewakes a cleared session from SessionStart and from a pre-clear Stop park, 2026-10-16
+
+This supports the `bin/fm-claude-stop-autoarm.sh` header statement that its clear-matched `SessionStart` registration wakes the cleared session.
+It was measured on Claude Code 2.1.294 on Linux (WSL2), in a scratch directory outside every repository so no Firstmate hooks loaded, in an interactive `claude --model haiku --tools ''` session given one short prompt and then `/clear`.
+
+```json
+{"hooks":{"SessionStart":[{"matcher":"clear","hooks":[{"type":"command","command":"<probe>/ss.sh","asyncRewake":true,"timeout":60}]}],"Stop":[{"hooks":[{"type":"command","command":"<probe>/stop.sh","asyncRewake":true,"timeout":60}]}]}}
+```
+
+The one-shot Stop hook slept 25 seconds, and the SessionStart hook slept 15 seconds; each then printed a distinct reply request to stderr and exited 2.
+
+| Event | Hook log (seconds after the prompt's Stop) | Pane afterwards |
+| --- | --- | --- |
+| Stop hook parked before `/clear` | started +0, exited 2 at +25 | `Stop hook feedback` followed by the requested reply, in the cleared conversation |
+| SessionStart on `/clear` | started +15 with `"source":"clear"` and a new `session_id`, exited 2 at +30 | `Stop hook feedback` followed by the requested reply |
+
+Each rewake turn then fired Stop with `"stop_hook_active":true` under the post-clear `session_id`.
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-09-21, all against isolated project and home state.
