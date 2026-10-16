@@ -1,0 +1,102 @@
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01LABRUN
+== run 01LABRUN step review round 1
+id: mirror-bound
+severity: warning
+file: app/guard.rb
+line: 10
+action: ask-user
+description: The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, PROPOSED-FIX-TAIL: compare both directions, end-before-start AND start-after-end, in one helper so the mirror case cannot drift.
+
+id: note
+severity: warning
+file: app/guard.rb
+line: 10
+action: no-op
+description: fine
+
+== run 01LABRUN step review round 2
+id: mirror-bound-2
+severity: warning
+file: app/guard.rb
+line: 22
+action: auto-fix
+description: round two: only one direction fixed
+
+== run 01LABRUN step test round 1
+(no findings)
+[exit 0]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01LABRUN --step review
+== run 01LABRUN step review round 1
+id: mirror-bound
+severity: warning
+file: app/guard.rb
+line: 10
+action: ask-user
+description: The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, PROPOSED-FIX-TAIL: compare both directions, end-before-start AND start-after-end, in one helper so the mirror case cannot drift.
+
+id: note
+severity: warning
+file: app/guard.rb
+line: 10
+action: no-op
+description: fine
+
+== run 01LABRUN step review round 2
+id: mirror-bound-2
+severity: warning
+file: app/guard.rb
+line: 22
+action: auto-fix
+description: round two: only one direction fixed
+[exit 0]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01LABRUN --step review mirror-bound
+== run 01LABRUN step review round 1
+id: mirror-bound
+severity: warning
+file: app/guard.rb
+line: 10
+action: ask-user
+description: The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking's end date, PROPOSED-FIX-TAIL: compare both directions, end-before-start AND start-after-end, in one helper so the mirror case cannot drift.
+[exit 0]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01LABRUN nope-id
+error: finding nope-id is in no round of no-mistakes run 01LABRUN
+[exit 1]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01MISSINGRUN
+error: no-mistakes run 01MISSINGRUN has no recorded round
+[exit 1]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh 01LABRUN --step deploy
+error: no-mistakes run 01LABRUN step deploy has no recorded round
+[exit 1]
+
+$ NM_HOME=$LAB/nm fm-nm-findings.sh --step
+fm-nm-findings.sh - print a no-mistakes run's findings whole.
+
+Usage: fm-nm-findings.sh <run-id> [--step <step>] [<finding-id>...]
+
+A no-mistakes gate cuts each finding's description short, and no axi command
+prints it whole, so a gate answered from the gate's own output answers a
+finding nobody read in full. This prints every round of the run, or of one
+step, with each finding's id, severity, file, line, action and description
+verbatim, read-only from no-mistakes' state database (NM_HOME, default
+~/.no-mistakes) through bin/fm-nm-findings-lib.sh.
+
+Rounds print in step order, then round order, under a
+`== run <run> step <step> round <n>` line, so a step's last block is the gate
+it is parked at and the blocks before it are what earlier rounds raised.
+Naming finding ids prints only those findings, in every round that raised
+them.
+
+Exit status: 0 when everything asked for printed; 1 when the database cannot
+be read, the run (or step) has no recorded round, or a named finding id is in
+none of the rounds read, naming each missing id; 2 on a usage error.
+[exit 2]
+
+$ NM_HOME=/nonexistent fm-nm-findings.sh 01LABRUN
+the no-mistakes state database /nonexistent/state.sqlite (absent)
+error: could not read no-mistakes run 01LABRUN's findings
+[exit 1]

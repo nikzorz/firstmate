@@ -1,0 +1,18 @@
+## no-mistakes brief lines (lab FM_HOME, bin/fm-brief.sh heal-s1 some-proj --mode no-mistakes)
+112:A gate cuts each finding's description short, and the part it cuts can hold the finding's proposed fix, so before responding to any gate read every finding in full with `/home/nik/.no-mistakes/worktrees/50866b63a668/01M5203WFG0VFGYTEC2AF6700E/bin/fm-nm-findings.sh <run> --step <step>`, and write rule 6's ask-user snapshot from its output.
+113:When you answer fix on your own judgment, pass `--instructions` only for scope - which files, which tests, what not to run - never to change, narrow or replace a finding's proposed fix; to change one, escalate it using rule 6's ask-user format and its `nm-<run>-<step>` key, and stop until firstmate replies.
+
+## running the reader the brief names, from a project repo cwd: /home/nik/.no-mistakes/worktrees/50866b63a668/01M5203WFG0VFGYTEC2AF6700E/bin/fm-nm-findings.sh 01LABRUN --step review
+== run 01LABRUN step review round 1
+id: mirror-bound
+action: ask-user
+description: The duplicate guard rejects a request whose start date falls after the existing booking's end date, The duplicate guard rejects a request whose start date falls after the existing booking
+id: note
+action: no-op
+== run 01LABRUN step review round 2
+id: mirror-bound-2
+action: auto-fix
+[exit 0]
+
+## description tail via same reader (whole, 528 chars):
+PROPOSED-FIX-TAIL: compare both directions, end-before-start AND start-after-end, in one helper so the mirror case cannot drift.
