@@ -561,6 +561,18 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/spec-intent-fixtures/merge-guard-round-ids.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/spec-intent-fixtures/nm-findings-reader.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/spec-intent-fixtures/pure-build.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": ".agents/skills/agent-skill-trigger-index/SKILL.md",
       "audience": "agent-runtime"
     },
