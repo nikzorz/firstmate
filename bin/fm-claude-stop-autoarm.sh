@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Stop-owned watcher auto-arm (asyncRewake hook).
 #
-# Usage: fm-claude-stop-autoarm.sh   (no arguments; the Stop payload arrives on stdin)
+# Usage: fm-claude-stop-autoarm.sh   (no arguments; the hook payload arrives on stdin)
 #
 # Registered in tracked .claude/settings.json as a Stop command hook with
 # "asyncRewake": true and an explicit multi-hour timeout. Claude Code fires it
@@ -9,6 +9,15 @@
 # deduplication across firings. It owns routine tokenless watcher continuity
 # for Claude primaries (main home and marked secondmate homes):
 #
+#   - Clear: the same command is also registered as a SessionStart hook matched
+#     to source "clear", with the same asyncRewake and timeout. A /clear ends
+#     the conversation without a Stop, so a cycle that closes after it, such as
+#     a handling successor whose rewake turn the clear cut short, would reach
+#     no conversation and leave nothing armed. Claude delivers that
+#     SessionStart hook's exit 2 to the cleared session
+#     (docs/verification/supervision.md), and every decision below is
+#     state-based, so the payload kind changes nothing and single-flight still
+#     defers to a Stop claim parked before the clear.
 #   - Scope: only a genuine primary checkout (plain checkout or validly marked
 #     secondmate home) with AGENTS.md, bin/, and the effective state dir - the
 #     exact fm-turnend-guard.sh scope. Child crew/scout worktrees stay inert.
@@ -111,7 +120,7 @@
 # lock contention, it exits 0 and leaves continuity to the synchronous guard and
 # the model.
 #
-# The Stop hook passes no arguments, so any argument means a manual run: -h or
+# Neither hook passes arguments, so any argument means a manual run: -h or
 # --help prints usage and an unknown argument is refused, both before anything
 # is sourced, read, or armed. A park started from a model's tool call would be
 # owned by that short-lived process and leave supervision down once it exits.
@@ -121,9 +130,10 @@ usage() {
   cat <<'EOF'
 Usage: fm-claude-stop-autoarm.sh
 
-Claude Stop hook registered in .claude/settings.json; not for manual use.
-It reads the Stop payload on stdin and, in a primary home that needs
-supervision, arms the watcher or supervision host for this session.
+Claude Stop and clear-time SessionStart hook registered in
+.claude/settings.json; not for manual use. It reads the hook payload on stdin
+and, in a primary home that needs supervision, arms the watcher or
+supervision host for this session.
 Exit 0 is silent; exit 2 carries a rewake banner on stderr.
 EOF
 }
@@ -169,7 +179,7 @@ esac
 # owner of that max(300, poll+60) derivation.
 GRACE=${FM_GUARD_GRACE:-$(fm_poll_derived_grace)}
 
-# Consume the Stop payload once. The decisions below are state-based; the
+# Consume the hook payload once. The decisions below are state-based; the
 # payload is read so a slow writer can never wedge on a full pipe, and its host
 # is inspected before anything else runs.
 PAYLOAD=$(cat 2>/dev/null || true)

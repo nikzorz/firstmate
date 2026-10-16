@@ -87,6 +87,7 @@ Do not run the hook as a manual arm from a tool turn: a short-lived tool process
 The hook fires on every Stop.
 On each Stop, an eligible primary with supervision need admits one home-scoped owner, which foregrounds `bin/fm-watch-arm.sh` inside the hook-owned process tree.
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
+A `/clear` ends the conversation without a `Stop`, so the same hook is also registered on the clear-time `SessionStart`; its header owns why that keeps one arm owner.
 
 ### Claude session-lock ownership
 
