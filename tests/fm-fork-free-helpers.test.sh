@@ -80,6 +80,9 @@ printf 'date\n' >> "$log"
 exec $(command -v date) "\$@"
 SH
   chmod +x "$shim/date"
+  # Linux time() reads the coarse clock, which can trail date's clock_gettime by
+  # one tick, so across a second boundary the helper may read one second below
+  # the date taken just before it.
   # shellcheck disable=SC2016 # Expanded by the child shell.
   printf '%s\n' '. "$1/bin/fm-wake-lib.sh"' \
     'PATH="$2:$PATH"' \
@@ -88,7 +91,7 @@ SH
     'fm_epoch_seconds_to now' \
     'after=$(/bin/date +%s)' \
     'case "$now" in ""|*[!0-9]*) printf "not epoch seconds: %q\n" "$now" ;; esac' \
-    '[ "$now" -ge "$before" ] && [ "$now" -le "$after" ] || printf "%s outside [%s, %s]\n" "$now" "$before" "$after"' \
+    '[ "$now" -ge "$((before - 1))" ] && [ "$now" -le "$after" ] || printf "%s outside [%s, %s]\n" "$now" "$((before - 1))" "$after"' \
     'forks=$(grep -c . "$3" || true)' \
     'if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; }; then' \
     '  [ "$forks" -eq 0 ] || printf "bash %s ran date %s times\n" "$BASH_VERSION" "$forks"' \

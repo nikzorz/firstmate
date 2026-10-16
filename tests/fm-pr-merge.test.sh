@@ -5036,6 +5036,45 @@ test_same_theme_decision_rules_exactly_its_listed_rounds() {
   pass "fm-pr-merge lets a same-theme decision request rule its ids for exactly the rounds it lists"
 }
 
+test_finding_carried_through_rounds_is_refused_in_one_attempt_with_lines_that_clear_it() {
+  local case_dir round ids line lines
+  case_dir=$(make_case nm-carried)
+  add_gh_mocks "$case_dir" 6464646464646464646464646464646464646464
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, coverage_parked: [2], rounds: [
+        {round: 1, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 2, source: "user_declined", findings: [["review-1", "ask-user", ""]]},
+        {round: 3, source: "user_declined", findings: [["review-1", "ask-user", ""], ["review-2", "no-op", ""]]}]}]}')"
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-carried: a finding carried unanswered through three rounds must refuse"
+  for round in 1 2 3; do
+    assert_grep "no-mistakes run $NM_RUN_1704 step review round $round declined ask-user finding 'review-1'" \
+      "$case_dir/stderr" "nm-carried: round $round was not refused in the first attempt"
+  done
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+    "$case_dir/stderr" "nm-carried: round 2's coverage park was not refused"
+  lines=$(grep '^needs-decision ' "$case_dir/stderr" || true)
+  [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 3 ] \
+    || fail "nm-carried: expected one clearing line per refused round: $(cat "$case_dir/stderr")"
+  for round in 1 2 3; do
+    case "$round" in 1) ids=review-1 ;; 2) ids=coverage,review-1 ;; 3) ids=review-1,review-2 ;; esac
+    printf '%s\n' "$lines" | grep -qE "^needs-decision \[at=[0-9]+\] \[key=nm-$NM_RUN_1704-review\]: ask-user round=$round findings=$ids file=$case_dir/home/data/task-x1/nm-$NM_RUN_1704-findings.txt$" \
+      || fail "nm-carried: round $round's clearing line is missing or misshapen: $lines"
+  done
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-carried: gh pr merge ran over an unruled finding"
+
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$case_dir/state/task-x1.status"
+  done <<EOF
+$lines
+EOF
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-carried: the merge failed once the printed lines were appended: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge refuses every unnamed round of a carried finding at once and prints the lines that clear them"
+}
+
 test_unruled_finding_is_reported_with_other_conditions() {
   local case_dir
   case_dir=$(make_case nm-unruled-and-red)
@@ -5147,6 +5186,7 @@ test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another
 test_decision_naming_another_step_does_not_rule_its_round
 test_decision_without_a_valid_round_rules_nothing
 test_same_theme_decision_rules_exactly_its_listed_rounds
+test_finding_carried_through_rounds_is_refused_in_one_attempt_with_lines_that_clear_it
 test_unruled_finding_is_reported_with_other_conditions
 test_unreadable_run_record_refuses_merge
 test_gitlab_merge_refuses_unruled_finding
