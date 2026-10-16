@@ -193,6 +193,10 @@ Classify each wake this way, applying the steering-inbox exception before status
   The still-advancing-run absorb section of `bin/fm-supervise-daemon.sh` owns that contract, including its cadence and cap, and is where to read the full rules.
   Second, a claude crew parked on Claude Code's usage-limit prompt escalates named for what it is - window reset and recoverable, window still exhausted as a bounded external wait, or quota window unreadable - so handle it through `harness-adapters` instead of wedge recovery.
   For a pane that is not absorbed this bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
+  A stale detail that ends with `blocked-on-prompt:` and a dialog name means the pane shows that dialog, so the worker cannot continue until someone answers it.
+  An escalation this path already sends keeps that name, whether it comes from the status log or from housekeeping.
+  A terminal status that was already reported still clears the persistence marker, the same as a stale with no dialog name.
+  A declared wait keeps the pause cadence and does not carry the name.
   Healthy crewmates are autonomous and do not wait on firstmate mid-task.
 - `heartbeat` -> self-handle.
   The daemon runs its own cheap bash fleet scan every `FM_HEARTBEAT_SCAN_SECS` (default 300s) as the catch-all for captain-relevant events still unread by the per-wake classifier.

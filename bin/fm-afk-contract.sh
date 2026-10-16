@@ -53,7 +53,10 @@
 #   expected_return: <UTC ISO 8601> | -
 #   reach_channels: none
 #   reach_announced: <the one-sentence reach announcement>
-#   spend_max_concurrent_workers: <n>
+#   spend_max_concurrent_workers: <n>   without --spend, the ordinary worker
+#                                  records this home already holds at entry,
+#                                  and never fewer than the default
+#                                  (SPEND CAP below)
 #   confirmed: <UTC ISO 8601>       when this mandate was recorded; /afk itself
 #   confirmed_epoch: <seconds>        is the go, so no later human step stamps it
 #   mode: quiet                    only on a quiet entry (FM_AFK_MODE=quiet); absent
@@ -90,6 +93,7 @@
 #     carry the original session entry forward, and archive the superseded
 #     record. A replacement is staged before the prior record is archived and
 #     replaced. `propose` and `confirm` were retired with the wait-for-go gate.
+#     Without --spend the recorded cap follows SPEND CAP below.
 #   fm-afk-contract.sh readback
 #     The record's content for the captain and for the away session: the words
 #     verbatim plus the entry time, expected return, spend cap, and reach line
@@ -99,10 +103,10 @@
 #   fm-afk-contract.sh field <name> [--path <record>]
 #   fm-afk-contract.sh words [--path <record>]
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
-#   fm-afk-contract.sh slots
-#     Print `<live> <cap>`: this home's ordinary task records (every
-#     state/*.meta whose kind is not secondmate) and a valid away record's spend
-#     cap; exit 1 with no valid away record.
+#   fm-afk-contract.sh live-workers
+#     Print the ordinary worker count this home holds right now (SPEND CAP
+#     below). Reads no record, so it answers before an entry as well as during
+#     one.
 #   fm-afk-contract.sh archive              move the record aside; print its path
 #   fm-afk-contract.sh archived <entered_epoch>   print that archived record's path
 #
@@ -123,10 +127,26 @@
 # by the ordinary stale-owner recovery in bin/fm-wake-lib.sh, which owns the lock
 # primitive itself.
 #
+# SPEND CAP (spend_max_concurrent_workers; this script is its one owner, for
+# both the number written at entry and the counting rule behind it).
+# The cap bounds how many ordinary workers this home runs concurrently while an
+# away record stands; bin/fm-spawn.sh enforces it by refusing a fresh ordinary
+# spawn once the home already holds that many. An ordinary worker record is
+# every state/*.meta whose kind is not secondmate, counted by
+# fm_afk_contract_live_ordinary_workers and exposed as `live-workers`, which is
+# the one implementation both the entry default and that refusal read, so the
+# two can never count differently.
+# Without --spend, entry records the count standing at that moment, so away mode
+# never narrows work already under way; it never records less than
+# FM_AFK_CONTRACT_SPEND_DEFAULT, so an idle home still enters with the ordinary
+# room to work, and never 0. An explicit --spend is the captain's number and is
+# recorded unchanged.
+#
 # Sourceable: with the BASH_SOURCE guard, other scripts get the path, presence,
-# posture, and lock helpers (fm_afk_contract_path, fm_afk_contract_present,
-# fm_afk_contract_mode, fm_afk_contract_away_present,
-# fm_afk_contract_archive_dir, fm_afk_contract_away_slots,
+# posture, spend-cap, and lock helpers (fm_afk_contract_path,
+# fm_afk_contract_present, fm_afk_contract_mode, fm_afk_contract_away_present,
+# fm_afk_contract_archive_dir, fm_afk_contract_live_ordinary_workers,
+# fm_afk_contract_away_slots,
 # fm_afk_contract_lock_hold, fm_afk_contract_lock_release) without running main.
 set -u
 
@@ -167,6 +187,29 @@ fm_afk_contract_present() {  # [state-dir]
   [ -f "$(fm_afk_contract_path "${1:-$FM_AFK_CONTRACT_STATE}")" ]
 }
 
+# The ordinary worker records this home holds right now (the header's SPEND
+# CAP): every state/*.meta whose kind is not secondmate, because a secondmate is
+# a persistent home rather than spend. This is the one implementation of that
+# count, read by the entry default here and by bin/fm-spawn.sh's refusal.
+fm_afk_contract_live_ordinary_workers() {  # [state-dir]
+  local state=${1:-$FM_AFK_CONTRACT_STATE} meta live=0
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    live=$((live + 1))
+  done
+  printf '%s\n' "$live"
+}
+
+# The cap to record when the captain gave no --spend: the count standing at
+# entry, never below the default and so never 0.
+fm_afk_contract_entry_spend_default() {  # [state-dir]
+  local live
+  live=$(fm_afk_contract_live_ordinary_workers "${1:-$FM_AFK_CONTRACT_STATE}")
+  [ "$live" -gt "$FM_AFK_CONTRACT_SPEND_DEFAULT" ] || live=$FM_AFK_CONTRACT_SPEND_DEFAULT
+  printf '%s\n' "$live"
+}
+
 # The posture a record at <path> is (the header's AWAY OR QUIET): quiet only
 # for an exact `mode: quiet`, away otherwise.
 fm_afk_contract_record_mode() {  # <path>
@@ -191,18 +234,13 @@ fm_afk_contract_away_present() {  # [state-dir]
 }
 
 fm_afk_contract_away_slots() {  # [state-dir]
-  local state=${1:-$FM_AFK_CONTRACT_STATE} path cap live meta
+  local state=${1:-$FM_AFK_CONTRACT_STATE} path cap live
   path=$(fm_afk_contract_path "$state")
   fm_afk_contract_validate "$path" >/dev/null 2>&1 || return 1
   [ "$(fm_afk_contract_record_mode "$path")" = away ] || return 1
   cap=$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers) || return 1
   case "$cap" in ''|*[!0-9]*|0) return 1 ;; esac
-  live=0
-  for meta in "$state"/*.meta; do
-    [ -f "$meta" ] || continue
-    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
-    live=$((live + 1))
-  done
+  live=$(fm_afk_contract_live_ordinary_workers "$state")
   printf '%s %s\n' "$live" "$cap"
 }
 
@@ -455,7 +493,7 @@ fm_afk_contract_render_announcement() {  # <path>
 # --- subcommands ------------------------------------------------------------
 
 fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, EXPECTED_RETURN, SPEND
-  local words_file=''
+  local words_file='' spend_given=0
   WORDS=; EXPECTED_RETURN=-; SPEND=$FM_AFK_CONTRACT_SPEND_DEFAULT; FM_AFK_CONTRACT_SCALARS_GIVEN=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -480,6 +518,7 @@ fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, EXPECTED_RETURN, SPEN
         [ "$#" -gt 1 ] || { fm_afk_contract_log '--spend requires a positive integer'; return 2; }
         case "$2" in ''|*[!0-9]*|0) fm_afk_contract_log "--spend must be a positive integer, got '$2'"; return 2 ;; esac
         SPEND=$2
+        spend_given=1
         FM_AFK_CONTRACT_SCALARS_GIVEN=1
         shift 2 ;;
       --action|--object|--when|--stop|--grant|--grant=*)
@@ -497,6 +536,7 @@ fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, EXPECTED_RETURN, SPEN
     WORDS=$(cat "$words_file"; rc=$?; printf x; exit "$rc") || return 1
     WORDS=${WORDS%x}
   fi
+  [ "$spend_given" -eq 1 ] || SPEND=$(fm_afk_contract_entry_spend_default) || return 1
   return 0
 }
 
@@ -658,9 +698,9 @@ fm_afk_contract_main() {
     validate)
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_validate "$path" ;;
-    slots)
+    live-workers)
       [ "$#" -eq 0 ] || { fm_afk_contract_usage >&2; return 2; }
-      fm_afk_contract_away_slots ;;
+      fm_afk_contract_live_ordinary_workers ;;
     clauses|flags|refused|grants)
       fm_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;
