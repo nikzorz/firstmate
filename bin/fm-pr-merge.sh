@@ -109,19 +109,20 @@
 # An unruled finding must appear in a
 # `needs-decision [key=nm-<run>-...] ... findings=<id>,...` line of the task's
 # status log whose key names the finding's own run, since finding ids repeat
-# across runs. A line carrying `round=<n>` names its ids only for that round
-# of its key's step, since ids also repeat across the rounds of one step; a
-# line with no round, written before decision requests carried one, names its
-# ids for every step and round of its run. The one exception is the captain's test-step grant: in a test
-# step approved with a non-empty reason, the question no-mistakes itself asks
+# across runs, and whose `round=<n>` names the finding's round of the step its
+# key names, since ids also repeat across the rounds of one step. A
+# `[key=nm-<run>-same-theme]` line, whose key names no step, names its ids for
+# each round its `rounds=<a>,<b>,...` list names, in any step of its run. A
+# line whose round is missing or is not a number names nothing. The one
+# exception is the captain's test-step grant: in a test step approved with a non-empty reason, the question no-mistakes itself asks
 # when its recorded live validation verdict is inconclusive or no-surface
 # (scenarios not driven live). The verdict is the round's structured field;
 # which finding is that question is told by the pipeline's own wording, the
 # only mark it carries. A review round that parked on incomplete coverage and
 # was approved - its selection declined, or it is the last round of a
 # completed step - also needs a `needs-decision [key=nm-<run>-...]` line of its
-# run naming the reserved id `coverage` in findings=, since such a park holds no
-# finding to name and the review key alone also marks every ordinary review
+# run and round naming the reserved id `coverage` in findings=, since such a
+# park holds no finding to name and the review key alone also marks every ordinary review
 # escalation. The rounds come from
 # bin/fm-nm-findings-lib.sh's reader of no-mistakes' state database (NM_HOME,
 # default ~/.no-mistakes) and the review step's log. A database, round record,
@@ -129,8 +130,8 @@
 # be read; a repository no-mistakes holds no record for, or a branch with no
 # run, has nothing to rule. A task record with no branch= binds no run; every
 # ship spawn records one. Each refusal names the run, step, round, and finding
-# id or coverage park, once per run, step, and id at its first unruled round
-# no decision request names, and is reported with the other failing
+# id or coverage park, a finding once per run, step, and id at its first
+# unruled round no decision request names, and is reported with the other failing
 # conditions.
 #
 # Before either forge merge, the task's existing per-task control lock
@@ -1543,9 +1544,8 @@ require_released_captain_hold() {
 # Prints run<TAB>step<TAB>round<TAB>kind<TAB>id<TAB>action for every finding
 # the no-mistakes runs of one branch left unruled and every review coverage
 # park they approved (see the header), once per run, step, round, and id (kind
-# finding) or once per run and step (kind coverage, id and action "-") at its
-# first such round. Exits nonzero, naming what could not be read, rather than
-# printing a partial set.
+# finding, or kind coverage with id coverage and action "-"). Exits nonzero,
+# naming what could not be read, rather than printing a partial set.
 nm_unruled_findings() {  # <state-db> <project> <branch>
   local rounds
   rounds=$(fm_nm_rounds "$1" --branch "$2" "$3") || return 1
@@ -1591,13 +1591,12 @@ for entry in steps.values():
     for r in entry["rounds"]:
         declined = r["source"] == "user_declined" or (r["round"] == last and answered_last)
         passed_parked = r["round"] == last and entry["status"] == "completed"
-        if step == "review" and (declined or passed_parked) and (run, step) not in reported:
+        if step == "review" and (declined or passed_parked):
             if r["coverage_parked"] is None:
                 print("the review log of %s" % r["where"], file=sys.stderr)
                 sys.exit(1)
             if r["coverage_parked"]:
-                reported.add((run, step))
-                print("%s\t%s\t%s\tcoverage\t-\t-" % (run, step, r["round"]))
+                print("%s\t%s\t%s\tcoverage\tcoverage\t-" % (run, step, r["round"]))
         if not declined and r["source"] != "user":
             continue
         for finding in r["findings"]:
@@ -1618,10 +1617,10 @@ for entry in steps.values():
 }
 
 # Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
-# run left unruled with no decision request of that run naming it, and per
-# approved review coverage park with no decision request of that run naming
-# the reserved id coverage, or to one line saying what could not be read. Empty when the
-# task is not a no-mistakes task or records no branch, which binds no run.
+# run left unruled with no decision request of its run and round naming it,
+# and per approved review coverage park with none naming the reserved id
+# coverage, or to one line saying what could not be read. Empty when the task
+# is not a no-mistakes task or records no branch, which binds no run.
 UNRULED_FINDING_REFUSALS=
 collect_unruled_finding_refusals() {
   local mode branch project status_file db unruled named='' refused='' run step round kind finding_id action
@@ -1643,19 +1642,21 @@ collect_unruled_finding_refusals() {
 "
       return 0
     fi
-    # run<TAB>id for a line with no round, run<TAB>step<TAB>round<TAB>id for
-    # one with a round; coverage is named for its whole run either way.
+    # run<TAB>step<TAB>round<TAB>id, with step * for a same-theme line.
     named=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-\([^]]*\)\][^:]*:\(.*\)/\1 \2 \3/p' "$status_file" \
       | awk '{
-          ids = ""; round = ""
+          step = $2; token = "round="; valid = "^[0-9]+$"
+          if (step == "same-theme") { step = "*"; token = "rounds="; valid = "^[0-9]+(,[0-9]+)*$" }
+          ids = ""; rounds = ""
           for (i = 3; i <= NF; i++) {
             if ($i ~ /^findings=/) ids = substr($i, 10)
-            else if ($i ~ /^round=[0-9]+$/) round = substr($i, 7)
+            else if (index($i, token) == 1) rounds = substr($i, length(token) + 1)
           }
+          if (rounds !~ valid) next
+          r = split(rounds, round, ",")
           n = split(ids, id, ",")
-          for (i = 1; i <= n; i++)
-            if (round == "" || id[i] == "coverage") print $1 "\t" id[i]
-            else print $1 "\t" $2 "\t" round "\t" id[i]
+          for (j = 1; j <= r; j++)
+            for (i = 1; i <= n; i++) print $1 "\t" step "\t" round[j] "\t" id[i]
         }')
   fi
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
@@ -1668,13 +1669,12 @@ collect_unruled_finding_refusals() {
   fi
   while IFS=$'\t' read -r run step round kind finding_id action; do
     [ -n "$finding_id" ] || continue
+    printf '%s\n' "$named" | grep -qxF -e "$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id" -e "$run"$'\t*\t'"$round"$'\t'"$finding_id" && continue
     if [ "$kind" = coverage ]; then
-      printf '%s\n' "$named" | grep -qxF -- "$run"$'\t'coverage && continue
-      UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log names as coverage for that run
+      UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log names as coverage for that run and round
 "
       continue
     fi
-    printf '%s\n' "$named" | grep -qxF -e "$run"$'\t'"$finding_id" -e "$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id" && continue
     printf '%s\n' "$refused" | grep -qxF -- "$run"$'\t'"$step"$'\t'"$finding_id" && continue
     refused="$refused$run"$'\t'"$step"$'\t'"$finding_id"$'\n'
     [ "$action" = - ] && action=unlabelled
