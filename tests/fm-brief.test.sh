@@ -477,6 +477,40 @@ test_no_mistakes_dod_reports_stale_intent() {
   pass "fm-brief.sh: no-mistakes DOD stops at the gate to report a stale intent"
 }
 
+# A gate cuts each finding's description short, so a worker answering from the
+# gate alone can narrow a proposed fix it never read. The no-mistakes DOD must
+# hand the worker a reader that runs from its project worktree, and forbid fix
+# instructions that change a finding's proposed fix.
+test_no_mistakes_dod_reads_findings_whole_and_never_narrows_a_fix() {
+  local home id brief reader other_id
+  home="$TMP_ROOT/findings-reader-home"
+  mkdir -p "$home/data" "$home/state"
+  id="brief-findings-reader-s1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  reader=$(grep -o 'read every finding in full with `[^` ]*' "$brief" | sed 's/.*`//')
+  [ -n "$reader" ] || fail "no-mistakes DOD names no findings reader"
+  case "$reader" in /*) : ;; *) fail "the findings reader '$reader' is not an absolute path a project worktree can run" ;; esac
+  (cd "$TMP_ROOT" && "$reader" --help) | grep -qF "Usage: fm-nm-findings.sh <run-id>" \
+    || fail "the findings reader the brief names does not run"
+  assert_grep "before responding to any gate read every finding in full with \`$reader <run> --step <step>\`" "$brief" \
+    "no-mistakes DOD must read every finding whole before any gate answer"
+  assert_grep "write rule 6's ask-user snapshot from its output" "$brief" \
+    "no-mistakes DOD must write ask-user snapshots from the whole findings"
+  assert_grep "never to change, narrow or replace a finding's proposed fix" "$brief" \
+    "no-mistakes DOD must forbid fix instructions that narrow a proposed fix"
+  assert_grep "pass \`--instructions\` only for scope" "$brief" \
+    "no-mistakes DOD must limit fix instructions to scope"
+
+  other_id="brief-findings-reader-s2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other_id" some-proj --mode direct-PR >/dev/null 2>&1
+  assert_no_grep "fm-nm-findings.sh" "$home/data/$other_id/brief.md" \
+    "a direct-PR brief received the no-mistakes findings reader"
+  pass "fm-brief.sh: no-mistakes DOD reads findings whole and never narrows a proposed fix"
+}
+
 # Rounds the worker drives never reach a firstmate gate, so the no-mistakes DOD
 # must stop the worker at a same-theme repeat or a non-blocking finding under a
 # key the watcher binds to the run, instead of letting it answer fix.
@@ -1683,6 +1717,7 @@ test_no_mistakes_dod_green_detection
 test_no_mistakes_dod_preserves_before_abort
 test_pr_based_dod_requires_non_draft
 test_no_mistakes_dod_reports_stale_intent
+test_no_mistakes_dod_reads_findings_whole_and_never_narrows_a_fix
 test_no_mistakes_dod_stops_same_theme_repeat
 test_ask_user_escalation_format
 test_ship_project_memory_wording

@@ -283,13 +283,14 @@ EOF
 }
 
 # The forge-independent middle of the no-mistakes contract: how a worker drives
-# the pipeline, what `--intent` may carry, when a stale intent must be
-# reported, the two firstmate-specific rules, and how to end a run without
-# losing its head.
+# the pipeline, reads a gate's findings whole, what `--intent` may carry,
+# when a stale intent must be reported, the two firstmate-specific rules, and
+# how to end a run without losing its head.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit the ci step is skipped and there is no PR to report.
 fm_nm_driving_block() {  # <forge>
-  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg
+  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg findings_reader
+  findings_reader="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-nm-findings.sh"
   if [ "$1" != gerrit ]; then
     pr_return_line="Only a drive call's return reports the green PR: \`no-mistakes axi status\` shows progress but never reports \`checks-passed\` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
 "
@@ -323,6 +324,8 @@ The \`--intent\` string you pass must be self-sufficient: that string plus the c
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+A gate cuts each finding's description short, and the part it cuts can hold the finding's proposed fix, so before responding to any gate read every finding in full with \`$findings_reader <run> --step <step>\`, and write rule 6's ask-user snapshot from its output.
+When you answer fix on your own judgment, pass \`--instructions\` only for scope - which files, which tests, what not to run - never to change, narrow or replace a finding's proposed fix; to change one, escalate it using rule 6's ask-user format and its \`nm-<run>-<step>\` key, and stop until firstmate replies.
 
 A run's \`--intent\` is fixed when the run starts, so every ruling that changes the accepted contract, rather than fixing the code toward it, leaves the review measuring the code against an older description.
 When firstmate's reply to a gate would be the run's third such contract-changing ruling, or a finding that faults the code for carrying out an earlier ruling comes back on a later round at any severity, including as a no-op, do not respond at that gate.
