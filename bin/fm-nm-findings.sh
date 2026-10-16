@@ -28,8 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-nm-findings-lib.sh
 . "$SCRIPT_DIR/fm-nm-findings-lib.sh"
 
-[ $# -ge 1 ] && [ -n "$1" ] && case "$1" in -*) false ;; esac \
-  || { usage >&2; exit 2; }
+case "${1:-}" in ''|-*) usage >&2; exit 2 ;; esac
 run=$1
 shift
 step=
