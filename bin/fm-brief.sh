@@ -9,8 +9,10 @@
 # direct address) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
 # intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
-# subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
-# `## Captain's intent` line opening with a Captain label or address. Secondmate
+# subsections feed; bin/fm-spawn.sh refuses leftover placeholders, a
+# `## Captain's intent` line opening with a Captain label or address, and a ship
+# spec bullet that adds scope the intent does not name unless it carries
+# `[justified: <reason>]` (bin/fm-spec-intent-check.sh). Secondmate
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).

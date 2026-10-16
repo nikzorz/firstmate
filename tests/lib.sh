@@ -52,6 +52,12 @@ export FM_GATE_REFUSE_BYPASS=1
 # leaked harness pin alone stays inert outside a suite.
 export FM_TEST_SEAM=1
 
+# Every fresh ship spawn asks a model whether its spec stays inside the
+# captain's intent (bin/fm-spec-intent-check.sh). Suites answer with a stub that
+# passes every bullet; a case that exercises the check arms its own answer.
+export FM_SPEC_INTENT_CHECK_CLAUDE_BIN
+FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/spec-intent-judge-stub.sh"
+
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/fm-test-run.sh in, and that runner refuses the primary
