@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-nm-findings.sh over a fixture no-mistakes state
 # database: a description far longer than a gate prints comes back whole, the
-# step and finding-id filters select what they name, and a finding id, run, or
+# step filter selects what it names, and a run, step, or
 # database that cannot be found exits nonzero naming it.
 set -u
 
@@ -65,7 +65,7 @@ PY
 
 test_prints_a_long_description_whole() {
   local out code=0
-  out=$("$ROOT/bin/fm-nm-findings.sh" "$RUN" --step review mirror-bound) || code=$?
+  out=$("$ROOT/bin/fm-nm-findings.sh" "$RUN" --step review) || code=$?
   expect_code 0 "$code" "a found finding"
   assert_contains "$out" "description: $LONG" "the 1,427-character description must print verbatim"
   assert_contains "$out" "Proposed fix: compare both directions of the same bound in one check." \
@@ -74,7 +74,6 @@ test_prints_a_long_description_whole() {
   assert_contains "$out" "== run $RUN step review round 2" "a later round raising the same id must print too"
   assert_contains "$out" $'id: mirror-bound\nseverity: warning\nfile: bin/guard.sh\nline: 12\naction: ask-user' \
     "id, severity, file, line and action must print"
-  assert_not_contains "$out" "note-1" "a finding id filter must leave other findings out"
   pass "fm-nm-findings prints a 1,427-character description whole with every field"
 }
 
@@ -86,21 +85,6 @@ test_whole_run_prints_every_step_and_round_of_that_run_only() {
   assert_contains "$out" $'== run '"$RUN"$' step document round 1\n(no findings)' "an empty round must say so"
   assert_not_contains "$out" "other-run-only" "another run's findings must stay out"
   pass "fm-nm-findings prints every round of the named run only"
-}
-
-test_unknown_finding_id_fails_naming_it() {
-  local out err code=0
-  out=$("$ROOT/bin/fm-nm-findings.sh" "$RUN" mirror-bound no-such-finding 2>"$TMP_ROOT/err") || code=$?
-  err=$(cat "$TMP_ROOT/err")
-  expect_code 1 "$code" "an unknown finding id"
-  assert_contains "$err" "finding no-such-finding is in no round of no-mistakes run $RUN" "the missing id must be named"
-  assert_contains "$out" "id: mirror-bound" "the ids that were found still print"
-  code=0
-  "$ROOT/bin/fm-nm-findings.sh" "$RUN" --step document mirror-bound >/dev/null 2>"$TMP_ROOT/err" || code=$?
-  expect_code 1 "$code" "an id outside the named step"
-  assert_grep "finding mirror-bound is in no round of no-mistakes run $RUN step document" "$TMP_ROOT/err" \
-    "an id outside the named step must be named"
-  pass "fm-nm-findings exits nonzero naming a finding id it cannot find"
 }
 
 test_unknown_run_step_or_database_fails() {
@@ -125,5 +109,4 @@ test_unknown_run_step_or_database_fails() {
 
 test_prints_a_long_description_whole
 test_whole_run_prints_every_step_and_round_of_that_run_only
-test_unknown_finding_id_fails_naming_it
 test_unknown_run_step_or_database_fails

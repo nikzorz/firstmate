@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-nm-findings.sh - print a no-mistakes run's findings whole.
 #
-# Usage: fm-nm-findings.sh <run-id> [--step <step>] [<finding-id>...]
+# Usage: fm-nm-findings.sh <run-id> [--step <step>]
 #
 # A no-mistakes gate cuts each finding's description short, and no axi command
 # prints it whole, so a gate answered from the gate's own output answers a
@@ -13,12 +13,9 @@
 # Rounds print in step order, then round order, under a
 # `== run <run> step <step> round <n>` line, so a step's last block is the gate
 # it is parked at and the blocks before it are what earlier rounds raised.
-# Naming finding ids prints only those findings, in every round that raised
-# them.
 #
 # Exit status: 0 when everything asked for printed; 1 when the database cannot
-# be read, the run (or step) has no recorded round, or a named finding id is in
-# none of the rounds read, naming each missing id; 2 on a usage error.
+# be read or the run (or step) has no recorded round; 2 on a usage error.
 set -eu
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -32,7 +29,6 @@ case "${1:-}" in ''|-*) usage >&2; exit 2 ;; esac
 run=$1
 shift
 step=
-ids=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --step)
@@ -41,7 +37,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -*) echo "error: unknown option $1" >&2; usage >&2; exit 2 ;;
-    *) ids+=("$1"); shift ;;
+    *) echo "error: unexpected argument $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -55,7 +51,7 @@ printf '%s\n' "$rounds" | python3 -I -c '
 import json
 import sys
 
-run, step, *ids = sys.argv[1:]
+run, step = sys.argv[1:]
 rounds = [json.loads(line) for line in sys.stdin if line.strip()]
 if step:
     rounds = [r for r in rounds if r["step"] == step]
@@ -70,13 +66,9 @@ def field(finding, key):
     return "" if value is None else str(value)
 
 
-seen = set()
 blocks = []
 for r in rounds:
-    shown = [f for f in r["findings"] if not ids or f.get("id") in ids]
-    seen.update(f.get("id") for f in shown)
-    if ids and not shown:
-        continue
+    shown = r["findings"]
     lines = ["== run %s step %s round %s" % (r["run"], r["step"], r["round"])]
     if not shown:
         lines.append("(no findings)")
@@ -85,11 +77,5 @@ for r in rounds:
                   "file: " + field(f, "file"), "line: " + field(f, "line"),
                   "action: " + field(f, "action"), "description: " + field(f, "description"), ""]
     blocks.append("\n".join(lines).rstrip("\n"))
-missing = [i for i in ids if i not in seen]
-if blocks:
-    print("\n\n".join(blocks))
-for i in missing:
-    print("error: finding %s is in no round of no-mistakes %s" % (i, "run %s step %s" % (run, step) if step else "run %s" % run),
-          file=sys.stderr)
-sys.exit(1 if missing else 0)
-' "$run" "$step" ${ids[@]+"${ids[@]}"}
+print("\n\n".join(blocks))
+' "$run" "$step"
