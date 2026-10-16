@@ -5,14 +5,13 @@
   show <transcript> [--before <time>]  what one session loaded, invoked, read, edited and ran
 
 Reads Claude Code transcripts under --root (default ~/.claude/projects) and changes nothing.
+A WROTE row is a lead for the trace, not proof: confirm it with show and the commit's diff.
 Run it as `python3 -I sessions.py -h`.
 """
 import argparse
-import io
 import json
 import os
 import re
-import shlex
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -26,8 +25,9 @@ PIPELINE_PHASE = re.compile(r"You are the (\w+) phase inside an already active n
 WRITE_VERBS = {"mv", "cp", "rm", "tee", "touch", "truncate", "install", "patch"}
 GIT_WRITES = {"mv", "rm", "apply"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
-SHELL_PUNCTUATION = "();<>|&\n"
-HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(['\"]?)(\w+)\2")
+SEPARATORS = {"&&", "||", ";;", ";", "&", "|", "(", ")", "\n"}
+OPERATORS = sorted(SEPARATORS | REDIRECTS | {"<", ">&", "<&", "<<", "<<-", "<<<"}, key=len, reverse=True)
+ASSIGNMENT = re.compile(r"\w+=")
 # An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
 SCRIPT = re.compile(r"(?:python|perl|node|ruby)[\d.]*")
 SCRIPT_WRITE = re.compile(
@@ -101,56 +101,81 @@ def tool_uses(r):
     return [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
 
 
-def lift_heredocs(command):
-    """Split a command into its shell text and (opener line, body) pairs, each body ending at its terminator."""
-    lines, text, bodies, i = command.split("\n"), [], [], 0
-    while i < len(lines):
-        line = lines[i]
-        text.append(line)
-        i += 1
-        for m in HEREDOC.finditer(line):
-            strip, word, body = m.group(1) == "-", m.group(3), []
-            while i < len(lines):
-                body_line = lines[i]
+def tokens(command):
+    """The command's shell tokens as [kind, text] pairs.
+
+    kind is op, word, quoted (a word with quoting, kept in its text) or heredoc (the body its opener feeds).
+    Only unquoted text forms an operator, a comment (an unquoted # starting a token, to the line's end)
+    or a heredoc opener, and $((...)) is one word, so a shift there opens no heredoc.
+    """
+    out, pending, i, n = [], [], 0, len(command)
+    while i < n:
+        if command[i] in " \t\r" or command.startswith("\\\n", i):
+            i += 2 if command[i] == "\\" else 1
+            continue
+        if command[i] == "#":
+            i = command.find("\n", i) % (n + 1)
+            continue
+        op = next((o for o in OPERATORS if command.startswith(o, i)), None)
+        if op:
+            i += len(op)
+            out.append(["heredoc" if op in ("<<", "<<-") else "op", "" if op in ("<<", "<<-") else op])
+            if op in ("<<", "<<-"):
+                pending.append([op == "<<-", None, out[-1]])
+            if op == "\n":
+                for strip, word, token in pending:
+                    body = []
+                    while i < n and word is not None:
+                        end = command.find("\n", i) % (n + 1)
+                        line, i = command[i:end], end + 1
+                        if (line.lstrip("\t") if strip else line) == word:
+                            break
+                        body.append(line)
+                    token[1] = "\n".join(body)
+                pending.clear()
+            continue
+        start, quoted = i, False
+        while i < n and command[i] not in " \t\r" and not any(command.startswith(o, i) for o in OPERATORS):
+            c = command[i]
+            if c in "'\"":
+                quoted, i = True, i + 1
+                while i < n and command[i] != c:
+                    i += 2 if c == '"' and command[i] == "\\" else 1
                 i += 1
-                if (body_line.lstrip("\t") if strip else body_line) == word:
-                    break
-                body.append(body_line)
-            bodies.append((line, "\n".join(body)))
-    return "\n".join(text), bodies
+            elif c == "\\":
+                quoted, i = True, i + 2
+            elif command.startswith("$((", i):
+                depth, i = 0, i + 1
+                while i < n:
+                    depth += {"(": 1, ")": -1}.get(command[i], 0)
+                    i += 1
+                    if depth == 0:
+                        break
+            else:
+                i += 1
+        out.append(["quoted" if quoted else "word", command[start:i]])
+        if pending and pending[-1][1] is None:
+            pending[-1][1] = bare(out[-1][1])
+    return out
 
 
-class CommentKeepsNewline(io.StringIO):
-    """Leaves the newline that ends a comment in the stream, so it still ends the statement."""
-
-    def readline(self, size=-1):
-        line = super().readline(size)
-        if line.endswith("\n"):
-            self.seek(self.tell() - 1)
-        return line
+def bare(text):
+    return re.sub(r"['\"\\]", "", text)
 
 
-def statements(text):
-    """The shell text's statements as word lists, split at unquoted ;, &, |, parentheses and newlines."""
-    lex = shlex.shlex(CommentKeepsNewline(text), posix=True, punctuation_chars=SHELL_PUNCTUATION)
-    lex.whitespace = " \t\r"
-    lex.whitespace_split = True
-    try:
-        tokens = list(lex)
-    except ValueError:
-        tokens = re.findall(r"[^\s();<>|&]+|[();<>|&\n]+", text)
-    result, words = [], []
-    for t in tokens:
-        if t and set(t) <= set(SHELL_PUNCTUATION) and not set(t) & set("<>"):
-            result.append(words)
-            words = []
+def statements(command):
+    """The command's pipelines as token lists, split at unquoted ;, &, &&, ||, parentheses and newlines."""
+    result, stmt = [], []
+    for t in tokens(command):
+        if t[0] == "op" and t[1] in SEPARATORS - {"|"}:
+            result.append(stmt)
+            stmt = []
         else:
-            words.append(t)
-    return [w for w in result + [words] if w]
+            stmt.append(t)
+    return [st for st in result + [stmt] if st]
 
 
 def verb_writes(words):
-    words = [w for w in words if not re.match(r"\w+=", w)] or [""]
     verb, args = os.path.basename(words[0]), words[1:]
     if verb in WRITE_VERBS:
         return True
@@ -162,33 +187,39 @@ def verb_writes(words):
     return False
 
 
-def written(words):
-    """What one statement writes: its redirect targets, and all its words when its command writes files."""
-    out = [words[n + 1] for n, w in enumerate(words[:-1]) if w in REDIRECTS and words[n + 1] != "/dev/null"]
-    return out + [" ".join(words)] if verb_writes(words) else out
+def written(pipeline):
+    """What one pipeline writes: the heredoc bodies it feeds when any of its commands writes a file, plus each command's writes."""
+    commands, cmd = [], []
+    for t in pipeline:
+        if t[0] == "op" and t[1] == "|":
+            commands.append(cmd)
+            cmd = []
+        else:
+            cmd.append(t)
+    out = [w for c in commands + [cmd] for w in command_written(c)]
+    return out + [t[1] for t in pipeline if t[0] == "heredoc"] if out else out
 
 
-def script(words, body=""):
-    """The source of an inline script when the statement runs one that writes files, else None."""
-    words = [w for w in words if not re.match(r"\w+=", w)]
-    source = " ".join(words) + "\n" + body
-    if words and SCRIPT.fullmatch(os.path.basename(words[0])) and SCRIPT_WRITE.search(source):
-        return source
-    return None
+def command_written(stmt):
+    """What one simple command writes: redirect targets, every argument when its unquoted verb writes files,
+    and the source of an inline script that writes files."""
+    words = [t for t in stmt if t[0] in ("word", "quoted")]
+    out = [bare(stmt[n + 1][1]) for n, t in enumerate(stmt[:-1])
+           if t[0] == "op" and t[1] in REDIRECTS and stmt[n + 1][0] in ("word", "quoted")
+           and bare(stmt[n + 1][1]) != "/dev/null"]
+    command = [t for t in words if not (t[0] == "word" and ASSIGNMENT.match(t[1]))]
+    if command and command[0][0] == "word" and verb_writes([bare(t[1]) for t in command]):
+        out.append(" ".join(bare(t[1]) for t in command))
+    source = "\n".join(t[1] for t in stmt if t[0] != "op")
+    if command and command[0][0] == "word" and SCRIPT.fullmatch(os.path.basename(command[0][1])) \
+            and SCRIPT_WRITE.search(source):
+        out.append(source)
+    return out
 
 
 def command_writes(command):
-    """Each text a shell command writes: redirect targets, write-verb statements, written-out heredoc bodies, and writing inline scripts."""
-    text, bodies = lift_heredocs(command)
-    out = []
-    for words in statements(text):
-        out += written(words) + [s for s in [script(words)] if s]
-    for opener, body in bodies:
-        for words in statements(opener):
-            if written(words):
-                out.append(body)
-            out += [s for s in [script(words, body)] if s]
-    return out
+    """Each text a shell command writes."""
+    return [w for stmt in statements(command) for w in written(stmt)]
 
 
 def write_shaped(command):

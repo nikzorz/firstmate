@@ -77,6 +77,7 @@ The cause is inferred from the trace, not guessed.
 
   `find` lists the sessions near the commit time, oldest first.
   Pick the `WROTE` row marked `AT`, whose window contains the commit time; a later `WROTE` row is usually the session that fixed it.
+  A `WROTE` row is a lead, not proof: confirm it with `show` and the commit's diff before the trace rests on it.
   A row labelled `pipeline <run> <phase>` is a no-mistakes agent, so a line a fix round wrote traces to the pipeline, not the worker.
   `show` prints what that session loaded at start, the path-scoped rules it loaded on demand, the skills it invoked, the files it read and edited, and the commands it ran, marking the ones that write.
   Compare that against the rule that would have prevented the miss: was it loaded, read, or never reached?

@@ -67,6 +67,16 @@ transcript -work-pool-1-arena/commit.jsonl "$WT" 2026-10-15T17:20:00Z 2026-10-15
   '"Bash","input":{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\nrm the old settle_frames patch\nEOF\n)\""}}'
 transcript -work-pool-1-arena/comment.jsonl "$WT" 2026-10-15T17:40:00Z 2026-10-15T17:50:00Z "tidy up" \
   '"Bash","input":{"command":"echo hi # don'"'"'t clobber it\nprintf row >> docs/comment-ledger.tsv\n# don'"'"'t keep it\nrm docs/old-notes.md"}}'
+bash_session() {  # <name> <command, JSON-escaped>
+  transcript "-work-pool-1-arena/$1.jsonl" "$WT" 2026-10-15T18:00:00Z 2026-10-15T18:10:00Z "$1" \
+    '"Bash","input":{"command":"'"$2"'"}}'
+}
+bash_session quoted-gt 'grep -c \">\" scripts/quoted-gt.gd && rg -n '"'"'>'"'"' scripts/quoted-gt.gd'
+bash_session url-fragment 'curl -sL https://example.com/page#top > docs/page.html'
+bash_session array-length 'echo ${#arr[@]} > out/count.txt'
+bash_session sed-hash 'sed -i s#old#new# scripts/sed-target.gd'
+bash_session quoted-heredoc 'rg \"<<EOF\" docs\ncp a scripts/after-quoted-heredoc.gd'
+bash_session arithmetic-shift 'echo $((1<<3))\ncp a scripts/after-shift.gd'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -134,7 +144,24 @@ test_reads_that_look_like_writes_are_mentions() {
   assert_contains "$(line_for "$out" comment.jsonl)" WROTE "an apostrophe in a comment does not hide a later redirect"
   out=$(sessions find docs/old-notes.md)
   assert_contains "$(line_for "$out" comment.jsonl)" WROTE "a write verb on the line after a comment is in command position"
+  out=$(sessions find scripts/quoted-gt.gd)
+  assert_contains "$(line_for "$out" quoted-gt.jsonl)" mentions "a quoted > before the path is not a redirect onto it"
   pass "reads shaped like writes are reported as mentions"
+}
+
+test_hash_and_shift_inside_words_hide_no_writes() {
+  local out
+  out=$(sessions find docs/page.html)
+  assert_contains "$(line_for "$out" url-fragment.jsonl)" WROTE "a # inside a URL does not start a comment"
+  out=$(sessions find out/count.txt)
+  assert_contains "$(line_for "$out" array-length.jsonl)" WROTE "a # inside \${#arr[@]} does not start a comment"
+  out=$(sessions find scripts/sed-target.gd)
+  assert_contains "$(line_for "$out" sed-hash.jsonl)" WROTE "a # inside a sed expression does not start a comment"
+  out=$(sessions find scripts/after-quoted-heredoc.gd)
+  assert_contains "$(line_for "$out" quoted-heredoc.jsonl)" WROTE "a quoted <<EOF opens no heredoc"
+  out=$(sessions find scripts/after-shift.gd)
+  assert_contains "$(line_for "$out" arithmetic-shift.jsonl)" WROTE "a shift inside \$((...)) opens no heredoc"
+  pass "a # or << inside a word hides no later write"
 }
 
 test_pipeline_sessions_are_labelled() {
@@ -197,6 +224,7 @@ test_find_marks_the_writer_at_the_commit_time
 test_find_without_a_time_lists_every_session_oldest_first
 test_shell_writes_count_as_writes
 test_reads_that_look_like_writes_are_mentions
+test_hash_and_shift_inside_words_hide_no_writes
 test_pipeline_sessions_are_labelled
 test_no_match_fails_with_a_hint
 test_show_lists_what_the_session_had
