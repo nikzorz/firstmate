@@ -30,8 +30,6 @@ OPERATORS = sorted(SEPARATORS | REDIRECTS | {"<", ">&", "<&", "<<", "<<-", "<<<"
 ASSIGNMENT = re.compile(r"\w+=")
 KEYWORDS = {"do", "then", "else", "elif", "!", "{", "time"}
 WRAPPERS = {"sudo", "env", "xargs", "nice", "nohup", "command", "exec", "timeout"}
-WRAPPER_OPTION_ARGS = {"-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a", "-u", "-g", "-k"}
-DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
 # An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
 SCRIPT = re.compile(r"(?:python|perl|node|ruby)[\d.]*")
 SCRIPT_WRITE = re.compile(
@@ -205,20 +203,16 @@ def written(pipeline):
 
 
 def from_verb(words):
-    """The words from the command's verb on, past leading keywords, assignments, and wrappers with their options."""
-    i, wrapper = 0, None
-    while i < len(words) and words[i][0] == "word":
-        text = words[i][1]
-        if text in KEYWORDS or ASSIGNMENT.match(text):
-            i += 1
-        elif text in WRAPPERS:
-            wrapper, i = text, i + 1
-        elif wrapper and text.startswith("-"):
-            i += 2 if text in WRAPPER_OPTION_ARGS else 1
-        elif wrapper == "timeout" and DURATION.fullmatch(text):
-            wrapper, i = None, i + 1
-        else:
-            break
+    """The words from the command's verb on, past leading keywords and assignments.
+
+    Behind a wrapper the command is the first later unquoted word that writes, so wrapper options never need knowing.
+    """
+    i = 0
+    while i < len(words) and words[i][0] == "word" and (words[i][1] in KEYWORDS or ASSIGNMENT.match(words[i][1])):
+        i += 1
+    if i < len(words) and words[i][0] == "word" and words[i][1] in WRAPPERS:
+        return next((words[j:] for j in range(i + 1, len(words)) if words[j][0] == "word" and (
+            verb_writes([bare(t[1]) for t in words[j:]]) or SCRIPT.fullmatch(os.path.basename(words[j][1])))), [])
     return words[i:]
 
 

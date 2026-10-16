@@ -82,6 +82,10 @@ bash_session if-then 'if true; then cp a scripts/if-target.gd; fi'
 bash_session while-do 'while read f; do rm scripts/while-target.gd; done < list.txt'
 bash_session xargs-sed 'rg -l x | xargs -n 1 sed -i s/x/y/ scripts/xargs-target.gd'
 bash_session sudo-cp 'sudo -u root cp a scripts/sudo-target.gd'
+bash_session sudo-n 'sudo -n cp a scripts/sudo-n-target.gd'
+bash_session sudo-e 'sudo -E cp a scripts/sudo-e-target.gd'
+bash_session env-cp 'env -i FOO=1 cp a scripts/env-target.gd'
+bash_session timeout-cp 'timeout -s KILL 5s cp a scripts/timeout-target.gd'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -171,7 +175,8 @@ test_hash_and_shift_inside_words_hide_no_writes() {
 
 test_writes_behind_keywords_and_wrappers_count() {
   local out name target
-  for name in for-do:loop-target if-then:if-target while-do:while-target xargs-sed:xargs-target sudo-cp:sudo-target; do
+  for name in for-do:loop-target if-then:if-target while-do:while-target xargs-sed:xargs-target sudo-cp:sudo-target \
+    sudo-n:sudo-n-target sudo-e:sudo-e-target env-cp:env-target timeout-cp:timeout-target; do
     target=scripts/${name#*:}.gd
     out=$(sessions find "$target")
     assert_contains "$(line_for "$out" "${name%%:*}.jsonl")" WROTE "a write after ${name%%:*} is a write to $target"
