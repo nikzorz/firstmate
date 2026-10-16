@@ -1634,7 +1634,7 @@ UNRULED_FINDING_CLEARING_LINES=
 collect_unruled_finding_refusals() {
   local mode branch project status_file db unruled named='' refused='' run step round kind finding_id action
   local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
-  local data_dir now ids
+  local now ids
   UNRULED_FINDING_REFUSALS=
   UNRULED_FINDING_CLEARING_LINES=
   mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
@@ -1694,11 +1694,10 @@ collect_unruled_finding_refusals() {
 $unruled
 EOF
   [ -n "$refused" ] || return 0
-  data_dir="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
   now=$(date +%s)
   # One line per run, step, and round, naming its ids in first-refused order.
   while IFS=$'\t' read -r run step round ids; do
-    UNRULED_FINDING_CLEARING_LINES="$UNRULED_FINDING_CLEARING_LINES$(fm_nm_gate_decision_line "$now" "$run" "$step" "$round" "$ids" "$data_dir/$ID/nm-$run-findings.txt")
+    UNRULED_FINDING_CLEARING_LINES="$UNRULED_FINDING_CLEARING_LINES$(fm_nm_gate_decision_line "$now" "$run" "$step" "$round" "$ids" "$MERGE_DATA/$ID/nm-$run-findings.txt")
 "
   done < <(printf '%s' "$refused" | awk -F '\t' '
     { gate = $1 "\t" $2 "\t" $3 }
@@ -1711,7 +1710,7 @@ EOF
 # unruled findings.
 print_unruled_finding_clearing_lines() {
   [ -n "$UNRULED_FINDING_CLEARING_LINES" ] || return 0
-  printf 'error: after writing each named snapshot file with the findings of its run, step, and round, append these lines to %s to name every unruled finding above:\n' \
+  printf 'error: after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to %s to name every unruled finding above:\n' \
     "$STATE/$ID.status" >&2
   printf '%s' "$UNRULED_FINDING_CLEARING_LINES" >&2
 }
