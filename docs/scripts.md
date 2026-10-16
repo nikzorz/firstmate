@@ -105,7 +105,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
-| `fm-nm-findings-lib.sh`  | Single read-only reader of no-mistakes' per-round finding records                   |
+| `fm-nm-findings-lib.sh`  | Single read-only reader of no-mistakes' per-round finding records and review coverage parks |
 | `fm-nm-findings.sh`      | Print a no-mistakes run's findings whole, where a gate cuts each description short   |
 | `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature, its extra-usage footer signature, and the quota read for whether, and when, the account window resets |
 | `fm-limit-resume.sh`     | Recover one crewmate stalled on Claude Code's usage-limit prompt once the account window has reset |

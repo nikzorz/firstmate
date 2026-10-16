@@ -276,9 +276,11 @@ fm_brief_intent_address_line() {  # <file>
 fm_ask_user_escalation_block() {  # <data-dir> <task-id>
   local data=$1 id=$2
   cat <<EOF
-   For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
+   For a no-mistakes ask-user gate, and before you approve or skip any gate, escalate the whole gate as one event plus one snapshot file, using that same shape even when the gate holds only a single finding: write every finding on the gate, whatever its action, unless this brief names that finding's class as one you may approve yourself, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
    \`needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$data/$id/nm-<run>-findings.txt\`
-   naming every ask-user finding id from that gate. The status line only points at the file; it never restates or summarizes a finding's content.
+   naming every finding id that snapshot holds. The status line only points at the file; it never restates or summarizes a finding's content.
+   Before you approve a review gate parked on incomplete review coverage, escalate it the same way with the reserved id \`coverage\` in \`findings=\` and the unverified files in the snapshot.
+   The merge is refused over any finding of an approved or skipped round, and any approved coverage park, that no such line names.
 EOF
 }
 
