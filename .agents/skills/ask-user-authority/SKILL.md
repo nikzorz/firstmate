@@ -3,7 +3,7 @@ name: ask-user-authority
 description: >-
   Agent-only decision procedure for ask-user findings.
   Use before deciding any ask-user finding.
-  This skill is the single owner of finding-decision policy: firstmate always applies judgment, decides findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous, expanding, or destructive ones.
+  This skill is the single owner of finding-decision policy: firstmate always applies judgment, files a finding that does not block the change as a follow-up issue instead of fixing it, decides blocking findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous or destructive ones.
   Finding authority is this skill's criteria, not the project's yolo posture.
 user-invocable: false
 metadata:
@@ -15,7 +15,7 @@ metadata:
 This skill is the single owner of the decision policy for no-mistakes ask-user findings.
 `AGENTS.md` section 7 points here and does not restate this procedure.
 Finding authority is determined by the criteria below, not by `yolo`.
-Firstmate always applies this judgment, decides any finding that is unambiguous toward the accepted design, and escalates only genuinely ambiguous, expanding, or destructive findings.
+Firstmate always applies this judgment, files any finding that does not block the change as a follow-up issue, decides any blocking finding that is unambiguous toward the accepted design, and escalates only genuinely ambiguous or destructive findings.
 
 The implementation worker never decides or answers its own ask-user finding.
 It stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
@@ -28,13 +28,19 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
 2. Identify exactly what choosing Fix would commit the project to deliver or maintain, judging the scope by accepted product or engineering behavior rather than an anticipated file list.
    The smallest downstream changes needed to keep that behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within scope even when they touch files not named at intake.
    Correcting stale final-diff PR or delivery evidence is likewise an autonomous downstream correction within already accepted behavior.
-3. Decide the finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
-4. Escalate only genuinely ambiguous findings:
-   - a Fix that would materially expand the contract by adding a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture not required by the accepted intent
+3. Decide whether the finding blocks the change.
+   It blocks when the change would be wrong without it: it breaks an accepted requirement, a test, or behavior the change promised, or it is security-sensitive.
+   A finding that only improves the change does not block: a simplification, an edge case of a heuristic the change openly is, or a hardening or Fix that would materially expand the contract (a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture) the accepted intent did not include.
+4. File a non-blocking finding instead of fixing it, without asking the captain.
+   Open one follow-up issue in the project's repo with `gh-axi`, carrying the finding verbatim, the PR, and the smallest change that would address it; when the project takes no issues, add a backlog item instead.
+   The gate answer leaves the finding unfixed with that issue as the reason, and the worker links the issue from the PR body before it reports the PR ready.
+5. Fix a blocking finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
+6. Escalate only a blocking finding that is genuinely ambiguous:
+   - its only fix would materially expand the contract in one of the ways step 3 lists
    - a product or architecture call not settled by accepted intent
-   - repeated same-theme findings when incremental corrections are preserving a questionable abstraction rather than closing independent defects
    - destructive, irreversible, and genuinely security-sensitive choices, which always escalate under the stronger existing captain boundary
-5. Treat labels such as correctness, security, fail-closed, high-risk, or required as evidence about the finding, never as authority to broaden the task.
+7. A finding on a theme already fixed in an earlier round of the same run follows the same-theme cutoff in `validation-supervision` instead of another fix round.
+8. Treat labels such as correctness, security, fail-closed, high-risk, or required as evidence about the finding, never as authority to broaden the task or to make it blocking.
 
 ## Captain-facing escalation
 
@@ -51,7 +57,7 @@ Do not relay reviewer labels or gate output as if they settled the decision.
 ## Classification examples
 
 - Fixing a concrete defect that violates an original acceptance criterion is firstmate's to decide, regardless of implementation difficulty.
-- Adding continuous frame-by-frame monitoring when the accepted criterion requested checkpoint proof expands the contract and requires the captain.
-- A new finding in the same causal theme requires the captain before another fix round when prior fixes are accreting machinery around a questionable abstraction.
+- Adding continuous frame-by-frame monitoring when the accepted criterion requested checkpoint proof does not block and becomes a follow-up issue.
+- A missed input case in a classifier the change documents as heuristic does not block and becomes a follow-up issue; a second such case in the same run triggers the same-theme cutoff.
 - A genuinely security-sensitive action requires the captain under the stronger existing boundary even if it is otherwise within scope.
 - Complex architecture explicitly requested by the captain stays within scope and does not escalate merely because it is complex.
