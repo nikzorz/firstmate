@@ -1,0 +1,32 @@
+$ fm-nm-findings.sh RUN1
+== run RUN1 step review round 1
+id: a
+severity: warning
+[exit 0]
+
+$ fm-nm-findings.sh RUN1 --step review
+== run RUN1 step review round 1
+id: a
+severity: warning
+[exit 0]
+
+$ fm-nm-findings.sh RUN1 a
+error: unexpected argument a
+fm-nm-findings.sh - print a no-mistakes run's findings whole.
+
+[exit 2]
+
+$ fm-nm-findings.sh RUN1 --step review nope
+error: unexpected argument nope
+fm-nm-findings.sh - print a no-mistakes run's findings whole.
+
+[exit 2]
+
+$ fm-nm-findings.sh RUN1 --step missing
+error: no-mistakes run RUN1 step missing has no recorded round
+[exit 1]
+
+$ fm-nm-findings.sh NORUN
+error: no-mistakes run NORUN has no recorded round
+[exit 1]
+
