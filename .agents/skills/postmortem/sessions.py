@@ -202,18 +202,38 @@ def written(pipeline):
     return out + [t[1] for t in pipeline if t[0] == "heredoc"] if out else out
 
 
-def from_verb(words):
-    """The words from the command's verb on, past leading keywords and assignments.
+def names_writer(word):
+    name = os.path.basename(word)
+    return name in WRITE_VERBS | {"sed", "perl", "git"} or bool(SCRIPT.fullmatch(name))
 
-    Behind a wrapper the command is the first later unquoted word that writes, so wrapper options never need knowing.
+
+def from_verb(words):
+    """The words from the command's verb on, past leading keywords, assignments and wrappers.
+
+    Behind a wrapper the scan skips options, a timeout or nice duration, and a word after an option unless it
+    names a writer, then stops at the wrapped command's own name; `command -v` and `-V` are lookups.
     """
     i = 0
     while i < len(words) and words[i][0] == "word" and (words[i][1] in KEYWORDS or ASSIGNMENT.match(words[i][1])):
         i += 1
-    if i < len(words) and words[i][0] == "word" and words[i][1] in WRAPPERS:
-        return next((words[j:] for j in range(i + 1, len(words)) if words[j][0] == "word" and (
-            verb_writes([bare(t[1]) for t in words[j:]]) or SCRIPT.fullmatch(os.path.basename(words[j][1])))), [])
-    return words[i:]
+    if i == len(words) or words[i][0] != "word" or words[i][1] not in WRAPPERS:
+        return words[i:]
+    wrapper, after_option = None, False
+    for j in range(i, len(words)):
+        text = bare(words[j][1])
+        if words[j][0] == "word" and text in WRAPPERS:
+            wrapper, after_option = text, False
+        elif wrapper == "command" and text in ("-v", "-V"):
+            return []
+        elif text.startswith("-"):
+            after_option = True
+        elif ASSIGNMENT.match(text) or wrapper in ("timeout", "nice") and re.fullmatch(r"[\d.]+[smhd]?", text):
+            after_option = False
+        elif after_option and not names_writer(text):
+            after_option = False
+        else:
+            return words[j:]
+    return []
 
 
 def command_written(stmt):

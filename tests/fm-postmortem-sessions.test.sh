@@ -83,6 +83,8 @@ bash_session while-do 'while read f; do rm scripts/while-target.gd; done < list.
 bash_session xargs-sed 'rg -l x | xargs -n 1 sed -i s/x/y/ scripts/xargs-target.gd'
 bash_session sudo-cp 'sudo -u root cp a scripts/sudo-target.gd'
 bash_session sudo-n 'sudo -n cp a scripts/sudo-n-target.gd'
+bash_session timeout-read 'timeout 5 rg install scripts/timeout-read.gd'
+bash_session xargs-read 'rg -l x | xargs grep -n patch scripts/xargs-read.gd'
 bash_session sudo-e 'sudo -E cp a scripts/sudo-e-target.gd'
 bash_session env-cp 'env -i FOO=1 cp a scripts/env-target.gd'
 bash_session timeout-cp 'timeout -s KILL 5s cp a scripts/timeout-target.gd'
@@ -181,6 +183,10 @@ test_writes_behind_keywords_and_wrappers_count() {
     out=$(sessions find "$target")
     assert_contains "$(line_for "$out" "${name%%:*}.jsonl")" WROTE "a write after ${name%%:*} is a write to $target"
   done
+  for name in timeout-read xargs-read; do
+    out=$(sessions find "scripts/$name.gd")
+    assert_contains "$(line_for "$out" "$name.jsonl")" mentions "a read behind a wrapper is not a write, even with a verb as an argument"
+  done
   pass "a write verb behind a shell keyword or wrapper is reported as WROTE"
 }
 
@@ -209,7 +215,7 @@ test_show_lists_what_the_session_had() {
 {"type":"user","timestamp":"2026-10-15T09:00:01Z","cwd":"$WT","message":{"role":"user","content":"<command-name>/no-mistakes</command-name>"}}
 {"type":"assistant","timestamp":"2026-10-15T09:01:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"diagnostic-reasoning"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:01:01Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/test-placement.md","content":{}}}
-{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","name":"Bash","input":{"command":"awk '\$2 > 0' f.tsv"}},{"type":"tool_use","name":"Bash","input":{"command":"git commit -m \\"a patch\\""}}]}}
+{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","name":"Bash","input":{"command":"awk '\$2 > 0' f.tsv"}},{"type":"tool_use","name":"Bash","input":{"command":"git commit -m \\"a patch\\""}},{"type":"tool_use","name":"Bash","input":{"command":"command -v rm"}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:30:00Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/late-rule.md","content":{}}}
 EOF
   out=$(sessions show -- "$rel")
@@ -222,6 +228,7 @@ EOF
   assert_contains "$out" "      git status" "a read-only command is not marked"
   assert_contains "$out" "      awk '\$2 > 0' f.tsv" "a > inside quotes does not mark a command"
   assert_contains "$out" '      git commit -m "a patch"' "a write verb inside a quoted argument does not mark a command"
+  assert_contains "$out" "      command -v rm" "a command -v lookup is not marked"
   assert_contains "$out" "== Files read (1)" "a file read twice counts once"
   assert_contains "$out" "late-rule.md" "without --before every rule is listed"
   out=$(sessions show "$TR/$rel" --before 2026-10-15T09:10:00Z)
