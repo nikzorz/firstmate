@@ -1,0 +1,5 @@
+HEAD partition check: union_lines=217 unique=217 serial_lane=217 diff_lines=0
+shard 1 members: tests/fm-supervision-host.test.sh
+shard 2 members: tests/fm-watch-triage.test.sh
+fm-test-run: lane 'portable-serial-1of8' asks for 8 portable serial shards but this runner is configured for 9 (see --list-lanes)
+rc(1of8)=0

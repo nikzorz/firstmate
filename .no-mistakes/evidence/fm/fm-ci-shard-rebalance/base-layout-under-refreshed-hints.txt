@@ -1,0 +1,11 @@
+BASE (ca4c424) shard membership scored with HEAD's refreshed hints (default 45000 for unhinted):
+shard 1: 1234757 ms
+shard 2: 1794223 ms
+shard 3: 1119737 ms
+shard 4: 1087015 ms
+shard 5: 1154408 ms
+shard 6: 1056844 ms
+shard 7: 1072194 ms
+shard 8: 921822 ms
+shard 9: 1136736 ms
+exact: tests/fm-supervision-host.test.sh is in base shard 2

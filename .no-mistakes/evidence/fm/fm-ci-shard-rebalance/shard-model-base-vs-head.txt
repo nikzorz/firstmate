@@ -1,0 +1,22 @@
+== BASE ca4c424
+shard 1: scripts=1 modeled_ms=1074843
+shard 2: scripts=26 modeled_ms=985482
+shard 3: scripts=26 modeled_ms=985481
+shard 4: scripts=27 modeled_ms=985471
+shard 5: scripts=27 modeled_ms=985483
+shard 6: scripts=27 modeled_ms=985482
+shard 7: scripts=27 modeled_ms=985485
+shard 8: scripts=28 modeled_ms=985482
+shard 9: scripts=28 modeled_ms=985482
+FM_TEST_COVERAGE ok total=257 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=217 serial_shards=9 serial_unhinted=11 serial_max_ms=1074843 serial_budget_ms=1200000 herdr=16
+== HEAD 9631604
+shard 1: scripts=1 modeled_ms=1291797
+shard 2: scripts=1 modeled_ms=1234757
+shard 3: scripts=30 modeled_ms=1150155
+shard 4: scripts=30 modeled_ms=1150155
+shard 5: scripts=31 modeled_ms=1150155
+shard 6: scripts=32 modeled_ms=1150188
+shard 7: scripts=31 modeled_ms=1150177
+shard 8: scripts=30 modeled_ms=1150154
+shard 9: scripts=31 modeled_ms=1150198
+FM_TEST_COVERAGE ok total=257 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=217 serial_shards=9 serial_unhinted=9 serial_max_ms=1291797 serial_budget_ms=1350000 herdr=16
