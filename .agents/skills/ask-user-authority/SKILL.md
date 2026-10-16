@@ -3,7 +3,7 @@ name: ask-user-authority
 description: >-
   Agent-only decision procedure for ask-user findings.
   Use before deciding any ask-user finding.
-  This skill is the single owner of finding-decision policy: firstmate always applies judgment, files a finding that does not block the change as a follow-up issue instead of fixing it, decides blocking findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous or destructive ones.
+  This skill is the single owner of the policy for deciding a finding that reaches firstmate: firstmate always applies judgment, files a finding that does not block the change as a follow-up issue instead of fixing it, decides blocking findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous or destructive ones.
   Finding authority is this skill's criteria, not the project's yolo posture.
 user-invocable: false
 metadata:
@@ -16,6 +16,11 @@ This skill is the single owner of the decision policy for no-mistakes ask-user f
 `AGENTS.md` section 7 points here and does not restate this procedure.
 Finding authority is determined by the criteria below, not by `yolo`.
 Firstmate always applies this judgment, files any finding that does not block the change as a follow-up issue, decides any blocking finding that is unambiguous toward the accepted design, and escalates only genuinely ambiguous or destructive findings.
+
+Three actors apply finding policy, and a change to it covers all three.
+Firstmate applies this skill to every finding a worker escalates.
+The no-mistakes worker answers every other gate itself under the driving block `bin/fm-dod-lib.sh` owns, which escalates here only the cases that block names.
+The away-posture supervision branch receives this skill verbatim from `bin/fm-branch-prompt.sh` and applies it under that prompt's role limits, which forbid posting outside the fleet.
 
 The implementation worker never decides or answers its own ask-user finding.
 It stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
@@ -36,6 +41,8 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    The gate answer leaves the finding unfixed with that issue as the reason, and the worker links the issue from the PR body before it reports the PR ready.
    While the captain is away, the away-posture supervision branch does not file: it records the follow-up text in its outcome for the return brief, answers the gate leaving the finding unfixed with that recorded follow-up as the reason, and firstmate files the issue on return.
 5. Fix a blocking finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
+   When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names, such as every script a power fight runs) and tell the fix round to derive the members from the code and name that derivation in the check.
+   Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
    - a product or architecture call not settled by accepted intent

@@ -39,4 +39,17 @@ test_primary_and_secondmate_instruction_generation() {
   pass "primary workers and secondmates receive the authority rule through generated instructions"
 }
 
+test_away_branch_prompt_names_every_policy_actor() {
+  local prompt
+  prompt=$("$ROOT/bin/fm-branch-prompt.sh") || fail "branch prompt generator failed"
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  assert_contains "$prompt" 'The no-mistakes worker answers every other gate itself under the driving block `bin/fm-dod-lib.sh` owns' \
+    "away-posture branch prompt omits the no-mistakes worker that answers non-ask-user gates"
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  assert_contains "$prompt" 'The away-posture supervision branch receives this skill verbatim from `bin/fm-branch-prompt.sh`' \
+    "away-posture branch prompt omits the supervision branch as a policy actor"
+  pass "away-posture branch prompt names every actor that applies finding policy"
+}
+
 test_primary_and_secondmate_instruction_generation
+test_away_branch_prompt_names_every_policy_actor
