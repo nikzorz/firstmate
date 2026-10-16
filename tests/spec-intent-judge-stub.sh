@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stand-in for the model bin/fm-spec-intent-check.sh asks, named through
-# FM_SPEC_INTENT_CHECK_CLAUDE_BIN. tests/lib.sh arms it for every suite so a
-# ship spawn never reaches a real model; with no knobs set it answers ok for
+# FM_SPEC_INTENT_CHECK_CLAUDE_BIN. tests/lib.sh and tests/herdr-test-safety.sh
+# arm it for every suite so a ship spawn never reaches a real model; with no knobs set it answers ok for
 # every numbered bullet it is sent.
 #   FM_STUB_JUDGE_FLAG     ERE; a bullet whose text matches is answered flag.
 #   FM_STUB_JUDGE_ANSWER   file whose contents are the whole answer instead.

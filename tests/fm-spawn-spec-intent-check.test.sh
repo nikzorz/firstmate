@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # A fresh ship spawn runs bin/fm-spec-intent-check.sh on its brief and refuses,
 # before any worktree or backend side effect, while a flagged spec bullet is
-# neither cut nor justified or while the check cannot run. A justified bullet
-# launches, and a scout brief is not checked.
+# neither cut nor justified or while an installed judge fails. A justified
+# bullet launches, a host with no judge installed launches with a warning, and
+# a scout brief is not checked.
 # shellcheck disable=SC2016 # Backticks are literal Markdown in brief text.
 set -u
 
@@ -101,6 +102,17 @@ test_refuses_when_the_check_cannot_run() {
   pass "a ship is refused when its spec cannot be judged"
 }
 
+test_launches_with_a_warning_when_no_judge_is_installed() {
+  make_case nojudge "$(brief "$FALLBACK_SPEC")"
+  local out status
+  out=$(FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$TMP_ROOT/no-such-claude" FM_STUB_JUDGE_FLAG='Old widgets' run_spawn nojudge ship)
+  status=$?
+  expect_code 0 "$status" "a host with no judge installed should still spawn: $out"
+  assert_contains "$out" "spawned nojudge" "a host with no judge installed did not spawn"
+  assert_contains "$out" 'warning: the spec-intent check of' "the spawn did not warn that the check was skipped"
+  pass "a ship launches with a warning naming the skipped check when no judge is installed"
+}
+
 test_scout_is_not_checked() {
   make_case scout "$(brief "$FALLBACK_SPEC")"
   FM_STUB_JUDGE_FLAG='Old widgets' expect_spawned scout scout "a scout brief"
@@ -111,6 +123,7 @@ test_scout_is_not_checked() {
 test_refuses_a_flagged_bullet
 test_launches_a_justified_bullet
 test_refuses_when_the_check_cannot_run
+test_launches_with_a_warning_when_no_judge_is_installed
 test_scout_is_not_checked
 
 echo "# all fm-spawn-spec-intent-check tests passed"

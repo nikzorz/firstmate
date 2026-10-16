@@ -25,7 +25,10 @@
 # and safe mode (no project instructions, skills, hooks or MCP servers), bounded
 # by fm_run_timed (bin/fm-timeout-lib.sh). Its answer must hold exactly one
 # `<n> ok` or `<n> flag: <what it adds>` line per bullet; anything else, a
-# missing binary, a non-zero exit, or the bound is a refusal, never a pass.
+# non-zero exit, or the bound is a refusal, never a pass. A host with no claude
+# installed cannot run the judge at all, and refusing there would block every
+# ship launch on a home whose primary harness is not Claude, so the check steps
+# aside with a warning instead.
 # FM_SPEC_INTENT_CHECK_CLAUDE_BIN names the claude executable (default: claude
 # on PATH), so a hermetic test can run a stub judge through the real call.
 #
@@ -34,8 +37,9 @@
 # can be read back after the launch.
 #
 # Exit status: 0 when no unjustified bullet is flagged; 1 when one or more is,
-# printing each on stdout; 2 when the check could not run or its answer was
-# malformed, or on a usage error.
+# printing each on stdout; 2 when the installed judge failed or its answer was
+# malformed, or on a usage error; 3 when claude is not installed and the check
+# was skipped.
 set -u
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -109,6 +113,7 @@ EOF
 
 CLAUDE_BIN=${FM_SPEC_INTENT_CHECK_CLAUDE_BIN:-claude}
 JUDGE_STATUS=127
+RESULT=""
 if command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
   (
     cd "$WORK" || exit 127
@@ -120,6 +125,7 @@ if command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
 else
   printf '%s is not installed\n' "$CLAUDE_BIN" > "$WORK/errors.txt"
   : > "$WORK/answer.txt"
+  RESULT="skipped: $CLAUDE_BIN is not installed"
 fi
 
 # verdict lines: "ok <n>", "flag <n> <reason>", or "malformed <why>".
@@ -144,10 +150,11 @@ VERDICT=$(tr -d '\r' < "$WORK/answer.txt" | awk -v count="$BULLET_COUNT" '
   }
 ')
 
-RESULT=pass
 FLAGGED=''
 JUSTIFIED=''
-if [ "$JUDGE_STATUS" -ne 0 ]; then
+if [ -n "$RESULT" ]; then
+  :
+elif [ "$JUDGE_STATUS" -ne 0 ]; then
   RESULT="cannot-run: the judge exited $JUDGE_STATUS"
   fm_timed_out "$JUDGE_STATUS" && RESULT="cannot-run: the judge hit its ${SPEC_INTENT_CHECK_TIMEOUT_SECS}s bound"
 elif printf '%s\n' "$VERDICT" | grep -q '^malformed '; then
@@ -166,6 +173,7 @@ else
   done <<EOF
 $VERDICT
 EOF
+  RESULT=pass
   [ -z "$FLAGGED" ] || RESULT=flagged
 fi
 
@@ -189,5 +197,6 @@ fi
 case "$RESULT" in
   pass) exit 0 ;;
   flagged) printf '%s' "$FLAGGED"; exit 1 ;;
+  skipped:*) echo "warning: the spec-intent check of $BRIEF was skipped ($CLAUDE_BIN is not installed); its spec bullets were not judged against the captain's intent" >&2; exit 3 ;;
   *) echo "error: the spec-intent check could not judge $BRIEF ($RESULT); see $RECORD" >&2; exit 2 ;;
 esac

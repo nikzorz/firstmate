@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # bin/fm-spec-intent-check.sh splits a brief's `## Firstmate spec` into
 # numbered bullets, refuses an unjustified flagged bullet, lets a bullet carrying
-# `[justified: <reason>]` through, and refuses rather than passes whenever the
-# judge cannot give one well-formed answer per bullet. The judge here is
+# `[justified: <reason>]` through, refuses rather than passes whenever an
+# installed judge cannot give one well-formed answer per bullet, and skips with
+# a warning when no judge is installed. The judge here is
 # tests/spec-intent-judge-stub.sh; tests/fm-spec-intent-check-live-e2e.test.sh
 # drives the real model over the same fixture briefs.
 # shellcheck disable=SC2016 # Backticks are literal Markdown in brief text.
@@ -95,11 +96,17 @@ expect_cannot_run() {  # <label> <expected-detail>
   assert_contains "$(cat "$RECORD")" "result: cannot-run: $2" "$1 record does not name why"
 }
 
-test_refuses_when_the_judge_cannot_answer() {
+test_skips_when_the_judge_is_not_installed() {
   OUT=$(FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$TMP_ROOT/no-such-claude" "$CHECK" "$FIXTURES/pure-build.md" "$RECORD" 2>&1)
   STATUS=$?
-  expect_cannot_run "a missing judge" 'the judge exited 127'
+  expect_code 3 "$STATUS" "a judge that is not installed should skip the check: $OUT"
+  assert_contains "$OUT" "warning: the spec-intent check of $FIXTURES/pure-build.md was skipped" \
+    "the skip does not warn that the check did not run"
+  assert_contains "$(cat "$RECORD")" "result: skipped: $TMP_ROOT/no-such-claude is not installed" "the record does not name the skip"
+  pass "a judge that is not installed skips the check with a warning"
+}
 
+test_refuses_when_the_judge_cannot_answer() {
   FM_STUB_JUDGE_EXIT=3 run_check "$FIXTURES/pure-build.md"
   expect_cannot_run "a failing judge" 'the judge exited 3'
 
@@ -117,7 +124,7 @@ test_refuses_when_the_judge_cannot_answer() {
 
   FM_STUB_JUDGE_ANSWER=$(answer_file empty '') run_check "$FIXTURES/pure-build.md"
   expect_cannot_run "an empty answer" 'bullet 1 has no answer'
-  pass "a missing, failing, or malformed judge refuses instead of passing"
+  pass "an installed judge that fails or answers malformed refuses instead of passing"
 }
 
 test_refuses_a_brief_without_both_subsections() {
@@ -134,6 +141,7 @@ test_pure_build_spec_passes
 test_justified_bullet_passes
 test_bullets_keep_their_continuation_lines
 test_judge_runs_without_tools
+test_skips_when_the_judge_is_not_installed
 test_refuses_when_the_judge_cannot_answer
 test_refuses_a_brief_without_both_subsections
 
