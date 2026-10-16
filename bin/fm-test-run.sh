@@ -187,9 +187,9 @@ MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
 # Bound applied automatically on the automatic --changed path, derived from
 # measured healthy runtimes with margin rather than picked: the slowest measured
-# script is tests/fm-watch-triage.test.sh at about 1235s under CI load (the hint
+# script is tests/fm-supervision-host.test.sh at about 1292s under CI load (the hint
 # table below records that loaded figure). 1500s keeps every measured script
-# under the bound with roughly 1.2x headroom over the slowest loaded measurement,
+# under the bound with roughly 1.16x headroom over the slowest loaded measurement,
 # and it stays under the 30-minute normal CI tier so a wedged script fails here,
 # with its output, before the job cap
 # cancels the lane. It is a guard, not a speed control: a HUNG script becomes a
