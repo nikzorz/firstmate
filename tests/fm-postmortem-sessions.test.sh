@@ -77,6 +77,11 @@ bash_session array-length 'echo ${#arr[@]} > out/count.txt'
 bash_session sed-hash 'sed -i s#old#new# scripts/sed-target.gd'
 bash_session quoted-heredoc 'rg \"<<EOF\" docs\ncp a scripts/after-quoted-heredoc.gd'
 bash_session arithmetic-shift 'echo $((1<<3))\ncp a scripts/after-shift.gd'
+bash_session for-do 'for f in a b; do sed -i s/x/y/ scripts/loop-target.gd; done'
+bash_session if-then 'if true; then cp a scripts/if-target.gd; fi'
+bash_session while-do 'while read f; do rm scripts/while-target.gd; done < list.txt'
+bash_session xargs-sed 'rg -l x | xargs -n 1 sed -i s/x/y/ scripts/xargs-target.gd'
+bash_session sudo-cp 'sudo -u root cp a scripts/sudo-target.gd'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -164,6 +169,16 @@ test_hash_and_shift_inside_words_hide_no_writes() {
   pass "a # or << inside a word hides no later write"
 }
 
+test_writes_behind_keywords_and_wrappers_count() {
+  local out name target
+  for name in for-do:loop-target if-then:if-target while-do:while-target xargs-sed:xargs-target sudo-cp:sudo-target; do
+    target=scripts/${name#*:}.gd
+    out=$(sessions find "$target")
+    assert_contains "$(line_for "$out" "${name%%:*}.jsonl")" WROTE "a write after ${name%%:*} is a write to $target"
+  done
+  pass "a write verb behind a shell keyword or wrapper is reported as WROTE"
+}
+
 test_pipeline_sessions_are_labelled() {
   local out
   out=$(sessions find docs/ledger.tsv)
@@ -225,6 +240,7 @@ test_find_without_a_time_lists_every_session_oldest_first
 test_shell_writes_count_as_writes
 test_reads_that_look_like_writes_are_mentions
 test_hash_and_shift_inside_words_hide_no_writes
+test_writes_behind_keywords_and_wrappers_count
 test_pipeline_sessions_are_labelled
 test_no_match_fails_with_a_hint
 test_show_lists_what_the_session_had

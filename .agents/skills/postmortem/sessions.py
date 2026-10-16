@@ -28,6 +28,10 @@ REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
 SEPARATORS = {"&&", "||", ";;", ";", "&", "|", "(", ")", "\n"}
 OPERATORS = sorted(SEPARATORS | REDIRECTS | {"<", ">&", "<&", "<<", "<<-", "<<<"}, key=len, reverse=True)
 ASSIGNMENT = re.compile(r"\w+=")
+KEYWORDS = {"do", "then", "else", "elif", "!", "{", "time"}
+WRAPPERS = {"sudo", "env", "xargs", "nice", "nohup", "command", "exec", "timeout"}
+WRAPPER_OPTION_ARGS = {"-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a", "-u", "-g", "-k"}
+DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
 # An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
 SCRIPT = re.compile(r"(?:python|perl|node|ruby)[\d.]*")
 SCRIPT_WRITE = re.compile(
@@ -200,6 +204,24 @@ def written(pipeline):
     return out + [t[1] for t in pipeline if t[0] == "heredoc"] if out else out
 
 
+def from_verb(words):
+    """The words from the command's verb on, past leading keywords, assignments, and wrappers with their options."""
+    i, wrapper = 0, None
+    while i < len(words) and words[i][0] == "word":
+        text = words[i][1]
+        if text in KEYWORDS or ASSIGNMENT.match(text):
+            i += 1
+        elif text in WRAPPERS:
+            wrapper, i = text, i + 1
+        elif wrapper and text.startswith("-"):
+            i += 2 if text in WRAPPER_OPTION_ARGS else 1
+        elif wrapper == "timeout" and DURATION.fullmatch(text):
+            wrapper, i = None, i + 1
+        else:
+            break
+    return words[i:]
+
+
 def command_written(stmt):
     """What one simple command writes: redirect targets, every argument when its unquoted verb writes files,
     and the source of an inline script that writes files."""
@@ -207,7 +229,7 @@ def command_written(stmt):
     out = [bare(stmt[n + 1][1]) for n, t in enumerate(stmt[:-1])
            if t[0] == "op" and t[1] in REDIRECTS and stmt[n + 1][0] in ("word", "quoted")
            and bare(stmt[n + 1][1]) != "/dev/null"]
-    command = [t for t in words if not (t[0] == "word" and ASSIGNMENT.match(t[1]))]
+    command = from_verb(words)
     if command and command[0][0] == "word" and verb_writes([bare(t[1]) for t in command]):
         out.append(" ".join(bare(t[1]) for t in command))
     source = "\n".join(t[1] for t in stmt if t[0] != "op")
