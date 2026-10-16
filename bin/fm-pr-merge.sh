@@ -130,9 +130,11 @@
 # be read; a repository no-mistakes holds no record for, or a branch with no
 # run, has nothing to rule. A task record with no branch= binds no run; every
 # ship spawn records one. Each refusal names the run, step, round, and finding
-# id or coverage park, a finding once per run, step, and id at its first
-# unruled round no decision request names, and is reported with the other failing
-# conditions.
+# id or coverage park, a finding carried through several rounds once for every
+# round no decision request names, and is reported with the other failing
+# conditions. After the refusals, each refused run, step, and round gets the
+# exact decision request line that would name all of its refused ids, so one
+# attempt shows everything still owed and the shape that clears it.
 #
 # Before either forge merge, the task's existing per-task control lock
 # serializes the captain-hold check through the forge command. A still-held or
@@ -273,6 +275,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-nm-findings-lib.sh"
 # shellcheck source=bin/fm-attribution-lib.sh
 . "$SCRIPT_DIR/fm-attribution-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -673,6 +677,7 @@ FIELDS
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
+    print_unruled_finding_clearing_lines
     return 1
   fi
   printf 'verified: %s is open and mergeable, with a successful pipeline at head %s\n' \
@@ -985,6 +990,7 @@ EOF
     printf '%s' "$refusals" >&2
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
+    print_unruled_finding_clearing_lines
     return 1
   fi
   printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
@@ -1619,13 +1625,18 @@ for entry in steps.values():
 # Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
 # run left unruled with no decision request of its run and round naming it,
 # and per approved review coverage park with none naming the reserved id
-# coverage, or to one line saying what could not be read. Empty when the task
-# is not a no-mistakes task or records no branch, which binds no run.
+# coverage, or to one line saying what could not be read, and
+# UNRULED_FINDING_CLEARING_LINES to the decision request line that clears each
+# refused run, step, and round. Both are empty when the task is not a
+# no-mistakes task or records no branch, which binds no run.
 UNRULED_FINDING_REFUSALS=
+UNRULED_FINDING_CLEARING_LINES=
 collect_unruled_finding_refusals() {
   local mode branch project status_file db unruled named='' refused='' run step round kind finding_id action
   local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
+  local data_dir now ids
   UNRULED_FINDING_REFUSALS=
+  UNRULED_FINDING_CLEARING_LINES=
   mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
   branch=$(grep '^branch=' "$META" | tail -1 | cut -d= -f2- || true)
   [ "$mode" = no-mistakes ] && [ -n "$branch" ] || return 0
@@ -1670,19 +1681,39 @@ collect_unruled_finding_refusals() {
   while IFS=$'\t' read -r run step round kind finding_id action; do
     [ -n "$finding_id" ] || continue
     printf '%s\n' "$named" | grep -qxF -e "$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id" -e "$run"$'\t*\t'"$round"$'\t'"$finding_id" && continue
+    refused="$refused$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id"$'\n'
     if [ "$kind" = coverage ]; then
       UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log names as coverage for that run and round
 "
       continue
     fi
-    printf '%s\n' "$refused" | grep -qxF -- "$run"$'\t'"$step"$'\t'"$finding_id" && continue
-    refused="$refused$run"$'\t'"$step"$'\t'"$finding_id"$'\n'
     [ "$action" = - ] && action=unlabelled
     UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round declined $action finding '$finding_id', which no needs-decision line of task $ID's status log names for that run and round
 "
   done <<EOF
 $unruled
 EOF
+  [ -n "$refused" ] || return 0
+  data_dir="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+  now=$(date +%s)
+  # One line per run, step, and round, naming its ids in first-refused order.
+  while IFS=$'\t' read -r run step round ids; do
+    UNRULED_FINDING_CLEARING_LINES="$UNRULED_FINDING_CLEARING_LINES$(fm_nm_gate_decision_line "$now" "$run" "$step" "$round" "$ids" "$data_dir/$ID/nm-$run-findings.txt")
+"
+  done < <(printf '%s' "$refused" | awk -F '\t' '
+    { gate = $1 "\t" $2 "\t" $3 }
+    !(gate in ids) { order[++n] = gate; ids[gate] = $4; next }
+    { ids[gate] = ids[gate] "," $4 }
+    END { for (i = 1; i <= n; i++) print order[i] "\t" ids[order[i]] }')
+}
+
+# Prints, after a refusal list, the decision request lines that clear its
+# unruled findings.
+print_unruled_finding_clearing_lines() {
+  [ -n "$UNRULED_FINDING_CLEARING_LINES" ] || return 0
+  printf 'error: after writing each named snapshot file with the findings of its run, step, and round, append these lines to %s to name every unruled finding above:\n' \
+    "$STATE/$ID.status" >&2
+  printf '%s' "$UNRULED_FINDING_CLEARING_LINES" >&2
 }
 
 FM_PR_MERGE_AUTHORITY=
