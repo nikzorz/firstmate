@@ -8,9 +8,11 @@ Reads Claude Code transcripts under --root (default ~/.claude/projects) and chan
 Run it as `python3 -I sessions.py -h`.
 """
 import argparse
+import io
 import json
 import os
 import re
+import shlex
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -21,13 +23,13 @@ WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 PIPELINE_CWD = re.compile(r"/\.no-mistakes/worktrees/[^/]+/([^/]+)")
 PIPELINE_DIR = re.compile(r"-no-mistakes-worktrees-[0-9a-f]+-([0-9A-Z]+)")
 PIPELINE_PHASE = re.compile(r"You are the (\w+) phase inside an already active no-mistakes run")
-WRITE_VERB = re.compile(
-    r"(?:^|[\s(])(?:git\s+(?:mv|rm|apply|checkout\s+--)|mv|cp|rm|tee|touch|truncate|install|patch"
-    r"|sed\s+(?:-[a-zA-Z]*i|--in-place)|perl\s+-[a-zA-Z]*i)\b")
-REDIRECT = re.compile(r"(?<![<>0-9&])>{1,2}\|?\s*([^\s;|&<>]+)")
-HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)(\w+)\2")
+WRITE_VERBS = {"mv", "cp", "rm", "tee", "touch", "truncate", "install", "patch"}
+GIT_WRITES = {"mv", "rm", "apply"}
+REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+SHELL_PUNCTUATION = "();<>|&\n"
+HEREDOC = re.compile(r"(?<!<)<<(-?)\s*(['\"]?)(\w+)\2")
 # An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
-SCRIPT = re.compile(r"(?:^|[\s(;&|])(?:python3?|perl|node|ruby)\b")
+SCRIPT = re.compile(r"(?:python|perl|node|ruby)[\d.]*")
 SCRIPT_WRITE = re.compile(
     r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_text\(|\.write_bytes\(|writeFileSync|appendFileSync|File\.write")
 
@@ -99,100 +101,104 @@ def tool_uses(r):
     return [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
 
 
-def segments(command):
-    """Split a shell command at unquoted ;, &&, || and newlines into (raw, shape, heredoc body) triples.
-
-    shape is the raw text with < and > inside quotes blanked, so only real redirections match REDIRECT,
-    and each heredoc body belongs to the segment that opened it, ending at its terminator.
-    """
-    segs, raw, shape, pending = [], [], [], []
-    i, quote, n = 0, None, len(command)
-
-    def close():
-        segs.append(["".join(raw), "".join(shape), ""])
-        raw.clear()
-        shape.clear()
-
-    while i < n:
-        c = command[i]
-        if quote:
-            if c == quote:
-                quote = None
-            elif c == "\\" and quote == '"' and i + 1 < n:
-                raw.append(command[i:i + 2])
-                shape.append(command[i:i + 2].replace(">", " ").replace("<", " "))
-                i += 2
-                continue
-            raw.append(c)
-            shape.append(" " if c in "<>" else c)
-            i += 1
-            continue
-        if c in "'\"":
-            quote = c
-        elif c == "\\" and i + 1 < n:
-            raw.append(command[i:i + 2])
-            shape.append(command[i:i + 2])
-            i += 2
-            continue
-        elif command.startswith("<<<", i):
-            raw.append("<<<")
-            shape.append("<<<")
-            i += 3
-            continue
-        elif (m := HEREDOC.match(command, i)):
-            pending.append((m.group(1) == "-", m.group(3), len(segs)))
-            raw.append(m.group(0))
-            shape.append(m.group(0))
-            i = m.end()
-            continue
-        elif c == "\n" or c == ";" or command.startswith(("&&", "||"), i):
-            close()
-            i += 1 if c in "\n;" else 2
-            if c == "\n":
-                for strip, word, at in pending:
-                    body = []
-                    while i < n:
-                        end = command.find("\n", i)
-                        end = n if end < 0 else end
-                        line, i = command[i:end], end + 1
-                        if (line.lstrip("\t") if strip else line) == word:
-                            break
-                        body.append(line)
-                    segs[at][2] += "\n".join(body)
-                pending.clear()
-            continue
-        raw.append(c)
-        shape.append(c)
+def lift_heredocs(command):
+    """Split a command into its shell text and (opener line, body) pairs, each body ending at its terminator."""
+    lines, text, bodies, i = command.split("\n"), [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        text.append(line)
         i += 1
-    close()
-    return [tuple(seg) for seg in segs]
+        for m in HEREDOC.finditer(line):
+            strip, word, body = m.group(1) == "-", m.group(3), []
+            while i < len(lines):
+                body_line = lines[i]
+                i += 1
+                if (body_line.lstrip("\t") if strip else body_line) == word:
+                    break
+                body.append(body_line)
+            bodies.append((line, "\n".join(body)))
+    return "\n".join(text), bodies
 
 
-def writes_file(shape):
-    return any(t != "/dev/null" for t in REDIRECT.findall(shape)) or bool(WRITE_VERB.search(shape))
+class CommentKeepsNewline(io.StringIO):
+    """Leaves the newline that ends a comment in the stream, so it still ends the statement."""
+
+    def readline(self, size=-1):
+        line = super().readline(size)
+        if line.endswith("\n"):
+            self.seek(self.tell() - 1)
+        return line
 
 
-def script_writes(shape, body):
-    return bool(SCRIPT.search(shape) and SCRIPT_WRITE.search(shape + "\n" + body))
+def statements(text):
+    """The shell text's statements as word lists, split at unquoted ;, &, |, parentheses and newlines."""
+    lex = shlex.shlex(CommentKeepsNewline(text), posix=True, punctuation_chars=SHELL_PUNCTUATION)
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError:
+        tokens = re.findall(r"[^\s();<>|&]+|[();<>|&\n]+", text)
+    result, words = [], []
+    for t in tokens:
+        if t and set(t) <= set(SHELL_PUNCTUATION) and not set(t) & set("<>"):
+            result.append(words)
+            words = []
+        else:
+            words.append(t)
+    return [w for w in result + [words] if w]
+
+
+def verb_writes(words):
+    words = [w for w in words if not re.match(r"\w+=", w)] or [""]
+    verb, args = os.path.basename(words[0]), words[1:]
+    if verb in WRITE_VERBS:
+        return True
+    if verb in ("sed", "perl"):
+        return any(re.match(r"-[a-zA-Z]*i|--in-place", a) for a in args)
+    if verb == "git":
+        sub = [a for n, a in enumerate(args) if not a.startswith("-") and (n == 0 or args[n - 1] not in ("-C", "-c"))]
+        return bool(sub) and (sub[0] in GIT_WRITES or sub[0] == "checkout" and "--" in args)
+    return False
+
+
+def written(words):
+    """What one statement writes: its redirect targets, and all its words when its command writes files."""
+    out = [words[n + 1] for n, w in enumerate(words[:-1]) if w in REDIRECTS and words[n + 1] != "/dev/null"]
+    return out + [" ".join(words)] if verb_writes(words) else out
+
+
+def script(words, body=""):
+    """The source of an inline script when the statement runs one that writes files, else None."""
+    words = [w for w in words if not re.match(r"\w+=", w)]
+    source = " ".join(words) + "\n" + body
+    if words and SCRIPT.fullmatch(os.path.basename(words[0])) and SCRIPT_WRITE.search(source):
+        return source
+    return None
+
+
+def command_writes(command):
+    """Each text a shell command writes: redirect targets, write-verb statements, written-out heredoc bodies, and writing inline scripts."""
+    text, bodies = lift_heredocs(command)
+    out = []
+    for words in statements(text):
+        out += written(words) + [s for s in [script(words)] if s]
+    for opener, body in bodies:
+        for words in statements(opener):
+            if written(words):
+                out.append(body)
+            out += [s for s in [script(words, body)] if s]
+    return out
 
 
 def write_shaped(command):
-    """True when a shell command changes files: a write verb, a redirection to a file, or an inline script that writes one."""
-    return any(writes_file(shape) or script_writes(shape, body) for _, shape, body in segments(command))
+    """True when a shell command changes files."""
+    return bool(command_writes(command))
 
 
 def bash_writes(command, needle):
-    """True when one segment of a shell command writes the needle: a redirect target or write verb naming it, a heredoc that segment writes out, or an inline script there that writes files."""
-    for raw, shape, body in segments(command):
-        if any(needle in t for t in REDIRECT.findall(shape)):
-            return True
-        if needle in raw and WRITE_VERB.search(shape):
-            return True
-        if needle in body and writes_file(shape):
-            return True
-        if needle in raw + "\n" + body and script_writes(shape, body):
-            return True
-    return False
+    """True when what a shell command writes contains the needle."""
+    return any(needle in w for w in command_writes(command))
 
 
 def wrote(block, needle):

@@ -62,6 +62,11 @@ transcript -work-pool-1-arena/script-then-read.jsonl "$WT" 2026-10-15T16:40:00Z 
   '"Bash","input":{"command":"python3 -c \"open('"'"'/tmp/o'"'"', '"'"'w'"'"').write('"'"'x'"'"')\"; cat docs/ledger.tsv"}}'
 transcript -work-pool-1-arena/edit-removes.jsonl "$WT" 2026-10-15T17:00:00Z 2026-10-15T17:10:00Z "drop the budget" \
   '"Edit","input":{"file_path":"/work/pool/1/arena/docs/design.md","old_string":"The frame budget is unit_budget_ms.","new_string":""}}'
+transcript -work-pool-1-arena/commit.jsonl "$WT" 2026-10-15T17:20:00Z 2026-10-15T17:30:00Z "commit it" \
+  '"Bash","input":{"command":"git commit -m \"settle_frames: a patch\""}}' \
+  '"Bash","input":{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\nrm the old settle_frames patch\nEOF\n)\""}}'
+transcript -work-pool-1-arena/comment.jsonl "$WT" 2026-10-15T17:40:00Z 2026-10-15T17:50:00Z "tidy up" \
+  '"Bash","input":{"command":"echo hi # don'"'"'t clobber it\nprintf row >> docs/comment-ledger.tsv\n# don'"'"'t keep it\nrm docs/old-notes.md"}}'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -116,6 +121,7 @@ test_reads_that_look_like_writes_are_mentions() {
   local out
   out=$(sessions find settle_frames)
   assert_contains "$(line_for "$out" quoted.jsonl)" mentions "a > inside a quoted argument is not a redirect"
+  assert_contains "$(line_for "$out" commit.jsonl)" mentions "a write verb inside a commit message is not a write"
   out=$(sessions find tests/motion.test.sh)
   assert_contains "$(line_for "$out" heredoc-then-run.jsonl)" mentions "a command after a heredoc's terminator is not in its body"
   out=$(sessions find docs/ledger.tsv)
@@ -124,6 +130,10 @@ test_reads_that_look_like_writes_are_mentions() {
   assert_contains "$(line_for "$out" edit-removes.jsonl)" mentions "an Edit that removes the text does not write it"
   out=$(sessions find scratch)
   assert_contains "$(line_for "$out" heredoc-then-run.jsonl)" WROTE "the heredoc body itself is still written"
+  out=$(sessions find docs/comment-ledger.tsv)
+  assert_contains "$(line_for "$out" comment.jsonl)" WROTE "an apostrophe in a comment does not hide a later redirect"
+  out=$(sessions find docs/old-notes.md)
+  assert_contains "$(line_for "$out" comment.jsonl)" WROTE "a write verb on the line after a comment is in command position"
   pass "reads shaped like writes are reported as mentions"
 }
 
@@ -152,7 +162,7 @@ test_show_lists_what_the_session_had() {
 {"type":"user","timestamp":"2026-10-15T09:00:01Z","cwd":"$WT","message":{"role":"user","content":"<command-name>/no-mistakes</command-name>"}}
 {"type":"assistant","timestamp":"2026-10-15T09:01:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"diagnostic-reasoning"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:01:01Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/test-placement.md","content":{}}}
-{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","name":"Bash","input":{"command":"awk '\$2 > 0' f.tsv"}}]}}
+{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","name":"Bash","input":{"command":"awk '\$2 > 0' f.tsv"}},{"type":"tool_use","name":"Bash","input":{"command":"git commit -m \\"a patch\\""}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:30:00Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/late-rule.md","content":{}}}
 EOF
   out=$(sessions show -- "$rel")
@@ -164,6 +174,7 @@ EOF
   assert_contains "$out" "WRITE git mv a.gd b.gd" "a write-shaped command is marked"
   assert_contains "$out" "      git status" "a read-only command is not marked"
   assert_contains "$out" "      awk '\$2 > 0' f.tsv" "a > inside quotes does not mark a command"
+  assert_contains "$out" '      git commit -m "a patch"' "a write verb inside a quoted argument does not mark a command"
   assert_contains "$out" "== Files read (1)" "a file read twice counts once"
   assert_contains "$out" "late-rule.md" "without --before every rule is listed"
   out=$(sessions show "$TR/$rel" --before 2026-10-15T09:10:00Z)
