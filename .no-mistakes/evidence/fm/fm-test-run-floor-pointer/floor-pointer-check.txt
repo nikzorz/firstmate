@@ -1,0 +1,3 @@
+check-coverage serial_max_ms vs constants:
+FM_TEST_COVERAGE ok total=257 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=217 serial_shards=9 serial_unhinted=9 serial_max_ms=1291797 serial_budget_ms=1350000 herdr=16
+CHANGED_DEFAULT_TIMEOUT_SECS=1500 (1500000 ms), PORTABLE_SERIAL_MAX_WEIGHT_MS=1350000
