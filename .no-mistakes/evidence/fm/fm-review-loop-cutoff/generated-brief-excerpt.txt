@@ -1,0 +1,7 @@
+== no-mistakes brief: same-theme / non-blocking rules ==
+119:A run fixes each theme once, and a finding that does not block the change becomes a follow-up rather than a fix round; `validation-supervision` defines theme and `ask-user-authority` defines blocking.
+120-When a gate returns a finding on a theme an earlier fix round of this run already fixed, including a regression a fix round introduced, auto-fix or not, do not answer fix: append `needs-decision [at=<epoch>] [key=nm-<run>-same-theme]: same theme fixed again findings=<id1>,<id2>,... rounds=<a>,<b>,...` naming the rounds and stop until firstmate replies.
+121-When a gate returns a finding that does not block the change, auto-fix or not, do not answer fix: escalate it using rule 6's ask-user format and its `nm-<run>-<step>` key, and stop until firstmate replies.
+122-
+== direct-PR brief count of same-theme key ==
+0
