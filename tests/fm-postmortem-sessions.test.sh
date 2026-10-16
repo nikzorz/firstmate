@@ -62,6 +62,7 @@ transcript -work-pool-1-arena/script-then-read.jsonl "$WT" 2026-10-15T16:40:00Z 
   '"Bash","input":{"command":"python3 -c \"open('"'"'/tmp/o'"'"', '"'"'w'"'"').write('"'"'x'"'"')\"; cat docs/ledger.tsv"}}'
 transcript -work-pool-1-arena/edit-removes.jsonl "$WT" 2026-10-15T17:00:00Z 2026-10-15T17:10:00Z "drop the budget" \
   '"Edit","input":{"file_path":"/work/pool/1/arena/docs/design.md","old_string":"The frame budget is unit_budget_ms.","new_string":""}}'
+# shellcheck disable=SC2016  # literal fixture command, must not expand
 transcript -work-pool-1-arena/commit.jsonl "$WT" 2026-10-15T17:20:00Z 2026-10-15T17:30:00Z "commit it" \
   '"Bash","input":{"command":"git commit -m \"settle_frames: a patch\""}}' \
   '"Bash","input":{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\nrm the old settle_frames patch\nEOF\n)\""}}'
@@ -73,9 +74,11 @@ bash_session() {  # <name> <command, JSON-escaped>
 }
 bash_session quoted-gt 'grep -c \">\" scripts/quoted-gt.gd && rg -n '"'"'>'"'"' scripts/quoted-gt.gd'
 bash_session url-fragment 'curl -sL https://example.com/page#top > docs/page.html'
+# shellcheck disable=SC2016  # literal fixture command, must not expand
 bash_session array-length 'echo ${#arr[@]} > out/count.txt'
 bash_session sed-hash 'sed -i s#old#new# scripts/sed-target.gd'
 bash_session quoted-heredoc 'rg \"<<EOF\" docs\ncp a scripts/after-quoted-heredoc.gd'
+# shellcheck disable=SC2016  # literal fixture command, must not expand
 bash_session arithmetic-shift 'echo $((1<<3))\ncp a scripts/after-shift.gd'
 bash_session for-do 'for f in a b; do sed -i s/x/y/ scripts/loop-target.gd; done'
 bash_session if-then 'if true; then cp a scripts/if-target.gd; fi'
