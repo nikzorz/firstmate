@@ -26,7 +26,7 @@ Firstmate runs step 0 itself, in the landing turn.
 A PR with no misses gets its one log entry and the postmortem stops there.
 Firstmate finishes the rest itself when every miss traces from records already on disk: the status log, findings snapshots, brief, and the rule files the trace names.
 When a trace needs session transcripts for more than one miss, or code reading beyond the lines a finding cites, dispatch a scout with this skill in dry-run form and its report as the deliverable, then run step 5 from that report; filing, captain questions and the log stay with firstmate.
-Cleanup need not wait for that scout, because the evidence it reads survives cleanup under `data/<id>/`, but collect the miss list and any trace that needs the task's local copy before cleanup.
+Cleanup deletes the task's steering inbox and local copy, so before cleanup collect the miss list, the verbatim text of every steer and ruling, and any trace that needs the local copy; a scout's brief carries that steer and ruling text, because the scout cannot read the inbox after cleanup.
 
 ## 0. Collect the misses
 
@@ -67,7 +67,7 @@ Reconstruct what the missing side had in front of it.
 The cause is inferred from the trace, not guessed.
 
 - **Author.**
-  Find the commit that introduced the line: `git -C <task local copy> log --all -S '<text>' -- <path>` while the task's copy exists, otherwise the PR's commits through `gh-axi`, and the commit time with `git show -s --format=%cI <sha>`.
+  Find the commit that introduced the line: `git -C <task local copy> log --all -S '<text>' -- <path>` while the task's copy exists, otherwise the PR's commits through `gh-axi`, and the commit time with `git show -s --format=%aI <sha>`, the author date, because a rebase rewrites the committer date and the pipeline rebases.
   Then find the session that made it with `sessions.py` beside this file, run from the firstmate code root:
 
   ```

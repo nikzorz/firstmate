@@ -25,12 +25,11 @@ WRITE_VERB = re.compile(
     r"(?:^|[\s(])(?:git\s+(?:mv|rm|apply|checkout\s+--)|mv|cp|rm|tee|touch|truncate|install|patch"
     r"|sed\s+(?:-[a-zA-Z]*i|--in-place)|perl\s+-[a-zA-Z]*i)\b")
 REDIRECT = re.compile(r"(?<![<>0-9&])>{1,2}\|?\s*([^\s;|&<>]+)")
-HEREDOC = re.compile(r"<<-?\s*['\"]?\w+")
+HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)(\w+)\2")
 # An inline script (python3 - <<EOF, python3 -c, node -e) that writes a file.
 SCRIPT = re.compile(r"(?:^|[\s(;&|])(?:python3?|perl|node|ruby)\b")
 SCRIPT_WRITE = re.compile(
     r"open\([^)]*['\"][wax]b?\+?['\"]|\.write_text\(|\.write_bytes\(|writeFileSync|appendFileSync|File\.write")
-SEGMENT = re.compile(r"&&|\|\||;|\n")
 
 
 def transcripts(root):
@@ -83,6 +82,14 @@ def contains(obj, needle):
     return any(needle in s for s in strings(obj))
 
 
+def without_old_text(obj):
+    if isinstance(obj, dict):
+        return {k: without_old_text(v) for k, v in obj.items() if k != "old_string"}
+    if isinstance(obj, list):
+        return [without_old_text(v) for v in obj]
+    return obj
+
+
 def tool_uses(r):
     if r.get("type") != "assistant":
         return []
@@ -92,32 +99,106 @@ def tool_uses(r):
     return [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
 
 
+def segments(command):
+    """Split a shell command at unquoted ;, &&, || and newlines into (raw, shape, heredoc body) triples.
+
+    shape is the raw text with < and > inside quotes blanked, so only real redirections match REDIRECT,
+    and each heredoc body belongs to the segment that opened it, ending at its terminator.
+    """
+    segs, raw, shape, pending = [], [], [], []
+    i, quote, n = 0, None, len(command)
+
+    def close():
+        segs.append(["".join(raw), "".join(shape), ""])
+        raw.clear()
+        shape.clear()
+
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == quote:
+                quote = None
+            elif c == "\\" and quote == '"' and i + 1 < n:
+                raw.append(command[i:i + 2])
+                shape.append(command[i:i + 2].replace(">", " ").replace("<", " "))
+                i += 2
+                continue
+            raw.append(c)
+            shape.append(" " if c in "<>" else c)
+            i += 1
+            continue
+        if c in "'\"":
+            quote = c
+        elif c == "\\" and i + 1 < n:
+            raw.append(command[i:i + 2])
+            shape.append(command[i:i + 2])
+            i += 2
+            continue
+        elif command.startswith("<<<", i):
+            raw.append("<<<")
+            shape.append("<<<")
+            i += 3
+            continue
+        elif (m := HEREDOC.match(command, i)):
+            pending.append((m.group(1) == "-", m.group(3), len(segs)))
+            raw.append(m.group(0))
+            shape.append(m.group(0))
+            i = m.end()
+            continue
+        elif c == "\n" or c == ";" or command.startswith(("&&", "||"), i):
+            close()
+            i += 1 if c in "\n;" else 2
+            if c == "\n":
+                for strip, word, at in pending:
+                    body = []
+                    while i < n:
+                        end = command.find("\n", i)
+                        end = n if end < 0 else end
+                        line, i = command[i:end], end + 1
+                        if (line.lstrip("\t") if strip else line) == word:
+                            break
+                        body.append(line)
+                    segs[at][2] += "\n".join(body)
+                pending.clear()
+            continue
+        raw.append(c)
+        shape.append(c)
+        i += 1
+    close()
+    return [tuple(seg) for seg in segs]
+
+
+def writes_file(shape):
+    return any(t != "/dev/null" for t in REDIRECT.findall(shape)) or bool(WRITE_VERB.search(shape))
+
+
+def script_writes(shape, body):
+    return bool(SCRIPT.search(shape) and SCRIPT_WRITE.search(shape + "\n" + body))
+
+
 def write_shaped(command):
     """True when a shell command changes files: a write verb, a redirection to a file, or an inline script that writes one."""
-    if any(t != "/dev/null" for t in REDIRECT.findall(command)):
-        return True
-    if SCRIPT.search(command) and SCRIPT_WRITE.search(command):
-        return True
-    return any(WRITE_VERB.search(seg) for seg in SEGMENT.split(command))
+    return any(writes_file(shape) or script_writes(shape, body) for _, shape, body in segments(command))
 
 
 def bash_writes(command, needle):
-    """True when a shell command writes the needle: names it in a write-shaped segment or redirect target, writes it in a heredoc, or names it in an inline script that writes files."""
-    if any(needle in t for t in REDIRECT.findall(command)):
-        return True
-    if needle in command and SCRIPT.search(command) and SCRIPT_WRITE.search(command):
-        return True
-    lines = command.split("\n")
-    for n, line in enumerate(lines):
-        if HEREDOC.search(line) and write_shaped(line) and needle in "\n".join(lines[n + 1:]):
+    """True when one segment of a shell command writes the needle: a redirect target or write verb naming it, a heredoc that segment writes out, or an inline script there that writes files."""
+    for raw, shape, body in segments(command):
+        if any(needle in t for t in REDIRECT.findall(shape)):
             return True
-    return any(needle in seg and WRITE_VERB.search(seg) for seg in SEGMENT.split(command))
+        if needle in raw and WRITE_VERB.search(shape):
+            return True
+        if needle in body and writes_file(shape):
+            return True
+        if needle in raw + "\n" + body and script_writes(shape, body):
+            return True
+    return False
 
 
 def wrote(block, needle):
     name, i = block.get("name"), block.get("input") or {}
     if name in WRITE_TOOLS:
-        return contains(i, needle)
+        return contains(without_old_text(i), needle)
     if name == "Bash":
         return bash_writes(str(i.get("command", "")), needle)
     return False
@@ -233,8 +314,9 @@ def show(path, before):
     for title, items in (("Loaded at start", loaded), ("Rules loaded on demand", rules),
                          ("Skills invoked", skills), ("Files read", reads),
                          ("Files edited", edits), ("Commands run", bash)):
+        items = list(dict.fromkeys(items))
         print(f"== {title} ({len(items)})")
-        for item in dict.fromkeys(items):
+        for item in items:
             print(f"   {item}")
 
 
@@ -244,7 +326,7 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("find", help="sessions that wrote or mention the needle, oldest first")
     s.add_argument("needle", help="a file path, or text unique to the line")
-    s.add_argument("--at", help="commit time (git show -s --format=%%cI <sha>); keeps sessions spanning it")
+    s.add_argument("--at", help="commit time (git show -s --format=%%aI <sha>); keeps sessions spanning it")
     s.add_argument("--slack", type=int, default=30, help="minutes either side of --at (default 30)")
     s = sub.add_parser("show", help="what one session loaded, read, invoked, edited and ran")
     s.add_argument("transcript", help="path from `find`, or one relative to the root (after `--` when it starts with -)")

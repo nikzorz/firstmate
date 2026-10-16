@@ -54,6 +54,14 @@ transcript -work-pool-1-arena/script.jsonl "$WT" 2026-10-15T15:00:00Z 2026-10-15
   '"Bash","input":{"command":"python3 - <<'"'"'EOF'"'"'\np = '"'"'tools/ci/setup.sh'"'"'\ns = open(p).read()\nopen(p, '"'"'w'"'"').write(s)\nEOF"}}'
 transcript -work-pool-1-arena/script-read.jsonl "$WT" 2026-10-15T15:40:00Z 2026-10-15T15:50:00Z "count it" \
   '"Bash","input":{"command":"python3 -c \"print(open('"'"'tools/ci/setup.sh'"'"').read().count(chr(10)))\""}}'
+transcript -work-pool-1-arena/quoted.jsonl "$WT" 2026-10-15T16:00:00Z 2026-10-15T16:10:00Z "search it" \
+  '"Bash","input":{"command":"rg -n \"=> settle_frames\" scripts"}}'
+transcript -work-pool-1-arena/heredoc-then-run.jsonl "$WT" 2026-10-15T16:20:00Z 2026-10-15T16:30:00Z "note and run" \
+  '"Bash","input":{"command":"cat > /tmp/notes.md <<EOF\nscratch\nEOF\nbash tests/motion.test.sh"}}'
+transcript -work-pool-1-arena/script-then-read.jsonl "$WT" 2026-10-15T16:40:00Z 2026-10-15T16:50:00Z "scratch then read" \
+  '"Bash","input":{"command":"python3 -c \"open('"'"'/tmp/o'"'"', '"'"'w'"'"').write('"'"'x'"'"')\"; cat docs/ledger.tsv"}}'
+transcript -work-pool-1-arena/edit-removes.jsonl "$WT" 2026-10-15T17:00:00Z 2026-10-15T17:10:00Z "drop the budget" \
+  '"Edit","input":{"file_path":"/work/pool/1/arena/docs/design.md","old_string":"The frame budget is unit_budget_ms.","new_string":""}}'
 transcript -work-pool-1-arena/edit/subagents/agent-1.jsonl "$WT" 2026-10-15T10:30:00Z 2026-10-15T10:40:00Z "subagent task" \
   '"Read","input":{"file_path":"/work/pool/1/arena/scripts/motion.gd","note":"var settle_frames = 2"}}'
 transcript -home-me--no-mistakes-worktrees-8558e7c04f3e-01RUNID/review.jsonl \
@@ -104,6 +112,21 @@ test_shell_writes_count_as_writes() {
   pass "shell-made writes are reported as WROTE and reads as mentions"
 }
 
+test_reads_that_look_like_writes_are_mentions() {
+  local out
+  out=$(sessions find settle_frames)
+  assert_contains "$(line_for "$out" quoted.jsonl)" mentions "a > inside a quoted argument is not a redirect"
+  out=$(sessions find tests/motion.test.sh)
+  assert_contains "$(line_for "$out" heredoc-then-run.jsonl)" mentions "a command after a heredoc's terminator is not in its body"
+  out=$(sessions find docs/ledger.tsv)
+  assert_contains "$(line_for "$out" script-then-read.jsonl)" mentions "a read beside a writing inline script is not written by it"
+  out=$(sessions find unit_budget_ms)
+  assert_contains "$(line_for "$out" edit-removes.jsonl)" mentions "an Edit that removes the text does not write it"
+  out=$(sessions find scratch)
+  assert_contains "$(line_for "$out" heredoc-then-run.jsonl)" WROTE "the heredoc body itself is still written"
+  pass "reads shaped like writes are reported as mentions"
+}
+
 test_pipeline_sessions_are_labelled() {
   local out
   out=$(sessions find docs/ledger.tsv)
@@ -127,9 +150,9 @@ test_show_lists_what_the_session_had() {
   cat >"$TR/$rel" <<EOF
 {"type":"attachment","timestamp":"2026-10-15T09:00:00Z","cwd":"$WT","attachment":{"type":"instructions","files":[{"path":"$WT/AGENTS.md","type":"Project","content":"rules"}]}}
 {"type":"user","timestamp":"2026-10-15T09:00:01Z","cwd":"$WT","message":{"role":"user","content":"<command-name>/no-mistakes</command-name>"}}
-{"type":"assistant","timestamp":"2026-10-15T09:01:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"diagnostic-reasoning"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}}]}}
+{"type":"assistant","timestamp":"2026-10-15T09:01:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"diagnostic-reasoning"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Read","input":{"file_path":"$WT/scripts/motion.gd"}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:01:01Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/test-placement.md","content":{}}}
-{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"assistant","timestamp":"2026-10-15T09:02:00Z","cwd":"$WT","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"$WT/scripts/motion.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git mv a.gd b.gd"}},{"type":"tool_use","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","name":"Bash","input":{"command":"awk '\$2 > 0' f.tsv"}}]}}
 {"type":"attachment","timestamp":"2026-10-15T09:30:00Z","cwd":"$WT","attachment":{"type":"nested_memory","path":"$WT/.claude/rules/late-rule.md","content":{}}}
 EOF
   out=$(sessions show -- "$rel")
@@ -140,6 +163,8 @@ EOF
   assert_contains "$out" "== Files edited (1)" "the Edit is listed as an edit"
   assert_contains "$out" "WRITE git mv a.gd b.gd" "a write-shaped command is marked"
   assert_contains "$out" "      git status" "a read-only command is not marked"
+  assert_contains "$out" "      awk '\$2 > 0' f.tsv" "a > inside quotes does not mark a command"
+  assert_contains "$out" "== Files read (1)" "a file read twice counts once"
   assert_contains "$out" "late-rule.md" "without --before every rule is listed"
   out=$(sessions show "$TR/$rel" --before 2026-10-15T09:10:00Z)
   assert_not_contains "$out" "late-rule.md" "--before drops what the session loaded after that time"
@@ -160,6 +185,7 @@ test_helper_changes_nothing() {
 test_find_marks_the_writer_at_the_commit_time
 test_find_without_a_time_lists_every_session_oldest_first
 test_shell_writes_count_as_writes
+test_reads_that_look_like_writes_are_mentions
 test_pipeline_sessions_are_labelled
 test_no_match_fails_with_a_hint
 test_show_lists_what_the_session_had
