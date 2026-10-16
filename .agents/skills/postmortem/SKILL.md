@@ -43,8 +43,8 @@ Read every source, because each one holds misses the others miss:
 
 Classify each item:
 
-- **Miss:** a finding that held (fixed, or accepted as a known limitation because it is true), a finding that was refuted (ruled wrong, or a fix round that changed nothing because the claim did not hold), a red job the change caused, a firstmate ruling that rejected the worker's approach, or a captain correction.
-- **Pipeline event, not a miss:** an item that makes no claim about the change, such as an agent's budget cut, a lost runner, the pipeline asking to confirm a change has no live surface, or a refusal over work an interrupted agent left.
+- **Miss:** a finding that held (fixed, or accepted as a known limitation because it is true), a finding that was refuted (ruled wrong, or a fix round that changed nothing because the claim did not hold), a red job the change caused, a firstmate ruling that rejected the worker's or a fix round's approach, or a captain correction.
+- **Pipeline event, not a miss:** an item that makes no claim about the change, such as an agent's budget cut, a lost runner, a red job the change did not cause, the pipeline asking to confirm a change has no live surface, or a refusal over work an interrupted agent left.
   List each as a side finding and give it a one-line entry in the log of misses.
   When that log already holds the same event on an earlier PR, the side finding says it recurred, so the pattern reaches the captain.
 
@@ -54,7 +54,7 @@ Done when every item has a class and each miss has an id: the finding id, `ci-<j
 
 Decide whose setup missed:
 
-- **Author:** the finding held, the job failed because of the change, firstmate rejected the worker's approach, or the captain corrected the work.
+- **Author:** the finding held, the job failed because of the change, firstmate rejected the worker's or a fix round's approach, or the captain corrected the work.
   The author's setup is the ship worker's: its brief (`data/<id>/brief.md` and the home's shared bullet files it was filled from), the project's always-on and path-scoped rules, and the skills it loaded.
   Firstmate is the author when its brief, steer or ruling let the miss through, and when the captain corrected firstmate itself.
 - **Reviewer:** the finding was refuted.
