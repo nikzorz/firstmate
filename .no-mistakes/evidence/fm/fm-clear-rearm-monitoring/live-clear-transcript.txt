@@ -1,0 +1,33 @@
+## register probe check (creates supervision need) 11:19:39
+registered: state/labprobe.check.sh
+## lab hook processes before /clear 11:19:39
+(none)
+## epoch ledger before /clear
+(absent)
+## lock-session before /clear: 1f2ad1ac-fcc3-4d2f-ba20-e0d3b90df414
+## /clear sent at 11:19:40; lab hook processes 15s later 11:19:55
+2486396 bash /tmp/fm-src.kalG1o/bin/fm-claude-stop-autoarm.sh
+2486830 bash /tmp/fm-src.kalG1o/bin/fm-supervision-host.sh park
+2487314 bash /tmp/fm-src.kalG1o/bin/fm-watch-arm.sh
+2487380 bash /tmp/fm-src.kalG1o/bin/fm-watch.sh
+## epoch ledger after /clear
+epoch=1 owner_pid=2486396 outcome=arming updated_at=1792171180
+linux-starttime=7162138 cmdline-hex=62617368002f746d702f666d2d7372632e6b616c47316f2f62696e2f666d2d636c617564652d73746f702d6175746f61726d2e736800
+## touched fire 11:20:01
+## after rewake 11:25:51
+epoch:
+epoch=2 owner_pid=2694838 outcome=arming updated_at=1792171502
+processes:
+2694838 bash /tmp/fm-src.kalG1o/bin/fm-claude-stop-autoarm.sh
+2695228 bash /tmp/fm-src.kalG1o/bin/fm-supervision-host.sh park
+2695474 bash /tmp/fm-src.kalG1o/bin/fm-watch-arm.sh --take-over 2677136
+2696072 bash /tmp/fm-src.kalG1o/bin/fm-watch.sh
+cycle exits:
+arm_pid=2487314	watcher_pid=2487380	origin=started	started_at=1792171181	ended_at=1792171487	exit_code=0	signal=none	reason=actionable-check	beacon_age=0	lock_before=pid:2487380|identity:linux-starttime=7162187 cmdline-hex=62617368002f746d702f666d2d7372632e6b616c47316f2f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=started:2677199
+arm_pid=2677136	watcher_pid=2677199	origin=started	started_at=1792171488	ended_at=1792171502	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=14	lock_before=pid:2677199|identity:linux-starttime=7192907 cmdline-hex=62617368002f746d702f666d2d7372632e6b616c47316f2f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=none
+arm_pid=2695474	watcher_pid=2677199	origin=attached	started_at=1792171502	ended_at=1792171502	exit_code=unknown	signal=unknown	reason=taken-over	beacon_age=14	lock_before=pid:2677199|identity:linux-starttime=7192907 cmdline-hex=62617368002f746d702f666d2d7372632e6b616c47316f2f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=started:2696072
+supervision-host log:
+1792171181	start	gen=host-2486830-1792171180	primary=claude
+1792171488	pass-through	attended	main-only	check: /tmp/fm-lab.Jfx3BT/state/labprobe.check.sh: labprobe fired after clear
+1792171502	start	gen=host-2695228-1792171502	primary=claude
+1792171502	take-over	arm=2677136

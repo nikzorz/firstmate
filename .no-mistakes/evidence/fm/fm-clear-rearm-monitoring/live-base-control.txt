@@ -1,0 +1,8 @@
+## BASE c0da724 control: register probe 11:32:00
+registered: state/labprobe.check.sh
+## processes before /clear
+(none)
+## 20s after /clear 11:32:21
+async hooks spawned: 0
+(none)
+epoch: absent

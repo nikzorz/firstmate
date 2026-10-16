@@ -1,0 +1,24 @@
+ ▐▛███▛█   Claude Code v2.1.294
+▝▜██████▀  Opus 5.5 (1M context) with medium effort · Claude Max
+ ▝▝   ▝▝   /tmp/fm-src.kalG1o
+⚠ Your login expires in 3 days · run /login to renew
+▎ Debug mode enabled · logging to /home/nik/.no-mistakes/evidence/01M52TTY0WBB62W2VK9T9HFSKE/lab2-claude-debug.log
+❯ /clear
+● Stop hook feedback
+● Bash(bin/fm-wake-drain.sh)
+  ⎿  1792171487 1       check   /tmp/fm-lab.Jfx3BT/state/labprobe.check.sh      check: /tmp/fm-lab.Jfx3BT/state/labprobe.check.sh: labprobe fired after clear
+     WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 2487380.1792171487.mWHiJo
+     WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+  ⎿  Allowed by auto mode classifier
+● Bash(cat /tmp/fm-lab.Jfx3BT/state/labprobe.check.sh 2>/dev/null | head -20; bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 2487380.1792171487.mWHiJo)
+  ⎿  #!/usr/bin/env bash
+     [ -e "/tmp/fm-lab.Jfx3BT/fire" ] && echo "labprobe fired after clear"
+     exit 0
+  ⎿  Allowed by auto mode classifier
+● Captain, shipshape. A test monitoring check fired once after the context reset, which shows monitoring still works through a reset. It needed no action, and I've marked it handled.
+✻ Crunched for 12s · done 11:25 AM
+ ☀  Clear  5% of context  53.0k / 1M   last turns █                                                                                                                                                 [-]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

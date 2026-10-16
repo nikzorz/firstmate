@@ -1,0 +1,12 @@
+2026-10-16T17:19:40.667Z [DEBUG] Hooks: Config-based async hook, backgrounding process async_hook_2486396
+2026-10-16T17:19:41.842Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\nbin: ~/.nvm/versions/node/v24.21.0/bin/lavish-axi\ndescription: \"Lavish Edit
+2026-10-16T17:19:43.597Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\n\n===========================================================================
+2026-10-16T17:24:49.336Z [ERROR] "Hook SessionStart:clear (SessionStart) error: status code 2\nstderr:\nfirstmate watcher wake - one supervision event needs a h
+2026-10-16T17:25:02.070Z [DEBUG] Hooks: Config-based async hook, backgrounding process async_hook_2694838
+2026-10-16T17:26:01.519Z [DEBUG] Hooks: Config-based async hook, backgrounding process async_hook_2712518
+2026-10-16T17:26:02.802Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\nbin: ~/.nvm/versions/node/v24.21.0/bin/lavish-axi\ndescription: \"Lavish Edit
+2026-10-16T17:26:04.144Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\n\n===========================================================================
+2026-10-16T17:30:16.104Z [DEBUG] Hooks: Config-based async hook, backgrounding process async_hook_2846473
+## base control
+2026-10-16T17:32:02.832Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\nbin: ~/.nvm/versions/node/v24.21.0/bin/lavish-axi\ndescription: \"Lavish Edit
+2026-10-16T17:32:04.466Z [DEBUG] "Hook SessionStart:clear (SessionStart) success:\n\n===========================================================================

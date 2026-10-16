@@ -1,0 +1,25 @@
+## before second /clear 11:26:00 (Stop park live)
+epoch=2 owner_pid=2694838 outcome=arming updated_at=1792171502
+2694838 bash /tmp/fm-src.kalG1o/bin/fm-claude-stop-autoarm.sh
+2695228 bash /tmp/fm-src.kalG1o/bin/fm-supervision-host.sh park
+2695474 bash /tmp/fm-src.kalG1o/bin/fm-watch-arm.sh --take-over 2677136
+2696072 bash /tmp/fm-src.kalG1o/bin/fm-watch.sh
+## 20s after second /clear 11:26:21
+async hooks spawned by the clear: 1
+2026-10-16T17:26:01.519Z [DEBUG] Hooks: Config-based async hook, backgrounding process async_hook_2712518
+epoch=2 owner_pid=2694838 outcome=arming updated_at=1792171502
+2694838 bash /tmp/fm-src.kalG1o/bin/fm-claude-stop-autoarm.sh
+2695228 bash /tmp/fm-src.kalG1o/bin/fm-supervision-host.sh park
+2695474 bash /tmp/fm-src.kalG1o/bin/fm-watch-arm.sh --take-over 2677136
+2696072 bash /tmp/fm-src.kalG1o/bin/fm-watch.sh
+autoarm process count: 1
+## touched fire 11:26:35
+## after wake 11:30:41
+epoch=3 owner_pid=2846473 outcome=arming updated_at=1792171816
+2846473 bash /tmp/fm-src.kalG1o/bin/fm-claude-stop-autoarm.sh
+2846882 bash /tmp/fm-src.kalG1o/bin/fm-supervision-host.sh park
+2847156 bash /tmp/fm-src.kalG1o/bin/fm-watch-arm.sh --take-over 2830243
+2847821 bash /tmp/fm-src.kalG1o/bin/fm-watch.sh
+1792171794	pass-through	attended	main-only	check: /tmp/fm-lab.Jfx3BT/state/labprobe.check.sh: labprobe fired after clear
+1792171816	start	gen=host-2846882-1792171816	primary=claude
+1792171816	take-over	arm=2830243
