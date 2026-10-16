@@ -43,6 +43,9 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
 5. Fix a blocking finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
    When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names, such as every script a power fight runs) and tell the fix round to derive the members from the code and name that derivation in the check.
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
+   A finding's remedy and its example are one case of the property, never the property.
+   Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
+   Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
    - a product or architecture call not settled by accepted intent

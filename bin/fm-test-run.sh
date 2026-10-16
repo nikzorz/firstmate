@@ -302,7 +302,7 @@ family_for_basename() {
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
-    fm-timeout-lib.test.sh|\
+    fm-timeout-lib.test.sh|fm-nm-findings.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
@@ -1614,6 +1614,13 @@ families_for_changed_path() {
       ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
     bin/fm-x-*|bin/fm-check*|bin/fm-attribution-lib.sh)
+      printf '%s\n' pr-forge
+      ;;
+    bin/fm-nm-findings-lib.sh)
+      # The one reader of no-mistakes finding records, sourced by
+      # bin/fm-nm-findings.sh (pure-contract-unit) and bin/fm-pr-merge.sh's
+      # unruled-finding guard (pr-forge).
+      printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
       ;;
     bin/fm-nm-run-lib.sh)
