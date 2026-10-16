@@ -186,11 +186,12 @@ JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
 # Bound applied automatically on the automatic --changed path, derived from
-# measured healthy runtimes with margin rather than picked: the slowest measured
-# script is tests/fm-supervision-host.test.sh at about 1292s under CI load (the hint
-# table below records that loaded figure). 1500s keeps every measured script
-# under the bound with roughly 1.16x headroom over the slowest loaded measurement,
-# and it stays under the 30-minute normal CI tier so a wedged script fails here,
+# measured healthy runtimes with margin rather than picked. The floor is the
+# slowest single serial script's loaded CI hint in the table below, which
+# --check-coverage's serial_max_ms can never fall under; read the current figure
+# there rather than restating it. PORTABLE_SERIAL_MAX_WEIGHT_MS must sit above
+# that floor and under this bound, which keeps every measured script under it
+# and stays under the 30-minute normal CI tier so a wedged script fails here,
 # with its output, before the job cap
 # cancels the lane. It is a guard, not a speed control: a HUNG script becomes a
 # bounded failure instead of an unbounded suite, which is the shape that
