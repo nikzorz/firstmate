@@ -236,6 +236,7 @@ Each subsection below gives one harness surface's tier, its tracked transport, a
 
 Claude is a run-tier harness.
 `.claude/settings.json` registers one unmatched `SessionStart` hook, invoked through `CLAUDE_PROJECT_DIR` with a 180s timeout.
+Its second, `clear`-matched `SessionStart` entry is the watcher auto-arm rather than a session-open adapter; [`turnend-guard.md`](turnend-guard.md#harness-integrations) owns it.
 The wrapper reads `source` from the hook payload.
 Native stdout context injection is supported.
 Claude caps one hook output string at 10,000 characters.
