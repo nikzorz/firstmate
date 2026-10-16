@@ -330,6 +330,10 @@ Append \`needs-decision [at=<epoch>] [key=nm-<run>-stale-intent]: intent stale a
 Once firstmate answers \`continue this run\`, do not report stale intent again for that run on a finding that returns; report again only at the gate of a new contract-changing ruling that lands after that answer.
 Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
 
+A run fixes each theme once, and a finding that does not block the change becomes a follow-up rather than a fix round; \`validation-supervision\` defines theme and \`ask-user-authority\` defines blocking.
+When a gate returns a finding on a theme an earlier fix round of this run already fixed, including a regression a fix round introduced, auto-fix or not, do not answer fix: append \`needs-decision [at=<epoch>] [key=nm-<run>-same-theme]: same theme fixed again findings=<id1>,<id2>,... rounds=<a>,<b>,...\` naming the rounds and stop until firstmate replies.
+When a gate returns a finding that does not block the change, auto-fix or not, do not answer fix: escalate it using rule 6's ask-user format and its \`nm-<run>-<step>\` key, and stop until firstmate replies.
+
 $drive_block
 A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
 Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns the checks that decide when a pipeline block is real.

@@ -30,16 +30,18 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    Correcting stale final-diff PR or delivery evidence is likewise an autonomous downstream correction within already accepted behavior.
 3. Decide whether the finding blocks the change.
    It blocks when the change would be wrong without it: it breaks an accepted requirement, a test, or behavior the change promised, or it is security-sensitive.
-   A finding that only improves the change does not block: a simplification, an edge case of a heuristic the change openly is, or a hardening or Fix that would materially expand the contract (a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture) the accepted intent did not include.
+   A finding that only improves the change does not block: a simplification, an edge case of a heuristic the change openly is (including a heuristic the brief or the captain's intent asks for), or a hardening or Fix that would materially expand the contract (a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture) the accepted intent did not include.
 4. File a non-blocking finding instead of fixing it, without asking the captain.
    Open one follow-up issue in the project's repo with `gh-axi`, carrying the finding verbatim, the PR, and the smallest change that would address it; when the project takes no issues, add a backlog item instead.
    The gate answer leaves the finding unfixed with that issue as the reason, and the worker links the issue from the PR body before it reports the PR ready.
+   While the captain is away, the away-posture supervision branch does not file: it records the follow-up text in its outcome for the return brief, answers the gate leaving the finding unfixed with that recorded follow-up as the reason, and firstmate files the issue on return.
 5. Fix a blocking finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
    - a product or architecture call not settled by accepted intent
    - destructive, irreversible, and genuinely security-sensitive choices, which always escalate under the stronger existing captain boundary
-7. A finding on a theme already fixed in an earlier round of the same run follows the same-theme cutoff in `validation-supervision` instead of another fix round.
+   - a second blocking finding on a theme an earlier round of the same run already fixed, as `validation-supervision` defines theme
+7. A non-blocking finding on a theme already fixed in an earlier round of the same run follows the same-theme cutoff in `validation-supervision` instead of another fix round.
 8. Treat labels such as correctness, security, fail-closed, high-risk, or required as evidence about the finding, never as authority to broaden the task or to make it blocking.
 
 ## Captain-facing escalation

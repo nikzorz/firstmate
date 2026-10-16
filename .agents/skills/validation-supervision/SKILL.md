@@ -29,8 +29,10 @@ Resume fleet supervision immediately after the decision lands.
 A validation run fixes each theme once.
 A theme is one root cause in one piece of code, such as the input cases of one heuristic, however many lines or files its findings name.
 When a run returns a finding on a theme already fixed in an earlier round of that run, stop fixing that theme: file the theme as one follow-up issue naming every round's finding on it, have the worker record it as a stated limitation in the PR body, and answer the gate leaving those findings unfixed so the run continues.
-A finding on that theme that blocks the change, as `ask-user-authority` defines blocking, is still fixed.
-Apply the cutoff at every gate firstmate answers, and steer the worker to apply it when its pane shows a repeat in rounds it drives itself.
+A finding on that theme that blocks the change, as `ask-user-authority` defines blocking, escalates to the captain under that skill's step 6 instead of another fix round.
+While the captain is away, the filing waits for the return as `ask-user-authority` step 4 says.
+Apply the cutoff at every gate firstmate answers.
+The worker stops at a same-theme repeat or a non-blocking finding in rounds it drives itself and escalates it as `needs-decision` under the contract `bin/fm-dod-lib.sh` owns, so firstmate applies this cutoff there too.
 The postmortem traces such a run as a miss of its own.
 
 Judge validation by the resolved state line from [`bin/fm-crew-state.sh`](../../../bin/fm-crew-state.sh), whose header owns outcome mappings and CI-monitor/daemon exceptions, never by shell liveness, the last status event, or a raw run record.
