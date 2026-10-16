@@ -385,8 +385,8 @@ STUB
   payload="$TMP_ROOT/promote-dod/payload-promote-dod-no-mistakes"
   assert_grep "ask-user findings are never yours to answer: escalate to firstmate" "$payload" \
     "promoted no-mistakes worker did not receive the ask-user escalation rule"
-  assert_grep "write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$payload" \
-    "promoted no-mistakes worker did not receive the ask-user-only snapshot contract"
+  assert_grep "write every finding on the gate, whatever its action, unless this brief names that finding's class as one you may approve yourself, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$payload" \
+    "promoted no-mistakes worker did not receive the whole-gate snapshot contract"
   # shellcheck disable=SC2016  # single quotes are deliberate: the placeholders must stay literal
   assert_grep 'needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file='"$home/data/promote-dod-no-mistakes/nm-<run>-findings.txt" "$payload" \
     "promoted no-mistakes worker did not receive the structured escalation event"

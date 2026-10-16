@@ -116,8 +116,10 @@
 # which finding is that question is told by the pipeline's own wording, the
 # only mark it carries. A review round that parked on incomplete coverage and
 # was approved - its selection declined, or it is the last round of a
-# completed step - also needs a `needs-decision [key=nm-<run>-review]` line,
-# since such a park can hold no finding to name. The rounds come from
+# completed step - also needs a `needs-decision [key=nm-<run>-...]` line of its
+# run naming the reserved id `coverage` in findings=, since such a park holds no
+# finding to name and the review key alone also marks every ordinary review
+# escalation. The rounds come from
 # bin/fm-nm-findings-lib.sh's reader of no-mistakes' state database (NM_HOME,
 # default ~/.no-mistakes) and the review step's log. A database, round record,
 # review log, or status log that cannot be read refuses, naming what could not
@@ -1613,12 +1615,12 @@ for entry in steps.values():
 
 # Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
 # run left unruled with no decision request of that run naming it, and per
-# approved review coverage park with no decision request keyed to that run's
-# review step, or to one line saying what could not be read. Empty when the
+# approved review coverage park with no decision request of that run naming
+# the reserved id coverage, or to one line saying what could not be read. Empty when the
 # task is not a no-mistakes task or records no branch, which binds no run.
 UNRULED_FINDING_REFUSALS=
 collect_unruled_finding_refusals() {
-  local mode branch project status_file db unruled named='' keyed='' run step round kind finding_id action
+  local mode branch project status_file db unruled named='' run step round kind finding_id action
   local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
   UNRULED_FINDING_REFUSALS=
   mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
@@ -1639,7 +1641,6 @@ collect_unruled_finding_refusals() {
     fi
     named=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-[^:]*:.*[[:space:]]findings=\([^[:space:]]*\).*/\1 \2/p' "$status_file" \
       | awk '{ n = split($2, ids, ","); for (i = 1; i <= n; i++) print $1 "\t" ids[i] }')
-    keyed=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-\([^]]*\)\].*/\1 \2/p' "$status_file")
   fi
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
   if ! merge_scratch_file reader_err nm-reader \
@@ -1652,8 +1653,8 @@ collect_unruled_finding_refusals() {
   while IFS=$'\t' read -r run step round kind finding_id action; do
     [ -n "$finding_id" ] || continue
     if [ "$kind" = coverage ]; then
-      printf '%s\n' "$keyed" | grep -qxF -- "$run $step" && continue
-      UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log keyed nm-$run-$step asks about
+      printf '%s\n' "$named" | grep -qxF -- "$run"$'\t'coverage && continue
+      UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log names as coverage for that run
 "
       continue
     fi

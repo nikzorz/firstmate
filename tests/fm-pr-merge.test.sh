@@ -4870,11 +4870,18 @@ test_approved_coverage_park_needs_a_decision_request() {
   assert_no_grep "round 1 was approved" "$case_dir/stderr" "nm-coverage: a coverage park answered with fix was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-coverage: gh pr merge ran over an approved coverage park"
 
-  printf 'needs-decision [at=1792000000] [key=nm-%s-review]: review coverage incomplete findings= file=%s\n' \
+  printf 'needs-decision [at=1791000000] [key=nm-%s-review]: ask-user findings=fixed-1 file=%s\n' \
     "$NM_RUN_1704" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
   run_nm_merge "$case_dir"
-  expect_code 0 "$NM_MERGE_RC" "nm-coverage: the merge failed once a decision request was keyed to the review: $(cat "$case_dir/stderr")"
-  pass "fm-pr-merge refuses a review coverage park approved without a decision request keyed to that review"
+  expect_code 1 "$NM_MERGE_RC" "nm-coverage: an earlier review escalation of another finding cleared a later coverage park"
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+    "$case_dir/stderr" "nm-coverage: the coverage park was not named once only an unrelated review escalation existed"
+
+  printf 'needs-decision [at=1792000000] [key=nm-%s-review]: ask-user findings=coverage file=%s\n' \
+    "$NM_RUN_1704" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-coverage: the merge failed once a decision request named the coverage park: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run"
 }
 
 test_unreadable_review_log_refuses_merge() {

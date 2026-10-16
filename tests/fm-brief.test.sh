@@ -587,15 +587,16 @@ test_ask_user_escalation_format() {
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
 
-  # A no-mistakes ask-user gate must escalate its ask-user findings as one status
-  # event plus one verbatim findings snapshot file, using that same shape even
-  # for a single finding, never paraphrased into the status line.
-  assert_grep "escalate all ask-user findings as one event plus one snapshot file" "$brief" \
-    "ship rule 6 lost the one-event-plus-snapshot-file ask-user contract"
-  assert_grep "using that same shape even when the gate holds only a single ask-user finding" "$brief" \
+  # A no-mistakes ask-user gate, and any gate the worker would approve or skip,
+  # must escalate as one status event plus one verbatim snapshot file holding
+  # every finding on the gate whatever its action, since the merge guard refuses
+  # any finding of an approved or skipped round that no decision request names.
+  assert_grep "For a no-mistakes ask-user gate, and before you approve or skip any gate, escalate the whole gate as one event plus one snapshot file" "$brief" \
+    "ship rule 6 lost the one-event-plus-snapshot-file contract for ask-user, approved, and skipped gates"
+  assert_grep "using that same shape even when the gate holds only a single finding" "$brief" \
     "ship rule 6 must require the same shape for a single finding"
-  assert_grep "write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$brief" \
-    "ship rule 6 must limit the verbatim axi slice to ask-user findings"
+  assert_grep "write every finding on the gate, whatever its action, unless this brief names that finding's class as one you may approve yourself, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$brief" \
+    "ship rule 6 must put every finding but a granted class in the verbatim snapshot"
   # shellcheck disable=SC2016  # single quotes are deliberate: backticks and the key/findings/file tokens must stay literal
   assert_grep 'needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file='"$home/data/$id/nm-<run>-findings.txt" "$brief" \
     "ship rule 6 must render the exact needs-decision ask-user status line"
@@ -604,16 +605,11 @@ test_ask_user_escalation_format() {
   assert_grep "The status line only points at the file; it never restates or summarizes a finding's content." "$brief" \
     "ship rule 6 must forbid paraphrasing ask-user findings into the status line"
 
-  # Approving or skipping a gate leaves its findings to the merge guard, which
-  # refuses any finding of such a round, or any approved coverage park, that no
-  # decision request names; the worker must escalate the whole gate first.
-  assert_grep "Before you approve or skip any gate, escalate every finding on it in that same shape, whatever its action" "$brief" \
-    "ship rule 6 must escalate every finding of a gate the worker would approve or skip"
-  assert_grep "unless this brief names that finding's class as one you may approve yourself" "$brief" \
-    "ship rule 6 must except only a finding class the brief grants"
+  # A coverage park holds no finding to name, so the guard reads the reserved id
+  # instead of the review key every ordinary review escalation also carries.
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'a review gate parked on incomplete review coverage escalates under its `nm-<run>-review` key even when it holds no finding' "$brief" \
-    "ship rule 6 must escalate a coverage park under the key the merge guard reads"
+  assert_grep 'Before you approve a review gate parked on incomplete review coverage, escalate it the same way with the reserved id `coverage` in `findings=`' "$brief" \
+    "ship rule 6 must escalate a coverage park under the reserved id the merge guard reads"
 
   # The DOD's own ask-user paragraph must point back at rule 6's format
   # (one-owner rule) rather than restating or bare-citing it.
