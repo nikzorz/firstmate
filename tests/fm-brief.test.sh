@@ -1127,6 +1127,20 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+test_scout_brief_requires_traced_done_when() {
+  local home brief
+  home="$TMP_ROOT/traced-done-when-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-brief.sh" traced-scout sample --scout >/dev/null 2>&1
+  brief="$home/data/traced-scout/brief.md"
+  assert_grep "states as Done-when only what you traced to the code that makes it reachable" "$brief" \
+    "scout brief did not require a traced Done-when"
+  assert_grep "says \`unverified:\` and names the run that would settle it" "$brief" \
+    "scout brief did not require unverified: marking"
+  pass "fm-brief.sh: scout brief limits ticket Done-when to what was traced"
+}
+
 # A scout brief offers the Lavish review loop for every compatible board version,
 # including older builds that use the legacy reply path.
 test_scout_lavish_line_follows_presentation_floor() {
@@ -1739,6 +1753,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_ship_and_scout_teach_validation_round_pause
 test_scout_and_secondmate_load_decision_hold_policy
+test_scout_brief_requires_traced_done_when
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
 test_workers_wait_without_spending_turns
