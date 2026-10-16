@@ -1,0 +1,10 @@
+ok - each fixture brief is refused naming its extra bullet
+ok - a spec of pure build instructions passes
+ok - a justified bullet passes and an empty justification does not
+ok - each bullet carries its continuation lines
+ok - the judge runs with no tools in safe mode
+ok - a judge that is not installed skips the check with a warning
+ok - an installed judge that fails or answers malformed refuses instead of passing
+ok - a brief without both subsections refuses before asking the judge
+# all fm-spec-intent-check tests passed
+EXIT=0

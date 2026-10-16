@@ -1,0 +1,50 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.rKc4Ge
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: the spec-intent check could not judge /tmp/fm-lab.rKc4Ge/data/labnojudge/brief.md (cannot-run: the judge exited 1); see /tmp/fm-lab.rKc4Ge/data/labnojudge/spec-intent-check.txt
+error: labnojudge cannot launch until the spec-intent check of /tmp/fm-lab.rKc4Ge/data/labnojudge/brief.md can run (see the refusal above)
+SPAWN_EXIT=1
+bash-5.3$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,47 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.rKc4Ge
+bullet 3 adds backward-compatible match for old needs-decision lines with no round: A `needs-decision` line written before this change, with no round, still matches as today, so in-flight lanes are not refused for an old line.
+bullet 4 adds test asserting old no-round line keeps today's match: Behaviour tests over fixture records (no source greps): a round-1 escalation does not clear a round-4 finding sharing its id; the same id named for round 4 passes; an old line with no round keeps today's match.
+error: /tmp/fm-lab.rKc4Ge/data/labflag/brief.md ## Firstmate spec adds scope with no matching words in ## Captain's intent (above); cut each flagged bullet's addition, or end the bullet with [justified: <reason>], then spawn again; the judge's full answer is in /tmp/fm-lab.rKc4Ge/data/labflag/spec-intent-check.txt
+SPAWN_EXIT=1
+bash-5.3$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

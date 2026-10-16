@@ -1,0 +1,48 @@
+FM_SPEC_INTENT_CHECK_CLAUDE_BIN=/home/nik/.no-mistakes/evidence/01M52DC91Q7T7ESCC6XCTPQXMH/slow-failing-judge-probe.sh bin/fm-spawn.sh labslow /tmp/fm-lab.rKc4Ge/proj --mode local-only --yolo off --harness claude 2>&1; echo SLOW_EXIT=$? at $(date +%s)
+nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M52DC91Q7T7ESCC6XCTPQXMH$ FM_SPEC_INTENT_CHECK_CLAUDE_BIN=/home/nik/.no-mistakes/evidence/01M52DC91Q7T7ESCC6XCTPQXMH/slow-failing-judge-probe.sh bin/fm-spawn.sh labslow /tmp/fm-lab.rKc4Ge/proj --mode local-only --yolo off --harness claude 2>&1; echo SLOW_EXIT=$? at $(date +%s)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.rKc4Ge
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: the spec-intent check could not judge /tmp/fm-lab.rKc4Ge/data/labslow/brief.md (cannot-run: the judge exited 1); see /tmp/fm-lab.rKc4Ge/data/labslow/spec-intent-check.txt
+error: labslow cannot launch until the spec-intent check of /tmp/fm-lab.rKc4Ge/data/labslow/brief.md can run (see the refusal above)
+SLOW_EXIT=1 at 1792158197
+nik@DESKTOP-JEAADIJ:~/.no-mistakes/worktrees/50866b63a668/01M52DC91Q7T7ESCC6XCTPQXMH$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

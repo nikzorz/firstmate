@@ -1,0 +1,7 @@
+ok - a ship whose spec carries an unjustified flagged bullet is refused before launch
+ok - a ship whose flagged bullet is justified launches
+ok - a ship is refused when its spec cannot be judged
+ok - a ship launches with a warning naming the skipped check when no judge is installed
+ok - a scout brief is not checked
+# all fm-spawn-spec-intent-check tests passed
+EXIT=0

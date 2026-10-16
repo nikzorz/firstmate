@@ -1,0 +1,6 @@
+ok - the PR 109 brief is refused for its per-finding-id filter
+ok - the round-binding brief is refused for its fallback for lines with no round
+ok - a spec of pure build instructions passes
+ok - the fallback bullet passes once it carries a justification
+# all fm-spec-intent-check-live-e2e tests passed
+EXIT=0

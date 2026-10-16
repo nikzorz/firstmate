@@ -1,0 +1,49 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.rKc4Ge
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+notice: labconc ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned labconc harness=claude kind=ship mode=local-only yolo=off window=primary:fm-labconc worktree=/home/nik/.treehouse/proj-0a512a/1/proj
+CONC_EXIT=0 at 1792158089
+bash-5.3$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
