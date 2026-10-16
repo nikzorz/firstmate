@@ -1,0 +1,12 @@
+$ fm-spawn.sh startup-growth <proj> --mode direct-PR --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.C3wmJw
+error: invalid task id 'startup-growth'
+A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, may not take the reserved x- prefix, and may not be the name of a home-level state/ record: a home's state/ is one flat <id>.<suffix> namespace, so a dot or a shared name leaves its records unattributable.
+exit=2
+$ fm-spawn.sh mail <proj> --mode direct-PR --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.C3wmJw
+error: invalid task id 'mail'
+A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, may not take the reserved x- prefix, and may not be the name of a home-level state/ record: a home's state/ is one flat <id>.<suffix> namespace, so a dot or a shared name leaves its records unattributable.
+exit=2
+pre-fix (HEAD~1): startup-growth ADMITTED
+post-fix (HEAD): startup-growth refused

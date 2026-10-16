@@ -1,0 +1,6 @@
+fm-forge-detect rc=0
+fm-dod-lib rc=0
+fm-startup-growth-check rc=0
+fm-crew-state rc=0
+fm-teardown rc=0
+fm-pr-merge rc=0

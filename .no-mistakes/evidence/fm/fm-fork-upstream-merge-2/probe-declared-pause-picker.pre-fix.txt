@@ -1,0 +1,4 @@
+memo after first poll: working declared:r1:3436007374726f6e673a37313a393332333930353a323032362d31302d31362031333a33323a30392e303937363431363839202d3036303000726567756c61722066696c653a38316134002d007265616461626c65007265616461626c65
+watcher wake output:
+stale: test:fm-dp-picker (idle 501s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+RESULT: dialog NOT named

@@ -1,0 +1,12 @@
+$ fm-spawn.sh startup-growth <nonexistent-repo> --mode local-only --yolo off
+error: invalid task id 'startup-growth'
+A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, may not take the reserved x- prefix, and may not be the name of a home-level state/ record: a home's state/ is one flat <id>.<suffix> namespace, so a dot or a shared name leaves its records unattributable.
+exit=2
+$ fm-spawn.sh tool-updates <nonexistent-repo> --mode local-only --yolo off
+error: invalid task id 'tool-updates'
+A task id is 1-64 characters of A-Za-z0-9, underscore, or hyphen, may not take the reserved x- prefix, and may not be the name of a home-level state/ record: a home's state/ is one flat <id>.<suffix> namespace, so a dot or a shared name leaves its records unattributable.
+exit=2
+$ fm-spawn.sh growth-fix <nonexistent-repo> --mode local-only --yolo off
+error: could not resolve the shared Treehouse project lock for /tmp/fm-lab.PWt4ks/fakeproj
+exit=1
+--- state/ after:
