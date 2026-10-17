@@ -108,7 +108,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
 | `fm-nm-findings-lib.sh`  | Single read-only reader of no-mistakes' per-round finding records and review coverage parks |
-| `fm-nm-findings.sh`      | Print a no-mistakes run's findings whole, where a gate cuts each description short   |
+| `fm-nm-findings.sh`      | Print a no-mistakes run's findings whole, where a gate cuts each description short, marking a finding carried from an earlier selected round |
+| `fm-nm-rulings-lib.sh`   | Single judge of which no-mistakes rounds a task still owes a decision line           |
+| `fm-nm-rulings-owed.sh`  | List every no-mistakes round a task still owes a decision line, and the lines that clear them, before a merge refuses |
 | `fm-claude-limit-lib.sh` | Own Claude Code's usage-limit prompt signature, its extra-usage footer signature, and the quota read for whether, and when, the account window resets |
 | `fm-limit-resume.sh`     | Recover one crewmate stalled on Claude Code's usage-limit prompt once the account window has reset |
 | `fm-extra-usage.sh`      | Watcher check that notices Claude workers on paid extra usage, and the guarded steer that stops the fleet at a safe point |
@@ -128,7 +130,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
-| `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
+| `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, owed-ruling, divergence, supervision-host outcome, recovery, and supervision checks |
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |

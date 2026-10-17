@@ -5223,8 +5223,9 @@ PY
 # Run 01M51JNVA446VH0VQZS32E5XW1's gate shape: review round 1 fixes two of its
 # three ask-user findings and leaves the third, round 2 is approved over an
 # ask-user finding beside an auto-fix one, the test step is approved over an
-# ask-user no-live-surface finding with the given reason, and an ask-user
-# finding the ci step's own auto-fix carried forward is fixed by its next round.
+# ask-user no-live-surface finding with the given reason, and the ci step fixes
+# its own auto-fix finding and then an ask-user finding a fix round selected,
+# after which it completes on an empty round.
 # Args: case_dir test_approval_reason [round-2 findings_json override]
 write_nm_run_1704() {
   local case_dir=$1 reason=$2 raw=${3:-}
@@ -5241,15 +5242,16 @@ write_nm_run_1704() {
       {name: "test", order: 4, approval: $reason, rounds: [
         {round: 1, source: "user_declined", verdict: "no-surface", findings: [["test-1", "ask-user", $nolive]]}]},
       {name: "ci", order: 9, rounds: [
-        {round: 1, source: "auto_fix", selected: ["ci-1"],
-         findings: [["ci-1", "auto-fix", ""], ["ci-2", "ask-user", ""]]},
-        {round: 2, source: "user", selected: ["ci-2"], findings: [["ci-2", "ask-user", ""]]}]}]}')"
+        {round: 1, source: "auto_fix", selected: ["ci-1"], findings: [["ci-1", "auto-fix", ""]]},
+        {round: 2, source: "user", selected: ["ci-2"], findings: [["ci-2", "ask-user", ""]]},
+        {round: 3, source: null}]}]}')"
 }
 
 # Run 01M51MVCQA1KF02JHJ93P7EVSC's shape, the run of the merged PR the guard
 # missed: review round 1 fixes its one finding, rounds 2 and 3 pass without
-# parking, and test round 2, verdict go, is approved with a reason over a no-op
-# finding about what the change does.
+# parking, round 3 over an auto-fix finding the completed step never fixed, and
+# test round 2, verdict go, is approved with a reason over a no-op finding about
+# what the change does.
 write_nm_run_1713() {
   write_nm_db "$1" "$(jq -nc --arg run "$NM_RUN_1713" '
     {run: $run, steps: [
@@ -5362,10 +5364,12 @@ test_pr_1713_run_shape_refuses_merge() {
   expect_code 1 "$NM_MERGE_RC" "nm-1713-refuses: an approved no-op test finding no decision named must refuse"
   assert_grep "no-mistakes run $NM_RUN_1713 step test round 2 declined no-op finding 'test-1'" \
     "$case_dir/stderr" "nm-1713-refuses: the approved no-op test finding was not named"
-  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 1 ] \
-    || fail "nm-1713-refuses: a fixed or never-parked finding was refused: $(cat "$case_dir/stderr")"
+  assert_grep "no-mistakes run $NM_RUN_1713 step review round 3 declined auto-fix finding 'pace-min-boundary-untested'" \
+    "$case_dir/stderr" "nm-1713-refuses: the finding the completed review step passed over was not named"
+  [ "$(grep -c "finding '.*', which no needs-decision line" "$case_dir/stderr")" -eq 2 ] \
+    || fail "nm-1713-refuses: a fixed finding was refused: $(cat "$case_dir/stderr")"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1713-refuses: gh pr merge ran over an unruled finding"
-  pass "fm-pr-merge refuses the merged PR 1713 run's approved no-op test finding"
+  pass "fm-pr-merge refuses the merged PR 1713 run's approved no-op test finding and the finding its completed review passed over"
 }
 
 # Args: case_dir step approval [skip]; one approved round holding a no-op and

@@ -464,7 +464,7 @@ mkdir -p "$DATA/$ID"
 
 ASK_USER_BLOCK=
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
-  ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
+  ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID" "$STATE")
 fi
 
 shell_quote() {

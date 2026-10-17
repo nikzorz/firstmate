@@ -13,6 +13,9 @@
 # Rounds print in step order, then round order, under a
 # `== run <run> step <step> round <n>` line, so a step's last block is the gate
 # it is parked at and the blocks before it are what earlier rounds raised.
+# A finding identical in every stored field to one an earlier round of its step
+# selected carries a `carried: round <n>` line naming that round, because
+# no-mistakes can store a finding again on a round whose review never raised it.
 #
 # Exit status: 0 when everything asked for printed; 1 when the database cannot
 # be read or the run (or step) has no recorded round; 2 on a usage error.
@@ -66,6 +69,13 @@ def field(finding, key):
     return "" if value is None else str(value)
 
 
+# (step, finding as stored) -> the earliest round of that step that selected it.
+selected = {}
+for r in rounds:
+    for f in r["findings"]:
+        if f.get("id") in r["selected"]:
+            selected.setdefault((r["step_result"], json.dumps(f, sort_keys=True)), r["round"])
+
 blocks = []
 for r in rounds:
     shown = r["findings"]
@@ -73,7 +83,11 @@ for r in rounds:
     if not shown:
         lines.append("(no findings)")
     for f in shown:
-        lines += ["id: " + field(f, "id"), "severity: " + field(f, "severity"),
+        lines.append("id: " + field(f, "id"))
+        earlier = selected.get((r["step_result"], json.dumps(f, sort_keys=True)))
+        if earlier is not None and earlier < r["round"]:
+            lines.append("carried: round %s" % earlier)
+        lines += ["severity: " + field(f, "severity"),
                   "file: " + field(f, "file"), "line: " + field(f, "line"),
                   "action: " + field(f, "action"), "description: " + field(f, "description"), ""]
     blocks.append("\n".join(lines).rstrip("\n"))

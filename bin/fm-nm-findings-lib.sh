@@ -5,8 +5,9 @@
 # description short, so every firstmate reader of those records goes through
 # fm_nm_rounds below, which reads its state database (state.sqlite) and review
 # step logs read-only.
-# bin/fm-nm-findings.sh prints a run's findings whole, and bin/fm-pr-merge.sh
-# judges which findings and coverage parks a branch's runs left unruled.
+# bin/fm-nm-findings.sh prints a run's findings whole, and
+# bin/fm-nm-rulings-lib.sh judges which findings and coverage parks a branch's
+# runs left unruled.
 #
 # fm_nm_rounds <state-db> --run <run-id>
 # fm_nm_rounds <state-db> --branch <repo-working-path> <branch>

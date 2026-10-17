@@ -105,42 +105,14 @@
 # On every forge a no-mistakes task (task record mode=no-mistakes) is also
 # refused while its pipeline left a finding unruled that no decision request
 # named, because nothing else stands between a finding a worker approved unseen
-# and the merge. Every round of every no-mistakes run of the task's recorded
-# branch=, in the repository whose working path is the task's project=, is read
-# live. A round was approved or skipped when its selection was declined, or
-# when it is the step's last round and the step carries an approval or skip
-# reason; every finding of such a round is unruled, whatever its action, since
-# a worker approves or skips a gate only after escalating all of it. A round
-# answered with fix leaves unruled only an ask-user finding it did not select.
-# An unruled finding must appear in a
-# `needs-decision [key=nm-<run>-...] ... findings=<id>,...` line of the task's
-# status log whose key names the finding's own run, since finding ids repeat
-# across runs, and whose `round=<n>` names the finding's round of the step its
-# key names, since ids also repeat across the rounds of one step. A
-# `[key=nm-<run>-same-theme]` line, whose key names no step, names its ids for
-# each round its `rounds=<a>,<b>,...` list names, in any step of its run. A
-# line whose round is missing or is not a number names nothing. The one
-# exception is the captain's test-step grant: in a test step approved with a non-empty reason, the question no-mistakes itself asks
-# when its recorded live validation verdict is inconclusive or no-surface
-# (scenarios not driven live). The verdict is the round's structured field;
-# which finding is that question is told by the pipeline's own wording, the
-# only mark it carries. A review round that parked on incomplete coverage and
-# was approved - its selection declined, or it is the last round of a
-# completed step - also needs a `needs-decision [key=nm-<run>-...]` line of its
-# run and round naming the reserved id `coverage` in findings=, since such a
-# park holds no finding to name and the review key alone also marks every ordinary review
-# escalation. The rounds come from
-# bin/fm-nm-findings-lib.sh's reader of no-mistakes' state database (NM_HOME,
-# default ~/.no-mistakes) and the review step's log. A database, round record,
-# review log, or status log that cannot be read refuses, naming what could not
-# be read; a repository no-mistakes holds no record for, or a branch with no
-# run, has nothing to rule. A task record with no branch= binds no run; every
-# ship spawn records one. Each refusal names the run, step, round, and finding
-# id or coverage park, a finding carried through several rounds once for every
-# round no decision request names, and is reported with the other failing
-# conditions. After the refusals, each refused run, step, and round gets the
-# exact decision request line that would name all of its refused ids, so one
-# attempt shows everything still owed and the shape that clears it.
+# and the merge. bin/fm-nm-rulings-lib.sh owns which rounds owe a decision line
+# and what names one; bin/fm-nm-rulings-owed.sh prints the same verdict before a
+# merge is attempted. Anything that judgment cannot read refuses, naming what
+# could not be read. Each refusal names the run, step, round, and finding id or
+# coverage park, and is reported with the other failing conditions. After the
+# refusals, each refused run, step, and round gets the exact decision request
+# line that would name all of its refused ids, so one attempt shows everything
+# still owed and the shape that clears it.
 # A Forgejo merge is refused unless every pre-merge condition holds, each read
 # live at merge time: the pull request is open, not a draft, mergeable is
 # true, and the combined commit status at the exact current head, read across
@@ -303,8 +275,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-afk-contract.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
-# shellcheck source=bin/fm-nm-findings-lib.sh
-. "$SCRIPT_DIR/fm-nm-findings-lib.sh"
+# shellcheck source=bin/fm-nm-rulings-lib.sh
+. "$SCRIPT_DIR/fm-nm-rulings-lib.sh"
 # shellcheck source=bin/fm-attribution-lib.sh
 . "$SCRIPT_DIR/fm-attribution-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
@@ -1798,172 +1770,24 @@ require_released_captain_hold() {
   esac
 }
 
-# Prints run<TAB>step<TAB>round<TAB>kind<TAB>id<TAB>action for every finding
-# the no-mistakes runs of one branch left unruled and every review coverage
-# park they approved (see the header), once per run, step, round, and id (kind
-# finding, or kind coverage with id coverage and action "-"). Exits nonzero,
-# naming what could not be read, rather than printing a partial set.
-nm_unruled_findings() {  # <state-db> <project> <branch>
-  local rounds
-  rounds=$(fm_nm_rounds "$1" --branch "$2" "$3") || return 1
-  printf '%s\n' "$rounds" | python3 -I -c '
-import json
-import re
-import sys
-
-SAFE = re.compile(r"[^\s,]+")
-# The captain-granted test-step class: the question no-mistakes itself asks
-# for each verdict that leaves scenarios not driven live, in its own wording.
-GRANTED_QUESTION = {
-    "inconclusive": "live validation verdict: inconclusive (",
-    "no-surface": "this change has no live-validatable surface; proceed without live validation? (",
-}
-
-
-def given(reason):
-    return isinstance(reason, str) and reason.strip() != ""
-
-
-def granted(entry, r, finding):
-    question = GRANTED_QUESTION.get(r["verdict"])
-    description = finding.get("description")
-    return (entry["step"] == "test" and given(entry["approval"]) and question is not None
-            and isinstance(description, str) and description.startswith(question))
-
-
-steps = {}
-for line in sys.stdin:
-    if not line.strip():
-        continue
-    r = json.loads(line)
-    entry = steps.setdefault(r["step_result"], {"run": r["run"], "step": r["step"], "status": r["step_status"],
-                                                "approval": r["approval"], "skip": r["skip"], "rounds": []})
-    entry["rounds"].append(r)
-
-reported = set()
-for entry in steps.values():
-    run, step = entry["run"], entry["step"]
-    answered_last = given(entry["approval"]) or given(entry["skip"])
-    last = max(r["round"] for r in entry["rounds"])
-    for r in entry["rounds"]:
-        declined = r["source"] == "user_declined" or (r["round"] == last and answered_last)
-        passed_parked = r["round"] == last and entry["status"] == "completed"
-        if step == "review" and (declined or passed_parked):
-            if r["coverage_parked"] is None:
-                print("the review log of %s" % r["where"], file=sys.stderr)
-                sys.exit(1)
-            if r["coverage_parked"]:
-                print("%s\t%s\t%s\tcoverage\tcoverage\t-" % (run, step, r["round"]))
-        if not declined and r["source"] != "user":
-            continue
-        for finding in r["findings"]:
-            finding_id, action = finding.get("id"), finding.get("action")
-            if finding_id in r["selected"] or (not declined and action != "ask-user"):
-                continue
-            if declined and granted(entry, r, finding):
-                continue
-            if not (isinstance(finding_id, str) and SAFE.fullmatch(finding_id)):
-                print("the id of a finding in %s" % r["where"], file=sys.stderr)
-                sys.exit(1)
-            if (run, step, r["round"], finding_id) in reported:
-                continue
-            reported.add((run, step, r["round"], finding_id))
-            print("%s\t%s\t%s\tfinding\t%s\t%s" % (run, step, r["round"], finding_id,
-                                                     action if isinstance(action, str) and SAFE.fullmatch(action) else "-"))
-'
-}
-
-# Sets UNRULED_FINDING_REFUSALS to one refusal line per finding a no-mistakes
-# run left unruled with no decision request of its run and round naming it,
-# and per approved review coverage park with none naming the reserved id
-# coverage, or to one line saying what could not be read, and
-# UNRULED_FINDING_CLEARING_LINES to the decision request line that clears each
-# refused run, step, and round. Both are empty when the task is not a
-# no-mistakes task or records no branch, which binds no run.
+# Sets UNRULED_FINDING_REFUSALS to one refusal line per pipeline round ruling
+# bin/fm-nm-rulings-lib.sh finds owed, or to one line saying what could not be
+# read, and UNRULED_FINDING_CLEARING_LINES to the decision request line that
+# clears each refused run, step, and round.
 UNRULED_FINDING_REFUSALS=
 UNRULED_FINDING_CLEARING_LINES=
 collect_unruled_finding_refusals() {
-  local mode branch project status_file db unruled named='' refused='' run step round kind finding_id action
-  local reader_err='' what cannot="so an unruled pipeline finding cannot be ruled out"
-  local now ids
-  UNRULED_FINDING_REFUSALS=
-  UNRULED_FINDING_CLEARING_LINES=
-  mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
-  branch=$(grep '^branch=' "$META" | tail -1 | cut -d= -f2- || true)
-  [ "$mode" = no-mistakes ] && [ -n "$branch" ] || return 0
-  project=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-  if [ -z "$project" ]; then
-    UNRULED_FINDING_REFUSALS="  - task $ID records no project, so its no-mistakes runs cannot be read, $cannot
-"
-    return 0
-  fi
-  status_file="$STATE/$ID.status"
-  if [ -e "$status_file" ] || [ -L "$status_file" ]; then
-    if [ ! -f "$status_file" ] || [ ! -r "$status_file" ]; then
-      UNRULED_FINDING_REFUSALS="  - the status log $status_file could not be read, $cannot
-"
-      return 0
-    fi
-    # run<TAB>step<TAB>round<TAB>id, with step * for a same-theme line.
-    named=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-\([^]]*\)\][^:]*:\(.*\)/\1 \2 \3/p' "$status_file" \
-      | awk '{
-          step = $2; token = "round="; valid = "^[0-9]+$"
-          if (step == "same-theme") { step = "*"; token = "rounds="; valid = "^[0-9]+(,[0-9]+)*$" }
-          ids = ""; rounds = ""
-          for (i = 3; i <= NF; i++) {
-            if ($i ~ /^findings=/) ids = substr($i, 10)
-            else if (index($i, token) == 1) rounds = substr($i, length(token) + 1)
-          }
-          if (rounds !~ valid) next
-          r = split(rounds, round, ",")
-          n = split(ids, id, ",")
-          for (j = 1; j <= r; j++)
-            for (i = 1; i <= n; i++) print $1 "\t" step "\t" round[j] "\t" id[i]
-        }')
-  fi
-  db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
-  if ! merge_scratch_file reader_err nm-reader \
-    || ! unruled=$(nm_unruled_findings "$db" "$project" "$branch" 2>"$reader_err"); then
-    what=$(sed -n '$p' "${reader_err:-/dev/null}" 2>/dev/null || true)
-    UNRULED_FINDING_REFUSALS="  - ${what:-the no-mistakes state database $db} could not be read, $cannot
-"
-    return 0
-  fi
-  while IFS=$'\t' read -r run step round kind finding_id action; do
-    [ -n "$finding_id" ] || continue
-    printf '%s\n' "$named" | grep -qxF -e "$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id" -e "$run"$'\t*\t'"$round"$'\t'"$finding_id" && continue
-    refused="$refused$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id"$'\n'
-    if [ "$kind" = coverage ]; then
-      UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $ID's status log names as coverage for that run and round
-"
-      continue
-    fi
-    [ "$action" = - ] && action=unlabelled
-    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - no-mistakes run $run step $step round $round declined $action finding '$finding_id', which no needs-decision line of task $ID's status log names for that run and round
-"
-  done <<EOF
-$unruled
-EOF
-  [ -n "$refused" ] || return 0
-  now=$(date +%s)
-  # One line per run, step, and round, naming its ids in first-refused order.
-  while IFS=$'\t' read -r run step round ids; do
-    UNRULED_FINDING_CLEARING_LINES="$UNRULED_FINDING_CLEARING_LINES$(fm_nm_gate_decision_line "$now" "$run" "$step" "$round" "$ids" "$MERGE_DATA/$ID/nm-$run-findings.txt")
-"
-  done < <(printf '%s' "$refused" | awk -F '\t' '
-    { gate = $1 "\t" $2 "\t" $3 }
-    !(gate in ids) { order[++n] = gate; ids[gate] = $4; next }
-    { ids[gate] = ids[gate] "," $4 }
-    END { for (i = 1; i <= n; i++) print order[i] "\t" ids[order[i]] }')
+  fm_nm_rulings_owed "$ID" "$STATE" "$MERGE_DATA"
+  UNRULED_FINDING_REFUSALS=$FM_NM_RULINGS_OWED
+  UNRULED_FINDING_CLEARING_LINES=$FM_NM_RULINGS_CLEARING
 }
 
 # Prints, after a refusal list, the decision request lines that clear its
 # unruled findings.
 print_unruled_finding_clearing_lines() {
   [ -n "$UNRULED_FINDING_CLEARING_LINES" ] || return 0
-  printf 'error: after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to %s to name every unruled finding above:\n' \
-    "$STATE/$ID.status" >&2
-  printf '%s' "$UNRULED_FINDING_CLEARING_LINES" >&2
+  printf 'error: %s' "$(fm_nm_rulings_clearing_text "$STATE/$ID.status")
+" >&2
 }
 
 FM_PR_MERGE_AUTHORITY=

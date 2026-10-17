@@ -377,15 +377,18 @@ fm_nm_gate_decision_line() {  # <epoch> <run> <step> <round> <ids> <file>
 # a lane parked at a human-owed gate the long recheck cadence instead of a
 # wedge escalation. A gate escalated under any other key still reads as a
 # suspected wedge.
-fm_ask_user_escalation_block() {  # <data-dir> <task-id>
-  local data=$1 id=$2 findings_reader
+fm_ask_user_escalation_block() {  # <data-dir> <task-id> <state-dir>
+  local data=$1 id=$2 findings_reader rulings_check
   findings_reader="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-nm-findings.sh"
+  printf -v rulings_check 'FM_STATE_OVERRIDE=%q FM_DATA_OVERRIDE=%q %q %q' "$3" "$data" \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-nm-rulings-owed.sh" "$id"
   cat <<EOF
    For a no-mistakes ask-user gate, and before you approve or skip any gate, escalate the whole gate as one event plus one snapshot file, using that same shape even when the gate holds only a single finding: write every finding on the gate, whatever its action, unless this brief names that finding's class as one you may approve yourself, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
    \`$(fm_nm_gate_decision_line '<epoch>' '<run>' '<step>' '<n>' '<id1>,<id2>,...' "$data/$id/nm-<run>-findings.txt")\`
    naming the gate's round, the \`round <n>\` heading the last block \`$findings_reader <run> --step <step>\` prints, and every finding id that snapshot holds. The status line only points at the file; it never restates or summarizes a finding's content.
    Before you approve a review gate parked on incomplete review coverage, escalate it the same way with the reserved id \`coverage\` in \`findings=\` and the unverified files in the snapshot.
    The merge is refused over any finding of an approved or skipped round, and any approved coverage park, that no such line names.
+   Immediately before your ready report, run \`$rulings_check\`: for each round it lists, write that round's findings to the snapshot file it names and append the lines it prints, then run it again until it reports no decision line owed.
 EOF
 }
 
@@ -441,7 +444,7 @@ Once firstmate answers \`continue this run\`, do not report stale intent again f
 Carried to the end, a stale intent makes the final review report accepted rulings as defects, and correcting the description then costs a second full pipeline pass.
 
 A run fixes each theme once, and a finding that does not block the change becomes a follow-up rather than a fix round; \`validation-supervision\` defines theme and \`ask-user-authority\` defines blocking.
-When a gate returns a finding on a theme an earlier fix round of this run already fixed, including a regression a fix round introduced, auto-fix or not, do not answer fix: append \`needs-decision [at=<epoch>] [key=nm-<run>-same-theme]: same theme fixed again findings=<id1>,<id2>,... rounds=<a>,<b>,...\` naming the rounds and stop until firstmate replies.
+When a gate returns a finding on a theme an earlier fix round of this run already fixed, including a regression a fix round introduced, auto-fix or not, do not answer fix: append \`needs-decision [at=<epoch>] [key=nm-<run>-same-theme]: same theme fixed again round=<n> findings=<id1>,<id2>,... rounds=<a>,<b>,...\` naming the gate's round as \`round=\`, every finding id on the gate in \`findings=\`, and the earlier rounds that fixed the theme in \`rounds=\`, with every finding on the gate written to rule 6's snapshot file, and stop until firstmate replies.
 When a gate returns a finding that does not block the change, auto-fix or not, do not answer fix: escalate it using rule 6's ask-user format and its \`nm-<run>-<step>\` key, and stop until firstmate replies.
 
 $drive_block

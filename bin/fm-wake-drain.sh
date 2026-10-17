@@ -3,7 +3,8 @@
 # optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
-# newer branch outcome, OPEN DECISIONS, captain-call record divergence, a
+# newer branch outcome, OPEN DECISIONS, pipeline rulings a ready report still
+# owes (RULINGS OWED), captain-call record divergence, a
 # deferred watcher recovery announcement (WATCHER RECOVERED), and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
@@ -534,6 +535,45 @@ EOF
   printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
 }
 
+# Print the RULINGS OWED section: for every task whose latest status event is
+# its CI-ready `done: PR <url> checks green` report, the pipeline rounds that
+# still owe a decision line, as bin/fm-nm-rulings-owed.sh reports them, so the
+# ready report surfaces what the merge would otherwise be the first to refuse.
+# Runs on every drain while that report stays the latest event, because the
+# owed lines stay owed until they are appended. A task that is not a pipeline
+# task, or owes nothing, prints nothing; a verdict that cannot be read prints
+# what could not be read. Bounded and silent like OPEN DECISIONS above.
+print_rulings_owed_section() {  # <task-and-endpoint-snapshot>
+  local snapshot=$1 task endpoint ident event verdict rc output='' global_bytes=4000 omitted=0
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    status_snapshot_latest_event "$STATE/$task.status" "$endpoint" "$ident" || continue
+    event=$FM_STATUS_SNAPSHOT_EVENT_LINE
+    [ "$(status_line_verb "$event")" = 'done' ] || continue
+    case "$event" in *PR*"checks green"*) ;; *) continue ;; esac
+    grep -qx 'mode=no-mistakes' "$STATE/$task.meta" 2>/dev/null || continue
+    rc=0
+    verdict=$(FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
+      "$SCRIPT_DIR/fm-nm-rulings-owed.sh" "$task" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || continue
+    [ "$rc" -eq 1 ] || [ "$rc" -eq 3 ] || verdict="whether task $task owes a decision line could not be judged (exit $rc)"
+    if [ $(( ${#output} + ${#verdict} + 1 )) -gt "$global_bytes" ]; then
+      omitted=$((omitted + 1))
+      continue
+    fi
+    output="$output$verdict
+"
+  done <<EOF
+$snapshot
+EOF
+  [ -n "$output" ] || [ "$omitted" -gt 0 ] || return 0
+  printf 'RULINGS OWED (pipeline rounds a ready report still owes a decision line; the merge refuses until each is appended):\n' || return 1
+  printf '%s' "$output" || return 1
+  if [ "$omitted" -gt 0 ]; then
+    printf 'RULINGS OWED: %d more task(s) omitted (byte cap); bin/fm-nm-rulings-owed.sh <task> lists each\n' "$omitted" || return 1
+  fi
+}
+
 # Print the RECORD DIVERGENCE section: every captain call whose two records
 # contradict each other - the status log says a key was resolved outright while
 # the task held for the captain is still open. Nothing here closes anything; the
@@ -779,6 +819,7 @@ print_status_sections() {
     print_unread_status_section "$snapshot" \
       && print_status_outcome_backstop_section "$snapshot" \
       && print_open_decisions_section "$snapshot" \
+      && print_rulings_owed_section "$snapshot" \
       && print_record_divergence_section
   } > "$prepared"; then
     rm -f -- "$prepared"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-nm-findings.sh over a fixture no-mistakes state
 # database: a description far longer than a gate prints comes back whole, the
-# step filter selects what it names, and a run, step, or
+# step filter selects what it names, a finding identical to one an earlier
+# round selected is marked carried, and a run, step, or
 # database that cannot be found exits nonzero naming it.
 set -u
 
@@ -107,6 +108,53 @@ test_unknown_run_step_or_database_fails() {
   pass "fm-nm-findings exits nonzero naming an unknown run, step, or database"
 }
 
+CARRIED_RUN=01M52KCB3JD1D4AVBY40ZG9EPW
+
+# Run 01M52KCB3JD1D4AVBY40ZG9EPW's review rounds 1-2: round 1 selected
+# tests-yml-lane, and round 2 stored it again identical in every field although
+# its review never raised it, beside a finding round 1 never held and one that
+# shares round 1's id but not its text.
+python3 -I - "$NM_HOME/state.sqlite" "$CARRIED_RUN" <<'PY' || fail "could not write the carried fixture"
+import json
+import sqlite3
+import sys
+
+db_path, run = sys.argv[1:]
+db = sqlite3.connect(db_path)
+db.execute("INSERT INTO runs VALUES (?, 'r1', 'fm/carried', 3)", (run,))
+db.execute("INSERT INTO step_results VALUES ('c1', ?, 'review', 3, 'completed', NULL, NULL, NULL)", (run,))
+
+
+def finding(fid, description, line=172):
+    return {"id": fid, "severity": "warning", "file": "tools/lint/guard_lanes.sh", "line": line,
+            "action": "auto-fix", "description": description}
+
+
+lane = finding("tests-yml-lane", "wants_guard_command does not list tests.yml")
+rounds = [
+    (1, ["tests-yml-lane", "wrapper-contract-weak"], [lane, finding("wrapper-contract-weak", "weak wrapper checks", 399)]),
+    (2, [], [lane, finding("class-cache-stale-lane", "stale cache lane", 173),
+             finding("wrapper-contract-weak", "weak wrapper checks, reworded", 399)]),
+]
+for rnd, selected, found in rounds:
+    db.execute("INSERT INTO step_rounds VALUES (?, 'c1', ?, ?, ?, ?)",
+               ("c1r%d" % rnd, rnd, json.dumps({"findings": found}), json.dumps(selected),
+                "user" if selected else "user_declined"))
+db.commit()
+PY
+
+test_marks_a_finding_identical_to_an_earlier_selected_one_as_carried() {
+  local out code=0
+  out=$("$ROOT/bin/fm-nm-findings.sh" "$CARRIED_RUN" --step review) || code=$?
+  expect_code 0 "$code" "the carried run"
+  assert_contains "$out" $'== run '"$CARRIED_RUN"$' step review round 2\nid: tests-yml-lane\ncarried: round 1\nseverity: warning' \
+    "round 2's identical copy of round 1's selected finding must be marked carried from round 1"
+  [ "$(printf '%s\n' "$out" | grep -c '^carried: ')" -eq 1 ] \
+    || fail "only the identical copy may be marked carried: $out"
+  pass "fm-nm-findings marks a finding identical to one an earlier round selected as carried"
+}
+
 test_prints_a_long_description_whole
 test_whole_run_prints_every_step_and_round_of_that_run_only
 test_unknown_run_step_or_database_fails
+test_marks_a_finding_identical_to_an_earlier_selected_one_as_carried
