@@ -267,7 +267,7 @@ The registrations in detail:
 
 - Claude registers two `Stop` hooks in `.claude/settings.json`, both anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude`, and `bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.
   The same auto-arm entry is also registered as a `SessionStart` hook matched to `clear`, because a `/clear` ends the conversation without a `Stop`.
-  A further `Stop` entry, `bin/fm-context-reset-reminder.sh`, never blocks; it only suggests the session reset the `stow` skill owns.
+  A further `Stop` entry, `bin/fm-context-reset-reminder.sh`, never blocks; past its threshold it starts the session reset the `stow` skill owns, or suggests it where it cannot type into the session.
   In a Claude secondmate home, `bin/fm-spawn.sh` writes a `.fm-busy-stop` pointer and gives the mate no `Stop` busy hook, so `--claude` is the only Stop writer of the parent home's busy record for that generation.
   It records idle when it allows the Stop and busy when its exit 2 blocks it into a continuation, because Claude runs Stop hooks in parallel and that continuation fires no `UserPromptSubmit`.
   A home whose guard predates `.fm-busy-stop` cannot close the turn, so that launch keeps the ordinary `Stop` idle hook instead.

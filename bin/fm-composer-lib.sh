@@ -1644,6 +1644,30 @@ _fm_composer_bare_rule_sandwich() {  # <plain-screen> <row>
   _fm_composer_titled_rule_row "$above" "${below//─/ }"
 }
 
+# Claude Code 2.1.294 draws its slash-command popup directly under the
+# composer's closing rule and marks the selected entry with the composer's own
+# prompt glyph, indented: "  ❯ /clear   Start a new session ...". Read as a bare
+# candidate, that row would replace the composer and its descriptions would
+# become the extracted draft, so a typed slash command never proved sent.
+_fm_composer_row_is_slash_popup_selection() {  # <raw-row>
+  [[ $1 =~ ^[[:space:]]+❯[[:space:]]+/[^[:space:]] ]]
+}
+
+# The first agent-glyph row strictly between rows <open> and <close>, or -1.
+_fm_composer_rule_pair_glyph_row() {  # <plain> <open> <close>
+  local plain=$1 row=$(($2 + 1)) trimmed glyph
+  while [ "$row" -lt "$3" ]; do
+    trimmed=$(_fm_composer_screen_row "$row" "$plain")
+    fm_composer_normalize_trim_var trimmed
+    if fm_composer_leading_agent_glyph_var glyph "$trimmed"; then
+      printf '%s' "$row"
+      return 0
+    fi
+    row=$((row + 1))
+  done
+  printf '%s' -1
+}
+
 _fm_composer_select_cursorless() {
   local plain=$1 generic=-1 next boundary raw trimmed glyph bare footer=0
   FM_COMPOSER_SELECTED_KIND=
@@ -1672,6 +1696,11 @@ _fm_composer_select_cursorless() {
     else
       bare=-1
     fi
+  fi
+  if [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] && [ "$bare" -gt "$FM_COMPOSER_SCAN_PI_CLOSE" ] \
+     && _fm_composer_row_is_slash_popup_selection \
+       "$(_fm_composer_screen_row $((FM_COMPOSER_SCAN_PI_CLOSE + 1)) "$plain")"; then
+    bare=$(_fm_composer_rule_pair_glyph_row "$plain" "$FM_COMPOSER_SCAN_PI_OPEN" "$FM_COMPOSER_SCAN_PI_CLOSE")
   fi
   if [ "$bare" -gt "$generic" ]; then
     generic=$bare
