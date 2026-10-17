@@ -1,0 +1,11 @@
+## S7 fm-brief.sh ship scaffold, maintainer github.com/nikzorz/firstmate home, fork WITHOUT gh default mark
+(no marks)
+error: this home runs as firstmate user/operator and holds no publication authority for github.com/kunchenguid/firstmate
+error: to let this home publish to github.com/kunchenguid/firstmate, write 'maintainer github.com/kunchenguid/firstmate' into /tmp/fm-lab.GTCznm/config/firstmate-role (docs/configuration.md "Firstmate role"), or pass --upstream-consent github.com/kunchenguid/firstmate for this one task with the captain's explicit approval
+exit=1
+
+## S7b same scaffold after gh repo set-default nikzorz/firstmate
+remote.origin.gh-resolved base
+scaffolded: /tmp/fm-lab.GTCznm/data/labmarked/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+labmarked

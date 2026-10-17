@@ -1,0 +1,53 @@
+## remotes of fork-shaped project
+origin	https://github.com/nikzorz/firstmate (fetch)
+origin	https://github.com/nikzorz/firstmate (push)
+upstream	https://github.com/kunchenguid/firstmate (fetch)
+upstream	DISABLE (push)
+
+## S0 role file: maintainer github.com/nikzorz/firstmate
+$ bin/fm-role.sh report
+fm-role: maintainer github.com/nikzorz/firstmate (local)
+
+## S1 before gh default mark (no gh-resolved): fallback order picks upstream
+$ bin/fm-role.sh check $FORK
+refused: this home runs as firstmate user/operator and holds no publication authority for github.com/kunchenguid/firstmate
+exit=1
+
+## S2 gh repo set-default nikzorz/firstmate (real gh)
+gh exit=0
+remote.origin.gh-resolved base
+$ bin/fm-role.sh check $FORK
+authorized: maintainer scope github.com/nikzorz/firstmate
+exit=0
+
+## S3 adversarial: fork maintainer scope never grants the parent (set-default to upstream)
+gh exit=0
+remote.upstream.gh-resolved base
+refused: this home runs as firstmate user/operator and holds no publication authority for github.com/kunchenguid/firstmate
+exit=1
+
+## S4 adversarial: two remotes marked base are ambiguous -> gh order (upstream) -> refused
+remote.origin.gh-resolved base
+remote.upstream.gh-resolved base
+refused: this home runs as firstmate user/operator and holds no publication authority for github.com/kunchenguid/firstmate
+exit=1
+
+## S5 adversarial: mark on a remote with no URL is ignored -> gh order -> refused
+refused: this home runs as firstmate user/operator and holds no publication authority for path:/tmp/fm-fork.KoA2Si/firstmate/ghost
+exit=1
+
+## S6 user (default) home refused even with origin marked
+fm-role: user (default)
+refused: this home runs as firstmate user/operator and holds no publication authority for github.com/nikzorz/firstmate
+exit=1
+
+## S7 fm-brief.sh ship scaffold gate (marked origin, maintainer home)
+a later scout promotion could not outrank), stops the scaffold before
+anything is written. Secondmate charters never take it.
+Refuses to overwrite an existing brief.
+exit=1
+## S7b same scaffold without the mark
+a later scout promotion could not outrank), stops the scaffold before
+anything is written. Secondmate charters never take it.
+Refuses to overwrite an existing brief.
+exit=1
