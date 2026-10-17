@@ -20,7 +20,7 @@ install_reminder() {
   local dir=$1
   mkdir -p "$dir/bin"
   cp "$ROOT/bin/fm-context-reset-reminder.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-hook-host-lib.sh" \
-    "$ROOT/bin/fm-supervisor-target-lib.sh" "$dir/bin/"
+    "$ROOT/bin/fm-supervisor-target-lib.sh" "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/"
   chmod +x "$dir/bin/fm-context-reset-reminder.sh"
 }
 
@@ -31,8 +31,15 @@ make_primary_dir() {
   git -C "$dir" commit -q --allow-empty -m init
   : > "$dir/AGENTS.md"
   install_reminder "$dir"
+  printf '%s\n' "$OWNER_PID" > "$dir/state/.lock"
   printf '%s\n' "$dir"
 }
+
+# The session lock in every test home names OWNER_PID. A session's identity is
+# its harness ancestry, so the in-process drivers below report FM_TEST_HARNESS_PID
+# (the owner by default) as that ancestry and leave the lock check itself real.
+OWNER_PID=4242
+OTHER_PID=5151
 
 # Transcript entry writers, in the shape Claude Code records.
 prompt() {  # <file> <text> [epoch]
@@ -170,12 +177,23 @@ auto_stop() {  # <home> <transcript> [extra env assignments...] -> stdout; launc
   shift 2
   # shellcheck disable=SC2016 # the inner script expands its own arguments
   jq -cn --arg t "$t" '{session_id:"s1",transcript_path:$t,hook_event_name:"Stop"}' \
-    | env -u TMUX_PANE -u HERDR_ENV -u HERDR_PANE_ID FM_SUPERVISOR_TARGET=lab:p1 FM_SUPERVISOR_BACKEND=herdr \
+    | env -u TMUX_PANE -u HERDR_ENV -u HERDR_PANE_ID -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
+        FM_SUPERVISOR_TARGET=lab:p1 FM_SUPERVISOR_BACKEND=herdr FM_TEST_HARNESS_PID="$OWNER_PID" \
         FM_CONTEXT_RESET_TOKENS=1000 "$@" bash -c '
       home=$1
       . "$home/bin/fm-context-reset-reminder.sh"
+      fm_harness_ancestry_pids() { printf "%s\n" "$FM_TEST_HARNESS_PID"; }
       fm_context_reset_launch() { printf "%s\n" "$*" >> "$home/launches"; }
       fm_context_reset_stop_hook' _ "$home"
+}
+
+# Runs `record <kind>` in-process as the session whose harness is <pid>.
+record_as() {  # <home> <pid> <kind>
+  # shellcheck disable=SC2016 # the inner script expands its own arguments
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID FM_TEST_HARNESS_PID="$2" bash -c '
+    . "$1/bin/fm-context-reset-reminder.sh"
+    fm_harness_ancestry_pids() { printf "%s\n" "$FM_TEST_HARNESS_PID"; }
+    fm_context_reset_record "$2"' _ "$1" "$3"
 }
 
 record_field() { sed -n "s/^$2=//p" "$1/state/.context-reset" 2>/dev/null; }
@@ -263,6 +281,37 @@ test_auto_falls_back_to_the_reminder() {
   pass "automation off, no pane, and a secondmate home all fall back to the one-time reminder"
 }
 
+# The automatic reset reads three gates, and each must answer only for the
+# session that owns the home's session lock: the entry gate, the reset record
+# (state/.context-reset, which carries the declined rule), and the reset-safe
+# stamp (state/.context-reset-safe).
+test_auto_runs_only_in_the_lock_owning_session() {
+  local home owner other out
+  home=$(make_primary_dir "$TMP_ROOT/owner")
+  owner="$home/owner.jsonl"
+  other="$home/other.jsonl"
+  prompt "$other" one 1700000000; assistant "$other" 400
+  prompt "$other" two 1700000100; assistant "$other" 1200
+  out=$(auto_stop "$home" "$other" FM_TEST_HARNESS_PID="$OTHER_PID")
+  assert_contains "$out" "then /clear" "a session that does not own the lock gets the one-time reminder past the threshold"
+  assert_equals "" "$(launches "$home")" "the entry gate: a session that does not own the lock never launches a typist"
+  [ ! -e "$home/state/.context-reset" ] || fail "the reset record: a session that does not own the lock wrote it"
+
+  prompt "$owner" "/stow light" 1700000200; assistant "$owner" 1250
+  printf 'phase=stow
+transcript=%s
+' "$owner" > "$home/state/.context-reset"
+  prompt "$other" three 1700000300; assistant "$other" 1300
+  auto_stop "$home" "$other" FM_TEST_HARNESS_PID="$OTHER_PID" >/dev/null
+  assert_equals "$owner" "$(record_field "$home" transcript)" "the reset record: another session's Stop leaves the owner's record alone"
+  record_as "$home" "$OTHER_PID" reset-safe 2>/dev/null; expect_code 0 $? "record reset-safe from another session"
+  [ ! -e "$home/state/.context-reset-safe" ] || fail "the reset-safe stamp: a session that does not own the lock recorded a verdict"
+  out=$(auto_stop "$home" "$owner")
+  assert_contains "$out" "did not report this session safe" "the declined rule: the owner's own stow, which recorded no verdict, declines"
+  assert_not_contains "$(launches "$home")" "/clear" "another session's stow verdict never clears the owner"
+  pass "only the lock-owning session types the reset, and only its own stow verdict clears it"
+}
+
 # Runs the typist in-process against scripted pane reads.
 deliver() {  # <home> <token> <idle-script> <submit-verdict> -> submits appended to $home/submits
   local home=$1
@@ -301,7 +350,7 @@ test_deliver_types_only_into_an_idle_pane() {
 test_record_command() {
   local home
   home=$(make_primary_dir "$TMP_ROOT/record")
-  "$home/bin/fm-context-reset-reminder.sh" record reset-safe; expect_code 0 $? "record reset-safe"
+  record_as "$home" "$OWNER_PID" reset-safe; expect_code 0 $? "record reset-safe"
   "$home/bin/fm-context-reset-reminder.sh" record curated; expect_code 0 $? "record curated"
   grep -qE '^[0-9]+$' "$home/state/.context-reset-safe" || fail "reset-safe record holds no epoch"
   grep -qE '^[0-9]+$' "$home/state/.stow-curated" || fail "curated record holds no epoch"
@@ -319,5 +368,6 @@ test_auto_types_the_stow_then_clear
 test_auto_declined_stow_stops_once
 test_auto_waits_for_an_open_question
 test_auto_falls_back_to_the_reminder
+test_auto_runs_only_in_the_lock_owning_session
 test_deliver_types_only_into_an_idle_pane
 test_record_command

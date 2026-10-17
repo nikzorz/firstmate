@@ -5,7 +5,8 @@
 # and whether a typed /clear really clears all come from the vendor's TUI, so a
 # stub cannot prove them. A real Claude runs in an isolated Herdr lab, in a
 # primary-shaped scratch home whose stow skill only records the reset-safe
-# verdict, with a one-token threshold:
+# verdict, with a one-token threshold; its first prompt takes the home's
+# session lock, as a main session does:
 #   1. A turn that ends with unsent text in the composer is never typed into,
 #      and the attempt stays armed.
 #   2. The next idle turn end gets /stow light typed, the skill records the
@@ -150,8 +151,9 @@ wait_for() {  # <seconds> <command...>
 phase_is() { [ "$(record_field phase)" = "$1" ]; }
 transcript_has() { grep -qF "$1" "$(record_field transcript)" 2>/dev/null; }
 
-verdict=$(fm_backend_herdr_send_text_submit "$TARGET" "Run the shell command 'sleep 12' with the Bash tool, then reply with exactly SLEPT." 3 0.4 0.4)
+verdict=$(fm_backend_herdr_send_text_submit "$TARGET" "Run the shell command '$HOME_DIR/bin/fm-lock.sh && sleep 12' with the Bash tool, then reply with exactly SLEPT." 3 0.4 0.4)
 [ "$verdict" = empty ] || fail "Claude Code ($VERSION) on $HERDR_VER: the first prompt did not submit ($verdict)"
+wait_for 30 test -s "$HOME_DIR/state/.lock" || fail "Claude Code ($VERSION) on $HERDR_VER: the session never took the session lock the automatic reset requires"
 sleep 4
 lab pane send-text "$PANE" "an unsent draft" >/dev/null || fail "could not type the unsent draft"
 wait_for 60 phase_is typing || fail "Claude Code ($VERSION) on $HERDR_VER: the turn end past the threshold launched no typist (phase '$(record_field phase)')"

@@ -22,20 +22,21 @@
 # transcript is read backwards and only as far as this turn's prompt, so the
 # cost does not grow with the session.
 #
-# Automatic reset, in the main primary home only (FM_CONTEXT_RESET_AUTO=0 turns
-# it off): every Stop at or past the threshold advances one record,
-# state/.context-reset, kept per transcript, by the first rule that applies:
+# Automatic reset, in the main primary home only and only in the session that
+# owns its session lock (FM_CONTEXT_RESET_AUTO=0 turns it off): every Stop at or
+# past the threshold advances one record, state/.context-reset, kept per
+# transcript, by the first rule that applies:
 #   1. A reset-safe record written during the turn that just ended means that
 #      turn was a stow pass that reported the session safe, so the typist types
-#      /clear.
+#      /clear. Only the lock-owning session writes that record, so no other
+#      session's verdict can clear this one.
 #   2. When the turn that just ended was the stow the typist typed and it
 #      recorded no reset-safe verdict, the pass declined: the hook says so once
 #      through a systemMessage and makes no further attempt in this transcript.
 #   3. When the turn's final message asks a question (a "?" outside a URL), the
 #      operator owes an answer, so the attempt waits for a later Stop.
 #   4. Otherwise the typist types `/stow light`, or `/stow` when the last full
-#      curation pass recorded here is absent or FM_STOW_CURATE_SECS (default
-#      86400) old.
+#      curation pass recorded here is absent or a day old.
 # The typist runs detached, so the turn is never held. It types only into the
 # pane this Claude session runs in (bin/fm-supervisor-target-lib.sh discovery),
 # and only after two consecutive reads FM_CONTEXT_RESET_SETTLE_SECS (default 3)
@@ -47,11 +48,11 @@
 # exiting keeps the session lock and live supervision with the same process,
 # exactly as a clear by hand does.
 #
-# Reminder: with automation off, in a secondmate home, or where no tmux or Herdr
-# pane can be found, the hook instead suggests the reset once through a
-# systemMessage, on the Stop that ends the turn crossing the threshold, that is,
-# when the last call before this turn's prompt was below the threshold and the
-# latest call is at or above it.
+# Reminder: with automation off, in a secondmate home, in a session that does
+# not own the session lock, or where no tmux or Herdr pane can be found, the
+# hook instead suggests the reset once through a systemMessage, on the Stop that
+# ends the turn crossing the threshold, that is, when the last call before this
+# turn's prompt was below the threshold and the latest call is at or above it.
 #
 # The transcript is the only per-session key: /clear opens a fresh transcript
 # and compaction drops the count, so either re-arms both paths. There is
@@ -82,6 +83,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-hook-host-lib.sh"
 # shellcheck source=bin/fm-supervisor-target-lib.sh
 . "$SCRIPT_DIR/fm-supervisor-target-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 fm_context_reset_number() {  # <value> <default>
   case "$1" in ''|*[!0-9]*|0) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac
@@ -117,10 +120,9 @@ fm_context_reset_epoch_in() {  # <file>
 }
 
 fm_context_reset_stow_command() {
-  local curated age
+  local curated
   curated=$(fm_context_reset_epoch_in "$(fm_context_reset_curated_path)")
-  age=$(fm_context_reset_number "${FM_STOW_CURATE_SECS:-}" 86400)
-  if [ "$curated" -gt 0 ] && [ $(( $(date +%s) - curated )) -lt "$age" ]; then
+  if [ "$curated" -gt 0 ] && [ $(( $(date +%s) - curated )) -lt 86400 ]; then
     printf '/stow light'
   else
     printf '/stow'
@@ -199,8 +201,9 @@ fm_context_reset_start_typist() {  # <transcript> <turn> <backend> <target> <tex
 # can be typed into, so the caller falls back to the reminder.
 fm_context_reset_auto() {  # <transcript> <tokens> <prompt-at> <question>
   local transcript=$1 tokens=$2 prompt_at=$3 question=$4 backend target phase turn safe_at
-  case "${FM_CONTEXT_RESET_AUTO:-1}" in 0|off|false|no) return 1 ;; esac
+  [ "${FM_CONTEXT_RESET_AUTO:-1}" = 0 ] && return 1
   fm_root_is_secondmate_home "$FM_ROOT" && return 1
+  fm_session_lock_owned_by_self "$STATE" || return 1
   target=$(discover_supervisor_target) || return 1
   backend=$(discover_supervisor_backend) || return 1
   case "$backend" in tmux|herdr) ;; *) return 1 ;; esac
@@ -297,7 +300,13 @@ fm_context_reset_deliver() {  # <token> <backend> <target> <text>
 fm_context_reset_record() {  # reset-safe|curated
   local path
   case "${1:-}" in
-    reset-safe) path=$(fm_context_reset_safe_path) ;;
+    reset-safe)
+      if ! fm_session_lock_owned_by_self "$STATE"; then
+        echo "fm-context-reset-reminder: this session does not own the session lock, so no reset-safe verdict is recorded" >&2
+        return 0
+      fi
+      path=$(fm_context_reset_safe_path)
+      ;;
     curated) path=$(fm_context_reset_curated_path) ;;
     *) echo "usage: fm-context-reset-reminder.sh record reset-safe|curated" >&2; return 2 ;;
   esac
