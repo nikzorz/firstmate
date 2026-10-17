@@ -393,7 +393,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "run /no-mistakes yourself to validate and ship a PR" "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -1851,13 +1851,26 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
           "$id: a scout would be told to commit on a branch it never creates"
         ;;
       *)
-        assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+        assert_grep "run /no-mistakes yourself to validate and ship a PR" "$brief" \
           "$id: brief lost the no-mistakes pipeline handoff"
+        assert_no_grep "append \`done [at=<epoch>]: {summary}\`" "$brief" \
+          "$id: a no-mistakes worker would report done and wait instead of starting validation"
         assert_grep "append \`done [at=<epoch>]: PR {url} checks green\`" "$brief" \
           "$id: brief lost the no-mistakes ready report"
         ;;
     esac
   done
+
+  id="brief-pointed-no-mistakes-gerrit"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --forge gerrit >/dev/null 2>&1 \
+    || fail "$id: gerrit no-mistakes scaffold exited non-zero"
+  brief="$home/data/$id/brief.md"
+  assert_grep "run /no-mistakes yourself to validate it" "$brief" \
+    "$id: brief lost the no-mistakes pipeline handoff"
+  assert_no_grep "append \`done [at=<epoch>]: {summary}\`" "$brief" \
+    "$id: a no-mistakes worker would report done and wait instead of starting validation"
+  assert_grep "append \`done [at=<epoch>]: PR {change url} published for review\`" "$brief" \
+    "$id: brief lost the gerrit ready report"
   pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
 }
 

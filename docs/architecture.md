@@ -395,7 +395,7 @@ A ship brief records its mode as a fixed machine-readable line and the spawn ref
 It also owns the named-head reachability gate that refuses a ship `done:` while that head exists only in the worker's disposable copy, testing the named head rather than whether some branch moved.
 `bin/fm-crew-state.sh`, `bin/fm-pr-check.sh`, and the secondmate ledger-first publisher call that same gate before treating a ship `done:` as ready.
 `bin/fm-crew-state.sh` alone composes a second gate after it: a direct-PR worker is briefed to open its pull request before reporting done, so a direct-PR `done:` naming no pull request in the task record, the line, or the status stream's recent URL-bearing lines reads `blocked` with the steer that mode calls for, while a named-head refusal keeps its own reason.
-A no-mistakes pre-validation `done:` stays the pipeline handoff and is not gated.
+A no-mistakes pre-validation `done:` is a legacy or off-contract report, since the worker is briefed to start validation itself after committing, and the gate tolerates it ungated.
 The status stream is never rewritten; the next reading agrees once the pull request exists.
 It is also the one owner of the no-mistakes `--intent` contract those workers follow.
 `data/projects.md` records each project's standing posture and optional `+yolo` merge flag as the captain's default and as context for that decision, including the conditional `no-mistakes-prod-only` policy; a ship spawn that drops below the registered rigor prints a deviation notice and continues.
