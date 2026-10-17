@@ -1,0 +1,60 @@
+ ▐▛███▛█   Claude Code v2.1.294
+▝▜██████▀  Opus 5.5 (1M context) with medium effort · Claude Max
+ ▝▝   ▝▝   /tmp/fm-lab.Y9cxeG/repo
+
+
+❯ Lab check only: run bin/fm-lock.sh with the Bash tool, then reply with exactly LOCKED. Do nothing else, skip any startup procedure.
+
+● Bash(bin/fm-lock.sh)
+  ⎿  lock acquired: harness pid 4009361
+
+ ▐▛███▛█   Claude Code v2.1.294
+▝▜██████▀  Opus 5.5 (1M context) with medium effort · Claude Max
+ ▝▝   ▝▝   /tmp/fm-lab.Y9cxeG/repo
+
+
+❯ /clear
+ ☀  Clear  7% of context  67.0k / 1M   last turns ▆█  ▲ +14.1k last turn                                                                                                                            [-]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

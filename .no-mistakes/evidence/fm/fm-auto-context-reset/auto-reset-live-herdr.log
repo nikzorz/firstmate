@@ -1,0 +1,3 @@
+ok - 2.1.294 (Claude Code) on herdr 0.9.3: a turn ending with an unsent draft in the composer is never typed into
+ok - 2.1.294 (Claude Code) on herdr 0.9.3: an idle turn end past the threshold gets /stow light typed, and its reset-safe verdict gets /clear typed and performed
+exit=0

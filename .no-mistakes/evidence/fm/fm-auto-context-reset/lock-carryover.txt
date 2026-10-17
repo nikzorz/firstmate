@@ -1,0 +1,3 @@
+lock pid before clear: 4009361 (fm-lock.sh output in pane)
+lock pid after clear: 4009361
+lock session after clear: de8705bc-4f9e-47d6-906a-6ff12c57d956 (new transcript; old was f8e96055-...)

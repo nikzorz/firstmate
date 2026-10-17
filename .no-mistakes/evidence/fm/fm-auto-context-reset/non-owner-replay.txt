@@ -1,0 +1,10 @@
+# non-owner Stop payload replay (this shell does not own /tmp/fm-lab.Y9cxeG/state/.lock)
+{"systemMessage":"Firstmate: this session has reached about 51k tokens of context. Resetting is safe because durable records, not this conversation, carry the work: run /stow light, then /clear once it reports the session is safe to reset."}
+exit=0
+# record after:
+transcript=~/.claude/projects/-tmp-fm-lab-Y9cxeG-repo/f8e96055-ac36-4720-a198-9c6917cd37c6.jsonl
+phase=cleared
+at=1792216894
+# record reset-safe from non-owner:
+fm-context-reset-reminder: this session does not own the session lock, so no reset-safe verdict is recorded
+exit=0 safe mtime=1792216885

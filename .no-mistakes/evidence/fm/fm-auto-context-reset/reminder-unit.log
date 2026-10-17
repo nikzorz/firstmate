@@ -1,0 +1,15 @@
+ok - reminder fires once, on the turn that crosses the threshold, ignoring mid-turn tool results and metadata entries
+ok - a context drop re-arms the reminder with no marker state
+ok - synthetic zero-usage entries neither re-arm nor hide the reminder
+ok - sidechain calls are ignored and a crossing first turn reminds
+ok - silent for a foreign host, a missing transcript, an empty payload, and a task worktree
+bash: line 1: /tmp/fm-context-reset-reminder.oJkHev/registered/bin/fm-host-mirror.sh: No such file or directory
+ok - tracked .claude/settings.json Stop hooks run the reminder
+ok - automatic reset: stow first (light once curated), /clear only on a verdict from the turn that just ended
+ok - a declined stow is reported once, and only a context drop re-arms it
+ok - an open question to the operator defers the automatic reset until a later Stop
+ok - automation off, no pane, and a secondmate home all fall back to the one-time reminder
+ok - only the lock-owning session types the reset, and only its own stow verdict clears it
+ok - the typist types only into a pane read idle twice, only while its record is current
+ok - record writes the reset-safe and curated epochs and refuses an unknown kind
+exit=0

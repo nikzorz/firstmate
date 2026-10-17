@@ -1,0 +1,9 @@
+LOCKED
+Captain, the light stow pass is complete and the session is safe to reset.
+
+- **Findings filed:** none. The only thing this session did was the lock check, so it learned nothing new that needs saving.
+- **Waiting on an unreachable memory store:** nothing.
+- **Open work records:** none were open, so none were filed or corrected.
+- **Unanswered questions to you:** none.
+
+"Safe to reset" means nothing this session knew will be lost when it clears. It does not mean the home's records were checked against reality. I've recorded the session as reset-safe.
