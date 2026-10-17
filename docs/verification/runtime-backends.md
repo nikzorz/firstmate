@@ -532,7 +532,7 @@ ok - 2.1.294 (Claude Code): the reset reminder fires once on the crossing turn a
 The automatic reset's idle test, its typed `/stow light`, and its typed `/clear` all depend on Claude's rendered TUI, so `tests/fm-context-reset-auto-live-e2e.test.sh` (`FM_CONTEXT_RESET_AUTO_LIVE=1`) drives a real Claude in an isolated Herdr lab with a one-token threshold and a stand-in stow skill that only records the reset-safe verdict.
 It refreshes this record after a Claude or Herdr upgrade.
 
-Verified 2026-10-16 on Claude Code 2.1.294 and Herdr 0.9.3.
+Verified 2026-10-17 on Claude Code 2.1.294 and Herdr 0.9.3, with the session-lock gate in place.
 
 ```sh
 FM_CONTEXT_RESET_AUTO_LIVE=1 bash tests/fm-context-reset-auto-live-e2e.test.sh
