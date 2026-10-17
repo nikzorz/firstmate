@@ -132,6 +132,7 @@ FM_NM_RULINGS_OWED=
 FM_NM_RULINGS_CLEARING=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
 FM_NM_RULINGS_UNREADABLE=false
+# shellcheck disable=SC2034 # FM_NM_RULINGS_UNREADABLE is read by the sourcing callers.
 fm_nm_rulings_owed() {  # <task-id> <state-dir> <data-dir>
   local id=$1 state=$2 data=$3 meta mode branch project status_file db unruled named='' owed=''
   local run step round kind finding_id action reader_err what now ids
