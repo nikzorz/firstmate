@@ -544,7 +544,7 @@ EOF
 # task, or owes nothing, prints nothing; a verdict that cannot be read prints
 # what could not be read. Bounded and silent like OPEN DECISIONS above.
 print_rulings_owed_section() {  # <task-and-endpoint-snapshot>
-  local snapshot=$1 task endpoint ident event verdict rc output='' global_bytes=4000 omitted=0
+  local snapshot=$1 task endpoint ident event verdict rc output='' global_bytes=4000 omitted=''
   while IFS=$(printf '\t') read -r task endpoint ident; do
     [ -n "$task" ] || continue
     status_snapshot_latest_event "$STATE/$task.status" "$endpoint" "$ident" || continue
@@ -558,7 +558,7 @@ print_rulings_owed_section() {  # <task-and-endpoint-snapshot>
     [ "$rc" -ne 0 ] || continue
     [ "$rc" -eq 1 ] || [ "$rc" -eq 3 ] || verdict="whether task $task owes a decision line could not be judged (exit $rc)"
     if [ $(( ${#output} + ${#verdict} + 1 )) -gt "$global_bytes" ]; then
-      omitted=$((omitted + 1))
+      omitted="$omitted $task"
       continue
     fi
     output="$output$verdict
@@ -566,11 +566,11 @@ print_rulings_owed_section() {  # <task-and-endpoint-snapshot>
   done <<EOF
 $snapshot
 EOF
-  [ -n "$output" ] || [ "$omitted" -gt 0 ] || return 0
+  [ -n "$output" ] || [ -n "$omitted" ] || return 0
   printf 'RULINGS OWED (pipeline rounds a ready report still owes a decision line; the merge refuses until each is appended):\n' || return 1
   printf '%s' "$output" || return 1
-  if [ "$omitted" -gt 0 ]; then
-    printf 'RULINGS OWED: %d more task(s) omitted (byte cap); bin/fm-nm-rulings-owed.sh <task> lists each\n' "$omitted" || return 1
+  if [ -n "$omitted" ]; then
+    printf 'RULINGS OWED: also owed by (byte cap):%s; bin/fm-nm-rulings-owed.sh <task> lists each\n' "$omitted" || return 1
   fi
 }
 

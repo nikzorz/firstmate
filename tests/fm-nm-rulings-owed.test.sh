@@ -228,6 +228,23 @@ test_wake_drain_surfaces_owed_rulings_on_a_ready_report() {
   pass "the wake drain lists owed rulings while a pipeline task's ready report is its latest event"
 }
 
+test_wake_drain_names_a_task_whose_owed_rulings_exceed_the_byte_cap() {
+  local dir out shape
+  shape=$(python3 -I -c 'import json; print(json.dumps({"run": "'"$RUN_1749"'", "steps": [{"name": "review", "order": 1,
+    "rounds": [{"round": 1, "source": "auto", "findings": [["finding-%02d" % i, "ask-user"] for i in range(40)]}]}]}))')
+  dir=$(make_nm_case drain-cap "$shape")
+  printf 'done [at=4]: PR https://github.com/example/repo/pull/7 checks green\n' >> "$dir/state/task-x1.status"
+  out=$(NM_HOME="$dir/nm" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_DATA_OVERRIDE="$dir/data" "$ROOT/bin/fm-wake-drain.sh" 2>&1) \
+    || fail "drain-cap: the drain failed: $out"
+  assert_contains "$out" "RULINGS OWED" "drain-cap: no RULINGS OWED section: $out"
+  case "$out" in
+    *"finding-00"*) fail "drain-cap: a verdict over the byte cap was printed whole: $out" ;;
+  esac
+  printf '%s\n' "$out" | grep -q '^RULINGS OWED: .*task-x1' \
+    || fail "drain-cap: the task dropped by the byte cap was not named: $out"
+  pass "the wake drain names a task whose owed rulings exceed the byte cap"
+}
+
 test_completed_step_and_unselected_ask_user_findings_are_owed
 test_same_theme_line_owes_the_gate_ids_it_left_out
 test_same_theme_line_names_every_gate_id_for_its_round
@@ -235,3 +252,4 @@ test_task_binding_no_run_owes_nothing
 test_unreadable_database_is_named_not_judged
 test_usage_errors_exit_2
 test_wake_drain_surfaces_owed_rulings_on_a_ready_report
+test_wake_drain_names_a_task_whose_owed_rulings_exceed_the_byte_cap

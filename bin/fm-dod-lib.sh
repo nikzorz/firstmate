@@ -387,8 +387,7 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id> <state-dir>
    \`$(fm_nm_gate_decision_line '<epoch>' '<run>' '<step>' '<n>' '<id1>,<id2>,...' "$data/$id/nm-<run>-findings.txt")\`
    naming the gate's round, the \`round <n>\` heading the last block \`$findings_reader <run> --step <step>\` prints, and every finding id that snapshot holds. The status line only points at the file; it never restates or summarizes a finding's content.
    Before you approve a review gate parked on incomplete review coverage, escalate it the same way with the reserved id \`coverage\` in \`findings=\` and the unverified files in the snapshot.
-   The merge is refused over any finding of an approved or skipped round, and any approved coverage park, that no such line names.
-   Immediately before your ready report, run \`$rulings_check\`: for each round it lists, write that round's findings to the snapshot file it names and append the lines it prints, then run it again until it reports no decision line owed.
+   Immediately before your ready report, run \`$rulings_check\`; the merge refuses over every round it lists. For each round it lists, write that round's findings to the snapshot file it names and append the lines it prints, then run it again until it reports no decision line owed.
 EOF
 }
 
