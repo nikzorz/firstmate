@@ -276,6 +276,29 @@ test_check_fork_lineage_reaches_the_gate() {
   pass "fm-role.sh check: repository lineage, not remotes, identifies firstmate across forks"
 }
 
+# A fork whose pull requests land on its own origin marks that remote as the gh
+# default; the publication target follows the mark, while the same fork
+# without it still resolves to the parent named by its upstream remote.
+test_check_gh_default_names_the_fork_target() {
+  local root fork fork_home out rc
+  root=$(make_lineage_root ghdefault-root https://github.com/kunchenguid/firstmate)
+  fork=$(clone_with_origin "$root" ghdefault-fork https://github.com/someone/firstmate-fork)
+  git -C "$fork" remote add upstream https://github.com/kunchenguid/firstmate
+  fork_home=$(make_role_home ghdefault-maint 'maintainer github.com/someone/firstmate-fork')
+
+  out=$(check_as "$root" "$fork_home" "$fork"); rc=$?
+  expect_code 1 "$rc" "an unmarked fork must still resolve to its upstream parent (got: $out)"
+  assert_contains "$out" "no publication authority for github.com/kunchenguid/firstmate" \
+    "the unmarked refusal must name the parent publication target"
+
+  git -C "$fork" config remote.origin.gh-resolved base
+  out=$(check_as "$root" "$fork_home" "$fork"); rc=$?
+  expect_code 0 "$rc" "the fork maintainer scope must cover the gh default origin (got: $out)"
+  assert_contains "$out" "authorized: maintainer scope github.com/someone/firstmate-fork" \
+    "the authority must name the gh default target"
+  pass "fm-role.sh check: the gh default remote names the publication target, upstream otherwise"
+}
+
 # Lineage that cannot be determined refuses, and a firstmate-lineage project
 # with no determinable publication target is refused even under consent.
 test_check_undeterminable_lineage_and_target_refuse() {
@@ -680,6 +703,7 @@ test_check_maintainer_scope_authorizes
 test_check_wrong_scope_and_remote_presence_do_not_authorize
 test_check_equivalent_remote_spellings_are_one_repo
 test_check_fork_lineage_reaches_the_gate
+test_check_gh_default_names_the_fork_target
 test_check_undeterminable_lineage_and_target_refuse
 test_check_task_consent_authorizes_one_task
 test_secondmate_cannot_self_grant

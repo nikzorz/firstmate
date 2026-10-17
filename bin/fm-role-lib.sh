@@ -37,7 +37,8 @@
 # of the code root's history covers any fork, the parent, and any clone of
 # either. Lineage that cannot be determined (no code root history, or a shallow
 # side sharing no root) refuses rather than permits. The publication target is
-# compared only against a maintainer scope or task consent: the first remote
+# compared only against a maintainer scope or task consent: the gh default
+# repository (the remote `gh repo set-default` marks), else the first remote
 # named upstream, github, or origin (the order gh prefers when resolving a
 # default repository), reduced to lowercase host/owner/repo; a local-path remote
 # is resolved one hop through that repository's own origin, and left as
@@ -222,11 +223,30 @@ fm_role_git_common_dir() {
 }
 
 # fm_role_publication_target <git-dir> - the repository a default publication
-# (gh pr/issue, a no-mistakes PR) would reach: the first of upstream, github,
-# origin that is configured, in the order gh prefers, normalized to
-# host/owner/repo or path:<abs>. Empty when the repo has no such remote.
+# (gh pr/issue, a no-mistakes PR) would reach: the gh default repository, the
+# one configured remote marked remote.<name>.gh-resolved=base by
+# `gh repo set-default`; otherwise the first of upstream, github, origin that is
+# configured, in the order gh prefers. Normalized to host/owner/repo or
+# path:<abs>. Empty when the repo has no such remote.
 fm_role_publication_target() {
-  local dir=$1 remote url=
+  local dir=$1 remote url='' key value base_remotes=''
+  while read -r key value; do
+    [ "$value" = base ] || continue
+    remote=${key#remote.}
+    remote=${remote%.gh-resolved}
+    base_remotes="$base_remotes${base_remotes:+ }$remote"
+  done < <(git -C "$dir" config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null)
+  # Two marked remotes are ambiguous, so neither is trusted over the gh order.
+  case $base_remotes in
+  '' | *' '*) ;;
+  *)
+    if url=$(git -C "$dir" remote get-url "$base_remotes" 2>/dev/null) && [ -n "$url" ]; then
+      fm_role_remote_identity "$url" "$dir"
+      return
+    fi
+    url=
+    ;;
+  esac
   for remote in upstream github origin; do
     if url=$(git -C "$dir" remote get-url "$remote" 2>/dev/null) && [ -n "$url" ]; then
       break
