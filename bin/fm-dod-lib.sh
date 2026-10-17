@@ -536,9 +536,8 @@ This project's review server is Gerrit: it has no pull requests and no forge CI 
 Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate.
-That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
+As soon as your implementation is committed, run /no-mistakes yourself to validate it; do not report \`done:\` or wait for firstmate to start the run.
+Publish only after the run passes, as described below.
 
 EOF
       fm_nm_driving_block "$forge"
@@ -628,9 +627,9 @@ EOF
 Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
-That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
+As soon as your implementation is committed, run /no-mistakes yourself to validate and ship a PR; do not report \`done:\` or wait for firstmate to start the run.
+The pipeline owns the push; never push from this copy.
+Your only \`done:\` is the checks-green PR report below.
 ${nm_base}
 EOF
       fm_nm_driving_block "$forge"
