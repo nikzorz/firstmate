@@ -1860,6 +1860,17 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
         ;;
     esac
   done
+
+  id="brief-pointed-no-mistakes-gerrit"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --forge gerrit >/dev/null 2>&1 \
+    || fail "$id: gerrit no-mistakes scaffold exited non-zero"
+  brief="$home/data/$id/brief.md"
+  assert_grep "run /no-mistakes yourself to validate it" "$brief" \
+    "$id: brief lost the no-mistakes pipeline handoff"
+  assert_no_grep "append \`done [at=<epoch>]: {summary}\`" "$brief" \
+    "$id: a no-mistakes worker would report done and wait instead of starting validation"
+  assert_grep "append \`done [at=<epoch>]: PR {change url} published for review\`" "$brief" \
+    "$id: brief lost the gerrit ready report"
   pass "fm-brief.sh: every crewmate brief stands alone for a worker pointed at its path"
 }
 

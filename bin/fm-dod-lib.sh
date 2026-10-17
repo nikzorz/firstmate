@@ -31,7 +31,8 @@
 # request before reporting done, so a direct-PR `done:` naming no pull request
 # anywhere is a task still owed a steer, not a finished delivery.
 # The check tests that head, not whether some branch moved. In no-mistakes
-# mode the pre-validation `done: {summary}` is the pipeline handoff and is
+# mode the worker starts validation itself, so a pre-validation
+# `done: {summary}` is a legacy or off-contract report that is tolerated and
 # not gated; only the later CI-ready `done: PR <url> checks green` is, or on a
 # Gerrit project the later `done: PR <change url> published for review`. The
 # named head is the worker copy's HEAD, except that a done naming the task's
@@ -731,7 +732,8 @@ fm_dod_accept_external_review_done() {  # <worktree> <project> <line> <meta>
 }
 
 # 0 when this ship done: is one the named-head gate must accept or refuse.
-# no-mistakes pre-validation done: is the pipeline handoff and is not gated.
+# A no-mistakes pre-validation done: is a tolerated legacy or off-contract
+# report and is not gated.
 # Empty mode is treated as no-mistakes, the unregistered-project default.
 fm_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   local note
@@ -965,7 +967,7 @@ EOF
 # too. 1 when a direct-PR done names none anywhere; stdout then holds the steer.
 # Presence only: it never asks whether the pull request is open, green, or the
 # worker's own, which would need the forge. Every other mode and kind passes:
-# no-mistakes treats a pre-validation done as the pipeline handoff, and
+# no-mistakes tolerates a legacy or off-contract pre-validation done, and
 # local-only and scout finish without a pull request. A forge=external ship
 # passes too: it reports an uploaded review, never a pull request, and
 # fm_dod_accept_external_review_done owns that report.
