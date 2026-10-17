@@ -1,0 +1,25 @@
+$ # lab home: task t1749 latest event is "done: PR ... checks green", same-theme line only
+$ bin/fm-wake-drain.sh
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+t1749 done [at=1792215700]: PR https://github.com/nikzorz/arena/pull/1749 checks green
+RULINGS OWED (pipeline rounds a ready report still owes a decision line; the merge refuses until each is appended):
+task t1749 owes a decision line for:
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 1 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 2 declined ask-user finding 'other-shape-source', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 2 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 3 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step test round 1 declined ask-user finding 'test-1', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step test round 1 declined ask-user finding 'test-2', which no needs-decision line of task t1749's status log names for that run and round
+after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to /tmp/fm-lab.JWpxci/state/t1749.status to name every unruled finding above:
+needs-decision [at=1792215654] [key=nm-01M52JSXS8KXT89X4FE5H6REKN-review]: ask-user round=1 findings=entry-citation file=/tmp/fm-lab.JWpxci/data/t1749/nm-01M52JSXS8KXT89X4FE5H6REKN-findings.txt
+needs-decision [at=1792215654] [key=nm-01M52JSXS8KXT89X4FE5H6REKN-review]: ask-user round=2 findings=other-shape-source,entry-citation file=/tmp/fm-lab.JWpxci/data/t1749/nm-01M52JSXS8KXT89X4FE5H6REKN-findings.txt
+needs-decision [at=1792215654] [key=nm-01M52JSXS8KXT89X4FE5H6REKN-review]: ask-user round=3 findings=entry-citation file=/tmp/fm-lab.JWpxci/data/t1749/nm-01M52JSXS8KXT89X4FE5H6REKN-findings.txt
+needs-decision [at=1792215654] [key=nm-01M52JSXS8KXT89X4FE5H6REKN-test]: ask-user round=1 findings=test-1,test-2 file=/tmp/fm-lab.JWpxci/data/t1749/nm-01M52JSXS8KXT89X4FE5H6REKN-findings.txt
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+exit=0

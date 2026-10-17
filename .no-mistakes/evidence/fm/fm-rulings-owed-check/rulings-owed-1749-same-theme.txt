@@ -1,0 +1,12 @@
+$ cat state/t1749.status
+needs-decision [at=1792200000] [key=nm-01M52JSXS8KXT89X4FE5H6REKN-same-theme]: ask-user findings=push-lookup-permission rounds=1,2 file=/tmp/nmprobe.KLE8/data/t1749/nm-01M52JSXS8KXT89X4FE5H6REKN-findings.txt
+$ bin/fm-nm-rulings-owed.sh t1749
+task t1749 owes a decision line for:
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 1 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 2 declined ask-user finding 'other-shape-source', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 2 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step review round 3 declined ask-user finding 'entry-citation', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step test round 1 declined ask-user finding 'test-1', which no needs-decision line of task t1749's status log names for that run and round
+  - no-mistakes run 01M52JSXS8KXT89X4FE5H6REKN step test round 1 declined ask-user finding 'test-2', which no needs-decision line of task t1749's status log names for that run and round
+after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to /tmp/nmprobe.KLE8/state/t1749.status to name every unruled finding above:
+exit=1

@@ -1,0 +1,13 @@
+$ bin/fm-nm-rulings-owed.sh t1752   # run 01M52KCB3JD1D4AVBY40ZG9EPW, no decision lines yet
+task t1752 owes a decision line for:
+  - no-mistakes run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 2 declined auto-fix finding 'tests-yml-lane', which no needs-decision line of task t1752's status log names for that run and round
+  - no-mistakes run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 2 declined auto-fix finding 'class-cache-stale-lane', which no needs-decision line of task t1752's status log names for that run and round
+  - no-mistakes run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 3 declined auto-fix finding 'review-1', which no needs-decision line of task t1752's status log names for that run and round
+  - no-mistakes run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 2 declined ask-user finding 'class-cache-stale-lane-red', which no needs-decision line of task t1752's status log names for that run and round
+  - no-mistakes run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 3 declined ask-user finding 'class-cache-stale-lane-red', which no needs-decision line of task t1752's status log names for that run and round
+after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to /tmp/nmprobe.KLE8/state/t1752.status to name every unruled finding above:
+needs-decision [at=1792215626] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPW-review]: ask-user round=2 findings=tests-yml-lane,class-cache-stale-lane file=/tmp/nmprobe.KLE8/data/t1752/nm-01M52KCB3JD1D4AVBY40ZG9EPW-findings.txt
+needs-decision [at=1792215626] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPW-review]: ask-user round=3 findings=review-1 file=/tmp/nmprobe.KLE8/data/t1752/nm-01M52KCB3JD1D4AVBY40ZG9EPW-findings.txt
+needs-decision [at=1792215626] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPW-test]: ask-user round=2 findings=class-cache-stale-lane-red file=/tmp/nmprobe.KLE8/data/t1752/nm-01M52KCB3JD1D4AVBY40ZG9EPW-findings.txt
+needs-decision [at=1792215626] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPW-test]: ask-user round=3 findings=class-cache-stale-lane-red file=/tmp/nmprobe.KLE8/data/t1752/nm-01M52KCB3JD1D4AVBY40ZG9EPW-findings.txt
+exit=1

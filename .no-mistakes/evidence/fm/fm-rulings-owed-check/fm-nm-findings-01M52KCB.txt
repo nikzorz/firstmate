@@ -1,0 +1,147 @@
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step intent round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step rebase round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 1
+id: caps-import-cache
+severity: warning
+file: tools/lint/validation_lint.sh
+line: 77
+action: ask-user
+description: The wrapper runs `python3 tools/lint/compiler_caps.py` without checking for, or building, the `.godot/` import cache, and the caps pass needs that cache to count anything. CI covers this with an explicit `Import project` step ahead of the caps step; its own comment says a fresh checkout without `.godot/` gives "spurious parse errors". `tools/gut.sh` covers it by importing when `cache_is_stale`, and in a worktree of a bare repository it imports on every call. A no-mistakes worktree is exactly that kind of checkout, and this one has no `.godot/` right now. Failing sequence: the lint step runs on a `.gd` diff before any GUT run has imported (for example the test step was skipped, or it never reached gut.sh). `count.gd` then fails to compile every script that names a `class_name`, `read_findings` raises Unusable ('a script that does not compile has no findings to count'), and the wrapper exits 2. That is a red lint step on a clean change, and it is not the `shadowed_variable_base_class in tests: 166, capped at 165` verdict the Done-when criterion asks for. A class_name added in the run's working tree after the test step imported leaves the cache stale in the same way. Smallest honest remedy: import first when the class cache is missing or older than HEAD, using gut.sh's `cache_is_stale` rule. That adds a second Godot pass beyond the ticket's stated cost of "one Godot pass of about 20 s", so the remedy needs the author's call.
+
+id: tests-yml-lane
+severity: warning
+file: tools/lint/guard_lanes.sh
+line: 172
+action: auto-fix
+description: The contract now reads `.github/workflows/tests.yml` and holds the gut job's caps command equal to the wrapper's CAPS. But `wants_guard_command` does not list `.github/workflows/tests.yml`, and `decides_every_guard` covers only guards.yml and the classifier. Failing sequence: a PR edits the `Hold each capped compiler rule to its count` step (adds a flag, renames the step). guards.yml skips the guard_command lane, run_guards.sh skips it in the validation run too, and the drift merges green. It then fails `guard_command_contract.sh` on the next unrelated PR that touches the wrapper or the config. Fix: add `.github/workflows/tests.yml` to `wants_guard_command`, and set the guard_command column to `run` in tests.yml's `expect` row in `tests/smoke/guard_lanes_contract.sh`, adding that row if none exists. Sibling: the new row at `tests/smoke/guard_lanes_contract.sh:86` covers the wrapper but nothing covers the second file the contract now compares.
+
+id: wrapper-contract-weak
+severity: warning
+file: tests/smoke/guard_command_contract.sh
+line: 399
+action: auto-fix
+description: The new wrapper checks would still pass several plausible wrong wrappers. (1) Every behavioral case sets `CAPS_STAND_IN_EXIT=1`, and in the `.gd` and project.godot cases run_guards' own verdict is unknown, so they assert only rc!=0. No case has a failing guard and a passing caps pass, and none has a passing caps pass on a due diff. So a wrapper that overwrites the runner's status (`"${CAPS[@]}"; status=$?`) passes, and so does one that exits 1 whenever the pass runs. (2) `wrapper_runs_runner` (line 142) and `wrapper_caps` (line 135) are source-text matches. A `bash tools/lint/run_guards.sh` line after an early `exit`, or a wrapper that invokes a literal command other than its CAPS array, passes both. The test-quality rule flags exactly these newly added source-only assertions. Fix: add a case that plants the existing autoload-by-string violation on a `.gd` diff with `CAPS_STAND_IN_EXIT=0` and asserts exit 1 plus the Rule book FAIL line, which proves the runner ran and its verdict survives. Add a tsv-only case with `CAPS_STAND_IN_EXIT=0` that asserts exit 0. Have the stand-in print its argv, and compare that observed invocation with the gut job's command, instead of (or alongside) parsing `CAPS=(...)`.
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 2
+id: tests-yml-lane
+carried: round 1
+severity: warning
+file: tools/lint/guard_lanes.sh
+line: 172
+action: auto-fix
+description: The contract now reads `.github/workflows/tests.yml` and holds the gut job's caps command equal to the wrapper's CAPS. But `wants_guard_command` does not list `.github/workflows/tests.yml`, and `decides_every_guard` covers only guards.yml and the classifier. Failing sequence: a PR edits the `Hold each capped compiler rule to its count` step (adds a flag, renames the step). guards.yml skips the guard_command lane, run_guards.sh skips it in the validation run too, and the drift merges green. It then fails `guard_command_contract.sh` on the next unrelated PR that touches the wrapper or the config. Fix: add `.github/workflows/tests.yml` to `wants_guard_command`, and set the guard_command column to `run` in tests.yml's `expect` row in `tests/smoke/guard_lanes_contract.sh`, adding that row if none exists. Sibling: the new row at `tests/smoke/guard_lanes_contract.sh:86` covers the wrapper but nothing covers the second file the contract now compares.
+
+id: class-cache-stale-lane
+severity: warning
+file: tools/lint/guard_lanes.sh
+line: 173
+action: auto-fix
+description: Round 1's fix moved the stale-cache rule into the new `tools/class_cache_stale.sh`. The lint wrapper calls it (`tools/lint/validation_lint.sh`, the `bash tools/class_cache_stale.sh "$root"` line), and `tests/smoke/guard_command_contract.sh` copies it into its clone and drives it. But `wants_guard_command` does not list `tools/class_cache_stale.sh`. The fix round added it only to `wants_gut_affected` (guard_lanes.sh line 161), and the new `expect` row at `tests/smoke/guard_lanes_contract.sh:111` sets the guard_command column to skip. This is the same gap the round-1 tests-yml-lane finding closed for tests.yml: the fix round created this sibling and left it uncovered. Failing sequence: a PR changes the script's interface (it reads the root from cwd instead of `$1`, or it flips the exit codes) and updates gut.sh's call to match. gut_sh_contract and gut_affected_contract run and pass, guard_command_contract is skipped, and the wrapper's call quietly breaks. It then either never imports, giving an exit 2 on every `.gd` validation run in a fresh worktree, or always imports. The failure shows up only on a later PR that touches the wrapper. Fix: add `tools/class_cache_stale.sh` to `wants_guard_command`, and set the last column of the `the import check the GUT runner calls` row at guard_lanes_contract.sh:111 to `run`.
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step review round 3
+id: review-1
+severity: info
+file: tools/lint/validation_lint.sh
+line: 81
+action: auto-fix
+description: The import before the caps pass sends all of Godot's output to /dev/null. When it fails, the step prints only 'the import failed' with no exit code and no log, so whoever reads a red lint step has nothing to diagnose from. tools/gut.sh runs the same import through `record` into its log and names that log and the exit status. Suggested fix: keep the output (or write it to a temp log and print its tail on failure) and include the import's exit status in the message.
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 2
+id: guard-command-contract-recursion
+severity: error
+file: tests/smoke/guard_command_contract.sh
+line: 
+action: auto-fix
+description: guard_command_contract.sh recurses without end. The case 'a changed project.godot runs the caps pass' runs the real validation_lint.sh, and so run_guards.sh, in a clone whose diff touches project.godot. wants_guard_command lists project.godot, so run_guards runs tests/smoke/guard_command_contract.sh inside that clone. That copy makes its own clone, reaches the same case and nests again. A bounded probe showed the depth rising into fresh /tmp clones. An orphaned earlier run had reached about 57 nested copies after 39 minutes and had filled about 4 GB of /tmp. In CI this hangs the guards job until it times out, on every PR that wakes the guard_command lane. Smallest remedy: commit a stand-in tests/smoke/guard_command_contract.sh into the clone's base commit, as the contract already does for compiler_caps.py and godot.sh, so a nested lane run cannot re-enter the real contract.
+
+id: class-cache-stale-lane-red
+severity: error
+file: tests/smoke/guard_lanes_contract.sh
+line: 
+action: ask-user
+description: On aa57c1fc, guard_lanes_contract.sh fails with 'guard_command: tests/smoke/guard_command_contract.sh names tools/class_cache_stale.sh, which does not wake the lane'. The wake rule came in from main (#1747) through the merge. It runs on every diff, so the new validation lint step exits 1 on any change, including a docs-only diff and a clean .gd change; the guards job goes red the same way. Round 2 declined the remedy of adding tools/class_cache_stale.sh to wants_guard_command, but that was before this merge made the omission a hard failure. The only other remedy is a NAMED_NOT_READ entry, which would be inaccurate, because the contract copies the script into its clone and drives it. Which way to resolve this needs the owner's ruling.
+
+id: test-3
+severity: error
+file: 
+line: 
+action: auto-fix
+description: live validation verdict: no-go (7 of 7 scenarios were driven live against the product); failed: A clean .gd change (a non-shadowing rename) passes the lint step, A docs-only diff skips the caps pass and passes the lint step, guard_command_contract.sh holds the wrapper's caps command equal to the gut job's, and terminates
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 3
+id: class-cache-stale-lane-red
+severity: error
+file: tests/smoke/guard_lanes_contract.sh
+line: 
+action: ask-user
+description: At 4f98b24e, guard_lanes_contract.sh still fails with 'guard_command: tests/smoke/guard_command_contract.sh names tools/class_cache_stale.sh, which does not wake the lane'. run_guards.sh runs that contract on every diff, so tools/lint/validation_lint.sh exits 1 on a clean .gd change and on a docs-only change, and four guard_command_contract cases fail. The guards job will go red the same way. There are two remedies. One adds tools/class_cache_stale.sh to wants_guard_command and sets the guard_command column of its expect row to run; round 2 declined this before the merge made it a hard failure. The other adds a NAMED_NOT_READ entry, which would be inaccurate because the contract drives the script. The owner needs to choose.
+
+id: test-2
+severity: error
+file: 
+line: 
+action: auto-fix
+description: live validation verdict: no-go (6 of 7 scenarios were driven live against the product); failed: A clean .gd change passes the lint step, A docs-only diff skips the caps pass and passes the lint step, guard_command_contract.sh holds the wrapper's caps command equal to the gut job's, and terminates, The lint lane classifier contract passes
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step test round 4
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step document round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step document round 2
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step lint round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step lint round 2
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step push round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step push round 2
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step pr round 1
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step pr round 2
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step ci round 1
+id: ci-1
+severity: error
+file: 
+line: 
+action: auto-fix
+description: PR has merge conflicts with the base branch
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step ci round 2
+id: ci-fix-agent-timeout
+severity: warning
+file: 
+line: 
+action: ask-user
+description: The CI auto-fix agent did not finish within its invocation budget while repairing: merge conflict. Reported: agent CI fix: agent timed out after 30m0s; agent last produced output 173ms ago (35 observed); agent reported: claude parse events: context deadline exceeded. The cut itself reflects budget or provider slowness; it does not clear the findings listed with it. Re-running the same request costs another full budget, so no further attempt is made automatically. Check that the configured agent CLI is authenticated and responsive, then respond with a fix selection to spend another budget, or resolve the CI failure outside the pipeline. The timed-out agent committed b33e547564bd; it is recorded locally for custody and is not published.
+
+id: ci-1
+severity: error
+file: 
+line: 
+action: ask-user
+description: PR has merge conflicts with the base branch
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step ci round 3
+(no findings)
+
+== run 01M52KCB3JD1D4AVBY40ZG9EPW step ci round 4
+(no findings)
