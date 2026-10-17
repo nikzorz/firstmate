@@ -514,17 +514,33 @@ The composer-classification record below observes the same gate from the other s
 
 ## Claude context reset reminder
 
-`bin/fm-context-reset-reminder.sh` reads Claude's own transcript records: the Stop payload's `transcript_path`, main-thread assistant `usage`, and which user entries are prompts rather than tool results.
+`bin/fm-context-reset-reminder.sh` reads Claude's own transcript records: the Stop payload's `transcript_path`, main-thread assistant `usage`, which user entries are prompts rather than tool results, the prompt's `timestamp`, and the turn's final assistant text.
 `tests/fm-context-reset-reminder-live-e2e.test.sh` (`FM_CONTEXT_RESET_LIVE_E2E=1`) proves that shape against the installed Claude Code and refreshes this record after an upgrade.
 
-Verified 2026-09-24 on Claude Code 2.1.281.
+Verified 2026-10-16 on Claude Code 2.1.294.
 
 ```sh
 FM_CONTEXT_RESET_LIVE_E2E=1 bash tests/fm-context-reset-reminder-live-e2e.test.sh
 ```
 
 ```
-ok - 2.1.281 (Claude Code): the reset reminder fires once on the crossing turn and stays silent on the next
+ok - 2.1.294 (Claude Code): the reset reminder fires once on the crossing turn and stays silent on the next
+```
+
+### Claude automatic context reset
+
+The automatic reset's idle test, its typed `/stow light`, and its typed `/clear` all depend on Claude's rendered TUI, so `tests/fm-context-reset-auto-live-e2e.test.sh` (`FM_CONTEXT_RESET_AUTO_LIVE=1`) drives a real Claude in an isolated Herdr lab with a one-token threshold and a stand-in stow skill that only records the reset-safe verdict.
+It refreshes this record after a Claude or Herdr upgrade.
+
+Verified 2026-10-17 on Claude Code 2.1.294 and Herdr 0.9.3, with the session-lock gate in place.
+
+```sh
+FM_CONTEXT_RESET_AUTO_LIVE=1 bash tests/fm-context-reset-auto-live-e2e.test.sh
+```
+
+```
+ok - 2.1.294 (Claude Code) on herdr 0.9.3: a turn ending with an unsent draft in the composer is never typed into
+ok - 2.1.294 (Claude Code) on herdr 0.9.3: an idle turn end past the threshold gets /stow light typed, and its reset-safe verdict gets /clear typed and performed
 ```
 
 The measure is the usage count rather than transcript bytes because bytes per context token vary too widely to calibrate.
@@ -1415,6 +1431,11 @@ The pre-Enter payload proof then judged the typed command unsent, pressed Ctrl+U
 The fix captures the FULL VISIBLE VIEWPORT for every herdr adapter composer read (`pane read --source visible [--format ansi]`, `fm_backend_herdr_composer_state` and `fm_backend_herdr_composer_content`): the composer is by definition inside the viewport, and the viewport is the one bound that always contains it.
 The shared inbox pending-line confirmation read (`bin/fm-task-inbox-lib.sh`) stays a bounded tail on every backend, herdr included; its payloads are task lines, not slash commands, so the popup shape does not arise there.
 The popup rows sit below the composer's closing rule, which is a structural edge row, so the shared classifier still selects only the composer and the menu rows never read as typed text.
+
+Claude Code 2.1.294 (Herdr 0.9.3, measured 2026-10-16) marks the popup's selected entry with the composer's own prompt glyph, indented: `  ❯ /clear   Start a new session with empty context; ...`.
+The classifier took that row as a bare composer below the rule pair, so the payload proof read the popup text and reported `send-failed` for a typed `/exit` and `/clear` alike.
+`bin/fm-composer-lib.sh` now treats an indented `❯ /<command>` row directly under the composer's closing rule as the popup's selection, and selects the prompt row between the rules instead.
+`tests/fm-composer-lib.test.sh` pins the shape (`Claude's slash popup selection row under the closing rule never replaces the composer`).
 Verified live in the lab: with the popup up the state read answers `pending` (previously `empty`) and the payload proof returns `/exit` (previously empty), the submit presses Enter, and the Claude process exits, leaving the shell prompt.
 Growing the window only adds rows above the composer, so the bottom-most-shape selection, the footer zone, and every previously passing verdict are unchanged.
 
@@ -1437,6 +1458,16 @@ FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh
 
 ```text
 ok - live Herdr submit confirm: Claude Code (2.1.283 (Claude Code)) on herdr 0.9.0 proves and submits a typed /exit behind its command popup
+```
+
+Observed 2026-10-16, after the 2.1.294 selection-row fix (before it, the same run ended `not ok - ... a typed /exit behind its command popup was judged unsent and cleared instead of submitted`):
+
+```text
+ok - live Herdr submit confirm: Claude Code (2.1.294 (Claude Code)) on herdr 0.9.3 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-459547-7621
+ok - live Herdr submit confirm: Claude Code (2.1.294 (Claude Code)) on herdr 0.9.3 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr doorbell stall: Claude Code (2.1.294 (Claude Code)) on herdr 0.9.3 recovers a doorbell fragment left by a stalled render, and the worker acts and acknowledges
+ok - live Herdr submit confirm: Claude Code (2.1.294 (Claude Code)) on herdr 0.9.3 parked under agent_status=done reads alive
+ok - live Herdr submit confirm: Claude Code (2.1.294 (Claude Code)) on herdr 0.9.3 proves and submits a typed /exit behind its command popup
 ```
 
 Measured 2026-09-26 against Herdr 0.8.2 and Claude Code 2.1.281.

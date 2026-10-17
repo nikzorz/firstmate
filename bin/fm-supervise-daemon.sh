@@ -752,15 +752,7 @@ fm_daemon_primary_harness() {
 }
 
 pane_is_busy() {  # <target> [backend]
-  local target=$1 backend=${2:-tmux} native tail40 harness
-  harness=$(fm_daemon_primary_harness)
-  native=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)
-  case "$native" in
-    busy) return 0 ;;
-  esac
-  tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || return 1
-  printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -12 \
-    | fm_busy_lines_match "$harness"
+  supervisor_pane_is_busy "$1" "${2:-tmux}" "$(fm_daemon_primary_harness)"
 }
 
 # pane_input_pending dispatches through fm_backend_composer_state and treats

@@ -1,6 +1,6 @@
 ---
 name: stow
-description: Sweep the current session for uncaptured durable knowledge, file it to disk, persist the open work records this session knows are unfiled or now wrong, and curate the home's tiered, decaying startup memory before a context reset. Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), before a session reset or context compaction, or periodically to keep operational memory current.
+description: Sweep the current session for uncaptured durable knowledge, file it to disk, persist the open work records this session knows are unfiled or now wrong, and curate the home's tiered, decaying startup memory before a context reset. Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), on `/stow light` (the lighter pass a session reset runs), before a session reset or context compaction, or periodically to keep operational memory current.
 user-invocable: true
 metadata:
   internal: true
@@ -13,6 +13,7 @@ metadata:
 Sweep this session for durable knowledge and open-work record state that exist only in conversation, then leave the next session with a compact current operating map rather than an accumulating journal.
 Memory entries are tiered and decay between passes, and stale material retires to a cold archive instead of being deleted.
 This skill writes only through the existing Firstmate ownership and write boundaries.
+`/stow light` runs only the light pass below; every other invocation is a full pass and follows this whole page.
 
 ## Memory tiers and entry markers
 
@@ -79,7 +80,7 @@ While the flag is present:
 
 ## Required startup-memory pass
 
-Every `/stow` invocation performs this complete pass, even when the session contains no new finding:
+Every full pass performs this complete curation, even when the session contains no new finding:
 
 1. Run `bin/fm-startup-memory-budget.sh report` before considering a write.
    Record its effective budget and each file's estimated-token total.
@@ -137,7 +138,7 @@ Every `/stow` invocation performs this complete pass, even when the session cont
 
 A net increase is allowed only for a genuinely new current fact with no stronger owner.
 Before allowing it, consolidate enough lower-priority material to remain within budget.
-Never describe the session as reset-safe while the memory total is over budget or an exception is unresolved.
+Never describe a full pass's session as reset-safe while the memory total is over budget or an exception is unresolved.
 
 ## The cold tier: data/memory-archive.md
 
@@ -288,10 +289,21 @@ State what reset-safe means in the same breath as the claim: nothing this sessio
 It is never a claim that the home's durable records are correct, because this pass checks no record the session did not name.
 Do not hide an over-budget result behind a reset-safe claim.
 In a primary home the receipt is written after the cascade below, not instead of it.
+After the receipt, run `bin/fm-context-reset-reminder.sh record curated`, and also `bin/fm-context-reset-reminder.sh record reset-safe` when the receipt declares the session safe to reset; the session reset below reads both records.
+
+## Light pass
+
+`/stow light` is the pass a session reset runs between full passes: it confirms nothing this session knows is unfiled, and it skips memory curation.
+It runs the knowledge sweep and the open-record persistence above, writing only what no file on disk already holds, and nothing else on this page: no budget report, reinforcement, decay, migration, consolidation, offload, or cascade to secondmates.
+A finding a memory file already states, even in older words, is already on disk: leave that entry unchanged and unstamped, because reinforcement belongs to the full pass.
+A new memory entry still carries its tier marker under the marking rules, and is written without the whole-file curation a full pass performs first.
+Its receipt names each finding filed and its owner, each finding left waiting on an unreachable declared tier, each open record filed or left with its reason, and whether the session is safe to reset.
+That verdict follows the completion receipt's reset-safe test with two changes: the budget clause does not apply, because the next full pass owns the budget, and a question this session put to the captain that is still unanswered makes the session not reset-safe, because a reset would lose what the answer refers to.
+When the verdict is reset-safe, run `bin/fm-context-reset-reminder.sh record reset-safe` after the receipt.
 
 ## Automatic cascade to secondmates
 
-In a primary home, every `/stow` cascades to every registered secondmate after this home's own required pass and knowledge sweep are complete.
+In a primary home, every full pass cascades to every registered secondmate after this home's own required pass and knowledge sweep are complete.
 In a secondmate home, `/stow` curates that home only and never cascades further.
 The cascade changes nothing until `/stow` is invoked: it adds no notification, no digest section, and no background work.
 
@@ -320,16 +332,17 @@ The session is reset-safe only when every home is within its own budget with no 
 ## Session reset
 
 A long primary session grows with every handled wake, while its startup cost is fixed, so resetting it returns the session to that fixed cost and loses nothing that durable records hold.
-This pass is the capture half; the reset is complete only after the other two steps:
+A pass is the capture half; the reset is complete only after the other two steps:
 
-1. Run this pass to a reset-safe receipt.
-2. The operator clears the conversation in the same session, with `/clear` on Claude.
+1. Run `/stow light` to a reset-safe receipt, or a full `/stow` when no full pass has run for about a day.
+2. Clear the conversation in the same session, with `/clear` on Claude.
    Clearing keeps the same process, so the session lock and live supervision stay with it, whereas exiting and relaunching pays lock and supervision continuity for the same result.
 3. Take the session-start digest that the clear re-delivers as this session's fresh start.
    On a harness whose clear does not re-deliver it (`docs/sessionstart-nudge.md`), run `bin/fm-session-start.sh` once.
 
 Reset before auto-compaction instead of relying on it: a compacted session keeps a lossy summary in context beside the re-read digest.
-On Claude, `bin/fm-context-reset-reminder.sh` suggests this reset once when the session's context crosses its threshold; its header owns the measure.
+On Claude, `bin/fm-context-reset-reminder.sh` runs this reset by itself once the main session's context crosses its threshold: while the session sits idle it types the pass, then types `/clear` only after that pass records the session reset-safe.
+Where it cannot type into the session it suggests the reset to the operator once instead; its header owns the threshold, the idle test, and both records.
 
 ## Scope exclusion: no skill storage by the pass
 

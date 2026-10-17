@@ -1176,6 +1176,23 @@ test_cursor_on_proven_box_bottom_classifies_content() {
   pass "fm_composer_classify_screen: a proven box tolerates a bottom-border cursor"
 }
 
+# Claude Code 2.1.294's slash-command popup, read live on Herdr: the selected
+# entry repeats the composer's prompt glyph, indented, directly under the
+# composer's closing rule.
+test_claude_slash_popup_keeps_the_ruled_composer() {
+  local rule screen out
+  rule=$(printf '─%.0s' $(seq 60))
+  screen=" ☀  Clear  0% of context"$'\n\n'"$rule"$'\n❯ /clear\n'"$rule"$'\n  ❯ /clear                     Start a new session with empty context\n                                disk (resumable with /resume)\n    /context                    Visualize current context usage'
+  out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$screen")
+  [ "$out" = /clear ] || fail "a typed slash command above its popup must extract as typed, got '$out'"
+  out=$(fm_composer_classify_screen "$CAPS_STYLED_NOID" "$screen")
+  [ "$out" = pending ] || fail "a typed slash command above its popup must read pending, got '$out'"
+  screen="$rule"$'\n❯ \n'"$rule"$'\n  ❯ /clear                     Start a new session with empty context'
+  out=$(fm_composer_classify_screen "$CAPS_STYLED_NOID" "$screen")
+  [ "$out" = empty ] || fail "the ruled composer, not its popup row, decides the verdict, got '$out'"
+  pass "fm_composer: Claude's slash popup selection row under the closing rule never replaces the composer"
+}
+
 test_selected_content_is_composer_scoped_and_wrap_normalized() {
   local screen out
   screen=$'hello captain in transcript\n╭────────────────────╮\n│ unrelated          │\n│ draft               │\n╰────────────────────╯'
@@ -1217,6 +1234,7 @@ test_selected_content_is_composer_scoped_and_wrap_normalized() {
   pass "fm_composer_extract_selected_content: scopes user content and excludes furniture"
 }
 
+test_claude_slash_popup_keeps_the_ruled_composer
 test_bare_shell_glyphs_are_unknown
 test_stripped_unbordered_content_uses_plain_content
 test_bare_shell_prompt_with_command_is_not_empty

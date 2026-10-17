@@ -76,3 +76,21 @@ discover_supervisor_backend() {
   printf '%s' "$FM_SUPERVISOR_BACKEND_DEFAULT"
   return 1
 }
+
+# supervisor_pane_is_busy: 0 when the supervisor pane shows an agent mid-turn.
+# Typing into a busy primary would queue the text behind the running turn, so
+# every caller that types into the captain's pane gates on this first. The
+# backend's native state wins when it reports busy; otherwise the rendered tail
+# is matched against <harness>'s own busy signature only, so another harness's
+# output can never make this pane read busy. The caller must have sourced
+# bin/fm-backend.sh, whose backend load supplies the signature matcher.
+supervisor_pane_is_busy() {  # <target> <backend> <harness>
+  local target=$1 backend=$2 harness=$3 native tail40
+  native=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)
+  case "$native" in
+    busy) return 0 ;;
+  esac
+  tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || return 1
+  printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -12 \
+    | fm_busy_lines_match "$harness"
+}
