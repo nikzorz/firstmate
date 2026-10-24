@@ -467,6 +467,21 @@ nm_field() {  # <key>
   fm_nm_field "$RUN_OUT" "$1"
 }
 
+# The components a checks-green reading carries so it is actionable without the
+# worker's own ready report: the run's PR URL, for a PR the worker never
+# reported and no pr= recorded, and the head the pipeline last pushed, which
+# names the exact commit those green checks judged. Each is its own component so
+# crew_ci_green_pr (bin/fm-classify-lib.sh) compares whole components, never
+# free text.
+ci_green_components() {
+  local url head
+  url=$(strip_quotes "$(nm_field pr)")
+  head=$(fm_nm_branch_sync_nested "$RUN_OUT" pipeline current_head)
+  [ -n "$head" ] || head=$(strip_quotes "$(nm_field head)")
+  [ -z "$url" ] || printf '%s%s%s' "$SEP" "$FM_CLASSIFY_CI_GREEN_PR_PREFIX" "$url"
+  [ -z "$head" ] || printf '%s%s%s' "$SEP" "$FM_CLASSIFY_CI_GREEN_HEAD_PREFIX" "$head"
+}
+
 pr_read_record_bounded() {  # <owner> <repo> <number>
   local record state merged
   # shellcheck disable=SC2016  # The inner script expands after bash -c receives positional args.
@@ -1651,7 +1666,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       case "$outcome" in
         passed|passed-with-override) RUN_STATE="done"; RUN_DETAIL=$(passed_pr_detail) ;;
         passed-with-skips) RUN_STATE="done"; RUN_DETAIL="$(passed_pr_detail) (publication/CI verification skipped)" ;;
-        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review" ;;
+        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review$(ci_green_components)" ;;
         failed)
           if nm_reclassify_failed_run_as_held_green; then :; else
             RUN_STATE=failed; RUN_DETAIL="run failed"
@@ -1707,11 +1722,7 @@ if [ "$HAVE_RUN" = 1 ]; then
             CI_LOG_STATE=$(nm_ci_checks_state)
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
-              RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
-              # The run's own PR URL makes this reading actionable even when
-              # the worker never reported it and no pr= was recorded.
-              ci_pr_url=$(strip_quotes "$(nm_field pr)")
-              [ -z "$ci_pr_url" ] || RUN_DETAIL="$RUN_DETAIL: $ci_pr_url"
+              RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)$(ci_green_components)"
             fi
             ;;
           fixing)

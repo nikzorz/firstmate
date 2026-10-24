@@ -16,7 +16,8 @@ KEY_FAMILIES=(hash count stale stale-since churn-since paused paused-rechecked
   paused-resurfaced waiting-resurfaced writing-since writing-resurfaced wedge-escalations
   dead-reported advancing-resurfaced advancing-absorbs herdr-escalated)
 ID_FAMILIES=(subsuper-stale subsuper-paused subsuper-pause-until-due subsuper-advancing
-  subsuper-advancing-resurfaced subsuper-advancing-absorbs subsuper-seen-status hb-surfaced)
+  subsuper-advancing-resurfaced subsuper-advancing-absorbs subsuper-seen-status hb-surfaced
+  merge-ready)
 # Keyed by the raw id rather than its folded spelling, as the secondmate wake-stall
 # writers key them; the receipts directory is counted as one more record.
 RAW_ID_FAMILIES=(secondmate-wake-progress secondmate-wake-ring secondmate-wake-stall)

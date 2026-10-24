@@ -1257,6 +1257,32 @@ EOF
   pass "ci-monitoring run with checks already green surfaces done"
 }
 
+# A run reading checks green on its ci step must carry the PR it judged and the
+# head its checks ran on as whole components, so the watcher's merge-ready
+# notice (crew_ci_green_pr) can act on it before the worker reports, and a
+# still-running ci step yields no such reading.
+test_ci_green_names_pr_and_head() {
+  reset_fakes
+  local d out rec; d=$(new_case ci-green-pr-head)
+  make_repo_on_branch "$d/wt" fm/feat-ciprhead
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-ciprhead.meta" "window=fm:fm-feat-ciprhead" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-ciprhead)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  out=$(run_crew_state "$d" feat-ciprhead)
+  assert_contains "$out" " · pr: https://github.com/o/r/pull/2" "green ci reading names its PR as a component"
+  assert_contains "$out" " · run head: $FM_FAKE_RUN_HEAD" "green ci reading names the judged head as a component"
+  rec=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_BIN="$CREW_STATE" crew_ci_green_pr feat-ciprhead) \
+    || fail "crew_ci_green_pr refused a green ci reading: $out"
+  [ "$rec" = "https://github.com/o/r/pull/2 $FM_FAKE_RUN_HEAD" ] || fail "crew_ci_green_pr read '$rec' from: $out"
+  FM_FAKE_CI_LOGS="CI checks running, waiting for results..."
+  out=$(run_crew_state "$d" feat-ciprhead)
+  if PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_BIN="$CREW_STATE" crew_ci_green_pr feat-ciprhead >/dev/null; then
+    fail "crew_ci_green_pr accepted a ci step still waiting on checks: $out"
+  fi
+  pass "a green ci reading names its PR and head, and only a green one is merge-ready"
+}
+
 test_top_level_ci_checks_green_surfaces_done() {
   reset_fakes
   local d; d=$(new_case top-level-ci-green)
@@ -6797,6 +6823,7 @@ test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
+test_ci_green_names_pr_and_head
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done
 test_ci_monitoring_green_then_rearm_stays_green

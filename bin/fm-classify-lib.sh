@@ -2714,6 +2714,43 @@ crew_gate_awaits_human_decision() {  # <id> -> <run-id> on stdout
   printf '%s\n' "$run"
 }
 
+# The spellings of the two components a checks-green no-mistakes reading carries
+# (bin/fm-crew-state.sh's ci_green_components mints them): the run's PR URL and
+# the head its green checks judged. crew_ci_green_pr below is their consumer.
+FM_CLASSIFY_CI_GREEN_PR_PREFIX='pr: '
+FM_CLASSIFY_CI_GREEN_HEAD_PREFIX='run head: '
+
+# 0 if crew <id>'s authoritative current state is its own no-mistakes run
+# reading checks green on a PR, printing `<pr-url> <head>` on stdout.
+# Only the run-step source answers: a checks-green reading that rests on the
+# worker's own ready report is that report, which already wakes firstmate on
+# its own. A reading naming no PR URL or no head is not evidence, since nothing
+# could then say which PR is ready or which commit was judged.
+# Same cost as crew_gate_awaits_human_decision: one fm-crew-state.sh read.
+crew_ci_green_pr() {  # <id> -> <pr-url> <head> on stdout
+  local id=$1 line state src rest part green='' url='' head=''
+  [ -n "$id" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = "done" ] || return 1
+  src=${line#*source: }; src=${src%% *}
+  [ "$src" = run-step ] || return 1
+  rest="$line · "
+  while [ -n "$rest" ]; do
+    part=${rest%% · *}
+    rest=${rest#* · }
+    case "$part" in
+      "checks green: PR ready for review"*) green=1 ;;
+      "$FM_CLASSIFY_CI_GREEN_PR_PREFIX"?*) url=${part#"$FM_CLASSIFY_CI_GREEN_PR_PREFIX"} ;;
+      "$FM_CLASSIFY_CI_GREEN_HEAD_PREFIX"?*) head=${part#"$FM_CLASSIFY_CI_GREEN_HEAD_PREFIX"} ;;
+    esac
+  done
+  [ -n "$green" ] && [ -n "$url" ] && [ -n "$head" ] || return 1
+  case "$url$head" in *[[:space:]]*) return 1 ;; esac
+  printf '%s %s\n' "$url" "$head"
+}
+
 # Directories excluded from the worktree write probe below, and the depth it walks.
 # The excluded set is everything a supervisor read or a package manager can write
 # without the crew doing any work - .git first, so firstmate's own read-only git

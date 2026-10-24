@@ -7700,3 +7700,104 @@ test_exit_picker_wedge_keeps_climbing
 test_quoted_exit_picker_stays_ordinary_stale
 test_secondmate_exit_picker_stays_quiet
 test_closed_exit_picker_drops_saved_dialog_name
+
+# --- merge-ready notice: a yolo=on no-mistakes run green on its PR ------------
+
+MERGE_READY_GREEN='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · pr: https://github.com/o/r/pull/7 · run head: aaa111 · run: 01RUN'
+
+write_merge_ready_meta() {  # <state> <id> <mode> <yolo>
+  fm_write_meta "$1/$2.meta" "kind=ship" "mode=$3" "yolo=$4" "branch=fm/$2"
+}
+
+test_merge_ready_wakes_before_done_on_yolo_on() {
+  local dir state fakebin out pid
+  dir=$(make_case merge-ready-yolo-on); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  write_merge_ready_meta "$state" ship1 no-mistakes on
+  # No status log at all: the worker has not reported its ready line yet.
+  export FM_FAKE_CREW_STATE="$MERGE_READY_GREEN"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "merge-ready watcher did not exit cleanly: $(cat "$out")"
+  grep -Fx 'check: merge-ready ship1: PR https://github.com/o/r/pull/7 checks green at aaa111' "$out" >/dev/null \
+    || fail "a green ci step on a yolo=on task did not raise the merge-ready wake: $(cat "$out")"
+  grep -F 'merge-ready ship1: PR https://github.com/o/r/pull/7' "$state/.wake-queue" >/dev/null \
+    || fail "the merge-ready wake was not queued durably: $(cat "$state/.wake-queue" 2>/dev/null)"
+  [ "$(cat "$state/.merge-ready-ship1")" = 'https://github.com/o/r/pull/7 aaa111' ] \
+    || fail "the merge-ready record does not name the raised PR head"
+  unset FM_FAKE_CREW_STATE
+  pass "a green ci step on a yolo=on no-mistakes task wakes firstmate before any done line"
+}
+
+test_merge_ready_quiet_off_scope() {
+  local dir state fakebin out pid id
+  dir=$(make_case merge-ready-off-scope); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  write_merge_ready_meta "$state" offyolo no-mistakes off
+  write_merge_ready_meta "$state" directpr direct-PR on
+  write_merge_ready_meta "$state" localonly local-only on
+  export FM_FAKE_CREW_STATE="$MERGE_READY_GREEN"
+  export FM_FAKE_CREW_STATE_LOG="$dir/reads"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "a task outside yolo=on no-mistakes raised a wake: $(cat "$out")"
+  fi
+  reap "$pid"
+  [ ! -s "$out" ] || fail "an off-scope task printed a wake: $(cat "$out")"
+  for id in offyolo directpr localonly; do
+    [ ! -e "$state/.merge-ready-$id" ] || fail "off-scope task $id wrote a merge-ready record"
+    ! grep -Fx "$id" "$dir/reads" >/dev/null 2>&1 || fail "off-scope task $id spent a current-state read"
+  done
+  unset FM_FAKE_CREW_STATE FM_FAKE_CREW_STATE_LOG
+  pass "yolo=off, direct-PR, and local-only tasks never raise the merge-ready wake"
+}
+
+test_merge_ready_quiet_until_green() {
+  local dir state fakebin out pid verdict
+  for verdict in \
+    'state: working · source: run-step · ci running · run: 01RUN' \
+    'state: failed · source: run-step · run failed · run: 01RUN' \
+    'state: done · source: status-log · PR https://github.com/o/r/pull/7 checks green'; do
+    dir=$(make_case "merge-ready-not-green-$RANDOM"); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+    write_merge_ready_meta "$state" ship1 no-mistakes on
+    export FM_FAKE_CREW_STATE="$verdict"
+    watch_bg "$state" "$fakebin" "$out"
+    pid=$!
+    if ! wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"; fail "a run not reading green on its own ci step raised a wake ($verdict): $(cat "$out")"
+    fi
+    reap "$pid"
+    [ ! -s "$out" ] || fail "a not-green run printed a wake ($verdict): $(cat "$out")"
+    [ ! -e "$state/.merge-ready-ship1" ] || fail "a not-green run wrote a merge-ready record ($verdict)"
+  done
+  unset FM_FAKE_CREW_STATE
+  pass "a ci step still running, a red run, or a green reading resting only on the worker's report raises no merge-ready wake"
+}
+
+test_merge_ready_once_per_head() {
+  local dir state fakebin out pid
+  dir=$(make_case merge-ready-once); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  write_merge_ready_meta "$state" ship1 no-mistakes on
+  printf '%s\n' 'https://github.com/o/r/pull/7 aaa111' > "$state/.merge-ready-ship1"
+  export FM_FAKE_CREW_STATE="$MERGE_READY_GREEN"
+  watch_bg "$state" "$fakebin" "$out" env FM_MERGE_READY_INTERVAL=0
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "the same green PR head woke twice: $(cat "$out")"
+  fi
+  reap "$pid"
+  [ ! -s "$out" ] || fail "the same green PR head printed a second wake: $(cat "$out")"
+  # A pipeline fix that pushed a new head and went green again is a new reading.
+  export FM_FAKE_CREW_STATE="${MERGE_READY_GREEN/aaa111/bbb222}"
+  watch_bg "$state" "$fakebin" "$out" env FM_MERGE_READY_INTERVAL=0
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "merge-ready watcher did not exit cleanly on a new head: $(cat "$out")"
+  grep -Fx 'check: merge-ready ship1: PR https://github.com/o/r/pull/7 checks green at bbb222' "$out" >/dev/null \
+    || fail "a new green head did not raise its own merge-ready wake: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "one merge-ready wake per PR head, and a new green head raises its own"
+}
+
+test_merge_ready_wakes_before_done_on_yolo_on
+test_merge_ready_quiet_off_scope
+test_merge_ready_quiet_until_green
+test_merge_ready_once_per_head
