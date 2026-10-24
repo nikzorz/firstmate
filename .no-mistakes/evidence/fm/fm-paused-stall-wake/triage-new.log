@@ -1,0 +1,3 @@
+ok - a time-only declared time reads from its stamp, and an unstamped one rechecks at once
+ok - a declared wait over any parked gate wakes naming the run and gate, once per park, and owns the window until the run moves
+ok - a busy pane under a declared wait never takes the parked-gate wake

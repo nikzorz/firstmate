@@ -1,0 +1,4 @@
+ok - every endpoint-keyed and id-keyed supervision record is cleared for a reused id
+ok - the clear removes only its own key and id, never a neighbor or home-scoped record
+ok - an unknown target or id clears what it can, and a missing state dir is success
+# fm-episode-records-lib.test.sh: all assertions passed
