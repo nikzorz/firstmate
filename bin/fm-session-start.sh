@@ -227,10 +227,10 @@
 #             re-emit the rest. Wake-queue presentation is NOT skipped: queued
 #             records are this turn's work queue, they arrived after startup,
 #             and a session that owns the lock is exactly the session that must
-#             handle and acknowledge them. A Claude `--source clear` re-emit
-#             still presents them but leaves them untaken, because no turn
-#             follows a clear and the automatic supervision wake delivers them
-#             instead. Lock acquisition still runs, because
+#             handle and acknowledge them. A Claude `--source clear` run, re-emit
+#             or full startup alike, still presents them but leaves them
+#             untaken, because no turn follows a clear and the automatic
+#             supervision wake delivers them instead. Lock acquisition still runs, because
 #             ownership must be re-verified rather than assumed: fm-lock.sh
 #             already treats a lock owned through shared ancestry or a trusted
 #             same-session Claude id as its own, so the re-emit proceeds, while
@@ -728,11 +728,12 @@ EOF
   fi
 }
 
-# A Claude /clear opens no model turn after its digest, so draining here would
-# take the queue into handling with nobody to handle it, and the rewake that
-# would have delivered it stands down (bin/fm-wake-drain.sh --present-only).
+# A Claude /clear opens no model turn after its digest, whether it re-emits or
+# runs a full startup, so draining here would take the queue into handling with
+# nobody to handle it, and the rewake that would have delivered it stands down
+# (bin/fm-wake-drain.sh --present-only).
 wake_queue_held_for_rewake() {
-  [ "$REEMIT" -eq 1 ] && [ "$PRIMARY_HARNESS:$SESSION_SOURCE" = claude:clear ]
+  [ "$PRIMARY_HARNESS:$SESSION_SOURCE" = claude:clear ]
 }
 
 AGENTS_START_HASH=
