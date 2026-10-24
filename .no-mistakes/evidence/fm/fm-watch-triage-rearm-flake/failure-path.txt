@@ -1,0 +1,11 @@
+# stopped-cycle drain exited 3
+# drain stdout:
+# drain stderr:
+#   boom on stderr
+# recovery marker: gen1
+# queue: 2 row(s)
+# .watch.lock: held by live pid 2708160: /bin/bash -c source ~/.claude/shell-snapshots/snapshot-bash-1792884976631-4wrim4.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'E=~/.no-mistakes/evidence/01M5R49WTHC7W08J0M5MF6FH4J sed -n '"'"'/^print_stopped_cycle_evidence()/,/^# Common watcher knobs/p'"'"' tests/fm-watch-triage.test.sh | sed '"'"'$d'"'"' > $E/helpers.sh S=$(mktemp -d); echo gen1 > $S/.watcher-down; printf '"'"'a\nb\n'"'"' > $S/.wake-queue; mkdir $S/.watch.lock; echo $$ > $S/.watch.lock/pid printf '"'"'#!/bin/sh\necho "boom on stderr" >&2; exit 3\n'"'"' > $S/drain; chmod +x $S/drain ( DRAIN=$S/drain; source $E/helpers.sh; ack_stopped_cycle $S; echo "return=$?"; ls $S ) 2>&1 | tee $E/failure-path.txt rm -rf $S $E/helpers.sh; grep -n '"'"'afk_busy_declared_pause_ticking\|^test_.*ack\|main\b'"'"' tests/fm-watch-triage.test.sh | tail -5; git status --short' < /dev/null && pwd -P >| /tmp/claude-14c8-cwd
+# .watcher-down.lock: absent
+# .wake-queue.lock: absent
+return=1
+drain

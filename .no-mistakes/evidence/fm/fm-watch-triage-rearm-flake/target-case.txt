@@ -1,0 +1,6 @@
+ok - away mode wakes the daemon once per declaration for a busy pane whose footer ticks on every capture
+rc=0
+ok - away mode wakes the daemon once per declaration for a busy pane whose footer ticks on every capture
+rc=0
+ok - away mode wakes the daemon once per declaration for a busy pane whose footer ticks on every capture
+rc=0
