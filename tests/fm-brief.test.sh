@@ -1174,7 +1174,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     esac
     mkdir -p "$home/state"
     env -u FM_CLASSIFY_PAUSED_VERB bash -c "$append" >/dev/null || fail "generated status command failed"
-    epoch=$(bash -c '. "$1"; status_line_at_epoch "$(cat "$2")"' _ \
+    epoch=$(bash -c '. "$1"; status_line_at_epoch "$(tail -n 1 "$2")"' _ \
       "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status")
     case "$epoch" in ''|*[!0-9]*) fail "$kind scaffold recorded no event time" ;; esac
     [ "$epoch" -ge "$now" ] && [ "$epoch" -le $((now + 5)) ] \
