@@ -120,6 +120,8 @@ test_usage_errors_write_nothing() {
     expect_code 2 "$rc" "$label"
   done <<'CASES'
 unknown state|bogus note
+note verb|note x
+captain-held verb|captain-held x
 missing note|working
 bad key|needs-decision --key a/b why
 line plus state|--line x working

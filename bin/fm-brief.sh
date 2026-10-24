@@ -491,6 +491,10 @@ INBOX_DIR=$(shell_quote "$STATE/$ID.inbox")
 WORKER_STATUS_CMD="$(shell_quote "$FM_ROOT/bin/fm-status.sh") $STATUS_FILE"
 # fm-status.sh finds config/ beside state/ on its own; name it only when moved.
 [ "$CONFIG" = "${STATE%/*}/config" ] || WORKER_STATUS_CMD="$WORKER_STATUS_CMD --config $(shell_quote "$CONFIG")"
+# The pane does not inherit this environment, so a configured paused verb rides
+# in the command for fm-status.sh to accept the verb this brief names.
+[ "$PAUSED_VERB" = "$FM_CLASSIFY_PAUSED_VERB_DEFAULT" ] \
+  || WORKER_STATUS_CMD="FM_CLASSIFY_PAUSED_VERB=$(shell_quote "$PAUSED_VERB") $WORKER_STATUS_CMD"
 AWAIT_CMD=$(shell_quote "$FM_ROOT/bin/fm-await.sh")
 STEER_CMD="$(shell_quote "$FM_ROOT/bin/fm-steer.sh") --inbox $INBOX_DIR"
 IFS= read -r -d '' WORKER_STATUS_RULE <<EOF || true
@@ -502,7 +506,8 @@ IFS= read -r -d '' WORKER_STATUS_RULE <<EOF || true
 EOF
 WORKER_STATUS_RULE=${WORKER_STATUS_RULE%$'\n'}
 IFS= read -r -d '' WORKER_WAIT_RULE <<EOF || true
-   Never wait with \`sleep\` or a hand-written poll loop: wait for a line in a file with \`$AWAIT_CMD <file> --match '<regex>'\` or for a process to exit with \`$AWAIT_CMD <pid>\`.
+   Never wait for a line in a file or a process exit with \`sleep\` or a hand-written poll loop: wait for the line with \`$AWAIT_CMD <file> --match '<regex>'\` or for the process to exit with \`$AWAIT_CMD <pid>\`.
+   Lines already in the file count, so wait on a fresh or truncated file, never one an earlier run appended to.
    One call prints the matching line, \`pid <pid> exited\`, or \`still waiting\` once its \`--max\` (default 540 seconds) passes; on \`still waiting\`, run it again rather than sleeping.
    Give that shell call a timeout longer than its \`--max\`: Claude Code's Bash tool defaults to two minutes, so pass it 600000 ms.
 EOF
@@ -541,18 +546,19 @@ WORKER_INBOX_SECTION=${WORKER_INBOX_SECTION%$'\n'}
 # a wait must cost no turns: a decision wait ends the turn, and an external
 # wait sleeps in one bounded blocking shell command sized to the harness.
 # Emitted only when config/wait-no-turns is present.
-IFS= read -r -d '' WAIT_SECTION <<'EOF' || true
+IFS= read -r -d '' WAIT_SECTION <<EOF || true
 # Waiting
 Every turn you take resends your whole context, so a wait must cost no turns.
-After you append `needs-decision:` or `blocked:`, end your turn at once: do not check the inbox, the status file, or anything else, because the answer arrives as a terminal message that starts your next turn.
-Wait on anything external - a pipeline gate, PR checks, a heavy-test slot - with ONE blocking shell command that returns when the state changes: `no-mistakes axi run` or `respond` with `--wait`, `gh pr checks <pr> --watch`, `fm-await.sh` from rule 4 for a line in a file or a process exit, or `until <condition>; do sleep 30; done` for anything else.
-Never spend turns on `sleep` followed by a status check, and never background a command in order to poll it.
-In Claude Code that `until` loop in a single Bash call is the sanctioned foreground wait: when the harness refuses a sleep-then-check command and points you at backgrounding instead, reissue the wait as the loop rather than accepting the background.
-Bound that command by what your harness lets one command run: in Pi pass the bash tool a `timeout` of at most 2700 seconds, because Pi sets none by default; in Claude Code pass the Bash tool its maximum `timeout` of 600000 ms, because its default is 2 minutes; in Codex keep waiting on a still-running command with empty `write_stdin` polls of up to 300000 ms; elsewhere pass your shell tool its largest timeout and assume at most 10 minutes.
-Give any `--wait` or `fm-await.sh --max` a duration a little under that bound.
+After you append \`needs-decision:\` or \`blocked:\`, end your turn at once: do not check the inbox, the status file, or anything else, because the answer arrives as a terminal message that starts your next turn.
+Wait on anything external - a pipeline gate, PR checks, a heavy-test slot - with ONE blocking shell command that returns when the state changes: \`no-mistakes axi run\` or \`respond\` with \`--wait\`, \`gh pr checks <pr> --watch\`, \`$AWAIT_CMD\` from rule 4 for a line in a file or a process exit, or, only for a condition it cannot watch, \`until <condition>; do sleep 30; done\`.
+Never loop on \`until ! pgrep -f <pattern>\`: the loop's own shell matches the pattern, so it never exits; wait on the process id with \`$AWAIT_CMD <pid>\` instead.
+Never spend turns on \`sleep\` followed by a status check, and never background a command in order to poll it.
+In Claude Code that one blocking command in a single Bash call is the sanctioned foreground wait: when the harness refuses a sleep-then-check command and points you at backgrounding instead, reissue the wait as that command rather than accepting the background.
+Bound that command by what your harness lets one command run: in Pi pass the bash tool a \`timeout\` of at most 2700 seconds, because Pi sets none by default; in Claude Code pass the Bash tool its maximum \`timeout\` of 600000 ms, because its default is 2 minutes; in Codex keep waiting on a still-running command with empty \`write_stdin\` polls of up to 300000 ms; elsewhere pass your shell tool its largest timeout and assume at most 10 minutes.
+Give any \`--wait\` or \`--max\` a duration a little under that bound.
 When the bound passes with nothing changed, run the same blocking command again, with no status check in between.
-The one exception is `respond`: it sent its answer before it began waiting, so reattach with `no-mistakes axi run --wait` instead, and never send the same `respond` again, because it would answer whichever gate parks next without you reading it.
-A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append `paused:` once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
+The one exception is \`respond\`: it sent its answer before it began waiting, so reattach with \`no-mistakes axi run --wait\` instead, and never send the same \`respond\` again, because it would answer whichever gate parks next without you reading it.
+A wait your shell can watch this way needs no \`$PAUSED_VERB:\` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append \`$PAUSED_VERB:\` once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
 EOF
 WAIT_SECTION=${WAIT_SECTION%$'\n'}
 WAIT_BLOCK=

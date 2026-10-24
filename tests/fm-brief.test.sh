@@ -1151,8 +1151,19 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     if [ "$kind" != secondmate ]; then
       [ -z "$append" ] || fail "$kind scaffold still hands the worker a hand-built echo status line"
       # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
-      append=$(sed -n "/^   \`'.*fm-status\.sh'/s/^   \`\(.*\)\`\$/\1/p" "$brief")
+      append=$(sed -n "/^   \`[^\`]*fm-status\.sh' [^\`]*\`\$/s/^   \`\(.*\)\`\$/\1/p" "$brief")
       [ -n "$append" ] || fail "$kind scaffold names no fm-status.sh status command"
+      # The pane starts without firstmate's environment, so the brief's own
+      # command must carry the paused verb it names.
+      mkdir -p "$home/state"
+      paused=${append//\{state\}/awaiting}
+      paused=${paused//\{one short line\}/slot}
+      env -u FM_CLASSIFY_PAUSED_VERB bash -c "$paused --until +5m" >/dev/null 2>&1 \
+        || fail "$kind scaffold's status command refused the paused verb the brief names"
+      case "$(tail -n 1 "$home/state/$id.status")" in
+        'awaiting [at='*']: slot until '*Z) ;;
+        *) fail "$kind scaffold's paused command did not append an awaiting line" ;;
+      esac
     fi
     now=$(date +%s)
     append=${append//\{state\}/done}
@@ -1162,7 +1173,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
       *"\$("*) fail "$kind scaffold left an unevaluated command in its status-append line" ;;
     esac
     mkdir -p "$home/state"
-    FM_CLASSIFY_PAUSED_VERB=awaiting bash -c "$append" >/dev/null || fail "generated status command failed"
+    env -u FM_CLASSIFY_PAUSED_VERB bash -c "$append" >/dev/null || fail "generated status command failed"
     epoch=$(bash -c '. "$1"; status_line_at_epoch "$(cat "$2")"' _ \
       "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status")
     case "$epoch" in ''|*[!0-9]*) fail "$kind scaffold recorded no event time" ;; esac

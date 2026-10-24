@@ -8,8 +8,10 @@
 # The first form writes "<state> [at=<epoch>] [key=<slug>]: <note>", the
 # grammar bin/fm-classify-lib.sh parses, with the epoch read from the clock
 # here so a caller never types one. Note words are joined with single spaces.
-# <state> is one of working, needs-decision, blocked, done, failed, resolved,
-# or the configured paused verb (FM_CLASSIFY_PAUSED_VERB, default "paused").
+# <state> is any status verb bin/fm-classify-lib.sh recognizes except note and
+# the captain-held verb: working, needs-decision, blocked, done, failed, and the
+# configured paused and resolve verbs (FM_CLASSIFY_PAUSED_VERB, default
+# "paused"; FM_CLASSIFY_RESOLVE_VERB, default "resolved").
 # --until is accepted only on a paused line and appends " until <UTC time>":
 # <when> is +N, +Ns, +Nm, or +Nh from now, rounded up to the next whole minute,
 # or an explicit YYYY-MM-DDTHH:MMZ.
@@ -91,10 +93,11 @@ if [ "$RAW_SET" -eq 1 ]; then
   LINE=$(status_stamp_line "$RAW_LINE")
 else
   [ -n "$STATE_WORD" ] || die_usage "missing the state"
-  case "$STATE_WORD" in
-    working|needs-decision|blocked|done|failed|"$FM_CLASSIFY_RESOLVE_VERB_DEFAULT"|"$PAUSED_VERB") ;;
-    *) die_usage "unknown state '$STATE_WORD' (working, needs-decision, blocked, $PAUSED_VERB, done, failed, resolved)" ;;
-  esac
+  if [ "$STATE_WORD" = note ] \
+    || [ "$STATE_WORD" = "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}" ] \
+    || ! _fm_status_verb_recognized "$STATE_WORD"; then
+    die_usage "unknown state '$STATE_WORD' (working, needs-decision, blocked, $PAUSED_VERB, done, failed, ${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT})"
+  fi
   [ -n "$NOTE" ] || die_usage "missing the note"
   if [ "$KEY_SET" -eq 1 ] && ! _fm_decision_slug_ok "$KEY"; then
     die_usage "key '$KEY' is not a slug of A-Za-z0-9._-"
