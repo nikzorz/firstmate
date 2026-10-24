@@ -1,0 +1,6 @@
+ok - a green ci step on a yolo=on no-mistakes task wakes firstmate before any done line
+ok - yolo=off, direct-PR, and local-only tasks never raise the merge-ready wake
+ok - a ci step still running, a red run, or a green reading resting only on the worker's report raises no merge-ready wake
+ok - one merge-ready wake per PR head, and a new green head raises its own
+ok - a worker done line or a registered pr= suppresses the merge-ready wake while the run still reads green
+rc=0
