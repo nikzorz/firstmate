@@ -624,26 +624,42 @@ pause_marker_remove() {  # <window> <state>
 # to its own absorbers. The current-state read is taken at most once per
 # <probe-secs>, and a gate escalates once per distinct run and gate; a read that
 # finds no parked gate drops that record, so the next park escalates again even
-# with identical text. The ordinary pause cadence still re-surfaces it while it
-# stays parked.
+# with identical text. While the record stands the gate owns every tick, so no
+# declared-wait recheck contradicts it, and it re-escalates on the pause cadence
+# while it stays parked. A busy crew is answering the gate itself, so it never
+# takes the gate escalation; it only keeps or drops the record.
 # Returns 0 when the parked gate owns this tick, 1 to let the cadence decide.
-pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs>
-  local state=$1 key=$2 win=$3 task=$4 age=$5 now=$6 secs=$7 probe seen last_probe gate run
+pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs> <pause-secs>
+  local state=$1 key=$2 win=$3 task=$4 age=$5 now=$6 secs=$7 pause_secs=$8 probe seen last_probe gate run
   probe="$state/.subsuper-pause-gate-probed-$key"
   seen="$state/.subsuper-pause-gate-$key"
   last_probe=$(cat "$probe" 2>/dev/null || true)
   case "$last_probe" in ''|*[!0-9]*) last_probe=0 ;; esac
-  [ $(( now - last_probe )) -ge "$secs" ] || return 1
-  printf '%s\n' "$now" > "$probe"
-  if ! gate=$(crew_parked_gate "$task"); then
-    rm -f "$seen"
+  if [ $(( now - last_probe )) -ge "$secs" ]; then
+    printf '%s\n' "$now" > "$probe"
+    if ! gate=$(crew_parked_gate "$task"); then
+      rm -f "$seen"
+      return 1
+    fi
+    gate=${gate%$'\t'*}
+    run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
+  elif [ -e "$seen" ]; then
+    gate=$(cat "$seen" 2>/dev/null || true)
+    run=${gate%% *}; gate=${gate#* }
+  else
     return 1
   fi
-  gate=${gate%$'\t'*}
-  run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
-  [ "$(cat "$seen" 2>/dev/null || true)" != "$run $gate" ] || return 0
+  if [ "$(cat "$seen" 2>/dev/null || true)" = "$run $gate" ] && [ "$age" -lt "$pause_secs" ]; then
+    return 0
+  fi
+  stale_window_is_busy "$win" "$state"
+  case "$?" in
+    0) [ -e "$seen" ]; return ;;
+    2) return 1 ;;
+  esac
   if escalate_add "$state" "paused ${age}s (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate): $win"; then
     printf '%s\n' "$run $gate" > "$seen"
+    _now > "$state/.subsuper-paused-$key"
   fi
   return 0
 }
@@ -1519,7 +1535,7 @@ housekeeping() {  # <state>
       continue
     fi
     if status_is_paused "$last" && pause_gate_escalate "$state" "$key" "$win" "$task" "$age" "$now" \
-      "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}"; then
+      "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" "$pause_secs"; then
       continue
     fi
     if until=$(status_paused_until "$last"); then

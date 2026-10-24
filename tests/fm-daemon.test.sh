@@ -1589,6 +1589,75 @@ test_housekeeping_paused_over_parked_gate_escalates() {
   pass "housekeeping escalates a declared wait over any parked gate once per park, keeps one over an advancing run, and rechecks each unreadable declaration once"
 }
 
+# Once a parked gate has escalated, its record (.subsuper-pause-gate-<key>) owns
+# the pause window: a due or unreadable declared time stays quiet between reads,
+# the gate itself re-escalates on the pause cadence, and a read finding the run
+# moving hands the window back to the ordinary recheck. A busy crew is answering
+# its own gate, so it never takes the gate escalation.
+test_housekeeping_parked_gate_owns_the_pause_window() {
+  local dir state fakebin task win pane busy key now saved_bin escalations
+  dir=$(make_supercase pause-gate-owns-window)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task='gateowned'; win="sess:fm-$task"; pane="$dir/pane.txt"; busy="$dir/busy.txt"
+  printf 'idle prompt $\n' > "$pane"
+  printf 'Validating... (esc to interrupt)\n' > "$busy"
+  fm_write_meta "$state/$task.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=claude" "backend=tmux"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  now=$(date +%s)
+  make_fake_crew_state "$fakebin" >/dev/null
+  saved_bin=${FM_CREW_STATE_BIN:-}
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA'
+
+  printf 'paused [at=%s]: no-mistakes fix round running\n' "$now" > "$state/$task.status"
+  echo $((now - 60)) > "$state/.subsuper-paused-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  escalations=$(wc -l < "$state/.subsuper-escalations" 2>/dev/null | tr -d ' ')
+  [ "${escalations:-0}" -eq 1 ] || fail "an idle crew over a parked gate escalated ${escalations:-0} times, not once"
+
+  printf 'paused: fix round running until 15:35Z\n' >> "$state/$task.status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  ! grep -F 'awaiting external' "$state/.subsuper-escalations" >/dev/null \
+    || fail "a due declaration escalated as an external wait over an escalated parked gate: $(cat "$state/.subsuper-escalations")"
+
+  echo $((now - 4000)) > "$state/.subsuper-paused-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  escalations=$(grep -cF 'run 01RUNA is parked at review: 3 finding(s) awaiting a decision' "$state/.subsuper-escalations")
+  [ "$escalations" -eq 2 ] || fail "a gate still parked past the pause cadence re-escalated $escalations times in total, not twice"
+  ! grep -F 'awaiting external' "$state/.subsuper-escalations" >/dev/null \
+    || fail "a gate still parked past the pause cadence escalated as an external wait"
+
+  rm -f "$state/.subsuper-pause-gate-probed-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing) · run: 01RUNA'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F 'awaiting external' "$state/.subsuper-escalations" >/dev/null \
+    || fail "a due declaration stayed silent after the run left its gate: $(cat "$state/.subsuper-escalations")"
+
+  : > "$state/.subsuper-escalations"
+  rm -f "$state/.subsuper-pause-gate-$key" "$state/.subsuper-pause-gate-probed-$key" "$state/.subsuper-pause-until-due-$key"
+  printf 'paused [at=%s]: waiting on no-mistakes validation\n' "$now" > "$state/$task.status"
+  echo $((now - 60)) > "$state/.subsuper-paused-$key"
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB'
+  mark_claude_busy "$state" "$task" || fail "could not record the crew as busy"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$busy" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "a busy crew answering its own parked gate took the gate escalation: $(cat "$state/.subsuper-escalations")"
+
+  unset FM_FAKE_CREW_STATE
+  if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
+  pass "an escalated parked gate owns the pause window until the run leaves it, and a busy crew never takes the gate escalation"
+}
+
 # A pane still idle but whose status is no longer a pause (the crew changed state
 # without becoming busy) drops the marker - the signal path owns the new state, so
 # the pause recheck must not re-surface a stale pause reason.
@@ -4029,6 +4098,7 @@ test_housekeeping_paused_resumed_cleared
 test_housekeeping_busy_declared_wait_matures_its_window
 test_housekeeping_declared_time_controls_pause_recheck
 test_housekeeping_paused_over_parked_gate_escalates
+test_housekeeping_parked_gate_owns_the_pause_window
 test_housekeeping_paused_unpaused_cleared
 test_housekeeping_captain_held_resolved_cleared
 test_housekeeping_stale_marker_transitions_to_pause

@@ -1771,7 +1771,8 @@ busy_turn_over_age() {  # <task>
 # dead-agent captain-held transfer, and re-surface it once every
 # PAUSE_RESURFACE_SECS for a recheck so it cannot rot invisibly. Called on any
 # stale poll once pause_state_class permits the bounded cadence, so it must be
-# cheap: it NEVER re-reads crew state. The re-surface age is anchored on the
+# cheap: its only crew-state read is the parked-gate check below, taken at most
+# once per STALE_ESCALATE_SECS. The re-surface age is anchored on the
 # status file mtime, not a per-hash marker, so a churny idle pane (a ticking
 # clock, a token counter) cannot keep resetting the cadence the way a hash-tied
 # timer would. The bounded re-surface itself is the shared resurface_absorbed
@@ -1791,30 +1792,38 @@ busy_turn_over_age() {  # <task>
 # STALE_ESCALATE_SECS. A gate is surfaced once per distinct run and gate, then
 # again on the long cadence while it stays parked; a read that finds no parked
 # gate drops that record, so the next park wakes again even with identical text.
+# While the record stands the gate owns the window, so no declared-wait wake
+# contradicts it between reads. A busy pane is answering the gate itself, so it
+# never takes the gate wake; it only keeps or drops the record.
 # Returns 0 when it handled the window (wake() exits the cycle), 1 to let the
 # declared-wait absorb proceed.
-paused_parked_gate_surface() {  # <window> <task> <declared-line>
-  local win=$1 task=$2 last=$3 key probe gate run
+paused_parked_gate_surface() {  # <window> <task> <declared-line> [busy]
+  local win=$1 task=$2 last=$3 busy=${4-} key probe surfaced gate run
   status_is_paused "$last" || return 1
   key=$(window_key "$win")
   probe="$STATE/.paused-gate-probed-$key"
-  [ "$(age_of "$probe")" -ge "$STALE_ESCALATE_SECS" ] || return 1
-  date +%s > "$probe"
-  if ! gate=$(crew_parked_gate "$task"); then
-    rm -f "$STATE/.paused-gate-surfaced-$key"
-    return 1
+  surfaced="$STATE/.paused-gate-surfaced-$key"
+  if [ "$(age_of "$probe")" -ge "$STALE_ESCALATE_SECS" ]; then
+    date +%s > "$probe"
+    if ! gate=$(crew_parked_gate "$task"); then
+      rm -f "$surfaced"
+      return 1
+    fi
+    if [ -z "$busy" ]; then
+      gate=${gate%$'\t'*}
+      run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
+      resurface_absorbed "$win" "$surfaced" 0 \
+        "stale: $win (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate)" \
+        "gate:$run:$gate" 0
+    fi
   fi
-  gate=${gate%$'\t'*}
-  run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
-  resurface_absorbed "$win" "$STATE/.paused-gate-surfaced-$key" 0 \
-    "stale: $win (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate)" \
-    "gate:$run:$gate" 0
-  triage_log "parked gate already surfaced inside the recheck cadence (run $run at $gate): $win"
+  [ -e "$surfaced" ] || return 1
+  triage_log "parked gate already surfaced, holding the declared wait until a read finds it no longer parked: $win"
   return 0
 }
 
-handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
+handle_paused_stale() {  # <window> <task> <hash> [busy]
+  local win=$1 task=$2 h=$3 busy=${4-} key statusf mtime age detail reason declaration last until now min_age
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -1829,7 +1838,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   last=$(status_declared_wait_line "$statusf")
   min_age=$PAUSE_RESURFACE_SECS
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
-  paused_parked_gate_surface "$win" "$task" "$last" && return 0
+  paused_parked_gate_surface "$win" "$task" "$last" "$busy" && return 0
   if status_is_captain_held "$last"; then
     if away_record_present; then
       triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $win"
@@ -1922,7 +1931,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
       fi
       return 0
     fi
-    handle_paused_stale "$win" "$task" "$h"
+    handle_paused_stale "$win" "$task" "$h" busy
     return 0
   fi
   wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" "$h" "$dialog"
