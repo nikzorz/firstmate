@@ -7799,7 +7799,7 @@ test_merge_ready_once_per_head() {
 
 test_merge_ready_quiet_once_ready_signal_held() {
   local dir state fakebin out pid held
-  for held in done pr; do
+  for held in "done" pr; do
     dir=$(make_case "merge-ready-held-$held"); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
     if [ "$held" = pr ]; then
       fm_write_meta "$state/ship1.meta" "kind=ship" "mode=no-mistakes" "yolo=on" "branch=fm/ship1" "pr=https://github.com/o/r/pull/7"

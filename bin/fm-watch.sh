@@ -2286,7 +2286,7 @@ merge_ready_tick() {
     [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
     [ -z "$(fm_meta_get "$meta" pr)" ] || continue
     id=$(basename "$meta" .meta)
-    [ "$(status_line_verb "$(last_status_line "$STATE/$id.status")")" != done ] || continue
+    [ "$(status_line_verb "$(last_status_line "$STATE/$id.status")")" != "done" ] || continue
     rec=$(FM_CREW_STATE_NO_FORGE=1 crew_ci_green_pr "$id") || continue
     record="$STATE/.merge-ready-$(fm_episode_key "$id")"
     [ "$(cat "$record" 2>/dev/null)" != "$rec" ] || continue
