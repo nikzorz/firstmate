@@ -23,9 +23,11 @@
 #   "coverage_parked" says whether a review round parked for approval because
 #   its review left changed files unverified. no-mistakes records that park in
 #   no field, only as a line of the step's log, so it is read from the log
-#   segment the round's own "reviewing changes..." line opens; it is false off
-#   the review step and null when the log cannot be read or its segments do not
-#   match the recorded rounds, leaving the caller to judge whether it matters.
+#   segment the round's own "reviewing changes..." line opens; a round whose
+#   diff was empty opens its segment with "no changes to review" instead and
+#   never parks. It is false off the review step and null when the log cannot
+#   be read or its segments do not match the recorded rounds, leaving the
+#   caller to judge whether it matters.
 #   "coverage_unverified" lists the files that park line names unverified, empty
 #   when the round did not park or the line names none.
 #   An absent database, or a round whose record cannot be read, exits nonzero
@@ -88,6 +90,7 @@ except sqlite3.Error as error:
 COVERAGE_PARKS = ("review coverage is incomplete; parking for approval",
                   "review reported no reviewed_paths; parking for approval")
 REVIEW_ROUND = "reviewing changes..."
+EMPTY_REVIEW_ROUND = "no changes to review"
 
 
 UNVERIFIED = " unverified: "
@@ -104,7 +107,7 @@ def coverage_parks(log_path, rounds):
         return None
     segment, parked = 0, {}
     for line in lines:
-        if line.startswith(REVIEW_ROUND):
+        if line.startswith(REVIEW_ROUND) or line == EMPTY_REVIEW_ROUND:
             segment += 1
         elif segment and line.startswith(COVERAGE_PARKS):
             _, _, files = line.partition(UNVERIFIED)
