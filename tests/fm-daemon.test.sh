@@ -1498,8 +1498,7 @@ test_housekeeping_declared_time_controls_pause_recheck() {
   pass "housekeeping bounds a distant declared time, defers to a near one, and rechecks a passed one at once"
 }
 
-# A `paused:` line does not explain a quiet crew whose run is parked at a gate a
-# human must answer: housekeeping escalates it naming the run and gate inside the
+# A `paused:` line does not explain a quiet crew whose run is parked at any gate: housekeeping escalates it naming the run and gate inside the
 # pause window, once per gate, while a declared wait over a run still advancing
 # keeps the long cadence. A time-only `until` with an `[at=]` stamp reads as its
 # next occurrence, and one with no stamp is due at once.
@@ -1536,6 +1535,31 @@ test_housekeeping_paused_over_parked_gate_escalates() {
   escalations=$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')
   [ "$escalations" -eq 1 ] || fail "one parked gate escalated $escalations times"
 
+  # The once-per-gate record (.subsuper-pause-gate-<key>) is dropped by a read
+  # that finds the run no longer parked, so the same gate text parking again
+  # escalates again.
+  rm -f "$state/.subsuper-pause-gate-probed-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing) · run: 01RUNA'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  [ ! -e "$state/.subsuper-pause-gate-$key" ] \
+    || fail "a read finding the run moving kept the once-per-gate record"
+  rm -f "$state/.subsuper-pause-gate-probed-$key"
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  escalations=$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')
+  [ "$escalations" -eq 2 ] || fail "a re-park with identical gate text escalated $escalations times in total, not twice"
+
+  # Any parked gate counts, not only one a human owes.
+  : > "$state/.subsuper-escalations"
+  rm -f "$state/.subsuper-pause-gate-$key" "$state/.subsuper-pause-gate-probed-$key"
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F 'run 01RUNB is parked at awaiting_approval: 2 finding(s) awaiting a decision' "$state/.subsuper-escalations" >/dev/null \
+    || fail "a declared wait over a crewmate-owed gate was absorbed: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+
   : > "$state/.subsuper-escalations"
   rm -f "$state/.subsuper-pause-gate-$key" "$state/.subsuper-pause-gate-probed-$key"
   export FM_FAKE_CREW_STATE='state: paused · source: status-log · waiting'
@@ -1546,10 +1570,23 @@ test_housekeeping_paused_over_parked_gate_escalates() {
   escalations=$(wc -l < "$state/.subsuper-escalations" 2>/dev/null | tr -d ' ')
   [ "${escalations:-0}" -eq 1 ] \
     || fail "an unstamped time-only declared time fell back to the long cadence ($escalations escalations)"
+  # The recheck-once record (.subsuper-pause-until-due-<key>) is bound to the
+  # declaration: the same line re-read stays quiet, a different unreadable one
+  # rechecks at once.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  escalations=$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')
+  [ "$escalations" -eq 1 ] || fail "the same unreadable declaration rechecked again ($escalations escalations)"
+  printf 'paused: next fix round running until 16:00 UTC\n' >> "$state/$task.status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  escalations=$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')
+  [ "$escalations" -eq 2 ] \
+    || fail "a second, different unreadable declaration shared the first one's recheck ($escalations escalations)"
 
   unset FM_FAKE_CREW_STATE
   if [ -n "$saved_bin" ]; then export FM_CREW_STATE_BIN="$saved_bin"; else unset FM_CREW_STATE_BIN; fi
-  pass "housekeeping escalates a declared wait over a parked ask-user gate once, keeps one over an advancing run, and rechecks an unreadable time at once"
+  pass "housekeeping escalates a declared wait over any parked gate once per park, keeps one over an advancing run, and rechecks each unreadable declaration once"
 }
 
 # A pane still idle but whose status is no longer a pause (the crew changed state

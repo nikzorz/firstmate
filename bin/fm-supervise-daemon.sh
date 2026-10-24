@@ -618,12 +618,14 @@ pause_marker_remove() {  # <window> <state>
 }
 
 # A `paused:` declaration explains a quiet crew only while nothing else owes an
-# answer: a run parked at a gate whose answer a human owes (crew_parked_human_gate
-# in fm-classify-lib.sh) is a decision waiting, so it escalates naming the run and
-# gate instead of aging on the long pause cadence. The watcher applies the same
-# refusal to its own absorbers. The current-state read is taken at most once per
-# <probe-secs>, and a gate escalates once per distinct run and gate; the ordinary
-# pause cadence still re-surfaces it while it stays parked.
+# answer: a run parked at any gate (crew_parked_gate in fm-classify-lib.sh), whoever
+# owes its answer, is a decision waiting, so it escalates naming the run and gate
+# instead of aging on the long pause cadence. The watcher applies the same refusal
+# to its own absorbers. The current-state read is taken at most once per
+# <probe-secs>, and a gate escalates once per distinct run and gate; a read that
+# finds no parked gate drops that record, so the next park escalates again even
+# with identical text. The ordinary pause cadence still re-surfaces it while it
+# stays parked.
 # Returns 0 when the parked gate owns this tick, 1 to let the cadence decide.
 pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs>
   local state=$1 key=$2 win=$3 task=$4 age=$5 now=$6 secs=$7 probe seen last_probe gate run
@@ -633,7 +635,11 @@ pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs
   case "$last_probe" in ''|*[!0-9]*) last_probe=0 ;; esac
   [ $(( now - last_probe )) -ge "$secs" ] || return 1
   printf '%s\n' "$now" > "$probe"
-  gate=$(crew_parked_human_gate "$task") || return 1
+  if ! gate=$(crew_parked_gate "$task"); then
+    rm -f "$seen"
+    return 1
+  fi
+  gate=${gate%$'\t'*}
   run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
   [ "$(cat "$seen" 2>/dev/null || true)" != "$run $gate" ] || return 0
   if escalate_add "$state" "paused ${age}s (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate): $win"; then
@@ -1521,7 +1527,7 @@ housekeeping() {  # <state>
         continue
       elif [ "$now" -lt "$until" ]; then
         bounded_until=1
-      elif [ "$(cat "$due" 2>/dev/null || true)" = "$until" ]; then
+      elif [ "$(cat "$due" 2>/dev/null || true)" = "$until $last" ]; then
         [ "$age" -ge "$pause_secs" ] || continue
       fi
     else
@@ -1551,7 +1557,7 @@ housekeeping() {  # <state>
           if escalate_add "$state" "$pause_reason"; then
             _now > "$marker"
             if [ -n "$until" ] && [ "$now" -ge "$until" ]; then
-              printf '%s\n' "$until" > "$due"
+              printf '%s\n' "$until $last" > "$due"
             fi
           fi
         else

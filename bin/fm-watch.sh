@@ -12,7 +12,8 @@
 # separate idle absorb case and re-surfaces only on its long bounded cadence,
 # although its initial no-verb status signal still surfaces in normal mode.
 # That cadence is hours long and condition-aware: a paused: line naming
-# `until <UTC ISO 8601>` is rechecked when that time passes, but a declared time
+# `until <time>` (status_paused_until in fm-classify-lib.sh) is rechecked when
+# that time passes, but a declared time
 # beyond FM_PAUSE_RESURFACE_SECS cannot extend the ordinary recheck cadence, and
 # while an away record (state/.afk-contract, never quiet mode's) exists an
 # item held for the captain is never rechecked at all, in either posture.
@@ -426,7 +427,7 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
-# A declared wait that names WHEN it clears (`paused: ... until <UTC ISO 8601>`,
+# A declared wait that names WHEN it clears (`paused: ... until <time>`, read by
 # status_paused_until in fm-classify-lib.sh) is condition-aware: it is not
 # rechecked before that time, and it is rechecked once as soon as that time
 # passes even when the flat cadence has not elapsed, then held to the cadence.
@@ -1322,9 +1323,9 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # this order rather than pooled because the routing already guarantees it is the
 # right one: a pane whose last line is `paused:` or `captain-held:` reaches this
 # timer only through pause_state_class answering `working`, so its crew state was
-# a running step when that was recorded. The run can park at a human-owed gate
-# after that answer, so a `paused:` line defers only while a fresh read finds no
-# such gate (crew_parked_human_gate), the same refusal paused_parked_gate_surface
+# a running step when that was recorded. The run can park at a gate after that
+# answer, so a `paused:` line defers only while a fresh read finds no parked
+# gate (crew_parked_gate), the same refusal paused_parked_gate_surface
 # applies to the declared-wait absorbers.
 #
 # The second record is OFF unless the home creates config/wedge-defer-parked-gate,
@@ -1389,7 +1390,7 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
   fi
   if status_is_paused "$last" \
     && { ! until=$(status_paused_until "$last") || [ "$(date +%s)" -lt "$until" ]; } \
-    && ! crew_parked_human_gate "$task" >/dev/null; then
+    && ! crew_parked_gate "$task" >/dev/null; then
     wait_record 'declared wait' 'awaiting external' \
       external 'confirm the wait still holds' "$statusf"
     return 0
@@ -1680,8 +1681,9 @@ wedge_defer_advancing() {  # <window> <since-file> <triage-label> <idle-age> <es
 # STALE_ESCALATE_SECS, never on an ordinary poll. The crew-state read
 # wedge_wait_evidence may take under config/wedge-defer-parked-gate keeps that
 # same bound however long the wait lasts, because the deferral it feeds restarts
-# the idle timer like every other deferral below; an unconfigured home never
-# reaches that read at all. The wait consult runs first, because a pane that can
+# the idle timer like every other deferral below; an unconfigured home reaches a
+# crew-state read there only for a `paused:` line, which it reads once to refuse
+# the deferral over a parked gate. The wait consult runs first, because a pane that can
 # account for its own quiet has nothing to prove through its worktree. The dead-record probe
 # runs last of the three, so the two cheaper deferrals keep the panes they
 # already own on their existing bounded cadences and only a pane that would
@@ -1782,12 +1784,13 @@ busy_turn_over_age() {  # <task>
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
 # A `paused:` declaration explains a quiet pane only while nothing else owes an
-# answer. A run parked at a gate whose answer a human owes (crew_parked_human_gate
-# in fm-classify-lib.sh) is a decision waiting, and absorbing it as the worker's
-# own wait hides that decision for the whole long cadence. Both declared-wait
-# absorbers run on every poll, so the current-state read is taken at most once per
-# STALE_ESCALATE_SECS; a gate is surfaced once per distinct run and gate, then
-# again on the long cadence while it stays parked.
+# answer. A run parked at any gate (crew_parked_gate in fm-classify-lib.sh), whoever
+# owes its answer, is a decision waiting, and absorbing it as the worker's own wait
+# hides that decision for the whole long cadence. Both declared-wait absorbers run
+# on every poll, so the current-state read is taken at most once per
+# STALE_ESCALATE_SECS. A gate is surfaced once per distinct run and gate, then
+# again on the long cadence while it stays parked; a read that finds no parked
+# gate drops that record, so the next park wakes again even with identical text.
 # Returns 0 when it handled the window (wake() exits the cycle), 1 to let the
 # declared-wait absorb proceed.
 paused_parked_gate_surface() {  # <window> <task> <declared-line>
@@ -1797,7 +1800,11 @@ paused_parked_gate_surface() {  # <window> <task> <declared-line>
   probe="$STATE/.paused-gate-probed-$key"
   [ "$(age_of "$probe")" -ge "$STALE_ESCALATE_SECS" ] || return 1
   date +%s > "$probe"
-  gate=$(crew_parked_human_gate "$task") || return 1
+  if ! gate=$(crew_parked_gate "$task"); then
+    rm -f "$STATE/.paused-gate-surfaced-$key"
+    return 1
+  fi
+  gate=${gate%$'\t'*}
   run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
   resurface_absorbed "$win" "$STATE/.paused-gate-surfaced-$key" 0 \
     "stale: $win (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate)" \

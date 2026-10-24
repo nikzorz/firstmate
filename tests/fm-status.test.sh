@@ -65,7 +65,8 @@ test_keyed_line_round_trips_the_key() {
 # A time-only `until HH:MMZ` reads as its next occurrence at or after the line's
 # own `[at=]` stamp; any other time-like token, an unstamped time-only one
 # included, reads as already due (0) instead of falling back to the cadence.
-# Prose after `until` still names no time.
+# Prose after `until` (no colon, no `YYYY-` date) still names no time, and a
+# dated time wins over a later prose `until`.
 test_until_time_only_and_unreadable() {
   local at=1792162543 v
   v=$(read_field until "paused [at=$at]: fix round (b) running until 15:35Z") || fail "time-only until unread"
@@ -79,9 +80,13 @@ test_until_time_only_and_unreadable() {
     v=$(read_field until "$line") || fail "unreadable until on '$line' fell back to the cadence"
     [ "$v" = 0 ] || fail "unreadable until on '$line' read as $v, not due"
   done
-  if read_field until 'paused: waiting until CI finishes' >/dev/null; then
-    fail "prose after until was read as a time"
-  fi
+  for line in 'paused: waiting until CI finishes' 'paused: waiting until 2 required checks pass' \
+    'paused: until 3 reviewers approve'; do
+    if read_field until "$line" >/dev/null; then fail "prose after until on '$line' was read as a time"; fi
+  done
+  v=$(read_field until 'paused: until 2026-10-16T15:35Z (retry until 3 attempts)') \
+    || fail "a dated until followed by a prose until was unread"
+  [ "$v" = 1792164900 ] || fail "a later prose until displaced the dated time: $v"
   pass "fm-classify: a time-only until reads from its stamp, and an unreadable one is due at once"
 }
 

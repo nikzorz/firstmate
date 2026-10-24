@@ -14,8 +14,10 @@ TMP_ROOT=$(fm_test_tmproot fm-episode-records-lib)
 
 KEY_FAMILIES=(hash count stale stale-since churn-since paused paused-rechecked
   paused-resurfaced waiting-resurfaced writing-since writing-resurfaced wedge-escalations
-  dead-reported advancing-resurfaced advancing-absorbs herdr-escalated)
-ID_FAMILIES=(subsuper-stale subsuper-paused subsuper-pause-until-due subsuper-advancing
+  dead-reported advancing-resurfaced advancing-absorbs herdr-escalated
+  paused-gate-probed paused-gate-surfaced)
+ID_FAMILIES=(subsuper-stale subsuper-paused subsuper-pause-until-due subsuper-pause-gate-probed
+  subsuper-pause-gate subsuper-advancing
   subsuper-advancing-resurfaced subsuper-advancing-absorbs subsuper-seen-status hb-surfaced
   merge-ready)
 # Keyed by the raw id rather than its folded spelling, as the secondmate wake-stall

@@ -2785,8 +2785,8 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional first-round stop"
 
-  # At the threshold the declaration still defers the escalation, without a
-  # crew-state read of its own.
+  # At the threshold the declaration still defers the escalation, at the cost of
+  # the one crew-state read that confirms the run is not parked at a gate.
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   : > "$log"
   : > "$out"
@@ -2801,7 +2801,8 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   fi
   reap "$pid"
   grep -F 'possible wedge' "$out" >/dev/null && fail "a declared wait was reported as a possible wedge: $(cat "$out")"
-  [ ! -s "$log" ] || fail "the threshold deferral of a declared wait read crew state"
+  calls=$(wc -l < "$log" | tr -d '[:space:]')
+  [ "$calls" -le 1 ] || fail "the threshold deferral of a declared wait read crew state $calls times"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a declared wait counted a wedge escalation"
   unset FM_FAKE_CREW_STATE
   pass "a declared wait under a working verdict reads crew state once, then the timer's wait consult defers it"
@@ -3484,8 +3485,8 @@ test_live_paused_time_only_until_rechecks() {
 
 # The 1689 stall: a worker declared `paused:` for its fix round, the round
 # returned at once, and the run sat parked at an ask-user gate while the
-# declaration absorbed every stale. A run parked at a human-owed gate wakes
-# firstmate naming the run and gate; a run still advancing stays absorbed.
+# declaration absorbed every stale. A run parked at any gate wakes firstmate
+# naming the run and gate; a run still advancing stays absorbed.
 test_live_paused_over_parked_gate_wakes() {
   local dir state fakebin out capture_file statusf window key sig wakes
   dir=$(make_case live-paused-parked-gate); state="$dir/state"; fakebin="$dir/fakebin"
@@ -3517,7 +3518,33 @@ test_live_paused_over_parked_gate_wakes() {
   PARKED_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA' \
     parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
     || fail "one parked gate woke firstmate a second time inside the recheck cadence"
-  pass "a declared wait over a parked ask-user gate wakes naming the run and gate, once"
+
+  # The once-per-gate record (.paused-gate-surfaced-<key>) is dropped by a read
+  # that finds the run no longer parked, so the same gate text parking again
+  # wakes again.
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 4s' > "$capture_file"
+  PARKED_CREW_STATE='state: working · source: run-step · validating (fixing) · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a declared wait over a run moving again woke firstmate"
+  [ ! -e "$state/.paused-gate-surfaced-$key" ] \
+    || fail "a read finding the run moving kept the once-per-gate record"
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 5s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a re-park with identical gate text was absorbed"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the re-park wake"
+
+  # Any parked gate counts, not only one a human owes.
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 6s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a declared wait over a crewmate-owed gate was absorbed"
+  grep -F 'run 01RUNB is parked at awaiting_approval: 2 finding(s) awaiting a decision' "$state/.wake-queue" >/dev/null \
+    || fail "the crewmate-owed gate wake did not name the run and gate: $(cat "$state/.wake-queue")"
+  pass "a declared wait over any parked gate wakes naming the run and gate, once per park"
 }
 
 # --- the wedge threshold consults the worker's own declared wait ------------
