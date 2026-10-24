@@ -85,6 +85,8 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
       "$state/.paused-$key" \
       "$state/.paused-rechecked-$key" \
       "$state/.paused-resurfaced-$key" \
+      "$state/.paused-gate-probed-$key" \
+      "$state/.paused-gate-surfaced-$key" \
       "$state/.waiting-resurfaced-$key" \
       "$state/.writing-since-$key" \
       "$state/.writing-resurfaced-$key" \
@@ -103,6 +105,8 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
       "$state/.subsuper-stale-$idkey" \
       "$state/.subsuper-paused-$idkey" \
       "$state/.subsuper-pause-until-due-$idkey" \
+      "$state/.subsuper-pause-gate-probed-$idkey" \
+      "$state/.subsuper-pause-gate-$idkey" \
       "$state/.subsuper-advancing-$idkey" \
       "$state/.subsuper-advancing-resurfaced-$idkey" \
       "$state/.subsuper-advancing-absorbs-$idkey" \

@@ -2785,8 +2785,8 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional first-round stop"
 
-  # At the threshold the declaration still defers the escalation, without a
-  # crew-state read of its own.
+  # At the threshold the declaration still defers the escalation, at the cost of
+  # the one crew-state read that confirms the run is not parked at a gate.
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   : > "$log"
   : > "$out"
@@ -2801,7 +2801,8 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   fi
   reap "$pid"
   grep -F 'possible wedge' "$out" >/dev/null && fail "a declared wait was reported as a possible wedge: $(cat "$out")"
-  [ ! -s "$log" ] || fail "the threshold deferral of a declared wait read crew state"
+  calls=$(wc -l < "$log" | tr -d '[:space:]')
+  [ "$calls" -le 1 ] || fail "the threshold deferral of a declared wait read crew state $calls times"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a declared wait counted a wedge escalation"
   unset FM_FAKE_CREW_STATE
   pass "a declared wait under a working verdict reads crew state once, then the timer's wait consult defers it"
@@ -3283,7 +3284,7 @@ parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absor
   local state=$1 fakebin=$2 out=$3 capture=$4 window=$5 mode=$6 pid cycles=0
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
     FM_FAKE_TMUX_CURRENT_COMMAND=grok \
-    FM_FAKE_CREW_STATE='state: paused · source: status-log · parked' \
+    FM_FAKE_CREW_STATE="${PARKED_CREW_STATE:-state: paused · source: status-log · parked}" \
     FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -3440,6 +3441,163 @@ test_live_paused_until_controls_recheck_time() {
     "$state/.wake-queue" 2>/dev/null || echo 0)
   [ "$wakes" -eq 0 ] || fail "a due declared time rechecked again inside the long cadence"
   pass "a live paused worker stays absorbed until its declared time, then rechecks"
+}
+
+# A time-only `until HH:MMZ` reads as its next occurrence after the line's own
+# `[at=]` stamp, and an unstamped one is due at once, rather than either falling
+# back to the long cadence that hid a parked run for hours.
+test_live_paused_time_only_until_rechecks() {
+  local dir state fakebin out capture_file statusf window key sig wakes now at clock
+  dir=$(make_case live-paused-time-only); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+  window="test:fm-parked"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  now=$(date +%s)
+  clock=$(iso_utc_at "$(( now + 7200 ))"); clock=${clock#*T}; clock=${clock%%:??Z}Z
+  printf 'paused [at=%s]: fix round running until %s\n' "$now" "$clock" > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked, elapsed 1s' > "$capture_file"
+  printf '%s' "$(hash_text 'parked, elapsed 1s')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a stamped time-only declared time two hours out woke early"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -eq 0 ] || fail "a stamped time-only declared time produced $wakes wakes before it"
+
+  at=$(( now - 10800 ))
+  clock=$(iso_utc_at "$(( now - 3600 ))"); clock=${clock#*T}; clock=${clock%%:??Z}Z
+  printf 'paused [at=%s]: fix round running until %s\n' "$at" "$clock" >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked, elapsed 2s' > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a stamped time-only declared time that has passed did not wake"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the passed time-only recheck"
+
+  printf 'paused: fix round running until 15:35Z\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked, elapsed 3s' > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "an unstamped time-only declared time fell back to the long cadence"
+  pass "a time-only declared time reads from its stamp, and an unstamped one rechecks at once"
+}
+
+# The 1689 stall: a worker declared `paused:` for its fix round, the round
+# returned at once, and the run sat parked at an ask-user gate while the
+# declaration absorbed every stale. A run parked at any gate wakes firstmate
+# naming the run and gate; a run still advancing stays absorbed.
+test_live_paused_over_parked_gate_wakes() {
+  local dir state fakebin out capture_file statusf window key sig wakes
+  dir=$(make_case live-paused-parked-gate); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+  window="test:fm-parked"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'paused [at=%s]: no-mistakes fix round running\n' "$(date +%s)" > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked, elapsed 1s' > "$capture_file"
+  printf '%s' "$(hash_text 'parked, elapsed 1s')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PARKED_CREW_STATE='state: working · source: run-step · validating (fixing) · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a declared wait over an advancing run woke firstmate"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -eq 0 ] || fail "a declared wait over an advancing run produced $wakes wakes"
+
+  printf 'parked, elapsed 2s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a declared wait over a parked ask-user gate was absorbed"
+  grep -F 'run 01RUNA is parked at review: 3 finding(s) awaiting a decision' "$state/.wake-queue" >/dev/null \
+    || fail "the parked-gate wake did not name the run and gate: $(cat "$state/.wake-queue")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the parked-gate wake"
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 3s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "one parked gate woke firstmate a second time inside the recheck cadence"
+
+  # The once-per-gate record (.paused-gate-surfaced-<key>) is dropped by a read
+  # that finds the run no longer parked, so the same gate text parking again
+  # wakes again.
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 4s' > "$capture_file"
+  PARKED_CREW_STATE='state: working · source: run-step · validating (fixing) · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a declared wait over a run moving again woke firstmate"
+  [ ! -e "$state/.paused-gate-surfaced-$key" ] \
+    || fail "a read finding the run moving kept the once-per-gate record"
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 5s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at review: 3 finding(s) · ask-user: authority decision · run: 01RUNA' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a re-park with identical gate text was absorbed"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the re-park wake"
+
+  # Any parked gate counts, not only one a human owes.
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 6s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a declared wait over a crewmate-owed gate was absorbed"
+  grep -F 'run 01RUNB is parked at awaiting_approval: 2 finding(s) awaiting a decision' "$state/.wake-queue" >/dev/null \
+    || fail "the crewmate-owed gate wake did not name the run and gate: $(cat "$state/.wake-queue")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the crewmate-owed gate wake"
+
+  # Between reads the surfaced gate (.paused-gate-surfaced-<key>) owns the
+  # window: a declaration due at once stays quiet while the run is parked, and
+  # wakes as before once a read finds the run moving.
+  printf 'paused: fix round running until 15:35Z\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked, elapsed 7s' > "$capture_file"
+  PARKED_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB' \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a due declaration woke over a parked gate already surfaced"
+  ! grep -F 'awaiting external' "$state/.wake-queue" >/dev/null \
+    || fail "a surfaced parked gate was followed by an external-wait wake: $(cat "$state/.wake-queue")"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' "$state/.wake-queue")
+  rm -f "$state/.paused-gate-probed-$key"
+  printf 'parked, elapsed 8s' > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a due declaration stayed silent after the run left its gate"
+  [ "$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' "$state/.wake-queue")" -eq $((wakes + 1)) ] \
+    || fail "the ordinary stale wake did not resume after the gate record dropped: $(cat "$state/.wake-queue")"
+  ! tail -n 1 "$state/.wake-queue" | grep -F 'parked at' >/dev/null \
+    || fail "a run no longer parked still woke with the gate wording"
+  pass "a declared wait over any parked gate wakes naming the run and gate, once per park, and owns the window until the run moves"
+}
+
+# A busy pane over its turn bound under a declared wait is answering the gate
+# itself, so a parked run never gives it the gate wake; the idle mirror is
+# test_live_paused_over_parked_gate_wakes.
+test_busy_paused_over_parked_gate_takes_no_gate_wake() {
+  local dir state fakebin out capture_file window key sig pid statusf
+  dir=$(make_case busy-paused-parked-gate); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-review-scout"
+  statusf="$state/review-scout.status"
+  printf 'Working... (7200.4s) answering the gate' > "$capture_file"
+  printf 'window=%s\nkind=scout\nharness=pi\n' "$window" > "$state/review-scout.meta"
+  record_pi_busy "$state" review-scout
+  printf 'paused: waiting on no-mistakes validation\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-review-scout_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  touch -t 200001010000 "$state/review-scout.meta"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · run: 01RUNB' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "a busy pane over a parked gate woke: $(cat "$out")"; }
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "a busy pane over a parked gate woke: $(cat "$out")"; }
+  reap "$pid"
+  [ ! -s "$out" ] || fail "a busy pane over a parked gate printed a wake reason: $(cat "$out")"
+  [ -e "$state/.paused-gate-probed-$key" ] || fail "the busy pane never read the run state, so the refusal was not exercised"
+  [ ! -e "$state/.paused-gate-surfaced-$key" ] || fail "a busy pane recorded a gate wake"
+  pass "a busy pane under a declared wait never takes the parked-gate wake"
 }
 
 # --- the wedge threshold consults the worker's own declared wait ------------
@@ -7461,6 +7619,9 @@ test_own_work_wait_keeps_first_alert_then_long_cadence
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
 test_live_declared_wait_churn_honors_the_resurface_throttle
 test_live_paused_until_controls_recheck_time
+test_live_paused_time_only_until_rechecks
+test_live_paused_over_parked_gate_wakes
+test_busy_paused_over_parked_gate_takes_no_gate_wake
 test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict
 test_wedge_threshold_keeps_a_wait_past_a_default_key_answer
 test_wedge_threshold_recheck_names_the_captain_for_a_held_lane

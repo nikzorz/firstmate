@@ -613,7 +613,55 @@ pause_marker_record() {  # <window> <state> - create if absent
 pause_marker_remove() {  # <window> <state>
   local win=$1 state=$2 key
   key=$(_stale_key "$(window_to_task "$win" "$state")")
-  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key"
+  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key" \
+    "$state/.subsuper-pause-gate-probed-$key" "$state/.subsuper-pause-gate-$key"
+}
+
+# A `paused:` declaration explains a quiet crew only while nothing else owes an
+# answer: a run parked at any gate (crew_parked_gate in fm-classify-lib.sh), whoever
+# owes its answer, is a decision waiting, so it escalates naming the run and gate
+# instead of aging on the long pause cadence. The watcher applies the same refusal
+# to its own absorbers. The current-state read is taken at most once per
+# <probe-secs>, and a gate escalates once per distinct run and gate; a read that
+# finds no parked gate drops that record, so the next park escalates again even
+# with identical text. While the record stands the gate owns every tick, so no
+# declared-wait recheck contradicts it, and it re-escalates on the pause cadence
+# while it stays parked. A busy crew is answering the gate itself, so it never
+# takes the gate escalation; it only keeps or drops the record.
+# Returns 0 when the parked gate owns this tick, 1 to let the cadence decide.
+pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs> <pause-secs>
+  local state=$1 key=$2 win=$3 task=$4 age=$5 now=$6 secs=$7 pause_secs=$8 probe seen last_probe gate run
+  probe="$state/.subsuper-pause-gate-probed-$key"
+  seen="$state/.subsuper-pause-gate-$key"
+  last_probe=$(cat "$probe" 2>/dev/null || true)
+  case "$last_probe" in ''|*[!0-9]*) last_probe=0 ;; esac
+  if [ $(( now - last_probe )) -ge "$secs" ]; then
+    printf '%s\n' "$now" > "$probe"
+    if ! gate=$(crew_parked_gate "$task"); then
+      rm -f "$seen"
+      return 1
+    fi
+    gate=${gate%$'\t'*}
+    run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
+  elif [ -e "$seen" ]; then
+    gate=$(cat "$seen" 2>/dev/null || true)
+    run=${gate%% *}; gate=${gate#* }
+  else
+    return 1
+  fi
+  if [ "$(cat "$seen" 2>/dev/null || true)" = "$run $gate" ] && [ "$age" -lt "$pause_secs" ]; then
+    return 0
+  fi
+  stale_window_is_busy "$win" "$state"
+  case "$?" in
+    0) [ -e "$seen" ]; return ;;
+    2) return 1 ;;
+  esac
+  if escalate_add "$state" "paused ${age}s (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate): $win"; then
+    printf '%s\n' "$run $gate" > "$seen"
+    _now > "$state/.subsuper-paused-$key"
+  fi
+  return 0
 }
 
 clear_pause_tracking() {  # <window> <state>
@@ -622,7 +670,8 @@ clear_pause_tracking() {  # <window> <state>
   key=$(_stale_key "$task")
   watcher_key=$(_stale_key "$win")
   rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key" "$state/.subsuper-stale-$key" \
-    "$state/.subsuper-dialog-$key" \
+    "$state/.subsuper-dialog-$key" "$state/.subsuper-pause-gate-probed-$key" "$state/.subsuper-pause-gate-$key" \
+    "$state/.paused-gate-probed-$watcher_key" "$state/.paused-gate-surfaced-$watcher_key" \
     "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key" \
     "$state/.writing-since-$watcher_key" "$state/.writing-resurfaced-$watcher_key" \
@@ -1485,12 +1534,16 @@ housekeeping() {  # <state>
     if status_is_captain_held "$last" && fm_afk_contract_away_present "$state"; then
       continue
     fi
+    if status_is_paused "$last" && pause_gate_escalate "$state" "$key" "$win" "$task" "$age" "$now" \
+      "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" "$pause_secs"; then
+      continue
+    fi
     if until=$(status_paused_until "$last"); then
       if [ "$now" -lt "$until" ] && [ "$age" -lt "$pause_secs" ]; then
         continue
       elif [ "$now" -lt "$until" ]; then
         bounded_until=1
-      elif [ "$(cat "$due" 2>/dev/null || true)" = "$until" ]; then
+      elif [ "$(cat "$due" 2>/dev/null || true)" = "$until $last" ]; then
         [ "$age" -ge "$pause_secs" ] || continue
       fi
     else
@@ -1520,7 +1573,7 @@ housekeeping() {  # <state>
           if escalate_add "$state" "$pause_reason"; then
             _now > "$marker"
             if [ -n "$until" ] && [ "$now" -ge "$until" ]; then
-              printf '%s\n' "$until" > "$due"
+              printf '%s\n' "$until $last" > "$due"
             fi
           fi
         else

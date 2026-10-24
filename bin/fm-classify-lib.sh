@@ -464,17 +464,44 @@ _fm_status_declared_wait_scan() {  # <resolve-verb> <legacy-captain-re>
 # clear with `until <YYYY-MM-DDTHH:MM[:SS]Z>` anywhere in its text (UTC only, so
 # no local-zone guess is ever recorded). Prints that time as epoch seconds so a
 # supervisor rechecks the wait when the worker said it would clear instead of on
-# the flat cadence; returns 1 when the line is not a pause or declares no time,
-# or the time is malformed, so a bad token falls back to the cadence rather than
-# silencing the wait.
+# the flat cadence; returns 1 when the line is not a pause or names no time.
+# An ISO time after any `until` wins. Otherwise the last `until` token counts
+# as a time only when it holds a colon or starts with a `YYYY-` date: a
+# time-only `HH:MM[:SS]Z` is read as its next occurrence at or after the line's
+# own `[at=]` stamp, the only clock that says which day the worker meant, and
+# any other time token, a time-only one with no stamp included, prints 0 so the
+# wait is due at once rather than hidden behind the long cadence. Prose such as
+# `until 2 checks pass` names no time and keeps the cadence.
 status_paused_until() {  # <status-line> -> epoch on stdout
-  local line=$1 token
+  local line=$1 token at hh mm ss clock
   status_is_paused "$line" || return 1
   token=$(printf '%s' "$line" \
     | sed -n 's/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z\).*/\1/p; s/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' \
     | head -1)
-  [ -n "$token" ] || return 1
-  fm_utc_iso_to_epoch "$token"
+  if [ -n "$token" ] && fm_utc_iso_to_epoch "$token"; then return 0; fi
+  token=$(printf '%s' "$line" \
+    | sed -n 's/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][^[:space:]]*\).*/\1/p' \
+    | head -1)
+  token=${token%[.,;)]}
+  case "$token" in
+    *:*|[0-9][0-9][0-9][0-9]-*) ;;
+    *) return 1 ;;
+  esac
+  case "$token" in
+    [0-2][0-9]:[0-5][0-9]Z) clock=${token%Z}:00 ;;
+    [0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z) clock=${token%Z} ;;
+    *) clock= ;;
+  esac
+  if [ -n "$clock" ] && at=$(status_line_at_epoch "$line"); then
+    hh=$((10#${clock%%:*})); mm=${clock#*:}; ss=$((10#${mm#*:})); mm=$((10#${mm%%:*}))
+    if [ "$hh" -lt 24 ]; then
+      clock=$(( at - at % 86400 + hh * 3600 + mm * 60 + ss ))
+      [ "$clock" -ge "$at" ] || clock=$(( clock + 86400 ))
+      printf '%s' "$clock"
+      return 0
+    fi
+  fi
+  printf '0'
 }
 
 # --- optional event emission time -------------------------------------------
@@ -2669,7 +2696,7 @@ crew_usage_limit_class() {  # <id>
 # The one spelling of the verdict component that says a parked gate's answer is
 # owed by a HUMAN. bin/fm-crew-state.sh mints it (nm_gate_awaits_human_decision
 # owns the derivation: the findings table's `action` column, read by position);
-# crew_gate_awaits_human_decision below is its only consumer.
+# crew_parked_gate below is its only reader.
 FM_GATE_HUMAN_DECISION='ask-user: authority decision'
 
 # 0 if crew <id>'s authoritative current state is a no-mistakes gate whose answer
@@ -2694,7 +2721,20 @@ FM_GATE_HUMAN_DECISION='ask-user: authority decision'
 # which may make a bounded no-mistakes call, so callers take it only where they
 # already accept that cost.
 crew_gate_awaits_human_decision() {  # <id> -> <run-id> on stdout
-  local id=$1 line state src rest part human='' run=''
+  local gate
+  gate=$(crew_parked_gate "$1") || return 1
+  [ "${gate##*$'\t'}" = human ] || return 1
+  printf '%s\n' "${gate%%$'\t'*}"
+}
+
+# The wider reading of the same line: ANY gate the crew's run is parked at,
+# whoever owes its answer, printing `<run-id>\t<gate>\t<owner>` where <gate> is
+# the line's whole `parked at ...` component and <owner> is `human` when the
+# minted component above is present, `any` otherwise. A supervisor that refuses
+# to absorb a declared wait over a parked run reads this, so it can name the run
+# and the gate; a line carrying no run id is not evidence here either.
+crew_parked_gate() {  # <id> -> <run-id>\t<gate>\t<human|any> on stdout
+  local id=$1 line state src rest part owner=any run='' gate=''
   [ -n "$id" ] || return 1
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
   case "$line" in state:*) ;; *) return 1 ;; esac
@@ -2706,12 +2746,15 @@ crew_gate_awaits_human_decision() {  # <id> -> <run-id> on stdout
   while [ -n "$rest" ]; do
     part=${rest%% · *}
     rest=${rest#* · }
-    [ "$part" = "$FM_GATE_HUMAN_DECISION" ] && human=1
-    case "$part" in "run: "?*) run=${part#run: } ;; esac
+    [ "$part" = "$FM_GATE_HUMAN_DECISION" ] && owner=human
+    case "$part" in
+      "run: "?*) run=${part#run: } ;;
+      "parked at "?*) [ -n "$gate" ] || gate=${part#parked at } ;;
+    esac
   done
-  [ -n "$human" ] && [ -n "$run" ] || return 1
+  [ -n "$run" ] || return 1
   case "$run" in *[[:space:]]*) return 1 ;; esac
-  printf '%s\n' "$run"
+  printf '%s\t%s\t%s\n' "$run" "${gate:-gate}" "$owner"
 }
 
 # The spellings of the two components a checks-green no-mistakes reading carries
