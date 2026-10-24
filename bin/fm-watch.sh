@@ -1321,8 +1321,11 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # nothing - the unchanged schedule unless one of them holds. The records are read in
 # this order rather than pooled because the routing already guarantees it is the
 # right one: a pane whose last line is `paused:` or `captain-held:` reaches this
-# timer only through pause_state_class answering `working`, so its crew state is
-# a running step, never a parked gate.
+# timer only through pause_state_class answering `working`, so its crew state was
+# a running step when that was recorded. The run can park at a human-owed gate
+# after that answer, so a `paused:` line defers only while a fresh read finds no
+# such gate (crew_parked_human_gate), the same refusal paused_parked_gate_surface
+# applies to the declared-wait absorbers.
 #
 # The second record is OFF unless the home creates config/wedge-defer-parked-gate,
 # and that one guard is what makes an unconfigured home's behaviour identical to
@@ -1385,7 +1388,8 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     return 0
   fi
   if status_is_paused "$last" \
-    && { ! until=$(status_paused_until "$last") || [ "$(date +%s)" -lt "$until" ]; }; then
+    && { ! until=$(status_paused_until "$last") || [ "$(date +%s)" -lt "$until" ]; } \
+    && ! crew_parked_human_gate "$task" >/dev/null; then
     wait_record 'declared wait' 'awaiting external' \
       external 'confirm the wait still holds' "$statusf"
     return 0
@@ -1777,6 +1781,31 @@ busy_turn_over_age() {  # <task>
 # captain themself for a verified hold. Only the captain-held verb takes the second
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
+# A `paused:` declaration explains a quiet pane only while nothing else owes an
+# answer. A run parked at a gate whose answer a human owes (crew_parked_human_gate
+# in fm-classify-lib.sh) is a decision waiting, and absorbing it as the worker's
+# own wait hides that decision for the whole long cadence. Both declared-wait
+# absorbers run on every poll, so the current-state read is taken at most once per
+# STALE_ESCALATE_SECS; a gate is surfaced once per distinct run and gate, then
+# again on the long cadence while it stays parked.
+# Returns 0 when it handled the window (wake() exits the cycle), 1 to let the
+# declared-wait absorb proceed.
+paused_parked_gate_surface() {  # <window> <task> <declared-line>
+  local win=$1 task=$2 last=$3 key probe gate run
+  status_is_paused "$last" || return 1
+  key=$(window_key "$win")
+  probe="$STATE/.paused-gate-probed-$key"
+  [ "$(age_of "$probe")" -ge "$STALE_ESCALATE_SECS" ] || return 1
+  date +%s > "$probe"
+  gate=$(crew_parked_human_gate "$task") || return 1
+  run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
+  resurface_absorbed "$win" "$STATE/.paused-gate-surfaced-$key" 0 \
+    "stale: $win (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate)" \
+    "gate:$run:$gate" 0
+  triage_log "parked gate already surfaced inside the recheck cadence (run $run at $gate): $win"
+  return 0
+}
+
 handle_paused_stale() {  # <window> <task> <hash>
   local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
   key=$(window_key "$win")
@@ -1793,6 +1822,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   last=$(status_declared_wait_line "$statusf")
   min_age=$PAUSE_RESURFACE_SECS
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
+  paused_parked_gate_surface "$win" "$task" "$last" && return 0
   if status_is_captain_held "$last"; then
     if away_record_present; then
       triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $win"
@@ -1810,8 +1840,8 @@ handle_paused_stale() {  # <window> <task> <hash>
     else
       # The declared time has passed: recheck now, once per declaration, then
       # hold the cadence.
-      detail="paused, declared time reached"
-      reason="paused ${age}s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared"
+      detail="paused, declared time reached or unreadable"
+      reason="paused ${age}s, awaiting external - the declared clearing time has passed or could not be read, rechecked on a long cadence not a wedge; confirm the wait cleared"
       declaration="$declaration:due"
       min_age=0
     fi
@@ -1894,7 +1924,8 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
 
 clear_pause_state() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key" \
+    "$STATE/.paused-gate-probed-$key" "$STATE/.paused-gate-surfaced-$key"
 }
 
 # The hash-scoped half of clear_pause_tracking: the stale suppressor, its wedge
@@ -2185,6 +2216,8 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
   last=$(status_declared_wait_line "$STATE/$task.status")
   STALE_WAIT_DECLARATION=
   if status_is_paused "$last"; then
+    printf '%s' "$h" > "$STATE/.stale-$key"
+    paused_parked_gate_surface "$win" "$task" "$last" && return 0
     declared=0
     bounded=0
     STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")

@@ -613,7 +613,33 @@ pause_marker_record() {  # <window> <state> - create if absent
 pause_marker_remove() {  # <window> <state>
   local win=$1 state=$2 key
   key=$(_stale_key "$(window_to_task "$win" "$state")")
-  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key"
+  rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key" \
+    "$state/.subsuper-pause-gate-probed-$key" "$state/.subsuper-pause-gate-$key"
+}
+
+# A `paused:` declaration explains a quiet crew only while nothing else owes an
+# answer: a run parked at a gate whose answer a human owes (crew_parked_human_gate
+# in fm-classify-lib.sh) is a decision waiting, so it escalates naming the run and
+# gate instead of aging on the long pause cadence. The watcher applies the same
+# refusal to its own absorbers. The current-state read is taken at most once per
+# <probe-secs>, and a gate escalates once per distinct run and gate; the ordinary
+# pause cadence still re-surfaces it while it stays parked.
+# Returns 0 when the parked gate owns this tick, 1 to let the cadence decide.
+pause_gate_escalate() {  # <state> <key> <window> <task> <age> <now> <probe-secs>
+  local state=$1 key=$2 win=$3 task=$4 age=$5 now=$6 secs=$7 probe seen last_probe gate run
+  probe="$state/.subsuper-pause-gate-probed-$key"
+  seen="$state/.subsuper-pause-gate-$key"
+  last_probe=$(cat "$probe" 2>/dev/null || true)
+  case "$last_probe" in ''|*[!0-9]*) last_probe=0 ;; esac
+  [ $(( now - last_probe )) -ge "$secs" ] || return 1
+  printf '%s\n' "$now" > "$probe"
+  gate=$(crew_parked_human_gate "$task") || return 1
+  run=${gate%%$'\t'*}; gate=${gate#*$'\t'}
+  [ "$(cat "$seen" 2>/dev/null || true)" != "$run $gate" ] || return 0
+  if escalate_add "$state" "paused ${age}s (declared paused, but run $run is parked at $gate awaiting a decision - not a declared wait; answer or escalate the gate): $win"; then
+    printf '%s\n' "$run $gate" > "$seen"
+  fi
+  return 0
 }
 
 clear_pause_tracking() {  # <window> <state>
@@ -622,7 +648,8 @@ clear_pause_tracking() {  # <window> <state>
   key=$(_stale_key "$task")
   watcher_key=$(_stale_key "$win")
   rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-pause-until-due-$key" "$state/.subsuper-stale-$key" \
-    "$state/.subsuper-dialog-$key" \
+    "$state/.subsuper-dialog-$key" "$state/.subsuper-pause-gate-probed-$key" "$state/.subsuper-pause-gate-$key" \
+    "$state/.paused-gate-probed-$watcher_key" "$state/.paused-gate-surfaced-$watcher_key" \
     "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key" \
     "$state/.writing-since-$watcher_key" "$state/.writing-resurfaced-$watcher_key" \
@@ -1483,6 +1510,10 @@ housekeeping() {  # <state>
     until=
     bounded_until=0
     if status_is_captain_held "$last" && fm_afk_contract_away_present "$state"; then
+      continue
+    fi
+    if status_is_paused "$last" && pause_gate_escalate "$state" "$key" "$win" "$task" "$age" "$now" \
+      "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}"; then
       continue
     fi
     if until=$(status_paused_until "$last"); then

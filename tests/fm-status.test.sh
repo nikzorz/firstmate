@@ -62,6 +62,29 @@ test_keyed_line_round_trips_the_key() {
   pass "fm-status: --key writes a decision key that opens and closes through the classifier"
 }
 
+# A time-only `until HH:MMZ` reads as its next occurrence at or after the line's
+# own `[at=]` stamp; any other time-like token, an unstamped time-only one
+# included, reads as already due (0) instead of falling back to the cadence.
+# Prose after `until` still names no time.
+test_until_time_only_and_unreadable() {
+  local at=1792162543 v
+  v=$(read_field until "paused [at=$at]: fix round (b) running until 15:35Z") || fail "time-only until unread"
+  [ "$v" = 1792164900 ] || fail "time-only until read as $v, not the same day's 15:35Z"
+  v=$(read_field until "paused [at=$at]: overnight job until 02:00Z.") || fail "next-day time-only until unread"
+  [ "$v" = 1792202400 ] || fail "an earlier clock time read as $v, not the next day's"
+  v=$(read_field until "paused: x until 2026-10-16T15:35Z") || fail "dated until unread"
+  [ "$v" = 1792164900 ] || fail "dated until read as $v"
+  for line in 'paused: fix round running until 15:35Z' 'paused: until 15:35 local' \
+    "paused [at=$at]: until 25:00Z" 'paused: until 2026-10-16 15:35'; do
+    v=$(read_field until "$line") || fail "unreadable until on '$line' fell back to the cadence"
+    [ "$v" = 0 ] || fail "unreadable until on '$line' read as $v, not due"
+  done
+  if read_field until 'paused: waiting until CI finishes' >/dev/null; then
+    fail "prose after until was read as a time"
+  fi
+  pass "fm-classify: a time-only until reads from its stamp, and an unreadable one is due at once"
+}
+
 test_until_relative_rounds_up_to_the_minute() {
   local out before until
   make_case until-rel
@@ -164,6 +187,7 @@ test_ledger_follows_the_flag_and_config_override() {
 
 test_plain_line_is_stamped_and_parsed
 test_keyed_line_round_trips_the_key
+test_until_time_only_and_unreadable
 test_until_relative_rounds_up_to_the_minute
 test_until_absolute_is_kept_and_validated
 test_line_form_stamps_only_an_unstamped_line
