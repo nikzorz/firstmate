@@ -25,8 +25,8 @@
 # not driven live). The verdict is the round's structured field; which finding
 # is that question is told by the pipeline's own wording, the only mark it
 # carries. A review round that parked on incomplete coverage and was approved -
-# its selection declined, or it is the last round of a completed step - also
-# needs a `needs-decision [key=nm-<run>-...]` line of its run and round naming
+# its selection declined, or it is the last round of a completed step - or that
+# still awaits its answer as the last round of a parked step also needs a `needs-decision [key=nm-<run>-...]` line of its run and round naming
 # the reserved id `coverage` in findings=, since such a park holds no finding to
 # name and the review key alone also marks every ordinary review escalation.
 #
@@ -39,12 +39,13 @@
 # mode=no-mistakes, or records no branch=, binds no run.
 #
 # fm_nm_rulings_owed <task-id> <state-dir> <data-dir>
-#   Sets FM_NM_RULINGS_OWED to one "  - ..." line per finding or approved
-#   coverage park no decision line names, a finding carried through several
+#   Sets FM_NM_RULINGS_OWED to one "  - ..." line per finding or approved or
+#   awaiting coverage park no decision line names, a finding carried through several
 #   rounds once for every round no line names; FM_NM_RULINGS_CLEARING to the
 #   decision line that names every owed id of each run, step, and round, in
 #   first-owed order, pointing at <data-dir>/<task-id>/nm-<run>-findings.txt;
-#   and FM_NM_RULINGS_UNREADABLE to true, with FM_NM_RULINGS_OWED holding the
+#   FM_NM_RULINGS_COVERAGE to one run<TAB>round<TAB>unverified-files line per
+#   owed coverage park; and FM_NM_RULINGS_UNREADABLE to true, with FM_NM_RULINGS_OWED holding the
 #   one line naming what could not be read, when nothing could be judged.
 #   Returns 0 in every case; reads only.
 # fm_nm_rulings_clearing_text <status-file>
@@ -58,8 +59,9 @@
 
 # Prints run<TAB>step<TAB>round<TAB>kind<TAB>id<TAB>action for every finding
 # the no-mistakes runs of one branch left unruled and every review coverage
-# park they approved, once per run, step, round, and id (kind finding, or kind
-# coverage with id coverage and action "-"). Exits nonzero, naming what could
+# park they approved or still await an answer on, once per run, step, round,
+# and id (kind finding, or kind coverage with id coverage and the park's
+# unverified files, comma-joined, in place of the action). Exits nonzero, naming what could
 # not be read, rather than printing a partial set.
 nm_unruled_findings() {  # <state-db> <project> <branch>
   local rounds
@@ -76,6 +78,7 @@ GRANTED_QUESTION = {
     "inconclusive": "live validation verdict: inconclusive (",
     "no-surface": "this change has no live-validatable surface; proceed without live validation? (",
 }
+PARKED = ("awaiting_approval", "fix_review")
 
 
 def given(reason):
@@ -105,12 +108,14 @@ for entry in steps.values():
     last = max(r["round"] for r in entry["rounds"])
     for r in entry["rounds"]:
         declined = r["source"] == "user_declined" or (r["round"] == last and answered_last)
-        if step == "review" and declined:
+        awaiting = r["round"] == last and entry["status"] in PARKED
+        if step == "review" and (declined or awaiting):
             if r["coverage_parked"] is None:
                 print("the review log of %s" % r["where"], file=sys.stderr)
                 sys.exit(1)
             if r["coverage_parked"]:
-                print("%s\t%s\t%s\tcoverage\tcoverage\t-" % (run, step, r["round"]))
+                print("%s\t%s\t%s\tcoverage\tcoverage\t%s" % (run, step, r["round"],
+                                                                 ", ".join(r["coverage_unverified"])))
         for finding in r["findings"]:
             finding_id, action = finding.get("id"), finding.get("action")
             if finding_id in r["selected"] or (not declined and action != "ask-user"):
@@ -131,14 +136,17 @@ for entry in steps.values():
 FM_NM_RULINGS_OWED=
 FM_NM_RULINGS_CLEARING=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
+FM_NM_RULINGS_COVERAGE=
+# shellcheck disable=SC2034 # Read by the sourcing callers.
 FM_NM_RULINGS_UNREADABLE=false
-# shellcheck disable=SC2034 # FM_NM_RULINGS_UNREADABLE is read by the sourcing callers.
+# shellcheck disable=SC2034 # FM_NM_RULINGS_COVERAGE and FM_NM_RULINGS_UNREADABLE are read by the sourcing callers.
 fm_nm_rulings_owed() {  # <task-id> <state-dir> <data-dir>
   local id=$1 state=$2 data=$3 meta mode branch project status_file db unruled named='' owed=''
   local run step round kind finding_id action reader_err what now ids
   local cannot="so an unruled pipeline finding cannot be ruled out"
   FM_NM_RULINGS_OWED=
   FM_NM_RULINGS_CLEARING=
+  FM_NM_RULINGS_COVERAGE=
   FM_NM_RULINGS_UNREADABLE=false
   meta="$state/$id.meta"
   if [ ! -f "$meta" ] || [ ! -r "$meta" ]; then
@@ -202,7 +210,8 @@ fm_nm_rulings_owed() {  # <task-id> <state-dir> <data-dir>
     printf '%s\n' "$named" | grep -qxF -e "$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id" -e "$run"$'\t*\t'"$round"$'\t'"$finding_id" && continue
     owed="$owed$run"$'\t'"$step"$'\t'"$round"$'\t'"$finding_id"$'\n'
     if [ "$kind" = coverage ]; then
-      FM_NM_RULINGS_OWED="$FM_NM_RULINGS_OWED  - no-mistakes run $run step $step round $round was approved while parked on incomplete review coverage, which no needs-decision line of task $id's status log names as coverage for that run and round
+      FM_NM_RULINGS_COVERAGE="$FM_NM_RULINGS_COVERAGE$run"$'\t'"$round"$'\t'"$action"$'\n'
+      FM_NM_RULINGS_OWED="$FM_NM_RULINGS_OWED  - no-mistakes run $run step $step round $round parked on incomplete review coverage and was approved or still awaits its answer, which no needs-decision line of task $id's status log names as coverage for that run and round
 "
       continue
     fi

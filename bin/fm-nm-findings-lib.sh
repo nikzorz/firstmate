@@ -13,7 +13,8 @@
 # fm_nm_rounds <state-db> --branch <repo-working-path> <branch>
 #   Prints one JSON object per step round, in run, step, then round order:
 #   {"run", "step_result", "step", "step_status", "approval", "skip", "round",
-#    "source", "selected", "findings", "verdict", "coverage_parked", "where"},
+#    "source", "selected", "findings", "verdict", "coverage_parked",
+#    "coverage_unverified", "where"},
 #   where "selected" is the round's selected finding id list, "findings" is its
 #   finding object list as no-mistakes stored it, "verdict" is the live
 #   validation verdict a test round recorded (null when none), and "where"
@@ -25,6 +26,8 @@
 #   segment the round's own "reviewing changes..." line opens; it is false off
 #   the review step and null when the log cannot be read or its segments do not
 #   match the recorded rounds, leaving the caller to judge whether it matters.
+#   "coverage_unverified" lists the files that park line names unverified, empty
+#   when the round did not park or the line names none.
 #   An absent database, or a round whose record cannot be read, exits nonzero
 #   with one stderr line naming what could not be read and prints nothing, so a
 #   caller never acts on a partial set. A run, repository, or branch with no
@@ -87,21 +90,26 @@ COVERAGE_PARKS = ("review coverage is incomplete; parking for approval",
 REVIEW_ROUND = "reviewing changes..."
 
 
+UNVERIFIED = " unverified: "
+
+
 def coverage_parks(log_path, rounds):
-    # Round numbers whose log segment parked on coverage, or None when the log
-    # cannot be read or holds a different number of rounds than were recorded.
+    # {round number: unverified files} for each round whose log segment parked
+    # on coverage, or None when the log cannot be read or holds a different
+    # number of rounds than were recorded.
     try:
         with open(log_path, encoding="utf-8", errors="replace") as log:
             lines = log.read().splitlines()
     except (OSError, TypeError):
         return None
-    segment, parked = 0, set()
+    segment, parked = 0, {}
     for line in lines:
         if line.startswith(REVIEW_ROUND):
             segment += 1
         elif segment and line.startswith(COVERAGE_PARKS):
-            parked.add(segment)
-    return {rounds[k - 1] for k in parked} if segment == len(rounds) else None
+            _, _, files = line.partition(UNVERIFIED)
+            parked[segment] = [f for f in (p.strip() for p in files.split(", ")) if f]
+    return {rounds[k - 1]: files for k, files in parked.items()} if segment == len(rounds) else None
 
 
 parks = {}
@@ -126,12 +134,13 @@ for run, step_id, step, status, approval, skip, log_path, round_no, source, sele
     except ValueError:
         unreadable("the findings of %s" % where)
     verdict = record.get("verdict")
-    parked = parks.get(step_id, set())
+    parked = parks.get(step_id, {})
     out.append(json.dumps({"run": run, "step_result": step_id, "step": step, "step_status": status,
                            "approval": approval, "skip": skip, "round": round_no, "source": source,
                            "selected": selected, "findings": listed,
                            "verdict": verdict if isinstance(verdict, str) else None,
                            "coverage_parked": None if parked is None else round_no in parked,
+                           "coverage_unverified": (parked or {}).get(round_no, []),
                            "where": where}))
 for line in out:
     print(line)

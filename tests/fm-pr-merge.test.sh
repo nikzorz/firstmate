@@ -5475,27 +5475,97 @@ test_approved_coverage_park_needs_a_decision_request() {
   run_nm_merge "$case_dir"
 
   expect_code 1 "$NM_MERGE_RC" "nm-coverage: a coverage park approved with no decision request must refuse"
-  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 parked on incomplete review coverage" \
     "$case_dir/stderr" "nm-coverage: the approved coverage park was not named"
-  assert_no_grep "round 1 was approved" "$case_dir/stderr" "nm-coverage: a coverage park answered with fix was refused"
+  assert_no_grep "round 1 parked on" "$case_dir/stderr" "nm-coverage: a coverage park answered with fix was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-coverage: gh pr merge ran over an approved coverage park"
 
   write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 fixed-1
   run_nm_merge "$case_dir"
   expect_code 1 "$NM_MERGE_RC" "nm-coverage: a review escalation of another finding cleared the coverage park"
-  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 parked on incomplete review coverage" \
     "$case_dir/stderr" "nm-coverage: the coverage park was not named once only an unrelated review escalation existed"
 
   write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 1 coverage
   run_nm_merge "$case_dir"
   expect_code 1 "$NM_MERGE_RC" "nm-coverage: a round-1 coverage escalation cleared round 2's coverage park"
-  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 parked on incomplete review coverage" \
     "$case_dir/stderr" "nm-coverage: round 2's coverage park was not named once only round 1's coverage was escalated"
 
   write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 2 coverage
   run_nm_merge "$case_dir"
   expect_code 0 "$NM_MERGE_RC" "nm-coverage: the merge failed once a decision request named the coverage park: $(cat "$case_dir/stderr")"
   pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run and round"
+}
+
+# Runs the watcher's coverage-park read once over case_dir's state and
+# no-mistakes fixture, printing every wake it raised.
+run_coverage_park_tick() {
+  local case_dir=$1
+  (
+    export FM_STATE_OVERRIDE="$case_dir/state" FM_ROOT_OVERRIDE="$ROOT" NM_HOME="$case_dir/nm"
+    export FM_COVERAGE_PARK_INTERVAL=0
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-watch.sh"
+    # shellcheck disable=SC2329 # Invoked by coverage_park_tick in place of the watcher's own wake.
+    wake() { printf '%s\n' "$1"; }
+    coverage_park_tick
+  )
+}
+
+test_coverage_park_wakes_firstmate() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-wake)
+  write_nm_coverage_approval "$case_dir"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the coverage-park read failed"
+  assert_equals "check: coverage-park task-x1: run $NM_RUN_1704 round 2 unverified tools/ci/gut_split.py" "$out" \
+    "nm-coverage-wake: only the approved, unruled park may wake firstmate, naming its run, round and unverified files"
+  assert_grep "coverage-park task-x1: run $NM_RUN_1704 round 2" "$case_dir/state/.wake-queue" \
+    "nm-coverage-wake: the coverage-park wake was not queued durably"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the second coverage-park read failed"
+  assert_equals "" "$out" "nm-coverage-wake: the same coverage park woke firstmate twice"
+  pass "an approved coverage park no decision line names wakes firstmate once, and a park answered with fix never does"
+}
+
+test_awaiting_coverage_park_wakes_firstmate() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-live)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, status: "awaiting_approval", coverage_parked: [1, 2], rounds: [
+        {round: 1, source: "user", selected: ["fixed-1"], findings: [["fixed-1", "auto-fix", ""]]},
+        {round: 2, source: null}]}]}')"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-live: the coverage-park read failed"
+  assert_equals "check: coverage-park task-x1: run $NM_RUN_1704 round 2 unverified tools/ci/gut_split.py" "$out" \
+    "nm-coverage-live: a park still awaiting its answer did not wake firstmate, or the park answered with fix did"
+  pass "a coverage park still awaiting its answer wakes firstmate before the worker answers"
+}
+
+test_answered_or_ruled_coverage_parks_do_not_wake() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-old)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" --arg old "$NM_RUN_1713" '
+    {run: $run, steps: [
+      {name: "review", order: 3, run: $old, coverage_parked: [1, 2], rounds: [
+        {round: 1, source: "user", selected: ["fixed-1"], findings: [["fixed-1", "auto-fix", ""]]},
+        {round: 2, source: null}]},
+      {name: "review", order: 3, status: "running", rounds: [{round: 1, source: null}]}]}')"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1713" review 2 coverage
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-old: the coverage-park read failed"
+  assert_equals "" "$out" "nm-coverage-old: an earlier run's park answered with fix or already ruled woke firstmate"
+  pass "an earlier run's coverage parks answered with fix or already ruled raise no wake on the first read"
+}
+
+test_park_without_coverage_does_not_wake() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-quiet)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, status: "running", rounds: [
+        {round: 1, source: null, findings: [["parked-1", "ask-user", ""]]}]}]}')"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-quiet: the coverage-park read failed"
+  assert_equals "" "$out" "nm-coverage-quiet: a park with no coverage line woke firstmate"
+  pass "a review round parked without incomplete coverage raises no coverage-park wake"
 }
 
 test_unreadable_review_log_refuses_merge() {
@@ -5662,7 +5732,7 @@ test_finding_carried_through_rounds_is_refused_in_one_attempt_with_lines_that_cl
     assert_grep "no-mistakes run $NM_RUN_1704 step review round $round declined ask-user finding 'review-1'" \
       "$case_dir/stderr" "nm-carried: round $round was not refused in the first attempt"
   done
-  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 was approved while parked on incomplete review coverage" \
+  assert_grep "no-mistakes run $NM_RUN_1704 step review round 2 parked on incomplete review coverage" \
     "$case_dir/stderr" "nm-carried: round 2's coverage park was not refused"
   lines=$(grep '^needs-decision ' "$case_dir/stderr" || true)
   [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 3 ] \
@@ -5812,6 +5882,10 @@ test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings
 test_test_step_grant_matches_only_the_pipelines_live_validation_question
 test_approved_coverage_park_needs_a_decision_request
+test_coverage_park_wakes_firstmate
+test_awaiting_coverage_park_wakes_firstmate
+test_answered_or_ruled_coverage_parks_do_not_wake
+test_park_without_coverage_does_not_wake
 test_unreadable_review_log_refuses_merge
 test_decision_named_in_another_run_does_not_rule_a_reused_id
 test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another

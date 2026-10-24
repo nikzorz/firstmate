@@ -154,7 +154,43 @@ test_marks_a_finding_identical_to_an_earlier_selected_one_as_carried() {
   pass "fm-nm-findings marks a finding identical to one an earlier round selected as carried"
 }
 
+COVERAGE_RUN=01M52HADA6QGX5SRW592TS1EJM
+COVERAGE_LOG="$TMP_ROOT/coverage-review.log"
+
+# Run 01M52HADA6QGX5SRW592TS1EJM's review: round 1 passes and round 2 parks on
+# incomplete coverage with no finding of its own.
+printf '%s\n' 'reviewing changes...' 'claude exited pid=1 status=success' \
+  'reviewing changes...' 'claude exited pid=2 status=success' \
+  'review coverage is incomplete; parking for approval with 2 reviewable file(s) unverified: .github/workflows/tests.yml, tests/smoke/README.md' \
+  > "$COVERAGE_LOG"
+python3 -I - "$NM_HOME/state.sqlite" "$COVERAGE_RUN" "$COVERAGE_LOG" <<'PY' || fail "could not write the coverage fixture"
+import sqlite3
+import sys
+
+db_path, run, log_path = sys.argv[1:]
+db = sqlite3.connect(db_path)
+db.execute("INSERT INTO runs VALUES (?, 'r1', 'fm/coverage', 4)", (run,))
+db.execute("INSERT INTO step_results VALUES ('v1', ?, 'review', 3, 'running', NULL, NULL, ?)", (run, log_path))
+for rnd in (1, 2):
+    db.execute("INSERT INTO step_rounds VALUES (?, 'v1', ?, '{\"findings\": []}', '[]', NULL)", ("v1r%d" % rnd, rnd))
+db.commit()
+PY
+
+test_coverage_park_prints_a_coverage_entry() {
+  local out code=0
+  out=$("$ROOT/bin/fm-nm-findings.sh" "$COVERAGE_RUN" --step review) || code=$?
+  expect_code 0 "$code" "the coverage run"
+  assert_contains "$out" $'== run '"$COVERAGE_RUN"$' step review round 2\nid: coverage\naction: ask-user\nunverified: .github/workflows/tests.yml, tests/smoke/README.md' \
+    "round 2's coverage park must print a coverage entry naming its unverified files"
+  assert_contains "$out" $'== run '"$COVERAGE_RUN"$' step review round 1\n(no findings)' \
+    "round 1 never parked and must print no coverage entry"
+  [ "$(printf '%s\n' "$out" | grep -c '^id: coverage$')" -eq 1 ] \
+    || fail "only the parked round may carry a coverage entry: $out"
+  pass "fm-nm-findings emits a coverage entry with the unverified files for a round parked on incomplete coverage"
+}
+
 test_prints_a_long_description_whole
 test_whole_run_prints_every_step_and_round_of_that_run_only
 test_unknown_run_step_or_database_fails
 test_marks_a_finding_identical_to_an_earlier_selected_one_as_carried
+test_coverage_park_prints_a_coverage_entry
