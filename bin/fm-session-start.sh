@@ -227,7 +227,10 @@
 #             re-emit the rest. Wake-queue presentation is NOT skipped: queued
 #             records are this turn's work queue, they arrived after startup,
 #             and a session that owns the lock is exactly the session that must
-#             handle and acknowledge them. Lock acquisition still runs, because
+#             handle and acknowledge them. A Claude `--source clear` re-emit
+#             still presents them but leaves them untaken, because no turn
+#             follows a clear and the automatic supervision wake delivers them
+#             instead. Lock acquisition still runs, because
 #             ownership must be re-verified rather than assumed: fm-lock.sh
 #             already treats a lock owned through shared ancestry or a trusted
 #             same-session Claude id as its own, so the re-emit proceeds, while
@@ -725,6 +728,13 @@ EOF
   fi
 }
 
+# A Claude /clear opens no model turn after its digest, so draining here would
+# take the queue into handling with nobody to handle it, and the rewake that
+# would have delivered it stands down (bin/fm-wake-drain.sh --present-only).
+wake_queue_held_for_rewake() {
+  [ "$REEMIT" -eq 1 ] && [ "$PRIMARY_HARNESS:$SESSION_SOURCE" = claude:clear ]
+}
+
 AGENTS_START_HASH=
 if [ "$REEMIT" -eq 0 ] && [ "$SESSION_SOURCE" = startup ]; then
   AGENTS_START_HASH=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null || true)
@@ -743,7 +753,12 @@ if [ "$REEMIT" -eq 1 ]; then
   printf 'reprinted, but the sweeps startup already reconciled - project clone refresh,\n'
   printf 'secondmate convergence and liveness, pending remote handoff\n'
   printf 'retry, X-mode artifact writes, and stale Herdr child cleanup - are NOT repeated.\n'
-  printf 'Queued wakes ARE still drained: they arrived after startup and are this turn work.\n'
+  if wake_queue_held_for_rewake; then
+    printf 'Queued wakes are shown but NOT drained: a clear opens no turn, so the automatic\n'
+    printf 'supervision wake that follows delivers them; drain and acknowledge them in that turn.\n'
+  else
+    printf 'Queued wakes ARE still drained: they arrived after startup and are this turn work.\n'
+  fi
 else
   section "SESSION START - $FM_HOME"
 fi
@@ -870,7 +885,11 @@ else
       printf '%s\n' "$BRANCH_REPLAY_OUT"
     fi
   fi
-  DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  if wake_queue_held_for_rewake; then
+    DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" --present-only 2>&1)
+  else
+    DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  fi
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else

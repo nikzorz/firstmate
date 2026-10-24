@@ -524,6 +524,23 @@ The one-shot Stop hook slept 25 seconds, and the SessionStart hook slept 15 seco
 
 Each rewake turn then fired Stop with `"stop_hook_active":true` under the post-clear `session_id`.
 
+### A pre-clear Stop park still rewakes while the clear's digest hook runs, 2026-10-24
+
+This supports the `bin/fm-claude-stop-autoarm.sh` header statement that a Stop claim parked before a clear still delivers once the clear's digest leaves the queue untaken.
+It was measured on Claude Code 2.1.294 on Linux (WSL2) with the same scratch-directory shape, adding an unmatched synchronous `SessionStart` hook that stands in for the digest by sleeping before it prints.
+
+```json
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"<probe>/hk.sh sync <secs> 0","timeout":60}]}],"Stop":[{"hooks":[{"type":"command","command":"<probe>/hk.sh stop <secs> 2","asyncRewake":true,"timeout":120}]}]}}
+```
+
+| Case | Hook log (seconds after `/clear` was sent) | Pane afterwards |
+| --- | --- | --- |
+| Park exits after the clear's synchronous hook | sync `source=clear` +1 to +3, Stop park exited 2 at +20 | `Stop hook feedback`, then the requested reply |
+| Park exits while the clear's synchronous hook still runs | sync `source=clear` +1 to +13, Stop park exited 2 at +2 | `Stop hook feedback`, then the requested reply, after the sync hook ended |
+| A second turn ended between the park and the clear | second Stop exited 0 before the clear, park exited 2 at +25 | `Stop hook feedback`, then the requested reply |
+
+Claude delivered the parked rewake in every case, so delivery after a clear depends only on that park's rewake commit succeeding.
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-09-21, all against isolated project and home state.

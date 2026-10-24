@@ -17,7 +17,11 @@
 #     SessionStart hook's exit 2 to the cleared session
 #     (docs/verification/supervision.md), and every decision below is
 #     state-based, so the payload kind changes nothing and single-flight still
-#     defers to a Stop claim parked before the clear.
+#     defers to a Stop claim parked before the clear. That parked claim still
+#     delivers because the clear's digest only presents the queue
+#     (bin/fm-wake-drain.sh --present-only): a drain there would take the
+#     episode for handling, the rewake commit below would be refused, and the
+#     wake would wait for the next message.
 #   - Scope: only a genuine primary checkout (plain checkout or validly marked
 #     secondmate home) with AGENTS.md, bin/, and the effective state dir - the
 #     exact fm-turnend-guard.sh scope. Child crew/scout worktrees stay inert.
