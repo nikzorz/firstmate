@@ -2204,6 +2204,29 @@ test_claude_permission_mode_auto_reaches_scout_launch() {
   pass "config/claude-permission-mode=auto reaches scout launches too"
 }
 
+test_claude_prompt_cache_ttl_only_on_scout_launch() {
+  local kind rec id out status launch
+  for kind in ship scout; do
+    id="cachettl-$kind-z23"
+    rec=$(make_spawn_case "cachettl-$kind" claude "$id")
+    read_case_record "$rec"
+    if [ "$kind" = ship ]; then
+      out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    else
+      out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+    fi
+    status=$?
+    expect_code 0 "$status" "claude $kind spawn should succeed"$'\n'"$out"
+    launch=$(cat "$LAUNCH_LOG")
+    if [ "$kind" = scout ]; then
+      assert_contains "$launch" "CLAUDE_CODE_PROMPT_CACHE_TTL=5m claude " "scout launch must use the 5-minute prompt cache"
+    else
+      assert_not_contains "$launch" "CLAUDE_CODE_PROMPT_CACHE_TTL" "ship launch must keep the automatic prompt cache"
+    fi
+  done
+  pass "only claude scout launches pin the 5-minute prompt cache"
+}
+
 # A Claude worker's Firstmate channel files all live outside its worktree cwd
 # (launch record in state/operational-inbox, steers in state/<id>.inbox, brief
 # in data/<id>), and since Claude Code 2.1.257 the first file-tool read of
@@ -2337,6 +2360,7 @@ test_claude_omits_config_dir_prefix_when_unset
 test_claude_permission_mode_bypass_matches_absent_launch
 test_claude_permission_mode_auto_swaps_only_the_permission_flag
 test_claude_permission_mode_auto_reaches_scout_launch
+test_claude_prompt_cache_ttl_only_on_scout_launch
 test_claude_worker_launch_covers_task_channel_dirs
 test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
 test_non_claude_harness_ignores_claude_permission_mode
