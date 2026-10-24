@@ -5162,8 +5162,9 @@ NM_NO_LIVE_SURFACE='this change has no live-validatable surface; proceed without
 # another run of the task's repository, and a "raw" key on a round replaces its
 # findings_json. A step's status defaults to completed. Each review step gets a
 # log with one review segment per round, where a round listed in the step's
-# "coverage_parked" parks on incomplete coverage; "log": false records a log
-# path no file is written at.
+# "coverage_parked" parks on incomplete coverage and a round listed in its
+# "empty_diff" logs only the pipeline's empty-diff line; "log": false records a
+# log path no file is written at.
 # Args: case_dir shape_json
 write_nm_db() {
   local case_dir=$1
@@ -5203,6 +5204,9 @@ for s, step in enumerate(shape["steps"]):
     if step["name"] == "review" and step.get("log", True):
         with open(log_path, "w") as log:
             for rnd in step["rounds"]:
+                if rnd["round"] in step.get("empty_diff", []):
+                    log.write("no changes to review\n\n")
+                    continue
                 log.write("reviewing changes...\nclaude exited pid=1 status=success\n")
                 if rnd["round"] in step.get("coverage_parked", []):
                     log.write("review coverage is incomplete; parking for approval with 1 reviewable"
@@ -5583,6 +5587,29 @@ test_unreadable_review_log_refuses_merge() {
   pass "fm-pr-merge refuses, naming the round, when a review log that could hold a coverage park cannot be read"
 }
 
+# Arena PR 1759's superseded run: review rounds 2 and 3 reviewed an empty diff,
+# so their log segments hold only the empty-diff line and no coverage verdict.
+test_empty_diff_review_round_reads_as_not_coverage_parked() {
+  local case_dir
+  case_dir=$(make_case nm-empty-diff)
+  add_gh_mocks "$case_dir" 6363636363636363636363636363636363636363
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [{name: "review", order: 3, empty_diff: [2, 3], rounds: [
+      {round: 1, source: "user", selected: ["fixed-1"], findings: [["fixed-1", "auto-fix", ""]]},
+      {round: 2, source: "user", selected: ["fixed-2"], findings: [["fixed-2", "auto-fix", ""]]},
+      {round: 3, source: "user_declined", findings: [["ruled-3", "ask-user", ""]]}]}]}')"
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-empty-diff: a declined round's unruled finding must still refuse"
+  assert_no_grep "could not be read" "$case_dir/stderr" "nm-empty-diff: an empty-diff review round was read as unreadable"
+  assert_no_grep "incomplete review coverage" "$case_dir/stderr" "nm-empty-diff: an empty-diff review round was read as coverage-parked"
+
+  write_nm_decision_line "$case_dir" "$NM_RUN_1704" review 3 ruled-3
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-empty-diff: the merge failed once every finding was ruled: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge reads a review round whose log records no changes to review as not coverage-parked"
+}
+
 test_decision_named_in_another_run_does_not_rule_a_reused_id() {
   local case_dir first=01M51NMRUNFIRST0000000000A second=01M51NMRUNSECOND000000000B
   case_dir=$(make_case nm-reused-id)
@@ -5887,6 +5914,7 @@ test_awaiting_coverage_park_wakes_firstmate
 test_answered_or_ruled_coverage_parks_do_not_wake
 test_park_without_coverage_does_not_wake
 test_unreadable_review_log_refuses_merge
+test_empty_diff_review_round_reads_as_not_coverage_parked
 test_decision_named_in_another_run_does_not_rule_a_reused_id
 test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another
 test_decision_naming_another_step_does_not_rule_its_round
