@@ -125,6 +125,12 @@
 #                          source owned closes that episode); the queued
 #                          payload names what to check. These three kinds are
 #                          joined with `;` when more than one surfaces in a cycle
+#   check: merge-ready <id>: PR <url> checks green at <head>
+#                          a yolo=on no-mistakes ship task's own run reads its
+#                          ci step green on that PR (merge_ready_tick below),
+#                          raised before the worker's ready report and once per
+#                          PR head; the merge itself still goes through
+#                          bin/fm-pr-merge.sh
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -269,6 +275,11 @@ WATCH_HOME_EXISTED=0
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
 
+# Only for fm_episode_key, the spelling the merge-ready record below keys on so
+# a later task reusing the id cannot inherit it.
+# shellcheck source=bin/fm-episode-records-lib.sh
+. "$SCRIPT_DIR/fm-episode-records-lib.sh"
+
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
@@ -317,6 +328,8 @@ WATCHER_STALL_BOUND=$(fm_watcher_stall_bound "$POLL")
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
+MERGE_READY_INTERVAL=${FM_MERGE_READY_INTERVAL:-30}  # seconds between merge-ready reads
+case "$MERGE_READY_INTERVAL" in ''|*[!0-9]*) MERGE_READY_INTERVAL=30 ;; esac
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2241,6 +2254,51 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
   echo $(( now - m ))
 }
 
+# Merge-ready notice for a task whose merge firstmate already holds standing
+# authority for: recorded kind=ship, mode=no-mistakes and yolo=on. Waiting for
+# the worker's ready report after its run's ci step reads green costs the
+# worker's closing turns and then firstmate's turn on that report, while
+# bin/fm-pr-merge.sh re-reads every merge condition live anyway, so the run's
+# own green reading (crew_ci_green_pr) is reason enough to wake. Every other
+# task keeps the worker's report as its only ready signal: without yolo=on a
+# merge needs the captain, and only a no-mistakes run has a ci step to read.
+# A remote secondmate's run lives on its own host and is never read here.
+# A task whose PR firstmate already registered (pr=) or whose worker already
+# wrote its done line is skipped: that report woke firstmate itself, and the run
+# keeps reading green until its ci step sees the merge.
+# .merge-ready-<id key> holds the `<url> <head>` last raised, so one green ci
+# step yields one wake rather than one per read, and a pipeline fix that pushes
+# a new head and goes green again raises its own. It is appended before the
+# record is written, as everywhere else here: a record written ahead of a failed
+# append would swallow the retry.
+# Throttled to MERGE_READY_INTERVAL because each candidate costs one bounded
+# fm-crew-state.sh read; its forge reads are switched off, since the green
+# reading needs none.
+merge_ready_tick() {
+  local meta id rec url head record reason
+  [ "$(age_of "$STATE/.last-merge-ready")" -ge "$MERGE_READY_INTERVAL" ] || return 0
+  touch "$STATE/.last-merge-ready"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(fm_meta_get "$meta" kind)" = ship ] || continue
+    [ "$(fm_meta_get "$meta" mode)" = no-mistakes ] || continue
+    [ "$(fm_meta_get "$meta" yolo)" = on ] || continue
+    [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+    [ -z "$(fm_meta_get "$meta" pr)" ] || continue
+    id=$(basename "$meta" .meta)
+    [ "$(status_line_verb "$(last_status_line "$STATE/$id.status")")" != "done" ] || continue
+    rec=$(FM_CREW_STATE_NO_FORGE=1 crew_ci_green_pr "$id") || continue
+    record="$STATE/.merge-ready-$(fm_episode_key "$id")"
+    [ "$(cat "$record" 2>/dev/null)" != "$rec" ] || continue
+    url=${rec%% *}
+    head=${rec#* }
+    reason="check: merge-ready $id: PR $url checks green at $head"
+    fm_wake_append check "merge-ready-$id" "$reason" || exit 1
+    printf '%s\n' "$rec" > "$record"
+    wake "$reason"
+  done
+}
+
 # Layer 2 + 3 signal scan: status files and turn-end markers.
 # Each file is compared against its persisted reported signature in .seen-* rather
 # than mtime-vs-a-startup-touch, so signals that land while no watcher is running
@@ -3191,6 +3249,10 @@ EOF
       wake "$contribution_check_output"
     fi
   fi
+
+  # Before the signal scan for the reason the checks above are: a chatty
+  # sibling's signals would otherwise starve it.
+  merge_ready_tick
 
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end
