@@ -136,6 +136,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |
 | `fm-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, home-owned status-append ranges, and bounded latest-event snapshots |
 | `fm-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
+| `fm-steer.sh`            | A worker's read and acknowledge commands for its own steering inbox                  |
+| `fm-status.sh`           | A worker's one-call status append: stamp, decision key, paused recheck time, and fleet-ledger record |
+| `fm-await.sh`            | A worker's one bounded call that waits for a line in a file or a process exit, in place of `sleep` or a poll loop |
 | `fm-branch-prompt.sh`    | Emit the shared supervision branch's byte-stable system prompt ([pi-supervision-branch.md](pi-supervision-branch.md), [supervision-host.md](supervision-host.md)) |
 | `fm-branch-outcome.sh`   | Own the supervision branch's append-only outcome store, cursors, bounded status-coverage indexes, and session-start replay |
 | `fm-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases                       |
