@@ -123,9 +123,13 @@
 # the worker's own background work, pipeline or long command; blocked when
 # firstmate must act. The first-sight alert remains; repeats use the long cadence.
 # Emission-time syntax and legacy unknown-time handling are owned by
-# bin/fm-classify-lib.sh; each scaffold renders the stamp as a literal <epoch>
-# placeholder the worker replaces with a numeric Unix time as it appends, so a
-# scaffold never emits a substitution a file-write tool would copy through.
+# bin/fm-classify-lib.sh. Ship and scout scaffolds hand the worker
+# bin/fm-status.sh, which stamps each line itself, bin/fm-await.sh for every
+# wait in place of sleep or a poll loop, and bin/fm-steer.sh to read and
+# acknowledge steers. A secondmate charter renders the stamp as a literal
+# <epoch> placeholder the second mate replaces with a numeric Unix time as it
+# appends, so no scaffold emits a substitution a file-write tool would copy
+# through.
 # Every scaffold also carries the steering-inbox receive-and-ack section:
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
@@ -189,7 +193,7 @@ IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Name what you are waiting for and what will let you resume; do not repeat the declaration on every poll.
    Do not declare active implementation or reasoning as a wait.
    Firstmate may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
-   When you know when the wait clears, include \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) for a recheck at that time; for your own background job or command with a timeout, that time is its start plus its timeout, rounded up to the minute.
+   When you know when the wait clears, pass \`--until <YYYY-MM-DDTHH:MMZ>\` (UTC) for a recheck at that time; for your own background job or command with a timeout, pass \`--until +<timeout>\` (such as \`+600s\` or \`+30m\`) as you start it, and the status command rounds it up to the minute.
    Follow the resolution rule below when the wait clears, then resume the task.
    Use \`blocked:\` when you are stuck and need help.
 EOF
@@ -474,12 +478,35 @@ shell_quote() {
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
-# The worker's status command: the plain append always carries the line, then
+# The secondmate charter's status command: the plain append always carries the line, then
 # the opt-in fleet ledger (docs/fleet-ledger.md) records it at once, costing one
 # file test when the flag is absent. A host without that flag, such as a remote
 # second mate's, runs only the append; the watcher capture is the backstop.
 STATUS_APPEND="echo \"{state} [at=<epoch>]: {one short line}\" >> $STATUS_FILE && { [ ! -e $(shell_quote "$CONFIG/fleet-ledger") ] || $(shell_quote "$FM_ROOT/bin/fm-fleet-ledger.sh") appended $(shell_quote "$CONFIG") $STATUS_FILE >/dev/null 2>&1 || true; }"
 INBOX_DIR=$(shell_quote "$STATE/$ID.inbox")
+# Ship and scout workers report, wait, and read steers through bin/fm-status.sh,
+# bin/fm-await.sh, and bin/fm-steer.sh rather than hand-built commands. A
+# secondmate charter keeps STATUS_APPEND and the plain inbox commands, because a
+# remote second mate's host need not carry this code root's bin/.
+WORKER_STATUS_CMD="$(shell_quote "$FM_ROOT/bin/fm-status.sh") $STATUS_FILE"
+# fm-status.sh finds config/ beside state/ on its own; name it only when moved.
+[ "$CONFIG" = "${STATE%/*}/config" ] || WORKER_STATUS_CMD="$WORKER_STATUS_CMD --config $(shell_quote "$CONFIG")"
+AWAIT_CMD=$(shell_quote "$FM_ROOT/bin/fm-await.sh")
+STEER_CMD="$(shell_quote "$FM_ROOT/bin/fm-steer.sh") --inbox $INBOX_DIR"
+IFS= read -r -d '' WORKER_STATUS_RULE <<EOF || true
+4. Report status with one call to the status command, never a hand-built \`echo\` line:
+   \`$WORKER_STATUS_CMD {state} "{one short line}"\`
+   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+   It stamps the current time, appends \`{state} [at=<epoch>]: {one short line}\` to your status file, prints that line, and records it in the fleet ledger, so you never type an epoch; quote the note as one argument.
+   Wherever this brief shows a status line as \`<state> [at=<epoch>] [key=<slug>]: <text>\`, write it with this command, adding \`--key <slug>\` for the key; a whole line another command prints for you to append goes through \`--line '<line>'\` instead of a state and note.
+EOF
+WORKER_STATUS_RULE=${WORKER_STATUS_RULE%$'\n'}
+IFS= read -r -d '' WORKER_WAIT_RULE <<EOF || true
+   Never wait with \`sleep\` or a hand-written poll loop: wait for a line in a file with \`$AWAIT_CMD <file> --match '<regex>'\` or for a process to exit with \`$AWAIT_CMD <pid>\`.
+   One call prints the matching line, \`pid <pid> exited\`, or \`still waiting\` once its \`--max\` (default 540 seconds) passes; on \`still waiting\`, run it again rather than sleeping.
+   Give that shell call a timeout longer than its \`--max\`: Claude Code's Bash tool defaults to two minutes, so pass it 600000 ms.
+EOF
+WORKER_WAIT_RULE=${WORKER_WAIT_RULE%$'\n'}
 
 # The receive-and-ack half of the steering-inbox contract, included in every
 # scaffold kind. The record format, doorbell line, and re-ring ladder are
@@ -497,10 +524,18 @@ Firstmate steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: \`mv $INBOX_DIR/NNN.msg $INBOX_DIR/handled/\`.
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
 EOF
+IFS= read -r -d '' WORKER_INBOX_SECTION <<EOF || true
+# Firstmate instruction inbox
+Firstmate steers you through durable message files in $INBOX_DIR.
+When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - run \`$STEER_CMD read\`, which prints every unread message in numeric order, act on each, then acknowledge the ones you handled with \`$STEER_CMD ack <NNN>...\`, the command it prints last.
+The acknowledgement moves each message into handled/: without it firstmate rings again and eventually treats you as stuck. An inbox with no unread messages needs no action.
+EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
+  WORKER_INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
 fi
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
+WORKER_INBOX_SECTION=${WORKER_INBOX_SECTION%$'\n'}
 
 # How a crewmate or scout waits. Every model turn resends the whole context, so
 # a wait must cost no turns: a decision wait ends the turn, and an external
@@ -510,11 +545,11 @@ IFS= read -r -d '' WAIT_SECTION <<'EOF' || true
 # Waiting
 Every turn you take resends your whole context, so a wait must cost no turns.
 After you append `needs-decision:` or `blocked:`, end your turn at once: do not check the inbox, the status file, or anything else, because the answer arrives as a terminal message that starts your next turn.
-Wait on anything external - a pipeline gate, PR checks, a heavy-test slot - with ONE blocking shell command that returns when the state changes: `no-mistakes axi run` or `respond` with `--wait`, `gh pr checks <pr> --watch`, or `until <condition>; do sleep 30; done` for anything else.
+Wait on anything external - a pipeline gate, PR checks, a heavy-test slot - with ONE blocking shell command that returns when the state changes: `no-mistakes axi run` or `respond` with `--wait`, `gh pr checks <pr> --watch`, `fm-await.sh` from rule 4 for a line in a file or a process exit, or `until <condition>; do sleep 30; done` for anything else.
 Never spend turns on `sleep` followed by a status check, and never background a command in order to poll it.
 In Claude Code that `until` loop in a single Bash call is the sanctioned foreground wait: when the harness refuses a sleep-then-check command and points you at backgrounding instead, reissue the wait as the loop rather than accepting the background.
 Bound that command by what your harness lets one command run: in Pi pass the bash tool a `timeout` of at most 2700 seconds, because Pi sets none by default; in Claude Code pass the Bash tool its maximum `timeout` of 600000 ms, because its default is 2 minutes; in Codex keep waiting on a still-running command with empty `write_stdin` polls of up to 300000 ms; elsewhere pass your shell tool its largest timeout and assume at most 10 minutes.
-Give any `--wait` a duration a little under that bound.
+Give any `--wait` or `fm-await.sh --max` a duration a little under that bound.
 When the bound passes with nothing changed, run the same blocking command again, with no status check in between.
 The one exception is `respond`: it sent its answer before it began waiting, so reattach with `no-mistakes axi run --wait` instead, and never send the same `respond` again, because it would answer whichever gate parks next without you reading it.
 A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append `paused:` once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
@@ -722,17 +757,14 @@ The report is the only thing that survives, so anything worth keeping must be in
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
-4. Report status by appending one line:
-   \`$STATUS_APPEND\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-   Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
+$WORKER_STATUS_RULE
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
    FYI progress lines; firstmate reads your pane for that.
    Whenever you mention a PR anywhere - a status line, your terminal, a summary - write its full
    https:// URL exactly as the forge printed it, never a bare number such as "PR 108"; firstmate
    copies that URL from your line rather than assembling one.
-$CREWMATE_PAUSE_INSTRUCTIONS
+$CREWMATE_PAUSE_INSTRUCTIONS$WORKER_WAIT_RULE
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -740,7 +772,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
-$WAIT_BLOCK$INBOX_SECTION
+$WAIT_BLOCK$WORKER_INBOX_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -799,10 +831,7 @@ $RULE1
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Leave the worktree clean before reporting done.
 3. $FORGE_RULE_LINE
-4. Report status by appending one line:
-   \`$STATUS_APPEND\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-   Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
+$WORKER_STATUS_RULE
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
@@ -812,7 +841,7 @@ $RULE1
    copies that URL from your line rather than assembling one.
    A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the
    turn after it; continue the same stage until a defined \`done:\` gate under Definition of done.
-$CREWMATE_PAUSE_INSTRUCTIONS
+$CREWMATE_PAUSE_INSTRUCTIONS$WORKER_WAIT_RULE
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -821,7 +850,7 @@ $ASK_USER_BLOCK
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
-$WAIT_BLOCK$INBOX_SECTION
+$WAIT_BLOCK$WORKER_INBOX_SECTION
 
 # Project memory
 A project's \`AGENTS.md\` or \`CLAUDE.md\` is loaded into every agent session in that project, so edit it only to correct information that is factually wrong - including information your own change made wrong - and never to add knowledge because it is missing.

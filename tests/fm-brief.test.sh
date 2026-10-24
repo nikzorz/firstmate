@@ -1142,12 +1142,18 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
         ;;
     esac
     brief="$home/data/$id/brief.md"
-    # Fill the scaffold's generated status-append command the way a worker does
-    # and run it. The stamp must be a value the worker supplies, so the command
-    # may not carry an unevaluated substitution that a file-write tool would
-    # copy through verbatim.
+    # Fill the scaffold's generated status command the way a worker does and
+    # run it. A charter's stamp is a value the second mate supplies, so its
+    # command may not carry an unevaluated substitution that a file-write tool
+    # would copy through verbatim; a worker's fm-status.sh call stamps itself.
     # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
     append=$(sed -n '/`echo "{state}/s/.*`\(echo .*\)`.*/\1/p' "$brief")
+    if [ "$kind" != secondmate ]; then
+      [ -z "$append" ] || fail "$kind scaffold still hands the worker a hand-built echo status line"
+      # shellcheck disable=SC2016 # Match literal backticks in the generated interface.
+      append=$(sed -n "/^   \`'.*fm-status\.sh'/s/^   \`\(.*\)\`\$/\1/p" "$brief")
+      [ -n "$append" ] || fail "$kind scaffold names no fm-status.sh status command"
+    fi
     now=$(date +%s)
     append=${append//\{state\}/done}
     append=${append//\{one short line\}/test event}
@@ -1156,10 +1162,12 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
       *"\$("*) fail "$kind scaffold left an unevaluated command in its status-append line" ;;
     esac
     mkdir -p "$home/state"
-    bash -c "$append" || fail "generated status command failed"
+    FM_CLASSIFY_PAUSED_VERB=awaiting bash -c "$append" >/dev/null || fail "generated status command failed"
     epoch=$(bash -c '. "$1"; status_line_at_epoch "$(cat "$2")"' _ \
       "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status")
-    [ "$epoch" = "$now" ] || fail "$kind scaffold did not record the worker's event time"
+    case "$epoch" in ''|*[!0-9]*) fail "$kind scaffold recorded no event time" ;; esac
+    [ "$epoch" -ge "$now" ] && [ "$epoch" -le $((now + 5)) ] \
+      || fail "$kind scaffold did not record the worker's event time"
     # Every status signal the brief instructs a worker to append is a template
     # the worker fills in and writes verbatim, with or without a shell, not only
     # rule 4's echo: substitute each one's named placeholders and read the stamp
@@ -1813,8 +1821,18 @@ test_every_crewmate_brief_is_complete_for_a_pointed_worker() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "$home/state/$id.status" "$brief" \
       "$id: brief lacks the absolute status path a pointed worker cannot infer"
-    assert_grep "4. Report status by appending one line:" "$brief" \
+    assert_grep "4. Report status with one call to the status command" "$brief" \
       "$id: brief lost the status protocol rule"
+    assert_grep "$ROOT/bin/fm-status.sh' '$home/state/$id.status' {state}" "$brief" \
+      "$id: brief does not hand the worker the status script for its own status file"
+    assert_grep "$ROOT/bin/fm-await.sh' <file> --match" "$brief" \
+      "$id: brief does not hand the worker the bounded wait in place of sleep"
+    assert_grep "$ROOT/bin/fm-steer.sh' --inbox '$home/state/$id.inbox' read" "$brief" \
+      "$id: brief does not hand the worker the steering-inbox reader"
+    assert_grep "$ROOT/bin/fm-steer.sh' --inbox '$home/state/$id.inbox' ack <NNN>" "$brief" \
+      "$id: brief does not hand the worker the steering-inbox acknowledgement"
+    assert_no_grep "date +%s" "$brief" \
+      "$id: brief still asks the worker to read the clock for a status stamp"
     assert_grep "States: working, needs-decision, blocked, paused, done, failed." "$brief" \
       "$id: brief lost the state list"
     assert_grep "5. If you hit the same obstacle twice" "$brief" \
