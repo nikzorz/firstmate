@@ -25,8 +25,9 @@
 #   no field, only as a line of the step's log, so it is read from the log
 #   segment the round's own "reviewing changes..." line opens; a round whose
 #   diff was empty opens its segment with "no changes to review" instead and
-#   never parks. It is false off the review step and null when the log cannot be read or its segments do not
-#   match the recorded rounds, leaving the caller to judge whether it matters.
+#   never parks. It is false off the review step and null when the log cannot
+#   be read or its segments do not match the recorded rounds, leaving the
+#   caller to judge whether it matters.
 #   "coverage_unverified" lists the files that park line names unverified, empty
 #   when the round did not park or the line names none.
 #   An absent database, or a round whose record cannot be read, exits nonzero
