@@ -1487,6 +1487,12 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       printf '%s\n' pure-contract-unit
       ;;
+    bin/fm-watch.sh)
+      # The coverage-park wake reads the merge guard's own no-mistakes fixture,
+      # so its tests sit beside the guard's in fm-pr-merge.test.sh.
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' "__script__:fm-pr-merge.test.sh"
+      ;;
     bin/fm-watch*|bin/fm-wake*|bin/fm-inactive-reconcile.sh|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
       printf '%s\n' watcher-wake-lock
@@ -1624,10 +1630,13 @@ families_for_changed_path() {
       ;;
     bin/fm-nm-findings-lib.sh)
       # The one reader of no-mistakes finding records, sourced by
-      # bin/fm-nm-findings.sh (pure-contract-unit) and bin/fm-pr-merge.sh's
-      # unruled-finding guard (pr-forge).
+      # bin/fm-nm-findings.sh (pure-contract-unit), and through
+      # bin/fm-nm-rulings-lib.sh by bin/fm-pr-merge.sh's unruled-finding guard
+      # (pr-forge) and bin/fm-watch.sh (watcher-wake-lock, with its coverage-park
+      # wake tested in pr-forge).
       printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
+      printf '%s\n' watcher-wake-lock
       ;;
     bin/fm-nm-run-lib.sh)
       # Shared no-mistakes run-attribution primitives, sourced by

@@ -1,6 +1,6 @@
 ---
 name: validation-supervision
-description: Load when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change, finding, or red CI step, and before deciding or answering any ask-user finding.
+description: Load when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change, finding, or red CI step, on a `check: coverage-park` wake, and before deciding or answering any ask-user finding.
 user-invocable: false
 metadata:
   internal: true
@@ -25,6 +25,7 @@ An ask-user finding returns as `needs-decision`; firstmate loads `ask-user-autho
 Send the same worker one exact decision naming the decision key, step, action, affected finding IDs, instructions where needed, and exact response command, passing `--resolve-key` so the worker's open decision record closes at answer time.
 Require the matching `resolved` event, forbid `--yes`, and require the worker to process every synchronous return until completion or a genuinely new escalation.
 Resume fleet supervision immediately after the decision lands.
+A `check: coverage-park <id>: run <run> round <n> unverified <files>` wake means that review round parked on incomplete review coverage and still owes a ruling: decide it under `ask-user-authority` as if it were an ask-user finding with the reserved id `coverage`, and send the worker that exact decision for that run and round before it answers the gate, telling it to record the round's `needs-decision` line naming `coverage` that the merge guard requires.
 
 A validation run fixes each theme once.
 A theme is one root cause in one piece of code, such as the input cases of one heuristic, however many lines or files its findings name.

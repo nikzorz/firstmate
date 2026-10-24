@@ -133,9 +133,9 @@
 #                          bin/fm-pr-merge.sh
 #   check: coverage-park <id>: run <run> round <n> unverified <files>
 #                          a no-mistakes ship task's review round parked on
-#                          incomplete review coverage (coverage_park_tick
-#                          below), raised once per run and round so firstmate
-#                          rules before the worker approves it
+#                          incomplete review coverage and still owes a ruling
+#                          (coverage_park_tick below), raised once per run and
+#                          round so firstmate rules before the worker approves it
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -230,8 +230,8 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
-# shellcheck source=bin/fm-nm-findings-lib.sh
-. "$SCRIPT_DIR/fm-nm-findings-lib.sh"
+# shellcheck source=bin/fm-nm-rulings-lib.sh
+. "$SCRIPT_DIR/fm-nm-rulings-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -2311,36 +2311,26 @@ merge_ready_tick() {
 # Coverage-park notice for a no-mistakes ship task. A review round that parks
 # on incomplete review coverage shows the park only in the review step's log,
 # never in the gate the worker answers, so a worker can approve it without the
-# ruling it needs and the merge guard finds out only at merge. Reading the
-# park straight from the task branch's run records (fm_nm_rounds) lets
-# firstmate rule before the worker answers; the worker's own escalation rule
-# stays as the backstop.
+# ruling it needs and the merge guard finds out only at merge. Waking on the
+# parks the merge guard's own judge (fm_nm_rulings_owed) still owes a ruling
+# lets firstmate rule before the worker answers, and never on a park already
+# answered with a fix or ruled; the worker's own escalation rule stays as the
+# backstop.
 # .coverage-park-<id key> holds every `<run> <round>` already raised, so one
 # park yields one wake. It is appended after the wake record, as everywhere
 # else here: a record written ahead of a failed append would swallow the retry.
 # A remote secondmate's run lives on its own host and is never read here.
 coverage_park_tick() {
-  local meta id project branch record parks run round files reason
+  local meta id record run round files reason
   [ "$(age_of "$STATE/.last-coverage-park")" -ge "$COVERAGE_PARK_INTERVAL" ] || return 0
   touch "$STATE/.last-coverage-park"
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     [ "$(fm_meta_get "$meta" kind)" = ship ] || continue
-    [ "$(fm_meta_get "$meta" mode)" = no-mistakes ] || continue
     [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
-    project=$(fm_meta_get "$meta" project)
-    branch=$(fm_meta_get "$meta" branch)
-    [ -n "$project" ] && [ -n "$branch" ] || continue
     id=$(basename "$meta" .meta)
-    parks=$(fm_nm_rounds "${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite" --branch "$project" "$branch" 2>/dev/null \
-      | python3 -I -c '
-import json
-import sys
-for line in sys.stdin:
-    r = json.loads(line)
-    if r["step"] == "review" and r.get("coverage_parked"):
-        print("%s\t%s\t%s" % (r["run"], r["round"], ", ".join(r.get("coverage_unverified") or [])))
-') || continue
+    fm_nm_rulings_owed "$id" "$STATE" "$FM_HOME/data"
+    [ "$FM_NM_RULINGS_UNREADABLE" = false ] || continue
     record="$STATE/.coverage-park-$(fm_episode_key "$id")"
     while IFS=$'\t' read -r run round files; do
       [ -n "$run" ] || continue
@@ -2349,7 +2339,7 @@ for line in sys.stdin:
       fm_wake_append check "coverage-park-$id-$run-$round" "$reason" || exit 1
       printf '%s %s\n' "$run" "$round" >> "$record"
       wake "$reason"
-    done <<< "$parks"
+    done <<< "$FM_NM_RULINGS_COVERAGE"
   done
 }
 

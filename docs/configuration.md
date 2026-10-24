@@ -2577,6 +2577,7 @@ FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second scan deadline; wedged-scan kill backstop follows one second later
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)
 FM_MERGE_READY_INTERVAL=30   # seconds between the watcher's reads of yolo=on no-mistakes tasks' ci step for a `check: merge-ready` wake; non-numeric becomes 30
+FM_COVERAGE_PARK_INTERVAL=30   # seconds between the watcher's reads of no-mistakes tasks' review rounds for a `check: coverage-park` wake on a coverage park still owed a ruling; non-numeric becomes 30
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle pane; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_TASK_INBOX_BUSY_MAX=2      # consecutive busy-deferred due polls before a stuck-busy stale wake; 1..999999999, at most 9 decimal digits, otherwise 2; policy: bin/fm-task-inbox-lib.sh
