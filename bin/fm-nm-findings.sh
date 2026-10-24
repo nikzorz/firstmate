@@ -16,6 +16,9 @@
 # A finding identical in every stored field to one an earlier round of its step
 # selected carries a `carried: round <n>` line naming that round, because
 # no-mistakes can store a finding again on a round whose review never raised it.
+# A review round parked on incomplete review coverage also carries an entry with
+# the reserved id `coverage` listing its unverified files, because that park
+# holds no finding of its own yet still needs a ruling before approval.
 #
 # Exit status: 0 when everything asked for printed; 1 when the database cannot
 # be read or the run (or step) has no recorded round; 2 on a usage error.
@@ -80,7 +83,10 @@ blocks = []
 for r in rounds:
     shown = r["findings"]
     lines = ["== run %s step %s round %s" % (r["run"], r["step"], r["round"])]
-    if not shown:
+    if r.get("coverage_parked"):
+        lines += ["id: coverage", "action: ask-user",
+                  "unverified: " + ", ".join(r.get("coverage_unverified") or []), ""]
+    elif not shown:
         lines.append("(no findings)")
     for f in shown:
         lines.append("id: " + field(f, "id"))

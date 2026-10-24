@@ -131,6 +131,11 @@
 #                          raised before the worker's ready report and once per
 #                          PR head; the merge itself still goes through
 #                          bin/fm-pr-merge.sh
+#   check: coverage-park <id>: run <run> round <n> unverified <files>
+#                          a no-mistakes ship task's review round parked on
+#                          incomplete review coverage (coverage_park_tick
+#                          below), raised once per run and round so firstmate
+#                          rules before the worker approves it
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -225,6 +230,8 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-nm-findings-lib.sh
+. "$SCRIPT_DIR/fm-nm-findings-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -330,6 +337,8 @@ HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 MERGE_READY_INTERVAL=${FM_MERGE_READY_INTERVAL:-30}  # seconds between merge-ready reads
 case "$MERGE_READY_INTERVAL" in ''|*[!0-9]*) MERGE_READY_INTERVAL=30 ;; esac
+COVERAGE_PARK_INTERVAL=${FM_COVERAGE_PARK_INTERVAL:-30}  # seconds between coverage-park reads
+case "$COVERAGE_PARK_INTERVAL" in ''|*[!0-9]*) COVERAGE_PARK_INTERVAL=30 ;; esac
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2299,6 +2308,51 @@ merge_ready_tick() {
   done
 }
 
+# Coverage-park notice for a no-mistakes ship task. A review round that parks
+# on incomplete review coverage shows the park only in the review step's log,
+# never in the gate the worker answers, so a worker can approve it without the
+# ruling it needs and the merge guard finds out only at merge. Reading the
+# park straight from the task branch's run records (fm_nm_rounds) lets
+# firstmate rule before the worker answers; the worker's own escalation rule
+# stays as the backstop.
+# .coverage-park-<id key> holds every `<run> <round>` already raised, so one
+# park yields one wake. It is appended after the wake record, as everywhere
+# else here: a record written ahead of a failed append would swallow the retry.
+# A remote secondmate's run lives on its own host and is never read here.
+coverage_park_tick() {
+  local meta id project branch record parks run round files reason
+  [ "$(age_of "$STATE/.last-coverage-park")" -ge "$COVERAGE_PARK_INTERVAL" ] || return 0
+  touch "$STATE/.last-coverage-park"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(fm_meta_get "$meta" kind)" = ship ] || continue
+    [ "$(fm_meta_get "$meta" mode)" = no-mistakes ] || continue
+    [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+    project=$(fm_meta_get "$meta" project)
+    branch=$(fm_meta_get "$meta" branch)
+    [ -n "$project" ] && [ -n "$branch" ] || continue
+    id=$(basename "$meta" .meta)
+    parks=$(fm_nm_rounds "${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite" --branch "$project" "$branch" 2>/dev/null \
+      | python3 -I -c '
+import json
+import sys
+for line in sys.stdin:
+    r = json.loads(line)
+    if r["step"] == "review" and r.get("coverage_parked"):
+        print("%s\t%s\t%s" % (r["run"], r["round"], ", ".join(r.get("coverage_unverified") or [])))
+') || continue
+    record="$STATE/.coverage-park-$(fm_episode_key "$id")"
+    while IFS=$'\t' read -r run round files; do
+      [ -n "$run" ] || continue
+      grep -qxF "$run $round" "$record" 2>/dev/null && continue
+      reason="check: coverage-park $id: run $run round $round unverified ${files:-(none named)}"
+      fm_wake_append check "coverage-park-$id-$run-$round" "$reason" || exit 1
+      printf '%s %s\n' "$run" "$round" >> "$record"
+      wake "$reason"
+    done <<< "$parks"
+  done
+}
+
 # Layer 2 + 3 signal scan: status files and turn-end markers.
 # Each file is compared against its persisted reported signature in .seen-* rather
 # than mtime-vs-a-startup-touch, so signals that land while no watcher is running
@@ -3253,6 +3307,7 @@ EOF
   # Before the signal scan for the reason the checks above are: a chatty
   # sibling's signals would otherwise starve it.
   merge_ready_tick
+  coverage_park_tick
 
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end

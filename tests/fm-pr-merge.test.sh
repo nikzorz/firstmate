@@ -5498,6 +5498,47 @@ test_approved_coverage_park_needs_a_decision_request() {
   pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run and round"
 }
 
+# Runs the watcher's coverage-park read once over case_dir's state and
+# no-mistakes fixture, printing every wake it raised.
+run_coverage_park_tick() {
+  local case_dir=$1
+  (
+    export FM_STATE_OVERRIDE="$case_dir/state" FM_ROOT_OVERRIDE="$ROOT" NM_HOME="$case_dir/nm"
+    export FM_COVERAGE_PARK_INTERVAL=0
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-watch.sh"
+    wake() { printf '%s\n' "$1"; }
+    coverage_park_tick
+  )
+}
+
+test_coverage_park_wakes_firstmate() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-wake)
+  write_nm_coverage_approval "$case_dir"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the coverage-park read failed"
+  assert_equals "check: coverage-park task-x1: run $NM_RUN_1704 round 1 unverified tools/ci/gut_split.py
+check: coverage-park task-x1: run $NM_RUN_1704 round 2 unverified tools/ci/gut_split.py" "$out" \
+    "nm-coverage-wake: a coverage park did not wake firstmate naming its run, round and unverified files"
+  assert_grep "coverage-park task-x1: run $NM_RUN_1704 round 2" "$case_dir/state/.wake-queue" \
+    "nm-coverage-wake: the coverage-park wake was not queued durably"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the second coverage-park read failed"
+  assert_equals "" "$out" "nm-coverage-wake: the same coverage park woke firstmate twice"
+  pass "a review round parked on incomplete coverage wakes firstmate once naming its run, round and unverified files"
+}
+
+test_park_without_coverage_does_not_wake() {
+  local case_dir out
+  case_dir=$(make_case nm-coverage-quiet)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "review", order: 3, status: "running", rounds: [
+        {round: 1, source: null, findings: [["parked-1", "ask-user", ""]]}]}]}')"
+  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-quiet: the coverage-park read failed"
+  assert_equals "" "$out" "nm-coverage-quiet: a park with no coverage line woke firstmate"
+  pass "a review round parked without incomplete coverage raises no coverage-park wake"
+}
+
 test_unreadable_review_log_refuses_merge() {
   local case_dir
   case_dir=$(make_case nm-no-review-log)
@@ -5812,6 +5853,8 @@ test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings
 test_test_step_grant_matches_only_the_pipelines_live_validation_question
 test_approved_coverage_park_needs_a_decision_request
+test_coverage_park_wakes_firstmate
+test_park_without_coverage_does_not_wake
 test_unreadable_review_log_refuses_merge
 test_decision_named_in_another_run_does_not_rule_a_reused_id
 test_decision_named_for_one_round_does_not_rule_a_reused_id_in_another
