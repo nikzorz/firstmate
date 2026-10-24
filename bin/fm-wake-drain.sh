@@ -22,7 +22,12 @@
 # announcement unclaimed for a later drain: a caller that parses queue rows and
 # shows its output to no session sets it so the announcement is never consumed
 # unread.
-# Usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
+# --present-only prints the same presentation but leaves the recovery episode
+# exactly as it found it and prints no WAKE_ACK_REQUIRED, for a caller whose
+# output reaches a session that has no turn to handle it: beginning handling
+# there is what makes the in-flight rewake owner stand down (autoarm_commit in
+# bin/fm-claude-stop-autoarm.sh), so the wake would wait for the next message.
+# Usage: fm-wake-drain.sh [--present-only | --ack-through SEQUENCE --recovery-generation GENERATION]
 set -u
 
 # Answered before any state, lock, or argument is touched: reading the header
@@ -58,6 +63,7 @@ RECOVERY_MARKER="$STATE/.watcher-down"
 RECOVERY_MARKER_TOKEN=
 RECOVERY_ACK_REQUIRED=false
 RECOVERY_ACK_MOVED=false
+PRESENT_ONLY=false
 ACK_THROUGH=
 ACK_GENERATION=
 ACK_REMOVED=0
@@ -237,11 +243,16 @@ presented_max_row() { # <rows-file>
 # makes every claim file it finds a dead presenter's.
 present_recovery_announcement_locked() {
   [ -z "${FM_WAKE_DRAIN_HOLD_ANNOUNCEMENT:-}" ] || return 0
+  [ "$PRESENT_ONLY" = false ] || return 0
   fm_recovery_announcement_present "$STATE" || true
 }
 
 case "${1:-}" in
   '') ;;
+  --present-only)
+    PRESENT_ONLY=true
+    [ "$#" -eq 1 ] || { echo "wake drain: unexpected presentation arguments" >&2; exit 2; }
+    ;;
   --ack-through)
     ACK_THROUGH=${2:-}
     case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
@@ -251,7 +262,7 @@ case "${1:-}" in
     case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
     [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
     ;;
-  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
+  *) echo "usage: fm-wake-drain.sh [--present-only | --ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -1036,6 +1047,7 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
   : > "$FM_WAKE_QUEUE"
   fm_recovery_marker_snapshot "$RECOVERY_MARKER" || true
   RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
+  [ "$PRESENT_ONLY" = false ] || RECOVERY_MARKER_TOKEN=
   case "$RECOVERY_MARKER_TOKEN" in
     pending:downtime:*|announced:downtime:*)
       fm_recovery_marker_begin_handling "$RECOVERY_MARKER" || {
@@ -1080,28 +1092,30 @@ if [ "$ACTOR" = main ]; then
   fi
 fi
 
-fm_recovery_marker_snapshot "$RECOVERY_MARKER" || true
-RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
-if [ -z "$RECOVERY_MARKER_TOKEN" ]; then
-  if [ -e "$RECOVERY_MARKER" ] || [ -L "$RECOVERY_MARKER" ]; then
-    echo "wake drain: durable wakes have invalid recovery state" >&2
-    exit 1
+if [ "$PRESENT_ONLY" = false ]; then
+  fm_recovery_marker_snapshot "$RECOVERY_MARKER" || true
+  RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
+  if [ -z "$RECOVERY_MARKER_TOKEN" ]; then
+    if [ -e "$RECOVERY_MARKER" ] || [ -L "$RECOVERY_MARKER" ]; then
+      echo "wake drain: durable wakes have invalid recovery state" >&2
+      exit 1
+    fi
+    fm_recovery_marker_publish "$RECOVERY_MARKER" downtime || {
+      echo "wake drain: legacy durable wakes could not be adopted safely" >&2
+      exit 1
+    }
+  elif [ "${RECOVERY_MARKER_TOKEN%%:*}" = acked ]; then
+    fm_recovery_marker_publish "$RECOVERY_MARKER" downtime || {
+      echo "wake drain: durable wakes could not enter a fresh recovery generation" >&2
+      exit 1
+    }
   fi
-  fm_recovery_marker_publish "$RECOVERY_MARKER" downtime || {
-    echo "wake drain: legacy durable wakes could not be adopted safely" >&2
+  fm_recovery_marker_begin_handling "$RECOVERY_MARKER" || {
+    echo "wake drain: durable wakes could not begin handling safely" >&2
     exit 1
   }
-elif [ "${RECOVERY_MARKER_TOKEN%%:*}" = acked ]; then
-  fm_recovery_marker_publish "$RECOVERY_MARKER" downtime || {
-    echo "wake drain: durable wakes could not enter a fresh recovery generation" >&2
-    exit 1
-  }
+  RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
 fi
-fm_recovery_marker_begin_handling "$RECOVERY_MARKER" || {
-  echo "wake drain: durable wakes could not begin handling safely" >&2
-  exit 1
-}
-RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
 
 DRAIN_VIEW_TMP=$(mktemp "$STATE/.wake-queue.actor-view.XXXXXX") || exit 1
 if [ "$ACTOR" = branch ]; then
@@ -1124,6 +1138,15 @@ case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
 esac
 if [ -n "$RAW_ROWS" ]; then
   printf '%s\n' "$RAW_ROWS" || exit "$?"
+fi
+if [ "$PRESENT_ONLY" = true ]; then
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  DRAIN_LOCK_HELD=false
+  printf 'WAKE_ACK_DEFERRED: these wakes are shown for context only and are not yet taken for handling; the turn that handles them starts with bin/fm-wake-drain.sh and acknowledges with the WAKE_ACK_REQUIRED command that drain prints\n' >&2
+  (print_status_presentation "$RAW_ROWS") || true
+  print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
+  assert_watcher_liveness
+  exit "$BRANCH_OUTCOMES_RC"
 fi
 fm_recovery_marker_snapshot "$RECOVERY_MARKER" || exit 1
 RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN

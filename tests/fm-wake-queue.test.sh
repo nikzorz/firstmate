@@ -39,6 +39,39 @@ test_held_announcement_survives_for_a_session_drain() {
   pass "a drain holding the recovery announcement leaves it for the next session drain"
 }
 
+test_present_only_drain_leaves_the_episode_for_its_delivery_turn() {
+  local dir state marker before out err sequence generation
+  dir=$(make_case present-only)
+  state="$dir/state"
+  marker="$state/.watcher-down"
+  append_wake "$state" signal task-p "needs-decision: presented before its turn" || fail "seed wake failed"
+  printf '2026-10-08T10:00:00+0000\n' > "$state/.watcher-recovered"
+  before=$(cat "$marker")
+  case "$before" in pending:downtime:*) ;; *) fail "the seeded wake left no undelivered episode: $before" ;; esac
+
+  err="$dir/present-only.err"
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" --present-only 2>"$err") || fail "the present-only drain failed: $(cat "$err")"
+  case "$out" in *'needs-decision: presented before its turn'*) ;; *) fail "the present-only drain hid the queued wake: $out" ;; esac
+  case "$out" in *'WATCHER RECOVERED'*) fail "the present-only drain claimed the recovery announcement: $out" ;; esac
+  grep -q '^WAKE_ACK_DEFERRED:' "$err" || fail "the present-only drain did not say the wake is still untaken: $(cat "$err")"
+  ! grep -q '^WAKE_ACK_REQUIRED:' "$err" || fail "the present-only drain offered an acknowledgement: $(cat "$err")"
+  [ "$(cat "$marker")" = "$before" ] || fail "the present-only drain changed the recovery episode: $(cat "$marker")"
+  [ -s "$state/.wake-queue" ] || fail "the present-only drain consumed the queued wake"
+  [ -e "$state/.watcher-recovered" ] || fail "the present-only drain consumed the recovery announcement"
+
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>&1) || fail "the delivery-turn drain failed"
+  sequence=$(printf '%s\n' "$out" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*$/\1/p' | tail -1)
+  generation=$(printf '%s\n' "$out" | sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' | tail -1)
+  [ "$generation" = "${before##*:}" ] || fail "the delivery-turn drain did not take the same episode: $out"
+  case "$(cat "$marker")" in pending:handling:*) ;; *) fail "the delivery-turn drain did not begin handling: $(cat "$marker")" ;; esac
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" >/dev/null 2>&1 \
+    || fail "the delivery-turn acknowledgement failed"
+  [ ! -s "$state/.wake-queue" ] || fail "the delivery-turn acknowledgement left the wake queued"
+
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" --present-only extra 2>&1) && fail "the present-only drain accepted an extra argument: $out"
+  pass "a present-only drain shows queued wakes and leaves their episode for the turn that delivers them"
+}
+
 test_abandoned_announcement_claim_is_presented_once() {
   local dir state out
   dir=$(make_case abandoned-announcement-claim)
@@ -3595,6 +3628,7 @@ test_wake_queue_prune_task
 test_drain_rotates_orphaned_scratch
 test_held_announcement_survives_for_a_session_drain
 test_abandoned_announcement_claim_is_presented_once
+test_present_only_drain_leaves_the_episode_for_its_delivery_turn
 test_secondmate_liveness_tick_relaunches_dead_endpoint_once
 test_secondmate_liveness_tick_relaunches_missing_endpoint
 test_secondmate_liveness_tick_relaunches_every_dead_mate_before_waking
