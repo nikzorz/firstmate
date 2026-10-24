@@ -1,0 +1,3 @@
+ok - fm-steer: read prints unread steers oldest first under headers and leaves them unacknowledged
+ok - fm-steer: ack moves each named steer into handled/, repeats are harmless, and an unknown one is an error
+ok - fm-steer: an absent inbox reads empty, and malformed calls exit 2

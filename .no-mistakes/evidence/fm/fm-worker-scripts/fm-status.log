@@ -1,0 +1,8 @@
+ok - fm-status: a plain line carries the clock's stamp and parses as the supervisor reads it
+ok - fm-status: --key writes a decision key that opens and closes through the classifier
+ok - fm-status: --until +N[smh] becomes the recheck time rounded up to the minute
+ok - fm-status: an explicit --until is kept, and a malformed or misplaced one is refused unwritten
+ok - fm-status: --line appends a printed line, stamping it only when it carries no time
+ok - fm-status: every usage error exits 2 and writes nothing
+ok - fm-status: a failed append exits 1
+ok - fm-status: the fleet ledger records a line only while the flag exists, read from config/ or --config

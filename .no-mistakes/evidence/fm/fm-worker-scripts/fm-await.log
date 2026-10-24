@@ -1,0 +1,5 @@
+ok - fm-await: a matching line already in the file returns at once with that line
+ok - fm-await: a file that does not exist yet is waited for until its line lands
+ok - fm-await: when --max passes first the call prints still waiting and exits 1 near its cap
+ok - fm-await: a pid wait returns when the process exits, including an unreaped child, and reports one still running
+ok - fm-await: malformed calls exit 2 without waiting
