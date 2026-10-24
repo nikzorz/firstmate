@@ -2246,6 +2246,14 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
 # Check and heartbeat cadence must survive actionable exits and restarts: the
 # watcher may be relaunched before in-memory counters reach their threshold on a
 # busy fleet. Persist the schedule as file mtimes instead.
+age_of() {  # seconds since file mtime; "due immediately" if missing
+  local f=$1 m now
+  m=$(stat_mtime "$f") || { echo 999999; return; }
+  fm_epoch_seconds_to now
+  [ "$m" -le "$now" ] || { echo 999999; return; }
+  echo $(( now - m ))
+}
+
 # Merge-ready notice for a task whose merge firstmate already holds standing
 # authority for: recorded kind=ship, mode=no-mistakes and yolo=on. Waiting for
 # the worker's ready report after its run's ci step reads green costs the
@@ -2255,6 +2263,9 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
 # task keeps the worker's report as its only ready signal: without yolo=on a
 # merge needs the captain, and only a no-mistakes run has a ci step to read.
 # A remote secondmate's run lives on its own host and is never read here.
+# A task whose PR firstmate already registered (pr=) or whose worker already
+# wrote its done line is skipped: that report woke firstmate itself, and the run
+# keeps reading green until its ci step sees the merge.
 # .merge-ready-<id key> holds the `<url> <head>` last raised, so one green ci
 # step yields one wake rather than one per read, and a pipeline fix that pushes
 # a new head and goes green again raises its own. It is appended before the
@@ -2273,7 +2284,9 @@ merge_ready_tick() {
     [ "$(fm_meta_get "$meta" mode)" = no-mistakes ] || continue
     [ "$(fm_meta_get "$meta" yolo)" = on ] || continue
     [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+    [ -z "$(fm_meta_get "$meta" pr)" ] || continue
     id=$(basename "$meta" .meta)
+    [ "$(status_line_verb "$(last_status_line "$STATE/$id.status")")" != done ] || continue
     rec=$(FM_CREW_STATE_NO_FORGE=1 crew_ci_green_pr "$id") || continue
     record="$STATE/.merge-ready-$(fm_episode_key "$id")"
     [ "$(cat "$record" 2>/dev/null)" != "$rec" ] || continue
@@ -2284,14 +2297,6 @@ merge_ready_tick() {
     printf '%s\n' "$rec" > "$record"
     wake "$reason"
   done
-}
-
-age_of() {  # seconds since file mtime; "due immediately" if missing
-  local f=$1 m now
-  m=$(stat_mtime "$f") || { echo 999999; return; }
-  fm_epoch_seconds_to now
-  [ "$m" -le "$now" ] || { echo 999999; return; }
-  echo $(( now - m ))
 }
 
 # Layer 2 + 3 signal scan: status files and turn-end markers.

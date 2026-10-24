@@ -7797,7 +7797,34 @@ test_merge_ready_once_per_head() {
   pass "one merge-ready wake per PR head, and a new green head raises its own"
 }
 
+test_merge_ready_quiet_once_ready_signal_held() {
+  local dir state fakebin out pid held
+  for held in done pr; do
+    dir=$(make_case "merge-ready-held-$held"); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+    if [ "$held" = pr ]; then
+      fm_write_meta "$state/ship1.meta" "kind=ship" "mode=no-mistakes" "yolo=on" "branch=fm/ship1" "pr=https://github.com/o/r/pull/7"
+    else
+      write_merge_ready_meta "$state" ship1 no-mistakes on
+      printf '%s\n' 'working: ci running' 'done [at=1700000000]: PR https://github.com/o/r/pull/7 checks green' > "$state/ship1.status"
+      prime_turnend_seen "$state/ship1.status"
+    fi
+    # The run keeps reading green until its ci step polls the merge.
+    export FM_FAKE_CREW_STATE="$MERGE_READY_GREEN"
+    watch_bg "$state" "$fakebin" "$out"
+    pid=$!
+    if ! wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"; fail "a task whose ready signal firstmate already holds ($held) raised a wake: $(cat "$out")"
+    fi
+    reap "$pid"
+    [ ! -s "$out" ] || fail "a held ready signal ($held) still printed a merge-ready wake: $(cat "$out")"
+    [ ! -e "$state/.merge-ready-ship1" ] || fail "a held ready signal ($held) wrote a merge-ready record"
+  done
+  unset FM_FAKE_CREW_STATE
+  pass "a worker done line or a registered pr= suppresses the merge-ready wake while the run still reads green"
+}
+
 test_merge_ready_wakes_before_done_on_yolo_on
 test_merge_ready_quiet_off_scope
 test_merge_ready_quiet_until_green
 test_merge_ready_once_per_head
+test_merge_ready_quiet_once_ready_signal_held
