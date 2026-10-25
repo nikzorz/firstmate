@@ -16,7 +16,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--herdr-lab] [--render-to <file>]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   A missing required argument prints this usage and names the argument, before
@@ -100,6 +100,16 @@
 # does not authorize, before the contract exists. Pass it on every ship
 # scaffold so detection does not depend on the caller recognizing the repo;
 # bin/fm-spawn.sh repeats the check at launch regardless.
+# A ship scaffold is recorded in data/<task-id>/brief-fingerprint.txt: one
+# "arg\t<value>" line per argument that reproduces it, then one
+# "section\t<fingerprint>\t<heading>" line per scaffold-owned section, so
+# bin/fm-spawn.sh can tell a section firstmate edited from one it left as
+# generated.
+# --render-to <file> writes the ship scaffold to <file> instead of
+# data/<task-id>/brief.md, overwriting it and recording nothing, so
+# bin/fm-spawn.sh can take a filled brief's unedited Setup, Rules, and
+# Definition of done from the current scaffold rather than the one in force
+# when the brief was filled.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line, followed by " forge=gerrit shape=squash"
 # on Gerrit, " forge=forgejo" on Forgejo, or " forge=external" on an external
@@ -241,6 +251,8 @@ UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
 PROJECT_DIR=
 PROJECT_DIR_SET=0
+RENDER_TO=
+RENDER_TO_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -256,6 +268,7 @@ for a in "$@"; do
       shape) SHAPE=$a; SHAPE_SET=1 ;;
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
       project) PROJECT_DIR=$a; PROJECT_DIR_SET=1 ;;
+      render-to) RENDER_TO=$a; RENDER_TO_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -280,6 +293,8 @@ for a in "$@"; do
     --upstream-consent=*) UPSTREAM_CONSENT=${a#--upstream-consent=}; UPSTREAM_CONSENT_SET=1 ;;
     --project) want_value="project" ;;
     --project=*) PROJECT_DIR=${a#--project=}; PROJECT_DIR_SET=1 ;;
+    --render-to) want_value="render-to" ;;
+    --render-to=*) RENDER_TO=${a#--render-to=}; RENDER_TO_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -373,6 +388,12 @@ if [ "$KIND" != ship ]; then
     exit 1
   }
 fi
+if [ "$RENDER_TO_SET" -eq 1 ]; then
+  [ "$KIND" = ship ] && [ -n "$RENDER_TO" ] || {
+    echo "error: --render-to takes a file path and applies only to ship briefs" >&2
+    exit 1
+  }
+fi
 if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   [ -n "$UPSTREAM_CONSENT" ] || {
     echo "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value" >&2
@@ -462,9 +483,13 @@ append_brief_include() {
     "$BRIEF_INCLUDE_BODY" >> "$BRIEF"
 }
 
-BRIEF="$DATA/$ID/brief.md"
-[ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
-mkdir -p "$DATA/$ID"
+if [ "$RENDER_TO_SET" -eq 1 ]; then
+  BRIEF=$RENDER_TO
+else
+  BRIEF="$DATA/$ID/brief.md"
+  [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
+  mkdir -p "$DATA/$ID"
+fi
 
 ASK_USER_BLOCK=
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
@@ -865,6 +890,21 @@ A correction edits only the wrong text: do not run \`$FM_ROOT/bin/fm-ensure-agen
 $DOD
 EOF
 append_brief_include
+if [ "$RENDER_TO_SET" -eq 0 ]; then
+  SCAFFOLD_ARGS=("$REPO" --mode "$MODE" --branch-prefix "$BRANCH_PREFIX")
+  [ -z "$BASE_BRANCH" ] || SCAFFOLD_ARGS+=(--base-branch "$BASE_BRANCH")
+  [ "$FORGE" = none ] || SCAFFOLD_ARGS+=(--forge "$FORGE")
+  [ -z "$SHAPE" ] || SCAFFOLD_ARGS+=(--shape "$SHAPE")
+  [ -z "$UPSTREAM_CONSENT" ] || SCAFFOLD_ARGS+=(--upstream-consent "$UPSTREAM_CONSENT")
+  [ "$HERDR_LAB" -eq 0 ] || SCAFFOLD_ARGS+=(--herdr-lab)
+  {
+    printf 'arg\t%s\n' "${SCAFFOLD_ARGS[@]}" &&
+      fm_brief_scaffold_fingerprints "$BRIEF"
+  } >"$DATA/$ID/brief-fingerprint.txt" || {
+    echo "error: could not record the scaffold fingerprint beside $BRIEF" >&2
+    exit 1
+  }
+fi
 if [ "$FORGE" = none ]; then
   echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
 elif [ "$FORGE" = gerrit ]; then

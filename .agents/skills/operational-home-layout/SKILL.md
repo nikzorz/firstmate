@@ -62,6 +62,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   projects.md        thin fleet navigation registry recording each project's standing delivery posture and optional ship-branch prefix; firstmate-private, parsed by fm-project-mode.sh (section 6)
   secondmates.md      local and remote secondmate routing table; firstmate-private, maintained by the secondmate seed helpers (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
+  <id>/brief-fingerprint.txt  a ship brief's scaffold record: the fm-brief.sh arguments that reproduce it and a fingerprint of each scaffold-owned section as generated; written by bin/fm-brief.sh, read by bin/fm-spawn.sh to re-render only the sections firstmate left unedited
   <id>/spec-intent-check.txt   the last spec-intent judgement of a fresh ship spawn: intent, numbered spec bullets, the judge's raw answer and the verdict; written by bin/fm-spec-intent-check.sh
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
   pipeline-spend.jsonl  optional per-task no-mistakes pipeline spend, written only when config/pipeline-spend is present; bin/fm-pipeline-spend.sh owns the schema

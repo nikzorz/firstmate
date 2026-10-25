@@ -93,3 +93,53 @@ fm_brief_task_heading_present() {  # <file> <heading>
   fm_brief_heading_parse - "$2" present >/dev/null <<<"$task"
 }
 
+
+# Split a scaffolded brief into its top-level sections, one file per section
+# under <dir>, each trimmed of the blank lines that separate it from the next,
+# and print "<n>\t<key>" for each in order. The key is the heading line, or
+# "(opening)" for the text before the first heading. `# Task` runs to the Herdr
+# heading bin/fm-brief.sh writes after it and `# Home brief additions` to the
+# end of the file, because filled text may carry headings of its own.
+fm_brief_split_sections() {  # <file> <dir>
+  awk -v dir="$2" '
+    function start(key) { if (n) close(file); n++; file = dir "/" n; blanks = 0; printf "%d\t%s\n", n, key }
+    function emit(l) {
+      if (l == "") { blanks++; return }
+      for (; blanks > 0; blanks--) print "" > file
+      print l > file
+    }
+    function is_herdr(l) { return l == "# Herdr isolation - HARD SAFETY CONTRACT" || l == "# Herdr lifecycle declaration - NOT ENABLED" }
+    {
+      l = $0
+      if (region == "home") { emit(l); next }
+      if (region == "task" && !is_herdr(l) && l != "# Home brief additions") { emit(l); next }
+      if (l ~ /^(```|~~~)/) fenced = !fenced
+      if (!fenced && l ~ /^# /) {
+        start(l)
+        region = l == "# Task" ? "task" : l == "# Home brief additions" ? "home" : ""
+      } else if (!n) {
+        start("(opening)")
+      }
+      emit(l)
+    }
+  ' "$1"
+}
+
+# A section's fingerprint is its trimmed text's POSIX cksum, enough to tell an
+# edited section from the one bin/fm-brief.sh wrote.
+fm_brief_section_fingerprint() {  # <section-file>
+  cksum <"$1" | awk '{ print $1 "-" $2 }'
+}
+
+# Print "section\t<fingerprint>\t<key>" for every section of a ship scaffold
+# except the `# Task` and `# Home brief additions` text firstmate fills.
+fm_brief_scaffold_fingerprints() {  # <brief>
+  local dir n key rc=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-brief-sections.XXXXXX") || return 1
+  while IFS=$'\t' read -r n key; do
+    case "$key" in "# Task" | "# Home brief additions") continue ;; esac
+    printf 'section\t%s\t%s\n' "$(fm_brief_section_fingerprint "$dir/$n")" "$key" || rc=1
+  done < <(fm_brief_split_sections "$1" "$dir")
+  rm -rf -- "$dir"
+  return "$rc"
+}
