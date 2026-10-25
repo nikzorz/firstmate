@@ -150,10 +150,11 @@
 #   - Every in-flight ROW is listed in full, with its hold_kind, hold_until,
 #     hold_reason, and blocked_by, so no in-flight row is ever bounded away.
 #   - On the tasks-axi path, the held group and the blocked queued group each
-#     print a count plus every item id, never full rows, and one line naming the commands that
-#     print a full row or the whole group. Most such items wait on a date or a
-#     standing do-not-re-raise ruling, so their full rows were the bulk of the
-#     digest while rarely acting this turn; no id is ever bounded away.
+#     print a count plus every item id, never full rows, and one line naming
+#     the commands that print a full row or the whole group. Most such items
+#     wait on a date or a standing do-not-re-raise ruling, so their full rows
+#     were the bulk of the digest while rarely acting this turn; no id is ever
+#     bounded away.
 #   - The hold_reason TEXT of a listed row is bounded, by
 #     FM_SESSION_START_HOLD_REASON_LIMIT characters, default 200. A longer
 #     reason is cut there and closed with the marker tasks-axi gives a long
