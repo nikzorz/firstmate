@@ -1,0 +1,21 @@
+$ ack 007.msg
+fm-steer.sh: '007.msg' is not a message number
+run 'fm-steer.sh --help' for usage
+rc=2
+$ ack inbox/008
+fm-steer.sh: 'inbox/008' is not a message number
+run 'fm-steer.sh --help' for usage
+rc=2
+$ ack 7 xx
+fm-steer.sh: 'xx' is not a message number
+run 'fm-steer.sh --help' for usage
+rc=2
+$ ack 8
+acknowledged 008.msg
+rc=0
+/tmp/tmp.B6rpLmrjEx/inbox:
+007.msg
+handled
+
+/tmp/tmp.B6rpLmrjEx/inbox/handled:
+008.msg
