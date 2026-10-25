@@ -63,6 +63,15 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
+#   A ship brief bin/fm-brief.sh scaffolded is launched with its Setup, Rules,
+#   Definition of done, and the other scaffold-owned sections re-rendered by
+#   bin/fm-brief.sh --render-to from the recorded repo name, delivery line,
+#   branch, base, and Herdr choice, keeping its `# Task` and any
+#   `# Home brief additions` text as filled; data/<id>/brief.md itself is
+#   untouched. A brief that recorded values cannot re-render is refused
+#   with a re-run fm-brief instruction. Scout briefs, promoted briefs, and
+#   hand-written briefs without the scaffold's `# Project memory` section
+#   launch as written.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
@@ -3420,6 +3429,68 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
   fi
 fi
+# Only a ship scaffold carries `# Project memory`; a promotion appends its own
+# delivery contract, which must not be replaced by an ordinary ship scaffold.
+spawn_brief_is_ship_scaffold() {  # <brief>
+  fm_brief_heading_present "$1" "# Project memory" &&
+    ! fm_brief_heading_present "$1" "# Current delivery mode contract"
+}
+
+# Re-render the brief's scaffold with its own recorded inputs, never this
+# spawn's flags, so the later brief/spawn agreement checks still compare the
+# brief's choices; then put the filled Task and home additions back verbatim.
+spawn_render_current_ship_scaffold() {  # <source-brief> <out>
+  local src=$1 out=$2 repo contract mode token branch prefix base
+  local -a args=()
+  repo=$(sed -n 's/^You are in a disposable git worktree of \(.*\), at a detached HEAD on a clean .*$/\1/p' "$src" | head -n 1)
+  contract=$(grep -m 1 '^Delivery contract: mode=' "$src") || return 1
+  branch=$(sed -n 's/^Ship branch: //p' "$src" | head -n 1)
+  [ -n "$repo" ] && [ -n "$branch" ] || return 1
+  case "$branch" in *"$ID") prefix=${branch%"$ID"} ;; *) return 1 ;; esac
+  for token in ${contract#Delivery contract: }; do
+    case "$token" in
+      mode=*) mode=${token#mode=} ;;
+      forge=*) args+=(--forge "${token#forge=}") ;;
+      shape=*) args+=(--shape "${token#shape=}") ;;
+      upstream-consent=*) args+=(--upstream-consent "${token#upstream-consent=}") ;;
+      *) return 1 ;;
+    esac
+  done
+  [ -n "${mode:-}" ] || return 1
+  if base=$(fm_brief_base_branches "$src"); then
+    [ "$(printf '%s\n' "$base" | wc -l)" -eq 1 ] || return 1
+    args+=(--base-branch "$base")
+  fi
+  ! fm_brief_heading_present "$src" "# Herdr isolation - HARD SAFETY CONTRACT" || args+=(--herdr-lab)
+  FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
+    FM_CONFIG_OVERRIDE="$CONFIG" "$FM_ROOT/bin/fm-brief.sh" "$ID" "$repo" --mode "$mode" \
+    --branch-prefix "$prefix" "${args[@]}" --render-to "$out.fresh" >/dev/null || {
+    rm -f -- "$out.fresh"
+    return 1
+  }
+  awk -v src="$src" '
+    function is_herdr(l) { return l == "# Herdr isolation - HARD SAFETY CONTRACT" || l == "# Herdr lifecycle declaration - NOT ENABLED" }
+    BEGIN {
+      while ((getline l < src) > 0) {
+        if (l == "# Task" && !task_seen) { task_seen = 1; in_task = 1 }
+        else if (in_task && is_herdr(l)) in_task = 0
+        if (in_task) task = task l "\n"
+        if (l == "# Home brief additions") extra = ""
+        if (l == "# Home brief additions" || extra != "") extra = extra l "\n"
+      }
+      if (!task_seen) exit 2
+    }
+    $0 == "# Home brief additions" { exit }
+    $0 == "# Task" && !done_task { printf "%s", task; skipping = 1; done_task = 1; next }
+    skipping && is_herdr($0) { skipping = 0 }
+    !skipping { print }
+    END { if (extra != "") printf "%s", extra }
+  ' "$out.fresh" >"$out"
+  local rc=$?
+  rm -f -- "$out.fresh"
+  return "$rc"
+}
+
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
@@ -3471,18 +3542,29 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   SOURCE_BRIEF=$BRIEF
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
+  SCAFFOLD_TMP="$DATA/$ID/.launch-scaffold.md.${BASHPID:-$$}"
+  LAUNCH_BODY=$SOURCE_BRIEF
+  if [ "$KIND" = ship ] && spawn_brief_is_ship_scaffold "$SOURCE_BRIEF"; then
+    if ! spawn_render_current_ship_scaffold "$SOURCE_BRIEF" "$SCAFFOLD_TMP"; then
+      rm -f -- "$SCAFFOLD_TMP"
+      echo "error: brief $ID was rendered from an older scaffold; re-run fm-brief" >&2
+      exit 1
+    fi
+    LAUNCH_BODY=$SCAFFOLD_TMP
+  fi
   {
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
-      cat "$SOURCE_BRIEF" &&
+      cat "$LAUNCH_BODY" &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
   } >"$BRIEF_TMP" || {
-    rm -f -- "$BRIEF_TMP"
+    rm -f -- "$BRIEF_TMP" "$SCAFFOLD_TMP"
     echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2
     exit 1
   }
+  rm -f -- "$SCAFFOLD_TMP"
   if ! mv "$BRIEF_TMP" "$BRIEF"; then
     rm -f -- "$BRIEF_TMP"
     echo "error: could not publish current launch contract for $SOURCE_BRIEF" >&2

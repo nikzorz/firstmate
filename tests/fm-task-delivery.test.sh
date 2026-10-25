@@ -570,6 +570,57 @@ EOF
 # Spawn and promotion refuse leftover Task-subsection placeholders through the
 # public brief/spawn/promote path. Filling both subsections lets the spawn
 # delivery checks proceed (the fake tmux still fails later).
+# A brief filled before a scaffold change must still launch on the current
+# Setup, Rules, and Definition of done, because the merge guard enforces the
+# current contract; the filled Task text and brief.md stay exactly as written.
+test_spawn_launches_a_prefilled_brief_on_the_current_scaffold() {
+  local rec home proj fakebin code_root out id brief before launch
+  rec=$(make_home rerender)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  code_root="$TMP_ROOT/rerender/code"
+  mkdir -p "$code_root"
+  cp -R "$ROOT/bin" "$code_root/bin" || fail "could not copy the code root"
+  printf 'Keep this standing home addition.\n' > "$home/config/brief-include.md"
+
+  id=delivery-rerender
+  brief="$home/data/$id/brief.md"
+  FM_HOME="$home" "$code_root/bin/fm-brief.sh" "$id" proj --mode no-mistakes --branch-prefix fix/ >/dev/null 2>&1 \
+    || fail "prefilled brief should scaffold"
+  fill_brief_subsections "$brief" "Fix the stale launch contract." "Keep the filled spec as written."
+  printf 'Keep this changed home addition.\n' > "$home/config/brief-include.md"
+  before=$(cat "$brief")
+
+  # The scaffold changes after the brief was filled: fm_dod_block gains a line
+  # and fm-brief.sh rewords a rule.
+  # shellcheck disable=SC2016  # $branch is the library's own literal source text
+  sed -i 's/^Ship branch: \$branch$/Ship branch: $branch\nScaffold revision marker: current/' "$code_root/bin/fm-dod-lib.sh"
+  grep -q '^Scaffold revision marker: current$' "$code_root/bin/fm-dod-lib.sh" || fail "could not change fm_dod_block"
+  sed -i 's/^   Leave the worktree clean before reporting done\.$/   Leave the worktree clean before reporting done (current rule)./' "$code_root/bin/fm-brief.sh"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
+    "$code_root/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --branch-prefix fix/ 2>&1)
+  launch="$home/data/$id/launch-brief.md"
+  assert_present "$launch" "prefilled brief did not render a launch brief: $out"
+  assert_grep "Scaffold revision marker: current" "$launch" \
+    "launch brief kept the Definition of done from the scaffold the brief was filled under"
+  assert_grep "before reporting done (current rule)" "$launch" \
+    "launch brief kept the Rules from the scaffold the brief was filled under"
+  assert_grep "Fix the stale launch contract." "$launch" "launch brief lost the filled Captain's intent"
+  assert_grep "Keep the filled spec as written." "$launch" "launch brief lost the filled Firstmate spec"
+  assert_grep "Keep this standing home addition." "$launch" "launch brief lost the brief's home additions"
+  assert_not_contains "$(cat "$launch")" "Keep this changed home addition." \
+    "launch brief replaced the brief's home additions"
+  assert_grep "Ship branch: fix/$id" "$launch" "launch brief lost the brief's ship branch"
+  [ "$(grep -c '^# Task$' "$launch")" -eq 1 ] || fail "launch brief carries more than one Task section"
+  [ "$(cat "$brief")" = "$before" ] || fail "spawn rewrote data/<id>/brief.md"
+  pass "fm-spawn: a prefilled ship brief launches on the current scaffold with its Task text kept"
+}
+
 test_spawn_and_promote_require_filled_task_subsections() {
   local rec home proj fakebin out status id brief meta intent_body spec_body authorized
   rec=$(make_home subsections)
@@ -1724,4 +1775,5 @@ test_promotion_carries_the_forge_binding
 test_forge_forgejo_rides_the_same_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
+test_spawn_launches_a_prefilled_brief_on_the_current_scaffold
 echo "# all fm-task-delivery tests passed"
