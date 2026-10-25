@@ -4604,6 +4604,13 @@ SH
     start=$(PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" FM_HOME="$home" \
       FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
       FM_BOOTSTRAP_NETWORK=skip "$ROOT/bin/fm-session-start.sh" 2>&1 || true)
+    if [ "$mode" = tool ]; then
+      # The tasks-axi digest prints held ids only; reasons are read on demand.
+      for id in sample-reason-call sample-dated-call sample-legacy-call sample-malformed-0; do
+        assert_contains "$start" "$id" "startup $mode omitted held id $id"
+      done
+      start=$(FM_HOME="$home" "$ROOT/bin/fm-tasks-axi.sh" list --fields hold_reason,body)
+    fi
     assert_contains "$start" "$quoted_reason" "startup $mode changed the encoded reason"
     assert_contains "$start" 'Investigate literal %28' "startup $mode changed the title"
     assert_contains "$start" "$legacy" "startup $mode changed the legacy reason"
