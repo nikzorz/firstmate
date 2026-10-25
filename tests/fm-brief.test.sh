@@ -1337,7 +1337,7 @@ test_scout_brief_requires_traced_done_when() {
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-brief.sh" traced-scout sample --scout >/dev/null 2>&1
   brief="$home/data/traced-scout/brief.md"
-  assert_grep "states as fact only what you traced to the code: its Done-when, and any count, list, or classification it gives" "$brief" \
+  assert_grep "states as fact only what you traced to the code: its Done-when (to the code that makes it reachable), and any count, list, or classification it gives" "$brief" \
     "scout brief did not require traced Done-when, counts, lists, and classifications"
   assert_grep "says \`unverified:\` and names the run that would settle it" "$brief" \
     "scout brief did not require unverified: marking"
