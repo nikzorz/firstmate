@@ -28,6 +28,8 @@
 #   (c) local-only + merged into local main, no remote         -> ALLOW  (no regression)
 #   (d) no-mistakes + HEAD on origin remote-tracking branch    -> ALLOW  (no regression)
 #   (e) no-mistakes + unpushed, no PR, content not in default  -> REFUSE (safety)
+#   (e2) no-mistakes + HEAD on the gate's --fork-url branch only -> ALLOW (fork-url fix)
+#   (e3) no-mistakes + --fork-url branch lacks HEAD             -> REFUSE (safety)
 #   (f) local-only + truly unpushed + --force                  -> ALLOW  (escape hatch)
 #   (g) no-mistakes + squash-merged PR, exact PR head          -> ALLOW  (squash fix)
 #   (h) no-mistakes + no PR but content already in default     -> ALLOW  (content fallback)
@@ -170,6 +172,8 @@ SH
   # plain text with no run id and no quoting - see the ledger fixtures below),
   # and `runs` appends its own invocation to FM_FAKE_NM_RUNS_LOG when set, so
   # a test can prove whether the ledger fallback ever engaged.
+  # The top-level `status` answers FM_FAKE_NM_STATUS verbatim (empty by
+  # default, i.e. the gate records no --fork-url).
   # The bare `axi` overview answers FM_FAKE_AXI_OVERVIEW verbatim (empty by
   # default, so no repository resolves and the pipeline-spend record is
   # written as unavailable).
@@ -216,6 +220,8 @@ case "${1:-}" in
   runs)
     [ -z "${FM_FAKE_NM_RUNS_LOG:-}" ] || printf 'runs %s\n' "$*" >> "$FM_FAKE_NM_RUNS_LOG"
     printf '%s\n' "${FM_FAKE_NM_RUNS_LIST:-}" ;;
+  status)
+    printf '%s\n' "${FM_FAKE_NM_STATUS:-}" ;;
 esac
 exit 0
 SH
@@ -920,6 +926,68 @@ test_no_mistakes_truly_unpushed_refuses() {
   expect_code 1 "$rc" "nm-unpushed: teardown should refuse"
   grep -q REFUSED "$case_dir/stderr" || fail "nm-unpushed: no REFUSED line in stderr"
   pass "no-mistakes worktree with genuinely unlanded work is refused (safety preserved)"
+}
+
+# Record $case_dir/fork.git as the gate's --fork-url the way `no-mistakes status`
+# reports it, without registering the fork as a git remote. Args: case_dir
+record_gate_fork_url() {
+  local case_dir=$1
+  git init -q --bare "$case_dir/fork.git"
+  export FM_FAKE_NM_STATUS="    repo:  $case_dir/project
+  remote:  $case_dir/origin.git
+    fork:  $case_dir/fork.git
+    gate:  $case_dir/gate.git"
+}
+
+test_no_mistakes_fork_url_head_allows() {
+  local case_dir rc
+  case_dir=$(make_case nm-fork-url)
+  write_meta "$case_dir" no-mistakes ship
+  record_gate_fork_url "$case_dir"
+  wt_commit_file "$case_dir" feature.txt hello "fork-pr work"
+  # The gate pushes by URL, so no refs/remotes entry names the fork branch, and
+  # a pipeline fix commit this copy never fetched sits on top of HEAD there.
+  git -C "$case_dir/wt" push -q "$case_dir/fork.git" fm/task-x1
+  git clone -q -b fm/task-x1 "$case_dir/fork.git" "$case_dir/_fork_fix" 2>/dev/null
+  git -C "$case_dir/_fork_fix" -c user.email=t@t -c user.name=t \
+    commit -q --allow-empty -m "pipeline fix"
+  git -C "$case_dir/_fork_fix" push -q origin fm/task-x1
+  rm -rf "$case_dir/_fork_fix"
+  [ -z "$(git -C "$case_dir/wt" for-each-ref refs/remotes/fork)" ] \
+    || fail "nm-fork-url: fixture unexpectedly created a fork remote-tracking ref"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  unset FM_FAKE_NM_STATUS
+
+  expect_code 0 "$rc" "nm-fork-url: teardown should succeed when HEAD is on the gate's fork branch"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "nm-fork-url: teardown printed a REFUSED line"
+  pass "no-mistakes worktree whose HEAD is on the --fork-url fork branch is torn down"
+}
+
+test_no_mistakes_fork_url_without_head_refuses() {
+  local case_dir rc
+  case_dir=$(make_case nm-fork-url-missing)
+  write_meta "$case_dir" no-mistakes ship
+  record_gate_fork_url "$case_dir"
+  # The fork holds the branch, but only an earlier commit of it.
+  wt_commit_file "$case_dir" feature.txt hello "pushed work"
+  git -C "$case_dir/wt" push -q "$case_dir/fork.git" fm/task-x1
+  wt_commit_file "$case_dir" feature.txt changed "unpushed work"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  unset FM_FAKE_NM_STATUS
+
+  expect_code 1 "$rc" "nm-fork-url-missing: teardown should refuse"
+  grep -q 'not on any remote and not landed' "$case_dir/stderr" \
+    || fail "nm-fork-url-missing: no landed-work refusal in stderr"
+  [ -d "$case_dir/wt" ] || fail "nm-fork-url-missing: refused teardown removed the worktree"
+  pass "no-mistakes worktree whose HEAD is absent from the --fork-url fork is refused"
 }
 
 test_squash_merged_branch_deleted_allows() {
@@ -6915,6 +6983,8 @@ test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
+test_no_mistakes_fork_url_head_allows
+test_no_mistakes_fork_url_without_head_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses
