@@ -131,6 +131,8 @@ Shared homes beat personal ones, and deterministic beats prose:
 1. **Check:** a lint rule, a test, a CI job, a hook, in the project or in firstmate.
    Any mechanical cause (a banned API, an import shape, a file location) gets one.
    If the project marks rules as enforced or prose-only, a check flips the rule to enforced.
+   A check keys on a token its input already carries (a key, a line prefix, a status verb).
+   When the only input is free prose, the heal either requires a structured token in that input, or says the check is a heuristic and names the cases it will miss.
 2. **Shared rule:** the rulebook both the author's agents and the reviewer read: the project's `AGENTS.md` and rule files, or firstmate's `AGENTS.md`, a skill, or the brief scaffold for a firstmate-side miss.
    Write it once, where both sides load it, so the two converge instead of each learning separately.
 3. **Pointer:** make an existing rule load when it should: its `paths:` scope, a review `path_instructions` pointer, a skill description, or a bullet file a brief should include.
