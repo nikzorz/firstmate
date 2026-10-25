@@ -163,13 +163,20 @@ Before proposing, look for a heal that already exists:
 - `data/learnings*.md` and the home's playbooks
 - the other heals in the current postmortem
 
-A cause that has recurred gets a stronger heal than last time: search the log of misses for the same cause against the same rule, and prose that failed twice becomes a check.
+A miss earns a heal only when its class recurs or it cost a review round trip.
+A review round trip is work the miss sent back beyond the single in-run fix that caught it: an escalated ruling, a further fix round on the same theme, a red CI job fixed or rerun, or a captain correction; a held finding fixed once in-run is not one.
+A class recurs when any earlier miss has it: a log entry with the same `Class:`, a log entry from before `Class:` existed with the same cause against the same rule, or an earlier miss of the same class in this postmortem.
+A first occurrence that cost no review round trip gets heal **none** with reason "first occurrence", and its log entry is what lets the next one match.
+A class that has recurred gets a stronger heal than last time, and prose that failed twice becomes a check.
 An existing heal in a personal home does not count as healed when the lesson is shared: promote it to the shared home, and point the personal copy there.
 
 Write firstmate edits by `firstmate-coding-guidelines`, and a project edit by that project's own guidance for writing rules.
 
-A heal may be **none**, but only with a stated reason: a one-off taste nit, or a misread with no pattern yet.
+A heal may be **none**, but only with a stated reason: a first occurrence, a one-off taste nit, or a misread with no pattern yet.
 It still gets logged.
+
+When the merged PR is itself a heal, its misses become a note on that heal's own ticket (a comment on its issue, or its backlog item's note) rather than new heals.
+Only a regression the heal PR caused gets a ticket of its own.
 
 Before shipping, check each heal against the captain's standing rulings: `data/captain.md`, `data/captain-<project>.md`, `data/captain-shared.md`, and any ruling the project records as its owner's (for arena, `docs/agents/review-standards.md`).
 A heal that changes or contradicts one is a question for the captain first, not a filing.
@@ -186,6 +193,7 @@ Heals ship outside the PR that surfaced them; by merge time that PR is closed, s
 | A firstmate check, skill, scaffold or supervision rule | a firstmate issue, or a firstmate ship task through this repo's normal path when its repo takes no issues | firstmate |
 | A no-mistakes reviewer defect | an issue for the no-mistakes maintainers | the captain approves first, because that repo is not the captain's |
 | Home-private memory | a direct inspect-then-update edit | firstmate |
+| A heal PR's miss that is not a regression | a note on that heal's own ticket: a comment on its issue through `gh-axi`, or its backlog item's note | firstmate |
 | Any heal that changes or contradicts a captain ruling | a question to the captain, held through `bin/fm-captain-hold.sh` | the captain |
 
 A shared heal ships as an issue and stops there: no branch or PR for it.
@@ -211,13 +219,15 @@ A PR with no misses gets one entry saying so, so a skipped postmortem is disting
 - Said: <the claim, the red job, or the correction>
 - True: <what the verdict established>
 - Side: <author | reviewer | rules>
+- Class: <a short name, reused verbatim for the same kind of miss on any PR>
+- Cost: <each review round trip the miss caused, as the heal gate defines it, or none>
 - Cause: <root cause from the table>
 - Contributing: <causes, or none>
-- Heal: <home>: <the change> -> <issue url | edited file | held for the captain | none: reason>
+- Heal: <home>: <the change> -> <issue url | edited file | held for the captain | note on <heal ticket> | none: reason>
 ```
 
 ```
 ## <YYYY-MM-DD> <project> <PR url> no misses
 ```
 
-Done when every heal has shipped (an issue URL, the edited file, or a held captain question) and every miss has its log entry.
+Done when every heal has shipped (an issue URL, the edited file, a held captain question, or the note posted on the heal's ticket) and every miss has its log entry.
