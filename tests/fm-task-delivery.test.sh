@@ -1822,6 +1822,10 @@ EOF
   assert_grep 'pr=https://github.com/o/r/pull/9' "$meta" "the switch dropped the recorded PR"
   assert_no_grep 'pr_head=' "$meta" "the switch kept the head recorded under direct-PR"
   assert_grep 'yolo=off' "$meta" "the switch changed the merge posture"
+  # shellcheck disable=SC2016  # the parse runs in its own shell, which expands these
+  bash -c '. "$1/bin/fm-pr-lib.sh" && fm_pr_metadata_identity_parse "$2" && [ "$FM_PR_META_URL" = "$3" ]' \
+      _ "$ROOT" "$meta" "https://github.com/o/r/pull/9" \
+    || fail "the switched record no longer parses as the recorded PR's identity"$'\n'"$(cat "$meta")"
   instructions="$home/data/$id/remode-instructions.md"
   assert_grep 'Delivery contract: mode=no-mistakes' "$instructions" "the contract is not the no-mistakes one"
   assert_grep 'same theme fixed again' "$instructions" "the contract lacks the same-theme cutoff"

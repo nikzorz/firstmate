@@ -184,8 +184,8 @@ BRIEF_REPLACEMENT="$DATA/$ID/.brief.md.remode.${BASHPID:-$$}"
 } > "$BRIEF_REPLACEMENT" || { echo "error: could not render the switched brief for $ID" >&2; exit 1; }
 
 TMP="$STATE/.$ID.meta.remode.${BASHPID:-$$}"
-grep -v -e '^mode=' -e '^pr_head=' "$META" > "$TMP" || true
-echo "mode=$MODE" >> "$TMP"
+sed -e '/^pr_head=/d' -e "s/^mode=.*/mode=$MODE/" "$META" > "$TMP" \
+  || { echo "error: could not stage the task record for $ID" >&2; exit 1; }
 # The brief is published before the record so a relaunch never pairs a
 # no-mistakes record with a brief whose only contract is direct-PR; a refused
 # record restores the original brief on exit.
