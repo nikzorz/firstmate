@@ -49,6 +49,7 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names, such as every script a power fight runs) and tell the fix round to derive the members from the code and name that derivation in the check.
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
    A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
+   It reads any standalone word fix, "fix round" included, as a Fix ruling, so a ruling that only mentions a fix carries a `Property:` line saying it rules none.
    A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example (for example, ...) or leave it out, so the fix round tests it against the property rather than building it.
    Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
    Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison.

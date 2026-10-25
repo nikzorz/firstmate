@@ -365,6 +365,7 @@ test_gate_fix_ruling_requires_property_line() {
   [ "$rc" -ne 0 ] || fail "a fix ruling with no Property: line should refuse"
   assert_contains "$(cat "$err")" '"Property:"' "the refusal should name the missing Property: line"
   assert_contains "$(cat "$err")" "ask-user-authority step 5" "the refusal should name the rule it enforces"
+  assert_contains "$(cat "$err")" "saying it rules none" "the refusal should name the Property: escape for a message that only mentions a fix"
   [ ! -d "$home/state/t1.inbox" ] || fail "a refused fix ruling still enqueued an inbox record"
   if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
     fail "a refused fix ruling still closed the decision: $(cat "$home/state/t1.status")"
@@ -378,8 +379,23 @@ test_gate_fix_ruling_requires_property_line() {
 
   printf 'needs-decision [key=nm-x-test]: ask-user round=1 findings=test-1 file=f\n' >> "$home/state/t1.status"
   run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-test \
-    'Ruling: approve test-1, no further fix round; the fixed head stays. Unfixed findings go to the PR body.'; rc=$?
+    'Ruling: approve test-1; the fixed head stays. Unfixed findings go to the PR body.'; rc=$?
   expect_code 0 "$rc" "an approve on a pipeline gate should send without a Property: line"
+
+  printf 'needs-decision [key=nm-x-ff]: ask-user round=1 findings=review-1 file=f\n' >> "$home/state/t1.status"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-x-ff 'Ruling: approve review-1; do not fix, filed #12.' >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "an approve that mentions a fix should refuse without a Property: line"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-ff \
+    $'Ruling: approve review-1; do not fix, filed #12.\nProperty: none; this rules no finding fix.'; rc=$?
+  expect_code 0 "$rc" "an approve that mentions a fix should send with a Property: line saying it rules none"
+
+  printf 'needs-decision [key=nm-x-fr]: ask-user round=1 findings=review-1 file=f\n' >> "$home/state/t1.status"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-x-fr 'Ruling: send review-1 to a fix round; add a, b, c.' >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "sending a finding to a fix round with no Property: line should refuse"
 
   printf 'needs-decision [key=api-fix]: fix or defer\n' >> "$home/state/t1.status"
   run_send "$fb" "$home" "$log" t1 --resolve-key api-fix 'fix it now'; rc=$?
