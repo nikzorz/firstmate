@@ -85,6 +85,20 @@ test_two_new_copies_are_listed() {
   pass "two new copies of one rule in different files are listed"
 }
 
+test_removed_dash_comment_keeps_later_hunks() {
+  local repo="$TMP_ROOT/dashcomment" out
+  new_repo "$repo"
+  printf -- '-- The signal lamp flickers amber whenever the tidal gauge drifts.\nlocal a = 1\n-- %s\nlocal b = 2\n' "$OWNER_RULE" >"$repo/docs/rules.lua"
+  commit_all "$repo" 'add lua rules'
+  git -C "$repo" branch -f main
+  printf 'local a = 1\nlocal b = 2\n' >"$repo/docs/rules.lua"
+  commit_all "$repo" 'retire lua rules'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a removed dash comment"
+  printf '%s\n' "$out" | grep -qxF "docs/guide.md:3: $RESTATED" \
+    || fail "a removed '-- ' comment hid the later hunk's restatement: $out"
+  pass "a removed '-- ' comment line does not drop later hunks of its file"
+}
+
 test_test_paths_and_interpreter_heredocs_are_skipped() {
   local repo="$TMP_ROOT/skips" out
   new_repo "$repo"
@@ -173,6 +187,7 @@ test_help_and_usage() {
 test_changed_owner_lists_stale_restatement
 test_move_is_not_a_restatement
 test_two_new_copies_are_listed
+test_removed_dash_comment_keeps_later_hunks
 test_test_paths_and_interpreter_heredocs_are_skipped
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
