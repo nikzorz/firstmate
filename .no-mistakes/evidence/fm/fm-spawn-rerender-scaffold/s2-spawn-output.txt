@@ -1,0 +1,4 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-rr.C60wZz/s2/home
+warning: brief s2t section '# Definition of done' was edited after fm-brief scaffolded it; launching it as written
+error: spawn refused for s2t: cannot determine whether /tmp/fm-rr.C60wZz/s2/proj shares firstmate's history (the code root /tmp/fm-rr.C60wZz/s2/code has no readable history, or a shallow clone shares no root commit); fetch full history (git fetch --unshallow) before dispatching publishing work
+error: to let this home publish to that repository, write 'maintainer <host>/<owner>/<repo>' into /tmp/fm-rr.C60wZz/s2/home/config/firstmate-role (docs/configuration.md "Firstmate role"), or pass --upstream-consent <host>/<owner>/<repo> for this one task with the captain's explicit approval

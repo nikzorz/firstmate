@@ -1,0 +1,8 @@
+ok - fm-promote: a promoted worker receives the project's registered forge contract with no flag to remember
+ok - forge=forgejo: spawn agreement and promotion carry the binding, name tea, and keep yolo
+ok - fm-spawn/fm-promote: leftover Task placeholders are refused until both subsections are filled
+ok - fm-project-mode: --branch-prefix resolves order-independently and defaults to the legacy fm/ prefix
+ok - fm-spawn: a prefilled ship brief launches on the current scaffold with its Task text kept
+ok - fm-spawn: an edited scaffold section launches as written with a warning naming it
+# all fm-task-delivery tests passed
+exit=0

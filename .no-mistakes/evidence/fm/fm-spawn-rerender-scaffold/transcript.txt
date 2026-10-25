@@ -1,0 +1,24 @@
+=== S1 stale DoD re-rendered
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-rr.C60wZz/s1/home
+error: spawn refused for s1t: cannot determine whether /tmp/fm-rr.C60wZz/s1/proj shares firstmate's history (the code root /tmp/fm-rr.C60wZz/s1/code has no readable history, or a shallow clone shares no root commit); fetch full history (git fetch --unshallow) before dispatching publishing work
+error: to let this home publish to that repository, write 'maintainer <host>/<owner>/<repo>' into /tmp/fm-rr.C60wZz/s1/home/config/firstmate-role (docs/configuration.md "Firstmate role"), or pass --upstream-consent <host>/<owner>/<repo> for this one task with the captain's explicit approval
+--- marker in launch-brief:
+15:Work the existing external PR
+18:Work the existing external PR branch
+112:Scaffold revision marker: current
+181:Work the existing external PR
+--- marker in brief.md (expect none):
+0
+=== S2 edited DoD kept with warning
+warning: brief s2t section '# Definition of done' was edited after fm-brief scaffolded it; launching it as written
+--- launch-brief:
+171:Push to the existing PR's branch; do not open a new PR.
+=== S3 unfilled placeholders refused
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-rr.C60wZz/s3/home
+error: /tmp/fm-rr.C60wZz/s3/home/data/s3t/brief.md still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn
+exit=1
+brief-fingerprint.txt
+brief.md
+=== S3b half filled (spec left) refused
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-rr.C60wZz/s3/home
+error: /tmp/fm-rr.C60wZz/s3/home/data/s3t/brief.md still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn
