@@ -347,6 +347,46 @@ test_not_open_key_refuses_before_send() {
   pass "fm-send --resolve-key: a key that is not open refuses loudly before anything is sent"
 }
 
+# A fix ruling on a pipeline gate that pastes the finding's list as a closed
+# edit set leaves a member the list missed no legitimate outcome, so it must
+# name the property the fix holds; an approve on the same key needs none.
+test_gate_fix_ruling_requires_property_line() {
+  local dir fb log home err rc
+  dir="$TMP_ROOT/property"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_home property)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [key=nm-x-review]: ask-user round=1 findings=review-1 file=f\n' > "$home/state/t1.status"
+
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-x-review 'Ruling: review-1 fix. Add a, b, c.' >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a fix ruling with no Property: line should refuse"
+  assert_contains "$(cat "$err")" '"Property:"' "the refusal should name the missing Property: line"
+  assert_contains "$(cat "$err")" "ask-user-authority step 5" "the refusal should name the rule it enforces"
+  [ ! -d "$home/state/t1.inbox" ] || fail "a refused fix ruling still enqueued an inbox record"
+  if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
+    fail "a refused fix ruling still closed the decision: $(cat "$home/state/t1.status")"
+  fi
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-review \
+    $'Ruling: review-1 fix.\nProperty: every script the lane runs wakes it; derive the members from the code.\nExamples: a, b, c.'; rc=$?
+  expect_code 0 "$rc" "a fix ruling with a Property: line should send"
+  grep -qF "Property: every script the lane runs" "$home/state/t1.inbox/001.msg" \
+    || fail "the fix ruling did not reach the worker's inbox"
+
+  printf 'needs-decision [key=nm-x-test]: ask-user round=1 findings=test-1 file=f\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-test \
+    'Ruling: approve test-1, no further fix round; the fixed head stays. Unfixed findings go to the PR body.'; rc=$?
+  expect_code 0 "$rc" "an approve on a pipeline gate should send without a Property: line"
+
+  printf 'needs-decision [key=api-fix]: fix or defer\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key api-fix 'fix it now'; rc=$?
+  expect_code 0 "$rc" "a non-pipeline decision key should not need a Property: line"
+  pass "fm-send --resolve-key: a pipeline fix ruling without a Property: line refuses before sending"
+}
+
 # The close is an enqueue-time fact: the durable record IS the delivery, so a
 # failed doorbell keystroke must not reopen the split-brain where the close
 # waited on an unconfirmable submit.
@@ -912,6 +952,7 @@ test_colon_first_key_position_is_answerable
 test_answer_starts_work_never_orphans
 test_routine_steer_never_closes
 test_not_open_key_refuses_before_send
+test_gate_fix_ruling_requires_property_line
 test_failed_ring_still_closes_at_enqueue
 test_failed_enqueue_does_not_close
 test_multiple_keys_close_together

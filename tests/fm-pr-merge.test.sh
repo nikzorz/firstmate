@@ -5160,7 +5160,8 @@ NM_NO_LIVE_SURFACE='this change has no live-validatable surface; proceed without
 # "status", "rounds": [{"round", "source", "selected", "verdict", "findings":
 # [[id, action, description], ...]}]}]}; a "run" key on a step places it in
 # another run of the task's repository, and a "raw" key on a round replaces its
-# findings_json. A step's status defaults to completed. Each review step gets a
+# findings_json, and an "instructions" object on a round maps finding ids onto
+# the respond instructions stored for them. A step's status defaults to completed. Each review step gets a
 # log with one review segment per round, where a round listed in the step's
 # "coverage_parked" parks on incomplete coverage and a round listed in its
 # "empty_diff" logs only the pipeline's empty-diff line; "log": false records a
@@ -5191,7 +5192,7 @@ CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT N
 CREATE TABLE step_results (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_name TEXT NOT NULL,
   step_order INTEGER NOT NULL, status TEXT NOT NULL, approval_reason TEXT, skip_reason TEXT, log_path TEXT);
 CREATE TABLE step_rounds (id TEXT PRIMARY KEY, step_result_id TEXT NOT NULL, round INTEGER NOT NULL,
-  findings_json TEXT, selected_finding_ids TEXT, selection_source TEXT);
+  findings_json TEXT, selected_finding_ids TEXT, selection_source TEXT, user_findings_json TEXT);
 """)
 db.execute("INSERT INTO repos VALUES ('r1', ?)", (project,))
 db.execute("INSERT INTO repos VALUES ('r2', '/elsewhere/other-repo')")
@@ -5217,9 +5218,11 @@ for s, step in enumerate(shape["steps"]):
     for r, rnd in enumerate(step["rounds"]):
         found = rnd.get("raw") or json.dumps({"verdict": rnd.get("verdict"), "findings": [
             {"id": i, "action": a, "severity": "warning", "description": d} for i, a, d in rnd.get("findings", [])]})
-        db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, ?, ?)",
+        given = rnd.get("instructions")
+        given = json.dumps({"findings": [{"id": i, "user_instructions": t} for i, t in given.items()]}) if given else None
+        db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, ?, ?, ?)",
                    ("s%dr%d" % (s, r), "s%d" % s, rnd["round"], found,
-                    json.dumps(rnd.get("selected", [])), rnd.get("source")))
+                    json.dumps(rnd.get("selected", [])), rnd.get("source"), given))
 db.commit()
 PY
 }
@@ -5280,15 +5283,146 @@ write_nm_decision_line() {
     "$run" "$step" "$round" "$ids" "$case_dir/nm-findings.txt" >> "$case_dir/state/task-x1.status"
 }
 
-# Runs the merge of PR 70 for a case, leaving its exit code in NM_MERGE_RC.
+# Runs the merge of PR 70 for a case, passing NM_EXTRA_ARGS, leaving its exit
+# code in NM_MERGE_RC.
+NM_EXTRA_ARGS=()
 run_nm_merge() {
   local case_dir=$1
   : > "$case_dir/gh-axi.log"
   set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
+    "${NM_EXTRA_ARGS[@]+"${NM_EXTRA_ARGS[@]}"}" > "$case_dir/stdout" 2> "$case_dir/stderr"
   NM_MERGE_RC=$?
   set -e
+}
+
+NM_RUN_1752=01M52KCB3JD1D4AVBY40ZG9EPW
+# Run 01M52KCB3JD1D4AVBY40ZG9EPW review round 1: the steer firstmate sent and
+# the instructions the worker passed in its place, which drop the clause "so
+# every file the contract compares wakes the lane".
+NM_1752_STEER='Ruling for review round 1, all three: fix. caps-import-cache: without the import cache the step is red on a clean change, so the caps verdict the ticket asks for never comes out; import first only when the class cache is missing or older than HEAD, by calling the rule tools/gut.sh already owns (cache_is_stale), never a copy of it, and say in the PR body that the extra Godot pass happens only on a stale cache. tests-yml-lane: add .github/workflows/tests.yml to wants_guard_command and set its expect row to run, so every file the contract compares wakes the lane. wrapper-contract-weak: add the two behavioral cases named (a failing guard with a passing caps pass exits 1 with the Rule book FAIL line; a tsv-only diff with a passing caps pass exits 0) and compare the stand-in observed argv with the gut job command. Change nothing else.'
+NM_1752_RELAYED='Ruling: caps-import-cache: import first only when the class cache is missing or older than HEAD, by calling the rule tools/gut.sh already owns (cache_is_stale), never a copy of it (if it cannot be called without running gut, move it so both call one definition). tests-yml-lane: add .github/workflows/tests.yml to wants_guard_command in tools/lint/guard_lanes.sh and set its expect row in tests/smoke/guard_lanes_contract.sh to run. wrapper-contract-weak: add the two behavioral cases (a planted autoload-by-string on a .gd diff with a passing caps pass exits 1 with the Rule book FAIL line; a tsv-only diff with a passing caps pass exits 0) and have the stand-in print its argv and compare it with the gut job command. Change nothing else.'
+
+# Run 01M52KCB3JD1D4AVBY40ZG9EPW's review round 1 gate, its decision line, the
+# steer that answered it, and fm-send's close of its key. Every finding was
+# selected for the fix round with the given instructions.
+# Args: case_dir instructions
+write_nm_relay_1752() {
+  local case_dir=$1 status="$1/state/task-x1.status"
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$2" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["caps-import-cache", "tests-yml-lane", "wrapper-contract-weak"],
+         instructions: {"caps-import-cache": $text, "tests-yml-lane": $text, "wrapper-contract-weak": $text},
+         findings: [["caps-import-cache", "ask-user", ""], ["tests-yml-lane", "auto-fix", ""],
+                    ["wrapper-contract-weak", "auto-fix", ""]]}]}]}')"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 1 caps-import-cache tests-yml-lane wrapper-contract-weak
+  mkdir -p "$case_dir/state/task-x1.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:00:07Z\n--\n%s' "$NM_1752_STEER" \
+    > "$case_dir/state/task-x1.inbox/handled/001.msg"
+  printf 'resolved [key=nm-%s-review] [at=1792162807]: answered: %s [truncated]\n' \
+    "$NM_RUN_1752" "${NM_1752_STEER:0:140}" >> "$status"
+}
+
+test_relayed_ruling_missing_the_steer_refuses_merge() {
+  local case_dir
+  case_dir=$(make_case nm-1752-relay-dropped)
+  add_gh_mocks "$case_dir" 5757575757575757575757575757575757575757
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  run_nm_merge "$case_dir"
+
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-dropped: instructions lacking the steer's body must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1752 step review round 1 was fixed with instructions that lack the body of the steer that answered its gate" \
+    "$case_dir/stderr" "nm-1752-relay-dropped: the refusal did not name the round"
+  assert_grep "so every file the contract compares wakes the lane" "$case_dir/stderr" \
+    "nm-1752-relay-dropped: the refusal did not quote the steer"
+  assert_grep "(if it cannot be called without running gut, move it so both call one definition)" "$case_dir/stderr" \
+    "nm-1752-relay-dropped: the refusal did not quote the instructions"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-dropped: gh pr merge ran over a reworded ruling"
+
+  case_dir=$(make_case nm-1752-relay-verbatim)
+  add_gh_mocks "$case_dir" 5858585858585858585858585858585858585858
+  write_nm_relay_1752 "$case_dir" "$NM_1752_STEER"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-verbatim: a verbatim relay must merge: $(cat "$case_dir/stderr")"
+  assert_no_grep 'accepted_relay=' "$case_dir/state/task-x1.meta" \
+    "nm-1752-relay-verbatim: a merge with nothing accepted recorded an acceptance"
+  pass "fm-pr-merge refuses a fix round whose instructions lack the steer that answered its gate"
+}
+
+# A round whose key a captain-held transfer closed is not answered on the inbox
+# plane; a later re-escalation of the same key and its answer belong to the
+# next round, so round 1 must not be judged against that later steer.
+test_relay_check_pairs_only_the_line_that_closed_the_round() {
+  local case_dir status steer2='Ruling for review round 2: fix wrapper-contract-weak only.'
+  case_dir=$(make_case nm-1752-relay-captain-held)
+  add_gh_mocks "$case_dir" 5959595959595959595959595959595959595959
+  status="$case_dir/state/task-x1.status"
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$NM_1752_RELAYED" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["caps-import-cache"],
+         instructions: {"caps-import-cache": $text},
+         findings: [["caps-import-cache", "ask-user", ""]]}]}]}')"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 1 caps-import-cache
+  printf 'captain-held [at=1792162700] [key=nm-%s-review]: tracked by fm-hold-1
+' "$NM_RUN_1752" >> "$status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 2 wrapper-contract-weak
+  mkdir -p "$case_dir/state/task-x1.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:00:07Z\n--\n%s' "$steer2" \
+    > "$case_dir/state/task-x1.inbox/handled/001.msg"
+  printf 'resolved [key=nm-%s-review] [at=1792162807]: answered: %s\n' "$NM_RUN_1752" "$steer2" >> "$status"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-captain-held: round 1 was paired with round 2's answer: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case nm-1752-relay-same-lead)
+  add_gh_mocks "$case_dir" 6060606060606060606060606060606060606060
+  write_nm_relay_1752 "$case_dir" "$NM_1752_STEER"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:20:00Z\n--\n%s Also fix the docs.' "$NM_1752_STEER" \
+    > "$case_dir/state/task-x1.inbox/handled/002.msg"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-same-lead: a later steer with the same opening replaced the real one: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge pairs a round only with the close of its own key and the steer enqueued by that close"
+}
+
+test_accept_relay_clears_exactly_its_round() {
+  local case_dir
+  case_dir=$(make_case nm-1752-relay-accepted)
+  add_gh_mocks "$case_dir" 5959595959595959595959595959595959595959
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:1")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-accepted: the named round must clear: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  assert_grep "accepted_relay=https://github.com/example/repo/pull/70 $NM_RUN_1752:review:1" "$case_dir/state/task-x1.meta" \
+    "nm-1752-relay-accepted: the accepted round was not recorded"
+
+  case_dir=$(make_case nm-1752-relay-other-round)
+  add_gh_mocks "$case_dir" 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:2")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-other-round: a flag naming another round must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1752 step review round 1 was fixed with instructions that lack" "$case_dir/stderr" \
+    "nm-1752-relay-other-round: the unaccepted round stopped being refused"
+  assert_grep "--accept-relay names $NM_RUN_1752:review:2, which is not a round refused over relayed instructions" "$case_dir/stderr" \
+    "nm-1752-relay-other-round: the stray flag was not refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-other-round: gh pr merge ran"
+
+  case_dir=$(make_case nm-1752-relay-away)
+  add_gh_mocks "$case_dir" 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:1")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 2 "$NM_MERGE_RC" "nm-1752-relay-away: --accept-relay must be refused while away"
+  assert_grep '--accept-relay is attended-only' "$case_dir/stderr" \
+    "nm-1752-relay-away: the refusal did not name attended-only"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-away: gh pr merge ran"
+  pass "fm-pr-merge --accept-relay clears only its named round, records it, and is attended-only"
 }
 
 test_approved_ask_user_finding_no_decision_named_refuses_merge() {
@@ -5905,6 +6039,9 @@ test_named_findings_and_granted_no_live_surface_finding_merge
 test_ask_user_finding_a_fix_round_left_unselected_refuses_merge
 test_granted_test_finding_needs_an_approval_reason
 test_pr_1713_run_shape_refuses_merge
+test_relayed_ruling_missing_the_steer_refuses_merge
+test_relay_check_pairs_only_the_line_that_closed_the_round
+test_accept_relay_clears_exactly_its_round
 test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings
 test_test_step_grant_matches_only_the_pipelines_live_validation_question

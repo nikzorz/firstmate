@@ -446,6 +446,7 @@ Carried to the end, a stale intent makes the final review report accepted ruling
 A run fixes each theme once, and a finding that does not block the change becomes a follow-up rather than a fix round; \`validation-supervision\` defines theme and \`ask-user-authority\` defines blocking.
 When a gate returns a finding on a theme an earlier fix round of this run already fixed, including a regression a fix round introduced, auto-fix or not, do not answer fix: append \`needs-decision [at=<epoch>] [key=nm-<run>-same-theme]: same theme fixed again round=<n> findings=<id1>,<id2>,... rounds=<a>,<b>,...\` naming the gate's round as \`round=\`, every finding id on the gate in \`findings=\`, and the earlier rounds that fixed the theme in \`rounds=\`, with every finding on the gate written to rule 6's snapshot file, and stop until firstmate replies.
 When a gate returns a finding that does not block the change, auto-fix or not, do not answer fix: escalate it using rule 6's ask-user format and its \`nm-<run>-<step>\` key, and stop until firstmate replies.
+When a fix round leaves the run's head with an empty diff against its base, do not respond at the next gate: append \`needs-decision [at=<epoch>] [key=nm-<run>-empty]: fix round left an empty diff against base round=<n>\`, naming the gate's round, and stop until firstmate replies.
 
 $drive_block
 A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
@@ -454,7 +455,7 @@ Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
-  When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
+  When the decision comes back, feed it to the gate with \`no-mistakes axi respond\`, passing the ruling message's body verbatim as \`--instructions\` whenever it answers fix (\`--instructions "\$(sed '1,/^--\$/d' <the ruling's message file in your steering inbox>)"\`), and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
 

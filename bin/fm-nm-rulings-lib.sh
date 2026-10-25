@@ -51,6 +51,21 @@
 # fm_nm_rulings_clearing_text <status-file>
 #   Prints, after a list of owed rulings, the lines that clear them; prints
 #   nothing when none are owed.
+# fm_nm_relay_mismatches <task-id> <state-dir> [<run>:<step>:<round>]
+#   Sets FM_NM_RELAY_MISMATCHES to one "  - ..." line per user-selected round
+#   whose stored respond instructions lack the body of the steer that answered
+#   its gate, naming the round and both texts, and FM_NM_RELAY_ACCEPTED to true
+#   when the optional accepted round was one of them; that round is then left
+#   out of the lines. The steer binds to a round through the task's status log:
+#   a `needs-decision [key=nm-<run>-<step>] ... round=<n>` line, the first later
+#   `resolved [key=<that key>] ...: answered: <excerpt>` close bin/fm-send.sh
+#   wrote for it, and the task inbox record (pending or handled) whose body,
+#   flattened the way that close flattens it, starts with the excerpt, the
+#   latest such record when several do. Every finding the round selected must
+#   carry instructions that contain that body, trimmed, verbatim. A round with
+#   no bound steer was answered on the worker's own judgment and is not judged;
+#   nothing here reports what cannot be read, which fm_nm_rulings_owed already
+#   refuses over. Returns 0 in every case; reads only.
 
 # shellcheck source=bin/fm-nm-findings-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-nm-findings-lib.sh"
@@ -238,4 +253,127 @@ fm_nm_rulings_clearing_text() {  # <status-file>
   [ -n "$FM_NM_RULINGS_CLEARING" ] || return 0
   printf 'after writing the named snapshot file of each run with the findings of every round its lines name (written once or appended to, never overwritten per round), append these lines to %s to name every unruled finding above:\n' "$1"
   printf '%s' "$FM_NM_RULINGS_CLEARING"
+}
+
+# shellcheck disable=SC2034 # Read by the sourcing callers.
+FM_NM_RELAY_MISMATCHES=
+# shellcheck disable=SC2034 # Read by the sourcing callers.
+FM_NM_RELAY_ACCEPTED=false
+# shellcheck disable=SC2034 # FM_NM_RELAY_MISMATCHES and FM_NM_RELAY_ACCEPTED are read by the sourcing callers.
+fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<run>:<step>:<round>]
+  local id=$1 state=$2 accept=${3:-} meta mode branch project db rounds out
+  FM_NM_RELAY_MISMATCHES=
+  FM_NM_RELAY_ACCEPTED=false
+  meta="$state/$id.meta"
+  [ -f "$meta" ] && [ -r "$meta" ] && [ -f "$state/$id.status" ] && [ -r "$state/$id.status" ] || return 0
+  mode=$(grep '^mode=' "$meta" | tail -1 | cut -d= -f2- || true)
+  branch=$(grep '^branch=' "$meta" | tail -1 | cut -d= -f2- || true)
+  project=$(grep '^project=' "$meta" | tail -1 | cut -d= -f2- || true)
+  [ "$mode" = no-mistakes ] && [ -n "$branch" ] && [ -n "$project" ] || return 0
+  db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
+  rounds=$(fm_nm_rounds "$db" --branch "$project" "$branch" 2>/dev/null) || return 0
+  out=$(printf '%s\n' "$rounds" | python3 -I -c '
+import calendar
+import glob
+import json
+import os
+import re
+import sys
+import time
+
+status_path, inbox, accept = sys.argv[1:]
+ASK = re.compile(r"^needs-decision\b[^:]*\[key=(nm-([^]\s-]+)-([^]\s]+))\][^:]*:(.*)$")
+# The answered close bin/fm-send.sh appends through status_stamp_line. Every
+# other keyed line (a re-escalation, a captain-held transfer from
+# bin/fm-captain-hold.sh, a close from bin/fm-status.sh) leaves the round
+# unpaired, because the steer that answered it is not on this inbox plane.
+CLOSE = re.compile(r"^resolved\b[^:]*\[at=(\d+)\][^:]*: answered: (.*)$")
+TRUNCATED = " [truncated]"
+
+
+def line_key(line):
+    # The key positions _fm_decision_key in bin/fm-classify-lib.sh reads.
+    head, sep, note = line.partition(":")
+    found = re.search(r"\[key=([^]]*)\]", head) or (sep and re.match(r"\s*\[key=([^]]*)\]", note))
+    return found.group(1) if found else None
+
+
+def enqueued(text):
+    # The at= header bin/fm-task-inbox-lib.sh stamps on each record.
+    stamp = re.search(r"^at=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$", text, re.M)
+    if not stamp:
+        return None
+    return calendar.timegm(time.strptime(stamp.group(1), "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def flat(text):
+    # The flattening bin/fm-send.sh applies to the excerpt its close records.
+    text = re.sub(r"[\n\r\t]", " ", text)
+    return re.sub(r"[\x00-\x1f\x7f]", "", text)
+
+
+def body(path):
+    # The record format bin/fm-task-inbox-lib.sh owns: headers, a -- line, the text.
+    try:
+        with open(path, encoding="utf-8", errors="replace") as record:
+            text = record.read()
+    except OSError:
+        return None
+    head, sep, rest = text.partition("\n--\n")
+    return (enqueued(head + "\n"), rest) if sep else None
+
+
+records = []
+for path in glob.glob(os.path.join(inbox, "*.msg")) + glob.glob(os.path.join(inbox, "handled", "*.msg")):
+    match = re.fullmatch(r"(\d+)\.msg", os.path.basename(path))
+    record = body(path)
+    if match and record is not None and record[0] is not None:
+        records.append((int(match.group(1)),) + record)
+records.sort()
+
+with open(status_path, encoding="utf-8", errors="replace") as status:
+    lines = status.read().splitlines()
+bound = {}
+for i, line in enumerate(lines):
+    ask = ASK.match(line)
+    if not ask:
+        continue
+    key, run, step, rest = ask.groups()
+    round_no = re.search(r"(?:^|\s)round=(\d+)(?:\s|$)", rest)
+    if not round_no:
+        continue
+    closing = next((later for later in lines[i + 1:] if line_key(later) == key), None)
+    close = CLOSE.match(closing) if closing else None
+    if not close:
+        continue
+    excerpt = close.group(2)
+    if excerpt.endswith(TRUNCATED):
+        excerpt = excerpt[:-len(TRUNCATED)]
+    excerpt = excerpt.rstrip()
+    before = [text for _, at, text in records if at <= int(close.group(1))]
+    if excerpt and before and flat(before[-1]).startswith(excerpt):
+        bound[(run, step, int(round_no.group(1)))] = before[-1].strip()
+
+accepted = False
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    r = json.loads(line)
+    steer = bound.get((r["run"], r["step"], r["round"]))
+    if r["source"] != "user" or not steer:
+        continue
+    given = [r["instructions"].get(f) for f in r["selected"]]
+    lacking = [text for text in given if not (isinstance(text, str) and steer in text)]
+    if not lacking:
+        continue
+    if accept == "%s:%s:%s" % (r["run"], r["step"], r["round"]):
+        accepted = True
+        continue
+    print("  - no-mistakes run %s step %s round %s was fixed with instructions that lack the body of the steer that answered its gate; steer: %s; instructions: %s"
+          % (r["run"], r["step"], r["round"], json.dumps(steer), json.dumps(lacking[0] or "")))
+print("accepted=%s" % ("true" if accepted else "false"))
+' "$state/$id.status" "$state/$id.inbox" "$accept" 2>/dev/null) || return 0
+  case "$out" in *accepted=true) FM_NM_RELAY_ACCEPTED=true ;; esac
+  out=${out%accepted=*}
+  FM_NM_RELAY_MISMATCHES=$out
 }

@@ -113,6 +113,17 @@
 # refusals, each refused run, step, and round gets the exact decision request
 # line that would name all of its refused ids, so one attempt shows everything
 # still owed and the shape that clears it.
+# The same task is also refused over a round a person answered with fix whose
+# stored instructions lack, verbatim, the body of the steer that answered its
+# gate, because a worker that rewords a ruling it relays can drop the clause
+# that carried the ruling; bin/fm-nm-rulings-lib.sh owns how a steer binds to a
+# round, and the refusal names the round and both texts. The fix round already
+# ran, so no appended line clears it: an attended --accept-relay
+# <run>:<step>:<round> records firstmate's judgment that the merged code meets
+# the whole ruling anyway. It may be passed once, clears exactly that round,
+# refuses when that round is not refused, is refused while the away-posture
+# record exists, and a merge the forge accepts records it in the task record as
+# accepted_relay=<pr-url> <run>:<step>:<round>.
 # A Forgejo merge is refused unless every pre-merge condition holds, each read
 # live at merge time: the pull request is open, not a draft, mergeable is
 # true, and the combined commit status at the exact current head, read across
@@ -242,7 +253,7 @@
 # job that can finish after that read. A queued or refused merge reads nothing
 # back.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--no-closing-keyword] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--accept-relay <run>:<step>:<round>] [--no-closing-keyword] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -317,6 +328,7 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+ACCEPT_RELAY=
 NO_CLOSING_KEYWORD=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -346,6 +358,17 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-missing=*)
       echo "error: --allow-missing requires a separate check name argument" >&2
+      exit 2
+      ;;
+    --accept-relay)
+      printf '%s' "${2:-}" | grep -Eqx '[^[:space:]:]+:[^[:space:]:]+:[0-9]+' \
+        || { echo "error: --accept-relay requires <run>:<step>:<round>" >&2; exit 2; }
+      [ -z "$ACCEPT_RELAY" ] || { echo "error: --accept-relay may be specified only once" >&2; exit 2; }
+      ACCEPT_RELAY=$2
+      shift 2
+      ;;
+    --accept-relay=*)
+      echo "error: --accept-relay requires a separate <run>:<step>:<round> argument" >&2
       exit 2
       ;;
     --no-closing-keyword)
@@ -1687,14 +1710,12 @@ URLS
   return "$refused"
 }
 
-# Writes the override into the task's metadata record ahead of its pr= line,
+# Writes one override into the task's metadata record ahead of its pr= line,
 # the only place that record's identity read accepts a key it does not own.
-# The forge has already accepted the merge, so a failed write is reported and
-# never turned into a failed merge.
-record_closing_keyword_override() {
-  local tmp='' line record status=0
-  [ -n "$CLOSING_KEYWORD_OVERRIDE_ISSUE" ] || return 0
-  record="closing_keyword_override=$URL $CLOSING_KEYWORD_OVERRIDE_ISSUE"
+# The forge has already accepted the merge, so a failed write returns 1 for the
+# caller to report and is never turned into a failed merge.
+record_merge_override() {  # <record-line>
+  local tmp='' line record=$1 status=0
   MERGE_META_LOCK=$(fm_meta_lock_path "$META") || status=1
   if [ "$status" -eq 0 ] && ! fm_lock_acquire_wait "$MERGE_META_LOCK"; then
     MERGE_META_LOCK=
@@ -1724,9 +1745,21 @@ record_closing_keyword_override() {
     fm_lock_release "$MERGE_META_LOCK" || status=1
     MERGE_META_LOCK=
   fi
-  [ "$status" -ne 0 ] || return 0
+  return "$status"
+}
+
+record_closing_keyword_override() {
+  [ -n "$CLOSING_KEYWORD_OVERRIDE_ISSUE" ] || return 0
+  record_merge_override "closing_keyword_override=$URL $CLOSING_KEYWORD_OVERRIDE_ISSUE" && return 0
   printf 'actionable: %s was merged under --no-closing-keyword without closing %s, but that override could not be recorded\n' \
     "$URL" "$CLOSING_KEYWORD_OVERRIDE_ISSUE" >&2
+}
+
+record_relay_acceptance() {
+  [ -n "$ACCEPT_RELAY" ] || return 0
+  record_merge_override "accepted_relay=$URL $ACCEPT_RELAY" && return 0
+  printf 'actionable: %s was merged under --accept-relay %s, but that acceptance could not be recorded\n' \
+    "$URL" "$ACCEPT_RELAY" >&2
 }
 
 # The one check no keyword form can fool, run only after a verified landed merge.
@@ -1780,6 +1813,12 @@ collect_unruled_finding_refusals() {
   fm_nm_rulings_owed "$ID" "$STATE" "$MERGE_DATA"
   UNRULED_FINDING_REFUSALS=$FM_NM_RULINGS_OWED
   UNRULED_FINDING_CLEARING_LINES=$FM_NM_RULINGS_CLEARING
+  fm_nm_relay_mismatches "$ID" "$STATE" "$ACCEPT_RELAY"
+  UNRULED_FINDING_REFUSALS=$UNRULED_FINDING_REFUSALS$FM_NM_RELAY_MISMATCHES
+  if [ -n "$ACCEPT_RELAY" ] && [ "$FM_NM_RELAY_ACCEPTED" != true ]; then
+    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - --accept-relay names $ACCEPT_RELAY, which is not a round refused over relayed instructions
+"
+  fi
 }
 
 # Prints, after a refusal list, the decision request lines that clear its
@@ -1840,6 +1879,10 @@ require_current_away_authority() {
   fi
   if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
     echo "error: --allow-missing is attended-only; while the away-posture record exists every required check must report" >&2
+    return 2
+  fi
+  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ -n "$ACCEPT_RELAY" ]; then
+    echo "error: --accept-relay is attended-only; while the away-posture record exists a relayed ruling must reach its fix round whole" >&2
     return 2
   fi
 }
@@ -2115,6 +2158,7 @@ case "$PROVIDER" in
     if [ "$merge_status" -eq 0 ]; then
       FM_PR_GITHUB_MERGE_ACCEPTED=true
       record_closing_keyword_override
+      record_relay_acceptance
       persist_accepted_merge_authority || exit 1
       fm_afk_contract_lock_release || true
       fm_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -2177,6 +2221,7 @@ case "$PROVIDER" in
       MERGE_CONTROL_LOCK=
       exit "$merge_status"
     fi
+    record_relay_acceptance
     persist_accepted_merge_authority || exit 1
     fm_afk_contract_lock_release || true
     fm_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -2227,6 +2272,7 @@ case "$PROVIDER" in
       echo "error: Forgejo did not confirm $URL as merged" >&2
       exit 1
     fi
+    record_relay_acceptance
     persist_accepted_merge_authority || exit 1
     fm_afk_contract_lock_release || true
     fm_lock_release "$MERGE_CONTROL_LOCK" || true
