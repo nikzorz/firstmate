@@ -1331,11 +1331,8 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # nothing - the unchanged schedule unless one of them holds. The records are read in
 # this order rather than pooled because the routing already guarantees it is the
 # right one: a pane whose last line is `paused:` or `captain-held:` reaches this
-# timer only through pause_state_class answering `working`, so its crew state was
-# a running step when that was recorded. The run can park at a gate after that
-# answer, so a `paused:` line defers only while a fresh read finds no parked
-# gate (crew_parked_gate), the same refusal paused_parked_gate_surface
-# applies to the declared-wait absorbers.
+# timer only through pause_state_class answering `working`, so its crew state is
+# a running step, never a parked gate.
 #
 # The second record is OFF unless the home creates config/wedge-defer-parked-gate,
 # and that one guard is what makes an unconfigured home's behaviour identical to
@@ -1398,8 +1395,7 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     return 0
   fi
   if status_is_paused "$last" \
-    && { ! until=$(status_paused_until "$last") || [ "$(date +%s)" -lt "$until" ]; } \
-    && ! crew_parked_gate "$task" >/dev/null; then
+    && { ! until=$(status_paused_until "$last") || [ "$(date +%s)" -lt "$until" ]; }; then
     wait_record 'declared wait' 'awaiting external' \
       external 'confirm the wait still holds' "$statusf"
     return 0
@@ -1690,9 +1686,8 @@ wedge_defer_advancing() {  # <window> <since-file> <triage-label> <idle-age> <es
 # STALE_ESCALATE_SECS, never on an ordinary poll. The crew-state read
 # wedge_wait_evidence may take under config/wedge-defer-parked-gate keeps that
 # same bound however long the wait lasts, because the deferral it feeds restarts
-# the idle timer like every other deferral below; an unconfigured home reaches a
-# crew-state read there only for a `paused:` line, which it reads once to refuse
-# the deferral over a parked gate. The wait consult runs first, because a pane that can
+# the idle timer like every other deferral below; an unconfigured home never
+# reaches that read at all. The wait consult runs first, because a pane that can
 # account for its own quiet has nothing to prove through its worktree. The dead-record probe
 # runs last of the three, so the two cheaper deferrals keep the panes they
 # already own on their existing bounded cadences and only a pane that would

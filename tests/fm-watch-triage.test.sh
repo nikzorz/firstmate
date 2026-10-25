@@ -2821,8 +2821,8 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional first-round stop"
 
-  # At the threshold the declaration still defers the escalation, at the cost of
-  # the one crew-state read that confirms the run is not parked at a gate.
+  # At the threshold the declaration still defers the escalation, without a
+  # crew-state read of its own.
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   : > "$log"
   : > "$out"
@@ -2837,8 +2837,7 @@ test_declared_wait_under_a_working_verdict_reads_crew_state_once() {
   fi
   reap "$pid"
   grep -F 'possible wedge' "$out" >/dev/null && fail "a declared wait was reported as a possible wedge: $(cat "$out")"
-  calls=$(wc -l < "$log" | tr -d '[:space:]')
-  [ "$calls" -le 1 ] || fail "the threshold deferral of a declared wait read crew state $calls times"
+  [ ! -s "$log" ] || fail "the threshold deferral of a declared wait read crew state"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a declared wait counted a wedge escalation"
   unset FM_FAKE_CREW_STATE
   pass "a declared wait under a working verdict reads crew state once, then the timer's wait consult defers it"
