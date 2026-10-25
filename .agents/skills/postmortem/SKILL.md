@@ -193,6 +193,7 @@ Heals ship outside the PR that surfaced them; by merge time that PR is closed, s
 | A firstmate check, skill, scaffold or supervision rule | a firstmate issue, or a firstmate ship task through this repo's normal path when its repo takes no issues | firstmate |
 | A no-mistakes reviewer defect | an issue for the no-mistakes maintainers | the captain approves first, because that repo is not the captain's |
 | Home-private memory | a direct inspect-then-update edit | firstmate |
+| A heal PR's miss that is not a regression | a note on that heal's own ticket: a comment on its issue through `gh-axi`, or its backlog item's note | firstmate |
 | Any heal that changes or contradicts a captain ruling | a question to the captain, held through `bin/fm-captain-hold.sh` | the captain |
 
 A shared heal ships as an issue and stops there: no branch or PR for it.
@@ -229,4 +230,4 @@ A PR with no misses gets one entry saying so, so a skipped postmortem is disting
 ## <YYYY-MM-DD> <project> <PR url> no misses
 ```
 
-Done when every heal has shipped (an issue URL, the edited file, or a held captain question) and every miss has its log entry.
+Done when every heal has shipped (an issue URL, the edited file, a held captain question, or the note posted on the heal's ticket) and every miss has its log entry.
