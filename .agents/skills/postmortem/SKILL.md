@@ -203,7 +203,10 @@ Follow the project's issue shape where it has one, and make the body self-contai
 - the miss, with links to the PR and the finding, run or job that surfaced it
 - the evidence and the root cause
 - the proposed change, exact enough to build from: the rule text, the lint selector, the file it goes in
+- proposed rule text that states current behaviour, checked against the default branch before filing; where the code does not do it yet, the text states it as the rule and names the issue that builds it
+- for work priced as one pass, every step the CI job runs before it, such as an import that precedes the pass
 - how to tell it worked, such as the check going red on the original line
+- for a Done-when that names a committed record (a times-table row, a baseline, a figure a CI job prints), the run that produces it and whether that run fits in the PR the ticket asks for; when re-taking the record moves other verdicts, such as a pace every paced check divides by, the re-take is its own ticket, with those verdicts' corrections in its Done-when
 
 Write the report to `data/<id>/postmortem.md`: one section per miss (the claim, the verdict, side, trace, cause, heal), then the side findings.
 Something else broken that the trace turns up, outside a miss's cause, is a **side finding**: report it, and leave it unhealed here.
