@@ -273,16 +273,37 @@ fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<run>:<step>:<round>]
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
   rounds=$(fm_nm_rounds "$db" --branch "$project" "$branch" 2>/dev/null) || return 0
   out=$(printf '%s\n' "$rounds" | python3 -I -c '
+import calendar
 import glob
 import json
 import os
 import re
 import sys
+import time
 
 status_path, inbox, accept = sys.argv[1:]
 ASK = re.compile(r"^needs-decision\b[^:]*\[key=(nm-([^]\s-]+)-([^]\s]+))\][^:]*:(.*)$")
-CLOSE = re.compile(r"^resolved\b[^:]*\[key=([^]\s]+)\][^:]*: answered: (.*)$")
+# The answered close bin/fm-send.sh appends through status_stamp_line. Every
+# other keyed line (a re-escalation, a captain-held transfer from
+# bin/fm-captain-hold.sh, a close from bin/fm-status.sh) leaves the round
+# unpaired, because the steer that answered it is not on this inbox plane.
+CLOSE = re.compile(r"^resolved\b[^:]*\[at=(\d+)\][^:]*: answered: (.*)$")
 TRUNCATED = " [truncated]"
+
+
+def line_key(line):
+    # The key positions _fm_decision_key in bin/fm-classify-lib.sh reads.
+    head, sep, note = line.partition(":")
+    found = re.search(r"\[key=([^]]*)\]", head) or (sep and re.match(r"\s*\[key=([^]]*)\]", note))
+    return found.group(1) if found else None
+
+
+def enqueued(text):
+    # The at= header bin/fm-task-inbox-lib.sh stamps on each record.
+    stamp = re.search(r"^at=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$", text, re.M)
+    if not stamp:
+        return None
+    return calendar.timegm(time.strptime(stamp.group(1), "%Y-%m-%dT%H:%M:%SZ"))
 
 
 def flat(text):
@@ -299,15 +320,15 @@ def body(path):
     except OSError:
         return None
     head, sep, rest = text.partition("\n--\n")
-    return rest if sep else None
+    return (enqueued(head + "\n"), rest) if sep else None
 
 
 records = []
 for path in glob.glob(os.path.join(inbox, "*.msg")) + glob.glob(os.path.join(inbox, "handled", "*.msg")):
     match = re.fullmatch(r"(\d+)\.msg", os.path.basename(path))
-    text = body(path)
-    if match and text is not None:
-        records.append((int(match.group(1)), text))
+    record = body(path)
+    if match and record is not None and record[0] is not None:
+        records.append((int(match.group(1)),) + record)
 records.sort()
 
 with open(status_path, encoding="utf-8", errors="replace") as status:
@@ -321,18 +342,17 @@ for i, line in enumerate(lines):
     round_no = re.search(r"(?:^|\s)round=(\d+)(?:\s|$)", rest)
     if not round_no:
         continue
-    for later in lines[i + 1:]:
-        close = CLOSE.match(later)
-        if not close or close.group(1) != key:
-            continue
-        excerpt = close.group(2)
-        if excerpt.endswith(TRUNCATED):
-            excerpt = excerpt[:-len(TRUNCATED)]
-        excerpt = excerpt.rstrip()
-        steers = [text for _, text in records if excerpt and flat(text).startswith(excerpt)]
-        if steers:
-            bound[(run, step, int(round_no.group(1)))] = steers[-1].strip()
-        break
+    closing = next((later for later in lines[i + 1:] if line_key(later) == key), None)
+    close = CLOSE.match(closing) if closing else None
+    if not close:
+        continue
+    excerpt = close.group(2)
+    if excerpt.endswith(TRUNCATED):
+        excerpt = excerpt[:-len(TRUNCATED)]
+    excerpt = excerpt.rstrip()
+    before = [text for _, at, text in records if at <= int(close.group(1))]
+    if excerpt and before and flat(before[-1]).startswith(excerpt):
+        bound[(run, step, int(round_no.group(1)))] = before[-1].strip()
 
 accepted = False
 for line in sys.stdin:

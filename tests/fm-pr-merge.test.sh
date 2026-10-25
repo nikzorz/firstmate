@@ -5350,6 +5350,41 @@ test_relayed_ruling_missing_the_steer_refuses_merge() {
   pass "fm-pr-merge refuses a fix round whose instructions lack the steer that answered its gate"
 }
 
+# A round whose key a captain-held transfer closed is not answered on the inbox
+# plane; a later re-escalation of the same key and its answer belong to the
+# next round, so round 1 must not be judged against that later steer.
+test_relay_check_pairs_only_the_line_that_closed_the_round() {
+  local case_dir status steer2='Ruling for review round 2: fix wrapper-contract-weak only.'
+  case_dir=$(make_case nm-1752-relay-captain-held)
+  add_gh_mocks "$case_dir" 5959595959595959595959595959595959595959
+  status="$case_dir/state/task-x1.status"
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$NM_1752_RELAYED" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["caps-import-cache"],
+         instructions: {"caps-import-cache": $text},
+         findings: [["caps-import-cache", "ask-user", ""]]}]}]}')"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 1 caps-import-cache
+  printf 'captain-held [at=1792162700] [key=nm-%s-review]: tracked by fm-hold-1
+' "$NM_RUN_1752" >> "$status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 2 wrapper-contract-weak
+  mkdir -p "$case_dir/state/task-x1.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:00:07Z\n--\n%s' "$steer2" \
+    > "$case_dir/state/task-x1.inbox/handled/001.msg"
+  printf 'resolved [key=nm-%s-review] [at=1792162807]: answered: %s\n' "$NM_RUN_1752" "$steer2" >> "$status"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-captain-held: round 1 was paired with round 2's answer: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case nm-1752-relay-same-lead)
+  add_gh_mocks "$case_dir" 6060606060606060606060606060606060606060
+  write_nm_relay_1752 "$case_dir" "$NM_1752_STEER"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:20:00Z\n--\n%s Also fix the docs.' "$NM_1752_STEER" \
+    > "$case_dir/state/task-x1.inbox/handled/002.msg"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-same-lead: a later steer with the same opening replaced the real one: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge pairs a round only with the close of its own key and the steer enqueued by that close"
+}
+
 test_accept_relay_clears_exactly_its_round() {
   local case_dir
   case_dir=$(make_case nm-1752-relay-accepted)
@@ -6005,6 +6040,7 @@ test_ask_user_finding_a_fix_round_left_unselected_refuses_merge
 test_granted_test_finding_needs_an_approval_reason
 test_pr_1713_run_shape_refuses_merge
 test_relayed_ruling_missing_the_steer_refuses_merge
+test_relay_check_pairs_only_the_line_that_closed_the_round
 test_accept_relay_clears_exactly_its_round
 test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings
