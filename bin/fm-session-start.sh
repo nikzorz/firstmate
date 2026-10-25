@@ -149,8 +149,8 @@
 #     is pure weight - 10 done rows cost 3.3KB in an observed main-home digest.
 #   - Every in-flight ROW is listed in full, with its hold_kind, hold_until,
 #     hold_reason, and blocked_by, so no in-flight row is ever bounded away.
-#   - The held group and the blocked queued group each print a count plus
-#     every item id, never full rows, and one line naming the commands that
+#   - On the tasks-axi path, the held group and the blocked queued group each
+#     print a count plus every item id, never full rows, and one line naming the commands that
 #     print a full row or the whole group. Most such items wait on a date or a
 #     standing do-not-re-raise ruling, so their full rows were the bulk of the
 #     digest while rarely acting this turn; no id is ever bounded away.
@@ -165,8 +165,8 @@
 #     deep queue costs a counter rather than kilobytes.
 #     (This replaces FM_SESSION_START_BACKLOG_LIMIT, which bounded the whole
 #     listing indiscriminately and so could drop a held or blocked row.)
-#     The manual-backend path below still prints held and blocked title lines
-#     in full.
+#     The manual-backend path below, also used when a tasks-axi list call
+#     fails, still prints held and blocked title lines in full.
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,

@@ -20,7 +20,7 @@
 #     FM_SESSION_START_STATUS_TAIL bounds the orphan-log tail, whose lines
 #     carry the same cap
 #   - startup backlog composition: done rows dropped, every in-flight row
-#     kept, held and blocked groups as counts and ids, an over-long hold reason cut with the full-read
+#     kept, tasks-axi held and blocked groups as counts and ids, an over-long hold reason cut with the full-read
 #     pointer, the dispatchable queued listing bounded with an exact disclosed
 #     remainder
 #   - orphan status logs whose task meta has already disappeared
