@@ -163,7 +163,9 @@ Before proposing, look for a heal that already exists:
 - `data/learnings*.md` and the home's playbooks
 - the other heals in the current postmortem
 
-A miss earns a heal only when its class recurs or it cost a review round trip: search the log of misses for an earlier entry with the same `Class:`.
+A miss earns a heal only when its class recurs or it cost a review round trip.
+A review round trip is work the miss sent back beyond the single in-run fix that caught it: an escalated ruling, a further fix round on the same theme, a red CI job fixed or rerun, or a captain correction; a held finding fixed once in-run is not one.
+A class recurs when any earlier miss has it: a log entry with the same `Class:`, a log entry from before `Class:` existed with the same cause against the same rule, or an earlier miss of the same class in this postmortem.
 A first occurrence that cost no review round trip gets heal **none** with reason "first occurrence", and its log entry is what lets the next one match.
 A class that has recurred gets a stronger heal than last time, and prose that failed twice becomes a check.
 An existing heal in a personal home does not count as healed when the lesson is shared: promote it to the shared home, and point the personal copy there.
@@ -217,7 +219,7 @@ A PR with no misses gets one entry saying so, so a skipped postmortem is disting
 - True: <what the verdict established>
 - Side: <author | reviewer | rules>
 - Class: <a short name, reused verbatim for the same kind of miss on any PR>
-- Cost: <the review rounds, CI reruns or captain corrections the miss added, or none>
+- Cost: <each review round trip the miss caused, as the heal gate defines it, or none>
 - Cause: <root cause from the table>
 - Contributing: <causes, or none>
 - Heal: <home>: <the change> -> <issue url | edited file | held for the captain | note on <heal ticket> | none: reason>
