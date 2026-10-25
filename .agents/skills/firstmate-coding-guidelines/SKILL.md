@@ -136,6 +136,9 @@ Firstmate PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.7
 - Run Firstmate production-library tests and commands that source `bin/` scripts under `bash` explicitly, never through the tool shell's default interpreter.
 - Run `bin/fm-lint.sh` before treating a script change as done; it is the single owner of the lint definition that CI and the no-mistakes pre-push gate both invoke, its own header owns what that definition covers, and it refuses to run under any other version of either linter.
 - When a task names a specific tool, implement the work with that tool, or explicitly flag the substitution and its new dependency footprint for review before shipping.
+- Add no option the intent does not name: no environment override or config knob, no second accepted spelling of an argument, no extra flag or mode.
+  A test that must step past a throttle removes its stamp file or sets the fixture clock instead of gaining a knob.
+  An option the change seems to need is a question for firstmate before it is built.
 - Colocate tests with the existing pattern in `tests/`, name them `<subject>.test.sh`, and extend an existing script rather than inventing a new runner.
 - Tests must exercise behavior through an executable or public interface and must never assert implementation-source bytes, including through parsers, regexes, snapshots, or indirect wrappers.
 - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
