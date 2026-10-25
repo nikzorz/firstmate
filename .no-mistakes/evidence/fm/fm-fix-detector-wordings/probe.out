@@ -1,0 +1,33 @@
+=== S1-closed-list-fix-round
+msg: Ruling: send review-1 to a fix round; add a, b, c.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.FWejia
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: --resolve-key 'nm-x-review' answers a pipeline gate with a fix ruling that has no line beginning "Property:"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent.
+exit=1
+=== S2-escape-named-in-refusal
+msg: Ruling: approve review-1; do not fix, filed #12.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.FWejia
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: --resolve-key 'nm-x-review' answers a pipeline gate with a fix ruling that has no line beginning "Property:"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent.
+exit=1
+=== S3-property-none-accepted
+msg: Ruling: approve review-1; do not fix, filed #12.
+Property: none; this rules no finding fix.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.FWejia
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit=0
+inbox: 001.msg
+inbox: handled
+=== S4-control-approve
+msg: Ruling: approve review-1.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.FWejia
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit=0
+inbox: 001.msg
+inbox: handled
