@@ -25,7 +25,8 @@ git init -q "$HOME_DIR"
 git -C "$HOME_DIR" commit -q --allow-empty -m init
 : > "$HOME_DIR/AGENTS.md"
 cp "$ROOT/bin/fm-context-reset-reminder.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-hook-host-lib.sh" \
-  "$ROOT/bin/fm-supervisor-target-lib.sh" "$HOME_DIR/bin/"
+  "$ROOT/bin/fm-supervisor-target-lib.sh" "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" \
+  "$HOME_DIR/bin/"
 cat > "$HOME_DIR/bin/stop-hook.sh" <<EOF
 #!/usr/bin/env bash
 FM_CONTEXT_RESET_AUTO=0 FM_CONTEXT_RESET_TOKENS=1 '$HOME_DIR/bin/fm-context-reset-reminder.sh' | tee -a '$LOG'
