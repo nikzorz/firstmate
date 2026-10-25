@@ -63,15 +63,18 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#   A ship brief bin/fm-brief.sh scaffolded is launched with its Setup, Rules,
-#   Definition of done, and the other scaffold-owned sections re-rendered by
-#   bin/fm-brief.sh --render-to from the recorded repo name, delivery line,
-#   branch, base, and Herdr choice, keeping its `# Task` and any
-#   `# Home brief additions` text as filled; data/<id>/brief.md itself is
-#   untouched. A brief that recorded values cannot re-render is refused
-#   with a re-run fm-brief instruction. Scout briefs, promoted briefs, and
-#   hand-written briefs without the scaffold's `# Project memory` section
-#   launch as written.
+#   A ship brief bin/fm-brief.sh scaffolded is launched with each Setup, Rules,
+#   Definition of done, or other scaffold-owned section it still carries as
+#   generated re-rendered by bin/fm-brief.sh --render-to from the arguments in
+#   data/<id>/brief-fingerprint.txt, keeping its `# Task` and any
+#   `# Home brief additions` text as filled. A section firstmate edited, by
+#   its fingerprint there, launches as written with a warning naming it; a
+#   brief scaffolded before that record existed re-renders only sections
+#   matching today's render, from the inputs its generated lines show.
+#   data/<id>/brief.md itself is untouched. A recorded brief that fails to
+#   re-render is refused with a re-run fm-brief instruction. Scout briefs,
+#   promoted briefs, and hand-written briefs without the scaffold's
+#   `# Project memory` section launch as written.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
@@ -3436,58 +3439,138 @@ spawn_brief_is_ship_scaffold() {  # <brief>
     ! fm_brief_heading_present "$1" "# Current delivery mode contract"
 }
 
-# Re-render the brief's scaffold with its own recorded inputs, never this
-# spawn's flags, so the later brief/spawn agreement checks still compare the
-# brief's choices; then put the filled Task and home additions back verbatim.
-spawn_render_current_ship_scaffold() {  # <source-brief> <out>
-  local src=$1 out=$2 repo contract mode token branch prefix base
-  local -a args=()
+# The arguments that reproduce the brief's scaffold: from its fingerprint
+# record, or, for a brief scaffolded before that record existed, read back from
+# the lines fm-brief generated. Never this spawn's flags, so the later
+# brief/spawn agreement checks still compare the brief's own choices.
+spawn_ship_scaffold_args() {  # <source-brief> <record>
+  local src=$1 record=$2 kind value repo contract mode token branch prefix base
+  SPAWN_SCAFFOLD_ARGS=()
+  if [ -f "$record" ]; then
+    while IFS=$'\t' read -r kind value; do
+      [ "$kind" != arg ] || SPAWN_SCAFFOLD_ARGS+=("$value")
+    done <"$record"
+    [ "${#SPAWN_SCAFFOLD_ARGS[@]}" -gt 0 ]
+    return
+  fi
   repo=$(sed -n 's/^You are in a disposable git worktree of \(.*\), at a detached HEAD on a clean .*$/\1/p' "$src" | head -n 1)
   contract=$(grep -m 1 '^Delivery contract: mode=' "$src") || return 1
   branch=$(sed -n 's/^Ship branch: //p' "$src" | head -n 1)
   [ -n "$repo" ] && [ -n "$branch" ] || return 1
   case "$branch" in *"$ID") prefix=${branch%"$ID"} ;; *) return 1 ;; esac
+  SPAWN_SCAFFOLD_ARGS=("$repo" --branch-prefix "$prefix")
   for token in ${contract#Delivery contract: }; do
     case "$token" in
       mode=*) mode=${token#mode=} ;;
-      forge=*) args+=(--forge "${token#forge=}") ;;
-      shape=*) args+=(--shape "${token#shape=}") ;;
-      upstream-consent=*) args+=(--upstream-consent "${token#upstream-consent=}") ;;
+      forge=*) SPAWN_SCAFFOLD_ARGS+=(--forge "${token#forge=}") ;;
+      shape=*) SPAWN_SCAFFOLD_ARGS+=(--shape "${token#shape=}") ;;
+      upstream-consent=*) SPAWN_SCAFFOLD_ARGS+=(--upstream-consent "${token#upstream-consent=}") ;;
       *) return 1 ;;
     esac
   done
   [ -n "${mode:-}" ] || return 1
+  SPAWN_SCAFFOLD_ARGS+=(--mode "$mode")
   if base=$(fm_brief_base_branches "$src"); then
     [ "$(printf '%s\n' "$base" | wc -l)" -eq 1 ] || return 1
-    args+=(--base-branch "$base")
+    SPAWN_SCAFFOLD_ARGS+=(--base-branch "$base")
   fi
-  ! fm_brief_heading_present "$src" "# Herdr isolation - HARD SAFETY CONTRACT" || args+=(--herdr-lab)
-  FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
-    FM_CONFIG_OVERRIDE="$CONFIG" "$FM_ROOT/bin/fm-brief.sh" "$ID" "$repo" --mode "$mode" \
-    --branch-prefix "$prefix" "${args[@]}" --render-to "$out.fresh" >/dev/null || {
-    rm -f -- "$out.fresh"
-    return 1
-  }
-  awk -v src="$src" '
-    function is_herdr(l) { return l == "# Herdr isolation - HARD SAFETY CONTRACT" || l == "# Herdr lifecycle declaration - NOT ENABLED" }
-    BEGIN {
-      while ((getline l < src) > 0) {
-        if (l == "# Task" && !task_seen) { task_seen = 1; in_task = 1 }
-        else if (in_task && is_herdr(l)) in_task = 0
-        if (in_task) task = task l "\n"
-        if (l == "# Home brief additions") extra = ""
-        if (l == "# Home brief additions" || extra != "") extra = extra l "\n"
-      }
-      if (!task_seen) exit 2
-    }
-    $0 == "# Home brief additions" { exit }
-    $0 == "# Task" && !done_task { printf "%s", task; skipping = 1; done_task = 1; next }
-    skipping && is_herdr($0) { skipping = 0 }
-    !skipping { print }
-    END { if (extra != "") printf "%s", extra }
-  ' "$out.fresh" >"$out"
-  local rc=$?
-  rm -f -- "$out.fresh"
+  ! fm_brief_heading_present "$src" "# Herdr isolation - HARD SAFETY CONTRACT" || SPAWN_SCAFFOLD_ARGS+=(--herdr-lab)
+}
+
+# A section still reads as fm-brief generated it when its fingerprint is the
+# recorded one, or, with no record, when it matches today's render.
+spawn_scaffold_recorded() {  # <record> <key>; prints the recorded fingerprint
+  [ -f "$1" ] && awk -F '\t' -v k="$2" '$1 == "section" && $3 == k { print $2; found = 1; exit } END { exit !found }' "$1"
+}
+
+spawn_scaffold_section_unedited() {  # <record> <key> <source-section> <fresh-section|"">
+  if [ -f "$1" ]; then
+    [ "$(spawn_scaffold_recorded "$1" "$2")" = "$(fm_brief_section_fingerprint "$3")" ]
+  else
+    [ -n "$4" ] && cmp -s -- "$3" "$4"
+  fi
+}
+
+spawn_scaffold_append() {  # <out> <section-file>
+  [ ! -s "$1" ] || printf '\n' >>"$1"
+  cat -- "$2" >>"$1"
+}
+
+# Place the sections today's scaffold generates after fresh section <j> that
+# the brief does not carry: a section new since the record was taken joins the
+# launch, and one the record shows firstmate removed stays out with a warning.
+spawn_scaffold_fill_gap() {  # <j>; reads the caller's merge state
+  local k=$(($1 + 1)) i present
+  while [ "$k" -le "${#fresh_keys[@]}" ]; do
+    present=0
+    for ((i = 1; i <= ${#src_keys[@]}; i++)); do
+      [ "${src_keys[i]}" != "${fresh_keys[k]}" ] || present=1
+    done
+    [ "$present" -eq 0 ] || return 0
+    if [ -f "$record" ] && ! spawn_scaffold_recorded "$record" "${fresh_keys[k]}" >/dev/null; then
+      spawn_scaffold_append "$out" "$work/fresh/$k"
+    else
+      echo "warning: brief $ID has no '${fresh_keys[k]}' section; launching it without the current scaffold's" >&2
+    fi
+    k=$((k + 1))
+  done
+}
+
+# Rebuild the launch body section by section. The scaffold-owned sections are
+# the top-level sections `bin/fm-brief.sh --render-to` generates today, other
+# than the `# Task` and `# Home brief additions` text firstmate fills, which is
+# always kept as filled. Each scaffold-owned section the brief still carries
+# as generated takes today's text; each one firstmate edited stays as written
+# with a warning naming it; a section firstmate added is kept.
+spawn_merge_ship_scaffold() {  # <source-brief> <out> <record> <workdir>
+  local src=$1 out=$2 record=$3 work=$4 n key i j reason
+  local -a src_keys=() fresh_keys=()
+  : >"$out" || return 1
+  if ! spawn_ship_scaffold_args "$src" "$record" ||
+    ! FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
+      FM_CONFIG_OVERRIDE="$CONFIG" "$FM_ROOT/bin/fm-brief.sh" "$ID" "${SPAWN_SCAFFOLD_ARGS[@]}" \
+      --render-to "$work/fresh.md" >/dev/null; then
+    [ ! -f "$record" ] || return 1
+    echo "warning: brief $ID has no scaffold record and its scaffold cannot be re-rendered; launching it as written" >&2
+    cp -- "$src" "$out"
+    return
+  fi
+  if [ -f "$record" ]; then
+    reason="was edited after fm-brief scaffolded it"
+  else
+    reason="has no scaffold record and differs from the current scaffold"
+  fi
+  mkdir -- "$work/src" "$work/fresh" || return 1
+  while IFS=$'\t' read -r n key; do src_keys[n]=$key; done < <(fm_brief_split_sections "$src" "$work/src")
+  while IFS=$'\t' read -r n key; do fresh_keys[n]=$key; done < <(fm_brief_split_sections "$work/fresh.md" "$work/fresh")
+  spawn_scaffold_fill_gap 0
+  for ((i = 1; i <= ${#src_keys[@]}; i++)); do
+    key=${src_keys[i]}
+    j=
+    for ((n = 1; n <= ${#fresh_keys[@]}; n++)); do
+      [ "${fresh_keys[n]}" != "$key" ] || { j=$n; break; }
+    done
+    case "$key" in
+      "# Task" | "# Home brief additions") spawn_scaffold_append "$out" "$work/src/$i" ;;
+      *)
+        if spawn_scaffold_section_unedited "$record" "$key" "$work/src/$i" "${j:+$work/fresh/$j}"; then
+          [ -z "$j" ] || spawn_scaffold_append "$out" "$work/fresh/$j"
+        else
+          [ -z "$j" ] && ! spawn_scaffold_recorded "$record" "$key" >/dev/null ||
+            echo "warning: brief $ID section '$key' $reason; launching it as written" >&2
+          spawn_scaffold_append "$out" "$work/src/$i"
+        fi
+        ;;
+    esac
+    [ -z "$j" ] || spawn_scaffold_fill_gap "$j"
+  done
+}
+
+spawn_render_current_ship_scaffold() {  # <source-brief> <out>
+  local work rc=0
+  work=$(mktemp -d "$DATA/$ID/.launch-scaffold.XXXXXX") || return 1
+  spawn_merge_ship_scaffold "$1" "$2" "$DATA/$ID/brief-fingerprint.txt" "$work" || rc=$?
+  rm -rf -- "$work"
   return "$rc"
 }
 

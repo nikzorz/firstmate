@@ -567,9 +567,6 @@ EOF
   pass "fm-project-mode: the conditional policy is accepted, mapped for mechanical callers, and readable raw"
 }
 
-# Spawn and promotion refuse leftover Task-subsection placeholders through the
-# public brief/spawn/promote path. Filling both subsections lets the spawn
-# delivery checks proceed (the fake tmux still fails later).
 # A brief filled before a scaffold change must still launch on the current
 # Setup, Rules, and Definition of done, because the merge guard enforces the
 # current contract; the filled Task text and brief.md stay exactly as written.
@@ -616,11 +613,59 @@ EOF
   assert_not_contains "$(cat "$launch")" "Keep this changed home addition." \
     "launch brief replaced the brief's home additions"
   assert_grep "Ship branch: fix/$id" "$launch" "launch brief lost the brief's ship branch"
+  assert_not_contains "$out" "warning: brief $id" "spawn warned about a brief it left as generated"
   [ "$(grep -c '^# Task$' "$launch")" -eq 1 ] || fail "launch brief carries more than one Task section"
   [ "$(cat "$brief")" = "$before" ] || fail "spawn rewrote data/<id>/brief.md"
   pass "fm-spawn: a prefilled ship brief launches on the current scaffold with its Task text kept"
 }
 
+# A Definition of done firstmate edited by hand, as AGENTS.md section 11
+# allows, is kept as written with a warning naming it, while the sections it
+# left as generated still take the current scaffold.
+test_spawn_keeps_an_edited_scaffold_section_with_a_warning() {
+  local rec home proj fakebin code_root out id brief launch
+  rec=$(make_home rerender-edited)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  code_root="$TMP_ROOT/rerender-edited/code"
+  mkdir -p "$code_root"
+  cp -R "$ROOT/bin" "$code_root/bin" || fail "could not copy the code root"
+
+  id=delivery-rerender-edited
+  brief="$home/data/$id/brief.md"
+  FM_HOME="$home" "$code_root/bin/fm-brief.sh" "$id" proj --mode no-mistakes --branch-prefix fix/ >/dev/null 2>&1 \
+    || fail "edited brief should scaffold"
+  fill_brief_subsections "$brief" "Work the existing external PR." "Push to its branch."
+  printf '%s\n' "Push to the existing PR's branch; do not open a new PR." >> "$brief"
+
+  # shellcheck disable=SC2016  # $branch is the library's own literal source text
+  sed -i 's/^Ship branch: \$branch$/Ship branch: $branch\nScaffold revision marker: current/' "$code_root/bin/fm-dod-lib.sh"
+  grep -q '^Scaffold revision marker: current$' "$code_root/bin/fm-dod-lib.sh" || fail "could not change fm_dod_block"
+  sed -i 's/^   Leave the worktree clean before reporting done\.$/   Leave the worktree clean before reporting done (current rule)./' "$code_root/bin/fm-brief.sh"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
+    "$code_root/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --branch-prefix fix/ 2>&1)
+  launch="$home/data/$id/launch-brief.md"
+  assert_present "$launch" "edited brief did not render a launch brief: $out"
+  assert_grep "Push to the existing PR's branch; do not open a new PR." "$launch" \
+    "spawn overwrote the Definition of done firstmate edited"
+  assert_not_contains "$(cat "$launch")" "Scaffold revision marker: current" \
+    "spawn replaced the edited Definition of done with the current scaffold's"
+  assert_contains "$out" "section '# Definition of done' was edited" \
+    "spawn kept the edited Definition of done without a warning naming it"
+  assert_grep "before reporting done (current rule)" "$launch" \
+    "the unedited Rules did not take the current scaffold"
+  assert_not_contains "$out" "section '# Rules'" "spawn warned about the unedited Rules"
+  pass "fm-spawn: an edited scaffold section launches as written with a warning naming it"
+}
+
+# Spawn and promotion refuse leftover Task-subsection placeholders through the
+# public brief/spawn/promote path. Filling both subsections lets the spawn
+# delivery checks proceed (the fake tmux still fails later).
 test_spawn_and_promote_require_filled_task_subsections() {
   local rec home proj fakebin out status id brief meta intent_body spec_body authorized
   rec=$(make_home subsections)
@@ -1776,4 +1821,5 @@ test_forge_forgejo_rides_the_same_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
 test_spawn_launches_a_prefilled_brief_on_the_current_scaffold
+test_spawn_keeps_an_edited_scaffold_section_with_a_warning
 echo "# all fm-task-delivery tests passed"

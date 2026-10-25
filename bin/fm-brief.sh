@@ -100,10 +100,16 @@
 # does not authorize, before the contract exists. Pass it on every ship
 # scaffold so detection does not depend on the caller recognizing the repo;
 # bin/fm-spawn.sh repeats the check at launch regardless.
+# A ship scaffold is recorded in data/<task-id>/brief-fingerprint.txt: one
+# "arg\t<value>" line per argument that reproduces it, then one
+# "section\t<fingerprint>\t<heading>" line per scaffold-owned section, so
+# bin/fm-spawn.sh can tell a section firstmate edited from one it left as
+# generated.
 # --render-to <file> writes the ship scaffold to <file> instead of
-# data/<task-id>/brief.md, overwriting it, so bin/fm-spawn.sh can take a
-# filled brief's Setup, Rules, and Definition of done from the current scaffold
-# rather than the one in force when the brief was filled.
+# data/<task-id>/brief.md, overwriting it and recording nothing, so
+# bin/fm-spawn.sh can take a filled brief's unedited Setup, Rules, and
+# Definition of done from the current scaffold rather than the one in force
+# when the brief was filled.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line, followed by " forge=gerrit shape=squash"
 # on Gerrit, " forge=forgejo" on Forgejo, or " forge=external" on an external
@@ -884,6 +890,21 @@ A correction edits only the wrong text: do not run \`$FM_ROOT/bin/fm-ensure-agen
 $DOD
 EOF
 append_brief_include
+if [ "$RENDER_TO_SET" -eq 0 ]; then
+  SCAFFOLD_ARGS=("$REPO" --mode "$MODE" --branch-prefix "$BRANCH_PREFIX")
+  [ -z "$BASE_BRANCH" ] || SCAFFOLD_ARGS+=(--base-branch "$BASE_BRANCH")
+  [ "$FORGE" = none ] || SCAFFOLD_ARGS+=(--forge "$FORGE")
+  [ -z "$SHAPE" ] || SCAFFOLD_ARGS+=(--shape "$SHAPE")
+  [ -z "$UPSTREAM_CONSENT" ] || SCAFFOLD_ARGS+=(--upstream-consent "$UPSTREAM_CONSENT")
+  [ "$HERDR_LAB" -eq 0 ] || SCAFFOLD_ARGS+=(--herdr-lab)
+  {
+    printf 'arg\t%s\n' "${SCAFFOLD_ARGS[@]}" &&
+      fm_brief_scaffold_fingerprints "$BRIEF"
+  } >"$DATA/$ID/brief-fingerprint.txt" || {
+    echo "error: could not record the scaffold fingerprint beside $BRIEF" >&2
+    exit 1
+  }
+fi
 if [ "$FORGE" = none ]; then
   echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
 elif [ "$FORGE" = gerrit ]; then
