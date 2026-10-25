@@ -3,19 +3,19 @@
 # restate a rule the current branch changed, so its author finds a stale copy
 # before review does.
 #
-# Usage: fm-restatement-sweep.sh [--base <rev>] [--head <rev>]
+# Usage: fm-restatement-sweep.sh [--base <rev>]
 #
-# Run it inside the repository's worktree. It compares <head> (default HEAD)
-# with its merge-base against <base>; without --base that is origin's default
-# branch (refs/remotes/origin/HEAD, else origin/main or origin/master), or the
-# local main or master when the repository has no origin.
-# Without --head it refuses while the worktree holds uncommitted or untracked
-# changes, because only committed sentences are swept and a clean-looking
-# report over an unswept edit would be false.
+# Run it anywhere inside the repository's worktree. It compares HEAD with its
+# merge-base against <base>; without --base that is origin's default branch
+# (refs/remotes/origin/HEAD, else origin/main or origin/master), or the local
+# main or master when the repository has no origin.
+# It refuses while the worktree holds uncommitted or untracked changes,
+# because only committed sentences are swept and a clean-looking report over
+# an unswept edit would be false.
 #
-# A changed sentence is one the diff added (read at <head>) or removed (read at
+# A changed sentence is one the diff added (read at HEAD) or removed (read at
 # the merge-base). Each is compared with every prose sentence tracked at
-# <head>, by the overlap of the uncommon words they share weighted by how rare
+# HEAD, by the overlap of the uncommon words they share weighted by how rare
 # each word is across the repository. A candidate is listed when it shares at
 # least three such words and enough of their weight with a changed sentence;
 # each changed sentence contributes at most its five closest candidates, and
@@ -49,27 +49,23 @@ set -u
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 BASE=''
-HEAD_REV=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --base) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; BASE=$2; shift 2 ;;
-    --head) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; HEAD_REV=$2; shift 2 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 
-git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "error: not inside a git worktree" >&2; exit 2; }
+top=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "error: not inside a git worktree" >&2; exit 2; }
+cd "$top" || exit 2
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 is required and was not found" >&2; exit 2; }
 
-if [ -z "$HEAD_REV" ]; then
-  HEAD_REV=HEAD
-  dirty=$(git status --porcelain --untracked-files=normal) || exit 2
-  if [ -n "$dirty" ]; then
-    echo "error: the worktree has uncommitted or untracked changes, which the sweep cannot see; commit them first:" >&2
-    printf '%s\n' "$dirty" >&2
-    exit 2
-  fi
+dirty=$(git status --porcelain --untracked-files=normal) || exit 2
+if [ -n "$dirty" ]; then
+  echo "error: the worktree has uncommitted or untracked changes, which the sweep cannot see; commit them first:" >&2
+  printf '%s\n' "$dirty" >&2
+  exit 2
 fi
 
 if [ -z "$BASE" ]; then
@@ -86,10 +82,10 @@ if [ -z "$BASE" ]; then
   [ -n "$BASE" ] || { echo "error: cannot find a default branch to compare against; pass --base <rev>" >&2; exit 2; }
 fi
 git rev-parse -q --verify "$BASE^{commit}" >/dev/null || { echo "error: cannot resolve base revision $BASE" >&2; exit 2; }
-git rev-parse -q --verify "$HEAD_REV^{commit}" >/dev/null || { echo "error: cannot resolve head revision $HEAD_REV" >&2; exit 2; }
-MERGE_BASE=$(git merge-base "$BASE" "$HEAD_REV") || { echo "error: $BASE and $HEAD_REV share no history" >&2; exit 2; }
+HEAD_COMMIT=$(git rev-parse -q --verify 'HEAD^{commit}') || { echo "error: HEAD has no commit to sweep" >&2; exit 2; }
+MERGE_BASE=$(git merge-base "$BASE" "$HEAD_COMMIT") || { echo "error: $BASE and HEAD share no history" >&2; exit 2; }
 
-exec python3 -I - "$BASE" "$MERGE_BASE" "$(git rev-parse "$HEAD_REV^{commit}")" <<'PY'
+exec python3 -I - "$BASE" "$MERGE_BASE" "$HEAD_COMMIT" <<'PY'
 import collections
 import math
 import re
@@ -243,14 +239,37 @@ def sentences(path, text):
     return found
 
 
+C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def header_path(field, prefix):
+    """Return the path a ---/+++ header names under prefix, or None for /dev/null."""
+    if field.startswith('"'):
+        raw, i = bytearray(), 1
+        while field[i] != '"':
+            if field[i] != "\\":
+                raw += field[i].encode("utf-8", "surrogateescape")
+                i += 1
+            elif field[i + 1] in C_ESCAPES:
+                raw.append(C_ESCAPES[field[i + 1]])
+                i += 2
+            else:
+                raw.append(int(field[i + 1: i + 4], 8))
+                i += 4
+        field = raw.decode("utf-8", "surrogateescape")
+    else:
+        field = field.rstrip("\t")
+    return field[len(prefix):] if field.startswith(prefix) else None
+
+
 def changed_lines(diff_text):
     removed, added = collections.defaultdict(set), collections.defaultdict(set)
     old = new = None
     for line in diff_text.split("\n"):
         if line.startswith("--- "):
-            old = line[6:] if line.startswith("--- a/") else None
+            old = header_path(line[4:], "a/")
         elif line.startswith("+++ "):
-            new = line[6:] if line.startswith("+++ b/") else None
+            new = header_path(line[4:], "b/")
         elif line.startswith("@@"):
             hunk = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
             if not hunk:
@@ -269,20 +288,20 @@ def read_blobs(rev, paths):
     if paths is not None and not paths:
         return {}
     scope = ["--", *paths] if paths is not None else []
-    listing = git("ls-tree", "-r", "-l", "-z", rev, *scope).decode("utf-8", "replace")
+    listing = git("--literal-pathspecs", "ls-tree", "-r", "-l", "-z", rev, *scope)
     wanted = []
-    for entry in listing.split("\0"):
+    for entry in listing.decode("utf-8", "surrogateescape").split("\0"):
         if not entry:
             continue
         meta, path = entry.split("\t", 1)
-        kind, size = meta.split()[1], meta.split()[3]
+        _, kind, oid, size = meta.split()
         if kind == "blob" and size != "-" and int(size) <= MAX_BLOB_BYTES and not TEST_PATH.search(path):
-            wanted.append(path)
+            wanted.append((path, oid))
     if not wanted:
         return {}
-    out = git("cat-file", "--batch", data="".join(f"{rev}:{p}\n" for p in wanted).encode())
+    out = git("cat-file", "--batch", data="".join(f"{oid}\n" for _, oid in wanted).encode())
     blobs, pos = {}, 0
-    for path in wanted:
+    for path, _ in wanted:
         newline = out.index(b"\n", pos)
         size = int(out[pos:newline].split()[2])
         data = out[newline + 1: newline + 1 + size]
@@ -293,7 +312,9 @@ def read_blobs(rev, paths):
 
 
 def main():
-    diff = git("diff", "-U0", "--no-color", "--no-ext-diff", "-M", MERGE_BASE, HEAD).decode("utf-8", "replace")
+    sys.stdout.reconfigure(errors="backslashreplace")
+    diff = git("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative", "-M",
+               "--src-prefix=a/", "--dst-prefix=b/", MERGE_BASE, HEAD).decode("utf-8", "surrogateescape")
     removed, added = changed_lines(diff)
 
     corpus = []  # (path, first, last, text, words, added_here)
@@ -304,13 +325,10 @@ def main():
             corpus.append((path, first, last, sentence, words_of(sentence), touched))
 
     probes = [(c[0], c[1], c[3], c[4], "+") for c in corpus if c[5]]
-    added_word_sets = {frozenset(p[3]) for p in probes}
     for path, text in read_blobs(MERGE_BASE, sorted(removed)).items():
         for first, last, sentence in sentences(path, text):
             if any(n in removed[path] for n in range(first, last + 1)):
-                words = words_of(sentence)
-                if frozenset(words) not in added_word_sets:
-                    probes.append((path, first, sentence, words, "-"))
+                probes.append((path, first, sentence, words_of(sentence), "-"))
 
     total = len(corpus) or 1
     frequency = collections.Counter()

@@ -120,8 +120,26 @@ test_dirty_worktree_is_refused() {
   rc=$?
   [ "$rc" -eq 2 ] || fail "an untracked file exited $rc, not 2: $out"
   printf '%s\n' "$out" | grep -qF 'notes.md' || fail "the refusal did not name the untracked file: $out"
-  out=$(sweep "$repo" --base main --head HEAD) || fail "an explicit --head was refused on a dirty worktree: $out"
-  pass "uncommitted and untracked changes are refused unless --head names a revision"
+  pass "uncommitted and untracked changes are refused"
+}
+
+test_owner_path_and_cwd_do_not_hide_a_change() {
+  local repo name out
+  for name in 'my owner.md' 'café.md' $'tab\towner.md' 'ow"n\\er.md'; do
+    repo="$TMP_ROOT/paths-$RANDOM"
+    new_repo "$repo"
+    git -C "$repo" mv docs/owner.md "docs/$name"
+    git -C "$repo" commit -qm 'rename the owner'
+    git -C "$repo" branch -qf main
+    git -C "$repo" config diff.noprefix true
+    git -C "$repo" config diff.relative true
+    printf '# Owner\n\n%s\n' "${OWNER_RULE/nine/fourteen}" >"$repo/docs/$name"
+    commit_all "$repo" 'widen the hold'
+    out=$(sweep "$repo/docs" --base main) || fail "sweep from a subdirectory exited $? for docs/$name: $out"
+    printf '%s\n' "$out" | grep -qxF "docs/guide.md:3: $RESTATED" \
+      || fail "the stale restatement was not listed for docs/$name: $out"
+  done
+  pass "an owner path with spaces, tabs, quotes, or non-ASCII, a subdirectory cwd, and prefix config still list the restatement"
 }
 
 test_default_base_resolution() {
@@ -157,6 +175,7 @@ test_move_is_not_a_restatement
 test_two_new_copies_are_listed
 test_test_paths_and_interpreter_heredocs_are_skipped
 test_dirty_worktree_is_refused
+test_owner_path_and_cwd_do_not_hide_a_change
 test_default_base_resolution
 test_help_and_usage
 

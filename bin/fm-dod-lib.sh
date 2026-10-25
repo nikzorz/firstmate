@@ -496,7 +496,7 @@ EOF
 # change moved or retired reaches its author rather than the reviewer.
 fm_restatement_sweep_step() {  # [<base-branch>]
   local base=${1:-} sweep base_q
-  sweep="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-restatement-sweep.sh"
+  printf -v sweep '%q' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-restatement-sweep.sh"
   if [ -n "$base" ]; then
     printf -v base_q '%q' "origin/$base"
     sweep="$sweep --base $base_q"
