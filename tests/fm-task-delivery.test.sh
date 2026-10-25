@@ -745,6 +745,9 @@ EOF
   assert_grep "plus any later words the captain actually supplied" \
     "$home/data/$id/launch-brief.md" \
     "marked legacy launch contract excluded later captain clarifications"
+  assert_grep "except the pre-run firstmate rulings the Definition of done tells you to pass on \`Ruled before validation:\` lines" \
+    "$home/data/$id/launch-brief.md" \
+    "launch intent contract must not supersede the pre-run ruling line"
   authorized=$(awk '$0 == "## Captain intent authorized for --intent" { emit=1; next } emit && /^$/ { exit } emit { print }' "$home/data/$id/launch-brief.md")
   assert_contains "$authorized" "Fix the legacy dispatch boundary." \
     "marked legacy launch contract omitted captain words"

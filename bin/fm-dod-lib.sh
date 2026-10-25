@@ -92,8 +92,9 @@
 # declares a paused wait instead. bin/fm-pr-check.sh refuses to arm merge
 # monitoring on a draft through the same reading bin/fm-pr-merge.sh uses.
 # This file is the one owner of the no-mistakes `--intent` contract: only the
-# brief's `## Captain's intent` subsection plus later captain words, never
-# `## Firstmate spec` and never the worker's own tradeoffs.
+# brief's `## Captain's intent` subsection plus later captain words and the
+# pre-run rulings below, never the rest of `## Firstmate spec` and never the
+# worker's own tradeoffs.
 # Author the subsection body and later relays as the actual words, without
 # adding speaker labels or direct address: the heading supplies provenance and
 # is not part of --intent. A legacy mixed Task instead marks each captain line
@@ -105,6 +106,14 @@
 # The string passed must be self-sufficient - it plus the codebase reconstructs
 # roughly the same specification - so a report, decision, or PR the intent
 # refers to is written into it as substance, never left as a pointer.
+# A firstmate ruling made before the run starts is the one firstmate text the
+# string carries, verbatim after the captain's words on a line opening
+# `Ruled before validation:`, because nothing else review reads holds it and a
+# departure it settled would otherwise come back as a finding. That label keeps
+# the ruling apart from the captain's ask, so `## Captain's intent` never holds
+# it; firstmate opens a departure it rules in `## Firstmate spec` or a steer with
+# the same label. A lane that closes several tickets carries every ticket's
+# words in `## Captain's intent`, because each one is the captain's ask.
 # bin/fm-brief.sh scaffolds those two `# Task` subsections; bin/fm-spawn.sh and
 # bin/fm-promote.sh refuse leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders
 # and a `## Captain's intent` line opening with a Captain label or address
@@ -327,7 +336,7 @@ fm_brief_intent_overlay() {  # <captain-intent>
 
 # Current no-mistakes intent contract
 This section supersedes every earlier brief instruction about constructing `--intent`, but not later clarifications actually supplied by the captain.
-Use everything under `## Captain intent authorized for --intent` through the end of this brief, including any nested subheadings but excluding that heading, plus any later words the captain actually supplied as `--intent`; never include Firstmate specification or other mixed Task content.
+Use everything under `## Captain intent authorized for --intent` through the end of this brief, including any nested subheadings but excluding that heading, plus any later words the captain actually supplied as `--intent`; never include Firstmate specification or other mixed Task content, except the pre-run firstmate rulings the Definition of done tells you to pass on `Ruled before validation:` lines.
 Preserve those words without adding speaker labels or direct address.
 Firstmate-authored constraints, acceptance criteria, implementation details, decisions, and tradeoffs are specification, not captain intent.
 The Definition of done's rule that `--intent` must be self-sufficient still governs the string you pass: resolve any report, decision, or PR the intent below refers to into its substance rather than passing the pointer.
@@ -431,6 +440,7 @@ Preserve the actual words without adding speaker labels or direct address; the s
 For a legacy brief with no such subsection, include only words on lines marked \`[captain] \`, excluding that metadata prefix; never copy its mixed \`# Task\` wholesale.
 If it has no provenance-marked captain words, stop and ask firstmate instead of starting no-mistakes.
 Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your own decisions and tradeoffs.
+The one firstmate text that does go in is a ruling firstmate made before you start the run that settles what the change does, whether a reply to your decision or a \`## Firstmate spec\` or steer line firstmate opens with \`Ruled before validation:\`: pass each after the captain's words, verbatim, on its own line starting \`Ruled before validation: \`, so review reads the departure as already ruled instead of raising it.
 The \`--intent\` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.

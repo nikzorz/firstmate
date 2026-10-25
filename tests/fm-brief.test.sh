@@ -514,6 +514,8 @@ test_no_mistakes_dod_wording() {
     "no-mistakes DOD must keep Firstmate spec out of --intent"
   assert_grep "or your own decisions and tradeoffs" "$brief" \
     "no-mistakes DOD must keep worker tradeoffs out of --intent"
+  assert_grep "on its own line starting \`Ruled before validation: \`" "$brief" \
+    "no-mistakes DOD must carry firstmate's pre-run rulings into --intent on a labeled line"
   assert_grep "This replaces the no-mistakes skill's advice to enrich \`--intent\`" "$brief" \
     "no-mistakes DOD must override the external skill's enrich-with-decisions guidance"
   # A bare reference cannot preserve the captain's ask, so the rendered DOD states
