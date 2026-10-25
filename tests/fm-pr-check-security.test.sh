@@ -777,6 +777,41 @@ test_direct_pr_unpushed_commit_refuses_registration() {
   pass "fm-pr-check refuses a direct-PR registration while a later commit is only in the copy"
 }
 
+# A direct-PR lane switched to no-mistakes ships the head its pipeline pushed,
+# which this copy never fetched: registration and the done gate accept it from
+# the forge-reported head once the record says no-mistakes.
+test_switched_lane_accepts_the_pipeline_pushed_head() {
+  local dir pipeline_head url rc
+  dir=$(make_case remode-pipeline-head)
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    "window=firstmate:fm-task-a" "endpoint_task_id=task-a" "worktree=$dir/wt" \
+    "project=$dir/project" "kind=ship" "mode=direct-PR" "branch=fm/task-a"
+  mkdir -p "$dir/home/data/task-a"
+  printf '%s\n' '# Task' "## Captain's intent" 'Graduate the lane.' '' '## Firstmate spec' 'Run the pipeline.' '' \
+    '# Definition of done' 'Delivery contract: mode=direct-PR' > "$dir/home/data/task-a/brief.md"
+  git -C "$dir/wt" commit -q --allow-empty -m 'work the pipeline then fixed on its side'
+  pipeline_head=0123456789abcdef0123456789abcdef01234567
+  url=https://github.com/o/r/pull/7
+  FM_TEST_GH_HEAD=$pipeline_head run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" && fail "a direct-PR lane registered a head its copy never pushed"
+
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_DATA_OVERRIDE="$dir/home/data" \
+    "$ROOT/bin/fm-remode.sh" task-a --mode no-mistakes > "$dir/remode.out" 2>&1 \
+    || fail "the switch failed: $(cat "$dir/remode.out")"
+  FM_TEST_GH_HEAD=$pipeline_head run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "the switched lane's PR was refused: $(cat "$dir/stderr")"
+  grep -qxF "pr_head=$pipeline_head" "$dir/home/state/task-a.meta" || fail "the pipeline-pushed head was not recorded"
+  rc=0
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-dod-lib.sh"
+    fm_dod_accept_ship_done ship "$(fm_dod_meta_value "$dir/home/state/task-a.meta" mode)" "$dir/wt" "$dir/project" \
+      "done: PR $url checks green" "$dir/home/state" task-a "$dir/home/state/task-a.meta"
+  ) > "$dir/gate.out" || rc=$?
+  [ "$rc" -eq 0 ] || fail "the done gate refused the switched lane's green PR: $(cat "$dir/gate.out")"
+  pass "a lane switched to no-mistakes is accepted on its pipeline-pushed head without a fetch"
+}
+
 test_valid_recording_and_merge_derivation() {
   local dir expected sidecar count rc
   dir=$(make_case valid-recording)
@@ -3651,6 +3686,7 @@ test_draft_pull_request_is_not_armed
 test_secondmate_record_refuses_a_pr_watch
 test_unpushed_named_head_refuses_registration
 test_direct_pr_unpushed_commit_refuses_registration
+test_switched_lane_accepts_the_pipeline_pushed_head
 test_valid_recording_and_merge_derivation
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract

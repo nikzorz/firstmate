@@ -1,6 +1,6 @@
 ---
 name: validation-supervision
-description: Load when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change, finding, or red CI step, on a `check: coverage-park` wake, and before deciding or answering any ask-user finding.
+description: Load when a ship starts or already has an active no-mistakes validation run, or a direct-PR ship is about to start one, including a mid-run requirement change, finding, or red CI step, on a `check: coverage-park` wake, and before deciding or answering any ask-user finding.
 user-invocable: false
 metadata:
   internal: true
@@ -9,6 +9,7 @@ metadata:
 # Validation supervision
 
 For a no-mistakes ship, the worker starts validation itself right after its implementation commit; steer it to run /no-mistakes, using the harness invocation owned by `harness-adapters`, only when it sits idle after committing with no run started.
+Before a direct-PR ship runs /no-mistakes, such as a lane graduating to validation, switch it with `bin/fm-remode.sh` and send the contract it prints; a steer alone leaves the recorded mode, the worker's Definition of done, and the done gate on direct-PR.
 The task worker that starts a no-mistakes run drives the pipeline and owns every `no-mistakes axi run` and `no-mistakes axi respond` call through the next gate or outcome.
 Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 `bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.
