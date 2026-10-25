@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for the explicit per-task delivery contract (AGENTS.md section 7)
-# across bin/fm-spawn.sh, bin/fm-promote.sh, and bin/fm-project-mode.sh.
+# across bin/fm-spawn.sh, bin/fm-promote.sh, bin/fm-remode.sh, and
+# bin/fm-project-mode.sh.
 #
 # A ship task's delivery mode and yolo posture are firstmate's decision at intake,
 # so the tools refuse to guess: the spawn and a scout promotion require both flags,
@@ -20,6 +21,7 @@ set -u
 SPAWN="$ROOT/bin/fm-spawn.sh"
 BRIEF="$ROOT/bin/fm-brief.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
+REMODE="$ROOT/bin/fm-remode.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
 MERGE_LOCAL="$ROOT/bin/fm-merge-local.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
@@ -1793,6 +1795,104 @@ EOF
   pass "fm-project-mode: --branch-prefix resolves order-independently and defaults to the legacy fm/ prefix"
 }
 
+run_remode() {  # <home> <remode-args...>
+  local home=$1
+  shift
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" "$REMODE" "$@" 2>&1
+}
+
+# A direct-PR lane that graduates to the pipeline must change its recorded mode and
+# receive the full no-mistakes Definition of done, not a steer that says to run it.
+test_remode_switches_a_direct_pr_ship_to_no_mistakes() {
+  local rec home proj fakebin id meta out status instructions
+  rec=$(make_home remode)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  id=remode-r1
+  meta="$home/state/$id.meta"
+  fm_write_meta "$meta" "window=fm-$id" "worktree=/tmp/wt" "kind=ship" "mode=direct-PR" \
+    "yolo=off" "branch=fm/$id" "pr=https://github.com/o/r/pull/9" "pr_head=0123456789abcdef0123456789abcdef01234567"
+  write_brief "$home" "$id" direct-PR
+  out=$(run_remode "$home" "$id" --mode no-mistakes)
+  status=$?
+  expect_code 0 "$status" "switching a direct-PR ship should succeed"$'\n'"$out"
+  assert_grep 'mode=no-mistakes' "$meta" "the switch did not record mode=no-mistakes"
+  assert_no_grep 'mode=direct-PR' "$meta" "the switch left the direct-PR mode in the record"
+  assert_grep 'pr=https://github.com/o/r/pull/9' "$meta" "the switch dropped the recorded PR"
+  assert_no_grep 'pr_head=' "$meta" "the switch kept the head recorded under direct-PR"
+  assert_grep 'yolo=off' "$meta" "the switch changed the merge posture"
+  instructions="$home/data/$id/remode-instructions.md"
+  assert_grep 'Delivery contract: mode=no-mistakes' "$instructions" "the contract is not the no-mistakes one"
+  assert_grep 'same theme fixed again' "$instructions" "the contract lacks the same-theme cutoff"
+  assert_grep 'ask-user findings are never yours to answer' "$instructions" "the contract lacks the ask-user rule"
+  # shellcheck disable=SC2016  # literal backticks in rendered prose must stay unexpanded
+  assert_grep 'pass `--instructions` only for scope' "$instructions" "the contract lacks the scope-only instructions rule"
+  assert_grep 'nm-<run>-findings.txt' "$instructions" "the contract lacks the ask-user escalation shape"
+  assert_grep 'Exercise the delivery contract.' "$instructions" "the contract does not carry the captain intent for --intent"
+  [ "$(sed -n 's/^Delivery contract: mode=//p' "$home/data/$id/brief.md" | tail -n 1)" = no-mistakes ] \
+    || fail "the brief's current contract line is not no-mistakes"
+  assert_grep 'same theme fixed again' "$home/data/$id/brief.md" "the brief does not keep the no-mistakes contract for a relaunch"
+  assert_contains "$out" "bin/fm-send.sh fm-$id" "the switch did not print the delivery command"
+
+  out=$(run_remode "$home" "$id" --mode no-mistakes)
+  status=$?
+  [ "$status" -ne 0 ] || fail "switching an already no-mistakes ship should be refused"
+  assert_contains "$out" "is mode=no-mistakes" "the repeat refusal did not name the current mode"
+  pass "fm-remode: a direct-PR ship switches to no-mistakes with the full Definition of done"
+}
+
+test_remode_refuses_what_it_does_not_switch() {
+  local rec home proj fakebin out status
+  rec=$(make_home remode-refuse)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  fm_write_meta "$home/state/remode-scout.meta" "window=fm-remode-scout" "kind=scout"
+  write_brief "$home" remode-scout
+  out=$(run_remode "$home" remode-scout --mode no-mistakes)
+  status=$?
+  [ "$status" -ne 0 ] || fail "switching a scout should be refused"
+  assert_contains "$out" "not a ship task" "the scout refusal did not explain itself"
+  assert_grep 'kind=scout' "$home/state/remode-scout.meta" "a refused switch changed the scout record"
+
+  fm_write_meta "$home/state/remode-local.meta" "window=fm-remode-local" "kind=ship" "mode=local-only"
+  write_brief "$home" remode-local local-only
+  out=$(run_remode "$home" remode-local --mode no-mistakes)
+  status=$?
+  [ "$status" -ne 0 ] || fail "switching a local-only ship should be refused"
+  assert_grep 'mode=local-only' "$home/state/remode-local.meta" "a refused switch changed the local-only record"
+  assert_absent "$home/data/remode-local/remode-instructions.md" "a refused switch wrote instructions"
+
+  fm_write_meta "$home/state/remode-to-pr.meta" "window=fm-remode-to-pr" "kind=ship" "mode=direct-PR"
+  write_brief "$home" remode-to-pr direct-PR
+  out=$(run_remode "$home" remode-to-pr --mode local-only)
+  status=$?
+  [ "$status" -ne 0 ] || fail "switching to local-only should be refused"
+  assert_grep 'mode=direct-PR' "$home/state/remode-to-pr.meta" "a refused target mode changed the record"
+  pass "fm-remode: scouts, non-direct-PR ships, and other target modes are refused"
+}
+
+# A relaunch passes the recorded mode, so the brief's appended contract must win
+# over the scaffold's original direct-PR line.
+test_spawn_accepts_the_switched_contract() {
+  local rec home proj fakebin out
+  rec=$(make_home remode-spawn)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  fm_write_meta "$home/state/remode-src.meta" "window=fm-remode-src" "kind=ship" "mode=direct-PR"
+  write_brief "$home" remode-src direct-PR
+  run_remode "$home" remode-src --mode no-mistakes >/dev/null || fail "the fixture switch failed"
+  mkdir -p "$home/data/remode-spawn-s1"
+  sed 's#fm/remode-src#fm/remode-spawn-s1#g' "$home/data/remode-src/brief.md" > "$home/data/remode-spawn-s1/brief.md"
+  out=$(run_spawn "$home" "$fakebin" remode-spawn-s1 "$proj" claude --mode no-mistakes --yolo off)
+  assert_not_contains "$out" "mismatch" "the switched contract was read as the original direct-PR one"
+  out=$(run_spawn "$home" "$fakebin" remode-spawn-s1 "$proj" claude --mode direct-PR --yolo off)
+  assert_contains "$out" "the brief says mode=no-mistakes" "a spawn ignored the switched contract"
+  pass "fm-spawn: a switched brief's current contract decides its delivery mode"
+}
+
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
@@ -1822,4 +1922,7 @@ test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
 test_spawn_launches_a_prefilled_brief_on_the_current_scaffold
 test_spawn_keeps_an_edited_scaffold_section_with_a_warning
+test_remode_switches_a_direct_pr_ship_to_no_mistakes
+test_remode_refuses_what_it_does_not_switch
+test_spawn_accepts_the_switched_contract
 echo "# all fm-task-delivery tests passed"

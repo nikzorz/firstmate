@@ -3432,8 +3432,9 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
   fi
 fi
-# Only a ship scaffold carries `# Project memory`; a promotion appends its own
-# delivery contract, which must not be replaced by an ordinary ship scaffold.
+# Only a ship scaffold carries `# Project memory`; a promotion or a mode switch
+# appends its own delivery contract, which must not be replaced by an ordinary
+# ship scaffold.
 spawn_brief_is_ship_scaffold() {  # <brief>
   fm_brief_heading_present "$1" "# Project memory" &&
     ! fm_brief_heading_present "$1" "# Current delivery mode contract"
@@ -3683,8 +3684,10 @@ if [ "$KIND" = ship ]; then
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
-  BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  BRIEF_FORGE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]forge=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  # The last contract line is the current one: bin/fm-remode.sh appends a
+  # superseding contract after the scaffold's.
+  BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | tail -n 1)
+  BRIEF_FORGE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]forge=\([^ ]*\).*$/\1/p' "$BRIEF" | tail -n 1)
   [ -n "$BRIEF_FORGE" ] || BRIEF_FORGE=none
   BRIEF_BRANCH=$(sed -n 's/^Ship branch: //p' "$BRIEF" | head -n 1)
   if [ -n "$BRIEF_BRANCH" ]; then
@@ -3715,7 +3718,7 @@ if [ "$KIND" = ship ]; then
   # as an upstream-consent= token on that same line; like mode and forge, the
   # brief and the spawn flag must agree so the worker's contract and the task
   # record carry the same authority.
-  BRIEF_CONSENT=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]upstream-consent=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  BRIEF_CONSENT=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]upstream-consent=\([^ ]*\).*$/\1/p' "$BRIEF" | tail -n 1)
   if [ "$BRIEF_CONSENT" != "$UPSTREAM_CONSENT" ]; then
     echo "error: upstream-consent mismatch for $ID: $BRIEF records upstream-consent=${BRIEF_CONSENT:-none} but this spawn passed ${UPSTREAM_CONSENT:-none}; correct the flag or re-scaffold the brief so the worker's contract and the task record agree" >&2
     exit 1

@@ -251,7 +251,7 @@ After an autonomous merge, give the captain a one-line full-URL or local-main ou
 
 ### Validate
 
-Load `validation-supervision` when a ship starts or already has an active no-mistakes validation run, including a mid-run requirement change or finding, and on a `check: coverage-park` wake.
+Load `validation-supervision` when a ship starts or already has an active no-mistakes validation run, or a direct-PR ship is about to start one, including a mid-run requirement change or finding, and on a `check: coverage-park` wake.
 
 ### PR ready, landing, and teardown
 
