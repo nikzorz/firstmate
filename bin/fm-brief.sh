@@ -783,7 +783,7 @@ $WAIT_BLOCK$WORKER_INBOX_SECTION
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
-A ticket you propose or file states as Done-when only what you traced to the code that makes it reachable. A criterion you could not check from the code, because it needs a run your instructions forbid or a path you did not read, says \`unverified:\` and names the run that would settle it.
+A ticket you propose or file states as fact only what you traced to the code: its Done-when (to the code that makes it reachable), and any count, list, or classification it gives. A claim you could not check from the code, because it needs a run your instructions forbid or a path you did not read, says \`unverified:\` and names the run that would settle it.
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
