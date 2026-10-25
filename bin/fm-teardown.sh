@@ -44,7 +44,10 @@
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
+# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR from the
+# same-named branch on the fork that `no-mistakes status` reports for the project
+# (a gate initialized with --fork-url pushes there by URL, leaving no
+# remote-tracking ref behind), OR - for a
 # normal ship task whose commits are not so reachable - when its PR is merged and
 # GitHub reports a PR head that contains the current local work, or its content is
 # already present in the up-to-date default branch. This recognizes the common
@@ -1893,6 +1896,31 @@ work_is_landed() {
   content_in_default
 }
 
+# Is HEAD contained in branch $1 on the fork no-mistakes pushes this project's
+# branches to? The gate pushes to its --fork-url by URL, so the fork branch has no
+# remote-tracking ref for the reachability test to see. The fork is the single
+# `fork:` line of `no-mistakes status`, and the gate pushes under the ship
+# branch's own name. No recorded fork, an unreadable fork, or no such branch there
+# is false, leaving the decision to the remaining landed-work tests.
+head_is_on_recorded_fork() {
+  local branch=$1 status fork_url tip current
+  case "$branch" in ''|HEAD) return 1 ;; esac
+  command -v no-mistakes >/dev/null 2>&1 || return 1
+  status=$(fm_nm_run_checked "$WT" "$NM_TEARDOWN_TIMEOUT" status) || return 1
+  fork_url=$(printf '%s\n' "$status" | sed -n 's/^[[:space:]]*fork:[[:space:]]*//p')
+  fork_url=$(fm_nm_trim "$fork_url")
+  case "$fork_url" in ''|*$'\n'*) return 1 ;; esac
+  tip=$(GIT_TERMINAL_PROMPT=0 git -C "$WT" ls-remote "$fork_url" "refs/heads/$branch" 2>/dev/null \
+    | awk -v ref="refs/heads/$branch" '$2 == ref { print $1 }') || return 1
+  case "$tip" in ''|*$'\n'*) return 1 ;; esac
+  if ! git -C "$WT" cat-file -e "$tip^{commit}" 2>/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git -C "$WT" fetch --quiet --no-tags --no-write-fetch-head \
+      "$fork_url" "refs/heads/$branch" >/dev/null 2>&1 || return 1
+  fi
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  git -C "$WT" merge-base --is-ancestor "$current" "$tip" 2>/dev/null
+}
+
 # The completion links this teardown already holds locally. A scout's
 # deliverable is its report, a local-only ship lands on local main, and every
 # other ship carries the PR recorded on its own record.
@@ -2589,7 +2617,7 @@ validate_worktree_teardown_safety() {
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
-    if ! work_is_landed "$branch"; then
+    if ! head_is_on_recorded_fork "$branch" && ! work_is_landed "$branch"; then
       echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
       printf 'unpushed commits:\n%s\n' "$unpushed" >&2
       echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
