@@ -265,12 +265,19 @@ def header_path(field, prefix):
 def changed_lines(diff_text):
     removed, added = collections.defaultdict(set), collections.defaultdict(set)
     old = new = None
+    # Under -U0 a removed "-- " comment or an added "++ " line looks like a
+    # header, so ---/+++ are headers only before a file's first hunk.
+    in_header = False
     for line in diff_text.split("\n"):
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            old = new = None
+            in_header = True
+        elif in_header and line.startswith("--- "):
             old = header_path(line[4:], "a/")
-        elif line.startswith("+++ "):
+        elif in_header and line.startswith("+++ "):
             new = header_path(line[4:], "b/")
         elif line.startswith("@@"):
+            in_header = False
             hunk = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
             if not hunk:
                 continue
