@@ -41,7 +41,7 @@ test_ack_moves_into_handled_and_reissued_numbers_stay_unique() {
   inbox="$state/t1.inbox"
   write_steer "$state" t1 one
   write_steer "$state" t1 two
-  out=$(FM_TASK_INBOX="$inbox" bash "$STEER" ack 1 002.msg 2>&1) || fail "ack failed: $out"
+  out=$(FM_TASK_INBOX="$inbox" bash "$STEER" ack 1 002 2>&1) || fail "ack failed: $out"
   assert_contains "$out" "acknowledged 001.msg" "first ack"
   assert_contains "$out" "acknowledged 002.msg" "second ack"
   [ -f "$inbox/handled/001.msg" ] && [ -f "$inbox/handled/002.msg" ] || fail "ack did not move into handled/"
@@ -68,6 +68,10 @@ test_absent_inbox_and_usage() {
   expect_code 2 "$rc" "ack without numbers"
   rc=0; out=$(bash "$STEER" ack --inbox "$TMP_ROOT/none" abc 2>&1) || rc=$?
   expect_code 2 "$rc" "ack of a non-number"
+  rc=0; out=$(bash "$STEER" ack --inbox "$TMP_ROOT/none" 001.msg 2>&1) || rc=$?
+  expect_code 2 "$rc" "ack of a .msg file name"
+  rc=0; out=$(bash "$STEER" ack --inbox "$TMP_ROOT/none" handled/001 2>&1) || rc=$?
+  expect_code 2 "$rc" "ack of a path"
   rc=0; out=$(bash "$STEER" send --inbox "$TMP_ROOT/none" 2>&1) || rc=$?
   expect_code 2 "$rc" "an unknown command"
   pass "fm-steer: an absent inbox reads empty, and malformed calls exit 2"

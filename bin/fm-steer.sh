@@ -17,7 +17,8 @@
 # a message read but not yet acted on still rings again. An empty or absent
 # inbox prints "no unread messages".
 # ack moves each named message into handled/, which is the acknowledgement.
-# <NNN> may be written 7, 007, or 007.msg. A message already in handled/ is
+# <NNN> is digits only and compared numerically, so 7 and 007 name the same
+# message; a .msg suffix or a path is refused. A message already in handled/ is
 # reported and not an error; one found nowhere is an error, after the others
 # are still acknowledged.
 #
@@ -105,15 +106,12 @@ fi
 
 [ "${#SEQS[@]}" -gt 0 ] || die_usage "ack needs at least one message number"
 for s in "${SEQS[@]}"; do
-  s=${s##*/}
-  s=${s%.msg}
   case "$s" in ''|*[!0-9]*) die_usage "'$s' is not a message number" ;; esac
 done
 
 rc=0
 for s in "${SEQS[@]}"; do
-  s=${s##*/}
-  want=$((10#${s%.msg}))
+  want=$((10#$s))
   found=
   for f in "$INBOX"/*.msg; do
     [ -f "$f" ] || continue
