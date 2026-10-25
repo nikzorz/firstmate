@@ -147,10 +147,13 @@
 #   - `done` rows are never listed. Retained completion history belongs to the
 #     reporting surfaces (bin/fm-bearings-snapshot.sh, /ahoy), and at startup it
 #     is pure weight - 10 done rows cost 3.3KB in an observed main-home digest.
-#   - Every in-flight, held, and blocked ROW is listed, with its hold_kind,
-#     hold_until, hold_reason, and blocked_by. Those are the rows AGENTS.md
-#     sections 7 and 10 make actionable at startup, so no row is ever bounded
-#     away.
+#   - Every in-flight ROW is listed in full, with its hold_kind, hold_until,
+#     hold_reason, and blocked_by, so no in-flight row is ever bounded away.
+#   - The held group and the blocked queued group each print a count plus
+#     every item id, never full rows, and one line naming the commands that
+#     print a full row or the whole group. Most such items wait on a date or a
+#     standing do-not-re-raise ruling, so their full rows were the bulk of the
+#     digest while rarely acting this turn; no id is ever bounded away.
 #   - The hold_reason TEXT of a listed row is bounded, by
 #     FM_SESSION_START_HOLD_REASON_LIMIT characters, default 200. A longer
 #     reason is cut there and closed with the marker tasks-axi gives a long
@@ -162,6 +165,8 @@
 #     deep queue costs a counter rather than kilobytes.
 #     (This replaces FM_SESSION_START_BACKLOG_LIMIT, which bounded the whole
 #     listing indiscriminately and so could drop a held or blocked row.)
+#     The manual-backend path below still prints held and blocked title lines
+#     in full.
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
@@ -577,6 +582,22 @@ print_ready_queued_bounded() {
   '
 }
 
+# print_group_ids <tasks-axi list output>: the group's row count and its ids,
+# the first field of each indented row.
+print_group_ids() {
+  printf '%s\n' "$1" | awk '
+    /^help\[/ { exit }
+    /^tasks\[/ { rows = 1; next }
+    rows && /^[[:space:]]/ {
+      sub(/^[[:space:]]+/, ""); sub(/,.*/, "")
+      ids = ids (n++ ? " " : "") $0
+      next
+    }
+    { rows = 0 }
+    END { printf "%d item(s)%s\n", n, (n ? ": " ids : "") }
+  '
+}
+
 print_backlog_tasks_axi_compact() {
   local path=$1 in_flight held blocked ready err
   if ! in_flight=$(tasks-axi list --file "$path" --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
@@ -588,14 +609,15 @@ print_backlog_tasks_axi_compact() {
   elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown; hold reasons bounded to %s chars; ready queued bounded to %s; task bodies omitted)\n' \
+    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight row shown; held and blocked queued as counts and ids; hold reasons bounded to %s chars; ready queued bounded to %s; task bodies omitted)\n' \
       "$HOLD_REASON_LIMIT" "$QUEUED_LIMIT"
     printf '\nin flight:\n'
     printf '%s\n' "$in_flight" | fm_hold_reason_decode_stream | bound_hold_reasons | strip_axi_help
     printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | fm_hold_reason_decode_stream | bound_hold_reasons | strip_axi_help
+    print_group_ids "$held"
     printf '\nblocked queued:\n'
-    printf '%s\n' "$blocked" | fm_hold_reason_decode_stream | bound_hold_reasons | strip_axi_help
+    print_group_ids "$blocked"
+    printf '(full row: bin/fm-tasks-axi.sh show <id> --full; whole group: bin/fm-tasks-axi.sh list --state held, or list --state queued --blocked)\n'
     printf '\nready queued (dispatchable now):\n'
     print_ready_queued_bounded "$ready"
     return 0
