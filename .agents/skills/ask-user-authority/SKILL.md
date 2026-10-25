@@ -35,14 +35,20 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    Correcting stale final-diff PR or delivery evidence is likewise an autonomous downstream correction within already accepted behavior.
 3. Decide whether the finding blocks the change.
    It blocks when the change would be wrong without it: it breaks an accepted requirement, a test, or behavior the change promised, or it is security-sensitive.
+   Judge "breaks a test" against the merge ref too: a finding a check on main, or on a PR firstmate holds green to merge, fails on blocks, even when the branch's own run is green.
    A finding that only improves the change does not block: a simplification, an edge case of a heuristic the change openly is (including a heuristic the brief or the captain's intent asks for), or a hardening or Fix that would materially expand the contract (a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture) the accepted intent did not include.
 4. File a non-blocking finding instead of fixing it, without asking the captain.
    Open one follow-up issue in the project's repo with `gh-axi`, carrying the finding verbatim, the PR, and the smallest change that would address it; when the project takes no issues, add a backlog item instead.
    The gate answer leaves the finding unfixed with that issue as the reason, and the worker links the issue from the PR body before it reports the PR ready.
    While the captain is away, the away-posture supervision branch does not file: it records the follow-up text in its outcome for the return brief, answers the gate leaving the finding unfixed with that recorded follow-up as the reason, and firstmate files the issue on return.
 5. Fix a blocking finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
+   Neither restoring behavior a fix round broke nor completing an already-approved design covers a finding on a theme an earlier round of the same run already fixed; that follows the same-theme cutoff in `validation-supervision`, even when the finding completes a captain's ruling.
+   A ruling whose fix would revert the change to its base or replace it with different work is never a Fix: it invalidates the work as `validation-supervision` describes.
+   A Fix ruling never says change nothing else.
+   It says: change nothing outside the property, except the smallest adjacent edits a named change needs to keep the project's checks green; name each in the fix summary; and if no green form exists, leave the finding unresolved and say why.
    When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names, such as every script a power fight runs) and tell the fix round to derive the members from the code and name that derivation in the check.
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
+   A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
    A finding's remedy and its example are one case of the property, never the property.
    Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
    Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison.

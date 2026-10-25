@@ -610,6 +610,57 @@ test_no_mistakes_dod_reports_stale_intent() {
   pass "fm-brief.sh: no-mistakes DOD stops at the gate to report a stale intent"
 }
 
+# A fix round that reverts the whole change leaves nothing to review, and the
+# pipeline then re-presents the old findings as if re-found. The no-mistakes DOD
+# must stop the worker at that gate under a key the watcher binds to the run.
+test_no_mistakes_dod_reports_empty_diff() {
+  local home id brief template line status other_id
+  home="$TMP_ROOT/empty-diff-home"
+  mkdir -p "$home/data" "$home/state"
+  id="brief-empty-diff-s1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "When a fix round leaves the run's head with an empty diff against its base, do not respond at the next gate" "$brief" \
+    "no-mistakes DOD lost the empty-diff stop"
+
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  template=$(grep -o '`needs-decision [^`]*key=nm-<run>-empty[^`]*`' "$brief" | tr -d '`')
+  [ -n "$template" ] || fail "no-mistakes DOD renders no empty-diff status line"
+  line=${template//<epoch>/$(date +%s)}
+  line=${line//<run>/run42}
+  line=$(printf '%s' "$line" | sed 's/<[^>]*>/2/g')
+  status="$home/state/$id.status"
+  printf '%s\n' "$line" > "$status"
+  bash -c '. "$1"; status_has_open_needs_decision "$2" run42' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$status" \
+    || fail "the empty-diff report does not bind to its run as an open decision"
+
+  other_id="brief-empty-diff-direct-pr-s2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other_id" some-proj --mode direct-PR >/dev/null 2>&1
+  assert_no_grep "key=nm-<run>-empty" "$home/data/$other_id/brief.md" \
+    "a direct-PR brief received the no-mistakes-only empty-diff rule"
+  pass "fm-brief.sh: no-mistakes DOD stops at the gate after a fix round empties the diff"
+}
+
+# A worker that rewords a ruling it relays can drop the clause that carried the
+# ruling's property, so the no-mistakes DOD must have it pass the body verbatim.
+test_no_mistakes_dod_relays_ruling_verbatim() {
+  local home id brief
+  home="$TMP_ROOT/relay-verbatim-home"
+  mkdir -p "$home/data" "$home/state"
+  id="brief-relay-verbatim-s1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "passing the ruling message's body verbatim as \`--instructions\` whenever it answers fix" "$brief" \
+    "no-mistakes DOD lets the worker reword a relayed ruling"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the command must stay literal
+  assert_grep '--instructions "$(sed '"'"'1,/^--$/d'"'"' <the ruling'"'"'s message file in your steering inbox>)"' "$brief" \
+    "no-mistakes DOD does not show how to pass the ruling body"
+  pass "fm-brief.sh: no-mistakes DOD relays a fix ruling's body verbatim"
+}
+
 # A gate cuts each finding's description short, so a worker answering from the
 # gate alone can narrow a proposed fix it never read. The no-mistakes DOD must
 # hand the worker a reader that runs from its project worktree, and forbid fix
@@ -1985,6 +2036,8 @@ test_no_mistakes_dod_green_detection
 test_no_mistakes_dod_preserves_before_abort
 test_pr_based_dod_requires_non_draft
 test_no_mistakes_dod_reports_stale_intent
+test_no_mistakes_dod_reports_empty_diff
+test_no_mistakes_dod_relays_ruling_verbatim
 test_no_mistakes_dod_reads_findings_whole_and_never_narrows_a_fix
 test_no_mistakes_dod_stops_same_theme_repeat
 test_ask_user_escalation_format

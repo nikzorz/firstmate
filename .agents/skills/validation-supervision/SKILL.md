@@ -14,12 +14,14 @@ Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 `bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.
 Once validation starts, prefer routing new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated; however, the smallest downstream changes needed to keep already accepted product or engineering behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within the current task even when they touch files not named at intake, and corrections required to satisfy already accepted intent are not new requirements.
 
-Only a current, explicit captain instruction that completely invalidates the work being validated keeps the task with the same worker instead of routing it to follow-up work or handing it to a replacement.
+Only a current, explicit captain instruction, or a ruling of the kind this paragraph ends with, that completely invalidates the work being validated keeps the task with the same worker instead of routing it to follow-up work or handing it to a replacement.
 That worker cancels the active run through no-mistakes axi's supported abort command and confirms through axi status that the run has stopped before changing any code.
 The worker then follows `branch_sync.next_action` from structured axi status: use axi sync's supported guarded recovery only when its code is `recover_custody`, and otherwise proceed only when structured status confirms that branch ownership is already returned and no recovery is required.
 Custody recovery settles branch ownership, not content: the worker must replace the obsolete work from the correct pre-invalidation base rather than building on top of the recovered-but-obsolete head, keeping the obsolete run's own pipeline-fix commits out of what gets validated and shipped.
 Apart from that single supported abort, do not hand-edit, commit, restart, or start a second validation run while the obsolete run still owns the branch.
 Once ownership is settled, validate exactly once against that final head so no obsolete or intermediate head is ever treated as authoritative.
+A ruling, firstmate's or the captain's, whose fix would revert the change to its base or replace it with different work invalidates the work the same way: it never goes to a fix round.
+The worker preserves the run head, aborts, rebuilds from the base branch rather than the recovered head, and starts one fresh run whose `--intent` carries the ruling's captain words.
 
 An ask-user finding returns as `needs-decision`; firstmate loads `ask-user-authority` and either decides or escalates per that skill.
 Send the same worker one exact decision naming the decision key, step, action, affected finding IDs, instructions where needed, and exact response command, passing `--resolve-key` so the worker's open decision record closes at answer time.
@@ -31,6 +33,8 @@ A validation run fixes each theme once.
 A theme is one root cause in one piece of code, such as the input cases of one heuristic, however many lines or files its findings name.
 When a run returns a finding on a theme already fixed in an earlier round of that run, stop fixing that theme: file the theme as one follow-up issue naming every round's finding on it, have the worker record it as a stated limitation in the PR body, and answer the gate leaving those findings unfixed so the run continues.
 A finding on that theme that blocks the change, as `ask-user-authority` defines blocking, escalates to the captain under that skill's step 6 instead of another fix round.
+The cutoff holds for a regression an earlier fix round introduced and for a finding that would complete a captain's ruling.
+A captain's ruling on a theme does not reopen it: the next repeat goes back to the captain with the derived fix, the limitation, and the rounds already spent.
 While the captain is away, the filing waits for the return as `ask-user-authority` step 4 says.
 Apply the cutoff at every gate firstmate answers.
 The worker stops at a same-theme repeat or a non-blocking finding in rounds it drives itself and escalates it as `needs-decision` under the contract `bin/fm-dod-lib.sh` owns, so firstmate applies this cutoff there too.

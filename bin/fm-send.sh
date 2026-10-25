@@ -174,6 +174,15 @@
 # (a remote mate's escalations reach it through the parent-replies ingest);
 # only the answer message crosses the backend or remote transport.
 #
+# A pipeline-gate answer (a key matching nm-*) that rules any finding fix must
+# carry a line beginning `Property:`, the set the fix must hold, whose members
+# the fix round derives from the code; one without it refuses before sending,
+# naming ask-user-authority step 5, because a ruling that pastes a finding's
+# list as a closed edit set leaves a member the list missed no legitimate
+# outcome. A message rules fix when the word fix stands alone in it outside
+# the phrase "fix round"; a message that only mentions a fix may carry a
+# Property: line saying it rules none.
+#
 # Answering a decision is the gate-answer path and is main-owned while
 # attended: when any named key is an open needs-decision or a captain-held task
 # (a blocked: key is ordinary steering and stays lease-guarded only), the Pi
@@ -639,6 +648,14 @@ if [ -n "$RESOLVE_KEYS" ]; then
     echo "error: --resolve-key requires a nonempty answer message" >&2
     exit 1
   fi
+  for k in $RESOLVE_KEYS; do
+    case "$k" in nm-*) ;; *) continue ;; esac
+    printf '%s' "$*" | sed -E 's/[Ff][Ii][Xx] [Rr][Oo][Uu][Nn][Dd][Ss]?//g' \
+      | grep -Eiq '(^|[^[:alnum:]_-])fix([^[:alnum:]_-]|$)' || continue
+    printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' && continue
+    echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5). Nothing was sent." >&2
+    exit 1
+  done
   RESOLVE_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
   RESOLVE_STATUS_FILE="$STATE/$RESOLVE_TASK_ID.status"
   resolve_open_set=$(status_open_decisions "$RESOLVE_STATUS_FILE")
