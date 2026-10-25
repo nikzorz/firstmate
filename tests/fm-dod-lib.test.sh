@@ -654,6 +654,30 @@ test_external_review_done_with_backup_needs_the_copy() {
   pass "external review done with a backup: refused until HEAD is under refs/remotes/backup/backup/, then accepted"
 }
 
+# Every ship delivery runs the restatement sweep on committed work before the
+# step that validates, publishes, or reports it.
+test_every_ship_dod_sweeps_before_delivery() {
+  local combo mode forge base dod sweep_at deliver_at
+  for combo in no-mistakes:none: no-mistakes:forgejo: no-mistakes:gerrit: direct-PR:none: direct-PR:forgejo: \
+    direct-PR:gerrit: direct-PR:external: local-only:none: no-mistakes:none:rel/1.0 direct-PR:none:rel/1.0; do
+    IFS=: read -r mode forge base <<<"$combo"
+    dod=$(CONFIG=$EXT_CFG fm_dod_block "$mode" t1 fm/t1 "$forge" "$base") || fail "$combo DoD did not render"
+    assert_contains "$dod" "$ROOT/bin/fm-restatement-sweep.sh" "$combo DoD lacks the restatement sweep"
+    if [ -n "$base" ]; then
+      assert_contains "$dod" "fm-restatement-sweep.sh --base origin/$base\`" "$combo DoD does not sweep against its base branch"
+    else
+      assert_contains "$dod" "fm-restatement-sweep.sh\`" "$combo DoD passes a base it was not given"
+    fi
+    sweep_at=$(printf '%s\n' "$dod" | grep -n -m1 'fm-restatement-sweep.sh' | cut -d: -f1)
+    deliver_at=$(printf '%s\n' "$dod" | grep -n -m1 -e 'run /no-mistakes yourself' -e 'push your branch and open a PR' \
+      -e 'Follow the review tool instructions' -e 'append `done' -e 'publish it' | cut -d: -f1)
+    [ -n "$deliver_at" ] && [ "$sweep_at" -lt "$deliver_at" ] \
+      || fail "$combo DoD does not sweep before delivery (sweep line $sweep_at, delivery line ${deliver_at:-none})"
+  done
+  pass "every ship delivery mode runs the restatement sweep before it validates, publishes, or reports"
+}
+
+test_every_ship_dod_sweeps_before_delivery
 test_external_forge_is_direct_pr_only
 test_external_rule_one_forbids_every_task_push
 test_external_dod_renders_the_adapter

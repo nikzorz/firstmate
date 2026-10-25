@@ -491,9 +491,27 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
+# The worker step that runs bin/fm-restatement-sweep.sh on committed work
+# before any delivery, so a sentence elsewhere still restating a rule the
+# change moved or retired reaches its author rather than the reviewer.
+fm_restatement_sweep_step() {  # [<base-branch>]
+  local base=${1:-} sweep base_q
+  sweep="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-restatement-sweep.sh"
+  if [ -n "$base" ]; then
+    printf -v base_q '%q' "origin/$base"
+    sweep="$sweep --base $base_q"
+  fi
+  cat <<EOF
+Before you validate, publish, or report the work, run \`$sweep\` in this worktree on your committed work.
+It lists sentences elsewhere in the repository that resemble one your diff added or removed, so a stale copy of a rule you changed surfaces before review does.
+Read each listed sentence: where it restates a rule your change moved, widened, narrowed, or retired, correct it or replace it with a one-line pointer to where the rule is stated in full, commit, and run the sweep again; a pointer, a deliberate one-line reinforcement at a risk point, or an unrelated sentence needs no change.
+If it exits nonzero, fix what its error names and run it again.
+EOF
+}
+
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
-  local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
+  local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter sweep_step
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   if [ -n "$consent" ]; then
@@ -509,6 +527,7 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
     forge_cli=tea
     draft_check="(\`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>\` must show \`draft\` as false, where <owner>/<repo> and <number> come from your PR URL); Forgejo marks a draft by a work-in-progress title prefix such as \`WIP:\`, so if it is a draft, remove that prefix with \`tea pulls edit <number> --repo <owner>/<repo> --title '<title without the prefix>'\`."
   fi
+  sweep_step=$(fm_restatement_sweep_step "$base")
   if [ -n "$base" ]; then
     printf -v base_q '%q' "$base"
     pr_base=", against the base branch \`$base\` (\`--base $base_q\`), not the repository default"
@@ -524,6 +543,7 @@ Ship branch: $branch
 This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, without the no-mistakes pipeline.
 Gerrit has no pull requests, so there is nothing to open; publishing creates the change.
 The task is complete only when committed on your branch.
+$sweep_step
 When it is implemented and committed, publish it.
 EOF
       fm_gerrit_publish_block
@@ -540,6 +560,7 @@ This project's review server is Gerrit: it has no pull requests and no forge CI 
 Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
 The task is complete only when committed on your branch.
+$sweep_step
 As soon as your implementation is committed, run /no-mistakes yourself to validate it; do not report \`done:\` or wait for firstmate to start the run.
 Publish only after the run passes, as described below.
 
@@ -571,6 +592,7 @@ Delivery contract: mode=direct-PR forge=external$contract_consent
 Ship branch: $branch
 This task ships **direct-PR** through an external review tool: the tool uploads a snapshot of your local commits itself, so you never push a branch to publish, and there is no pull request to open.
 The task is complete only when committed on your branch.
+$sweep_step
 EOF
       if [ -n "$FM_REVIEW_BACKUP_REMOTE" ]; then
         printf '%s\n' "Before uploading, push a durable copy to the backup remote as your first rule names; your done is accepted only when that copy holds your HEAD."
@@ -599,6 +621,7 @@ Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+$sweep_step
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
 If this task owns an issue, the PR body must close it, and the form is exact: the forge acts only when a closing keyword immediately precedes the reference.
 Write one \`Closes #{issue}\` line per issue.
@@ -619,6 +642,7 @@ Delivery contract: mode=local-only
 Ship branch: $branch
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`$branch\`. Do NOT push, do NOT open a PR, do NOT merge.
+$sweep_step
 A \`done:\` is accepted when the named head is on this project's shared local branch, not only on a detached copy; the check tests that head, not merely that a branch moved.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
@@ -631,6 +655,7 @@ EOF
 Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 The task is complete only when committed on your branch.
+$sweep_step
 As soon as your implementation is committed, run /no-mistakes yourself to validate and ship a PR; do not report \`done:\` or wait for firstmate to start the run.
 The pipeline owns the push; never push from this copy.
 Your only \`done:\` is the checks-green PR report below.

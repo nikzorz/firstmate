@@ -44,7 +44,8 @@ Every contract - a data format, a state machine, a decision procedure - is state
 Every other mention of it is a one-line cross-reference, never a restatement.
 A single deliberate one-line reinforcement at a genuine risk point is allowed, for example a "don't forget X" placed exactly where forgetting X is costly.
 Restating the contract's substance a second time is not allowed: the two copies will drift the moment only one is edited.
-When you touch a contract, patch, replace, or prune the owner's existing language rather than appending a new clause or paragraph wherever possible, then grep the repo for its other mentions and update the cross-references, not duplicate the change into a second full copy.
+When you touch a contract, patch, replace, or prune the owner's existing language rather than appending a new clause or paragraph wherever possible, then find its other mentions and update the cross-references, not duplicate the change into a second full copy.
+`bin/fm-restatement-sweep.sh` lists the sentences that resemble ones your committed branch changed, and every ship brief runs it before delivery; its matching is lexical, so grep for the contract's own names as well.
 When a replacement retires existing rule text, list each case the old text decided and point to where the new text decides it; a case it no longer decides is dropped only on purpose, named in the commit or PR.
 
 ## Inline-stub pattern
