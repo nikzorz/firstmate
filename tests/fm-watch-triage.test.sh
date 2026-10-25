@@ -27,16 +27,52 @@ DRAIN="$ROOT/bin/fm-wake-drain.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-tests)
 
+# A failed acknowledgement prints what the drain saw before the caller's fail
+# line: a CI-only failure here is otherwise unreproducible and leaves no trace.
+print_stopped_cycle_evidence() {  # <state> <step> <status> [drain-stdout drain-stderr]
+  local state=$1 lock pid
+  {
+    printf '# stopped-cycle %s exited %s\n' "$2" "$3"
+    if [ "$#" -ge 5 ]; then
+      printf '# drain stdout:\n'; sed 's/^/#   /' "$4" 2>/dev/null
+      printf '# drain stderr:\n'; sed 's/^/#   /' "$5" 2>/dev/null
+    fi
+    printf '# recovery marker: %s\n' "$(cat "$state/.watcher-down" 2>/dev/null || echo absent)"
+    printf '# queue: %s row(s)\n' "$(awk 'END { print NR }' "$state/.wake-queue" 2>/dev/null || echo 0)"
+    for lock in .watch.lock .watcher-down.lock .wake-queue.lock; do
+      if [ -e "$state/$lock" ] || [ -L "$state/$lock" ]; then
+        pid=$(cat "$state/$lock/pid" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+          printf '# %s: held by live pid %s: %s\n' "$lock" "$pid" "$(ps -o args= -p "$pid" 2>/dev/null)"
+        else
+          printf '# %s: held by dead or unrecorded pid %s\n' "$lock" "${pid:-none}"
+        fi
+      else
+        printf '# %s: absent\n' "$lock"
+      fi
+    done
+  } >&2
+}
+
 ack_stopped_cycle() {  # <state>
-  local state=$1 err sequence generation
+  local state=$1 out err status sequence generation
+  out="$state/.test-cycle-drain.out"
   err="$state/.test-cycle-drain.err"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2> "$err" || return 1
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" 2> "$err"
+  status=$?
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
-  rm -f "$err"
-  [ -n "$sequence" ] && [ -n "$generation" ] || return 1
+  if [ "$status" -ne 0 ] || [ -z "$sequence" ] || [ -z "$generation" ]; then
+    print_stopped_cycle_evidence "$state" drain "$status" "$out" "$err"
+    rm -f "$out" "$err"
+    return 1
+  fi
+  rm -f "$out" "$err"
   FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" \
-    --recovery-generation "$generation"
+    --recovery-generation "$generation" && return 0
+  status=$?
+  print_stopped_cycle_evidence "$state" acknowledgement "$status"
+  return "$status"
 }
 
 # Common watcher knobs: tight poll/grace, no check or heartbeat cadence unless a
