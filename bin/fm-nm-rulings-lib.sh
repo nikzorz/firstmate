@@ -350,9 +350,12 @@ for i, line in enumerate(lines):
     if excerpt.endswith(TRUNCATED):
         excerpt = excerpt[:-len(TRUNCATED)]
     excerpt = excerpt.rstrip()
-    before = [text for _, at, text in records if at <= int(close.group(1))]
-    if excerpt and before and flat(before[-1]).startswith(excerpt):
-        bound[(run, step, int(round_no.group(1)))] = before[-1].strip()
+    # The close stamp has one-second resolution, so a record enqueued in the
+    # same second after it also passes at <= close; match the excerpt first.
+    answers = [text for _, at, text in records
+               if at <= int(close.group(1)) and flat(text).startswith(excerpt)]
+    if excerpt and answers:
+        bound[(run, step, int(round_no.group(1)))] = answers[-1].strip()
 
 accepted = False
 for line in sys.stdin:

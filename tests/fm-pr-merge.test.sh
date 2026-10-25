@@ -5382,6 +5382,16 @@ test_relay_check_pairs_only_the_line_that_closed_the_round() {
     > "$case_dir/state/task-x1.inbox/handled/002.msg"
   run_nm_merge "$case_dir"
   expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-same-lead: a later steer with the same opening replaced the real one: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case nm-1752-relay-same-second)
+  add_gh_mocks "$case_dir" 6161616161616161616161616161616161616161
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:00:07Z\n--\n%s' 'Also rebase onto main.' \
+    > "$case_dir/state/task-x1.inbox/002.msg"
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-same-second: a steer enqueued in the close's second unpaired the round"
+  assert_grep "so every file the contract compares wakes the lane" "$case_dir/stderr" \
+    "nm-1752-relay-same-second: the refusal did not quote the steer that closed the round"
   pass "fm-pr-merge pairs a round only with the close of its own key and the steer enqueued by that close"
 }
 
