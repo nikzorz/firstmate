@@ -46,6 +46,7 @@ A single deliberate one-line reinforcement at a genuine risk point is allowed, f
 Restating the contract's substance a second time is not allowed: the two copies will drift the moment only one is edited.
 When you touch a contract, patch, replace, or prune the owner's existing language rather than appending a new clause or paragraph wherever possible, then grep the repo for its other mentions and update the cross-references, not duplicate the change into a second full copy.
 When a replacement retires existing rule text, list each case the old text decided and point to where the new text decides it; a case it no longer decides is dropped only on purpose, named in the commit or PR.
+Code that reads a record another script owns (status lines, inbox records, task meta) reads it through the owner's function, or, where it cannot (another language), derives every form from the owner's header and names that owner in a comment, never only the forms one writer emits.
 
 ## Inline-stub pattern
 
