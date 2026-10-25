@@ -614,7 +614,7 @@ Each relocated script keeps its own gate, enforcing exactly what a script can ch
 
 | Script | Gate while away |
 | --- | --- |
-| `bin/fm-pr-merge.sh` | Merges any pull request green at its live head, synchronously, under the record lock, and refuses `--allow-red` and `--allow-missing` while away, so the green gate is absolute in this posture; which pull request to merge - a `yolo=on` task's, or one the words meant - is the branch's reading. |
+| `bin/fm-pr-merge.sh` | Merges any pull request green at its live head, synchronously, under the record lock, and refuses `--allow-red`, `--allow-missing`, and `--accept-relay` while away, so the green gate is absolute in this posture; which pull request to merge - a `yolo=on` task's, or one the words meant - is the branch's reading. |
 | `bin/fm-spawn.sh` | Dispatches only queued work whose blockers cleared - already queued, or filed by the branch because the words explicitly call for it, and any queued, unheld item when the words, or a saved preference the words do not hold or narrow, ask for the fleet to be kept stocked; refuses a fresh ordinary spawn for either actor once the home holds as many ordinary task records as the record's spend cap (relaunches and secondmates exempt). |
 | `bin/fm-send.sh --resolve-key` | Answers a decision the words, or a standing ruling in the saved preference files the words do not hold or narrow, pre-answer, or one `ask-user-authority`'s judgment (carried verbatim in the branch prompt) lets firstmate decide. |
 | `bin/fm-merge-local.sh` | Never relocated. |

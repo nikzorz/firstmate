@@ -13,10 +13,12 @@
 # fm_nm_rounds <state-db> --branch <repo-working-path> <branch>
 #   Prints one JSON object per step round, in run, step, then round order:
 #   {"run", "step_result", "step", "step_status", "approval", "skip", "round",
-#    "source", "selected", "findings", "verdict", "coverage_parked",
-#    "coverage_unverified", "where"},
+#    "source", "selected", "findings", "instructions", "verdict",
+#    "coverage_parked", "coverage_unverified", "where"},
 #   where "selected" is the round's selected finding id list, "findings" is its
-#   finding object list as no-mistakes stored it, "verdict" is the live
+#   finding object list as no-mistakes stored it, "instructions" maps each
+#   finding id a respond call gave instructions to onto the text no-mistakes
+#   stored for it (empty when the round's record holds none), "verdict" is the live
 #   validation verdict a test round recorded (null when none), and "where"
 #   names the round for messages. --branch reads every run of that branch in
 #   each repository whose working path resolves to the given path.
@@ -52,7 +54,7 @@ from pathlib import Path
 db_path, mode, *keys = sys.argv[1:]
 SAFE = re.compile(r"[^\s,]+")
 SELECT = ("SELECT ru.id, s.id, s.step_name, s.status, s.approval_reason, s.skip_reason,"
-          " s.log_path, r.round, r.selection_source, r.selected_finding_ids, r.findings_json"
+          " s.log_path, r.round, r.selection_source, r.selected_finding_ids, r.findings_json, %s"
           " FROM runs ru JOIN step_results s ON s.run_id = ru.id"
           " JOIN step_rounds r ON r.step_result_id = s.id")
 ORDER = " ORDER BY ru.created_at, ru.id, s.step_order, r.round"
@@ -70,6 +72,9 @@ if not os.path.isfile(db_path):
 try:
     with closing(sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         db.execute("BEGIN")
+        # Older no-mistakes schemas store no respond instructions.
+        columns = {c[1] for c in db.execute("PRAGMA table_info(step_rounds)")}
+        SELECT = SELECT % ("r.user_findings_json" if "user_findings_json" in columns else "NULL")
         if mode == "--run":
             subject = "run %s" % keys[0]
             rows = db.execute(SELECT + " WHERE ru.id = ?" + ORDER, keys).fetchall()
@@ -121,7 +126,7 @@ for row in rows:
         parks[row[1]] = coverage_parks(row[6], sorted({r[7] for r in rows if r[1] == row[1]}))
 
 out = []
-for run, step_id, step, status, approval, skip, log_path, round_no, source, selected, findings in rows:
+for run, step_id, step, status, approval, skip, log_path, round_no, source, selected, findings, given in rows:
     if not (isinstance(run, str) and SAFE.fullmatch(run) and isinstance(step, str) and SAFE.fullmatch(step)
             and isinstance(round_no, int)):
         unreadable("a no-mistakes round record of %s" % subject)
@@ -134,13 +139,21 @@ for run, step_id, step, status, approval, skip, log_path, round_no, source, sele
         listed = record.get("findings") or []
         if not isinstance(listed, list) or not all(isinstance(f, dict) for f in listed):
             raise ValueError
+        answered = json.loads(given) if given else {}
+        if not isinstance(answered, dict):
+            raise ValueError
+        answered = answered.get("findings") or []
+        if not isinstance(answered, list) or not all(isinstance(f, dict) for f in answered):
+            raise ValueError
+        instructions = {f["id"]: f["user_instructions"] for f in answered
+                        if isinstance(f.get("id"), str) and isinstance(f.get("user_instructions"), str)}
     except ValueError:
         unreadable("the findings of %s" % where)
     verdict = record.get("verdict")
     parked = parks.get(step_id, {})
     out.append(json.dumps({"run": run, "step_result": step_id, "step": step, "step_status": status,
                            "approval": approval, "skip": skip, "round": round_no, "source": source,
-                           "selected": selected, "findings": listed,
+                           "selected": selected, "findings": listed, "instructions": instructions,
                            "verdict": verdict if isinstance(verdict, str) else None,
                            "coverage_parked": None if parked is None else round_no in parked,
                            "coverage_unverified": (parked or {}).get(round_no, []),
