@@ -138,6 +138,10 @@ Firstmate PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.7
 - When a task names a specific tool, implement the work with that tool, or explicitly flag the substitution and its new dependency footprint for review before shipping.
 - Colocate tests with the existing pattern in `tests/`, name them `<subject>.test.sh`, and extend an existing script rather than inventing a new runner.
 - Tests must exercise behavior through an executable or public interface and must never assert implementation-source bytes, including through parsers, regexes, snapshots, or indirect wrappers.
+- Before writing a guard, gate, wake or suppression, state its invariant as a rule over every case.
+  Derive from the code every entry path and site that reaches the guarded state: each caller, and each source, harness or forge value the sibling code branches on.
+  Reuse the predicate that already owns the decision, such as `fm_session_lock_owned_by_self` for the main session, or the merge guard's owed-ruling test.
+  Test each path and its mirror case.
 - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
 - Include the date, version, exact commands run, and exact output needed to support the current guarantee.
 - Keep incident chronology and delivery evidence in private task reports or PR evidence unless a concise rationale is required to maintain a current safety boundary.

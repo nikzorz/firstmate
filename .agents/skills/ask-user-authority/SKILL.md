@@ -51,7 +51,7 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
    A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example (for example, ...) or leave it out, so the fix round tests it against the property rather than building it.
    Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
-   Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison.
+   Then state the invariant the finding's root breaks, and its mirror case, as the guard rule in `firstmate-coding-guidelines` asks of every guard, gate, wake or suppression.
    When the property bans names from the output, state it over the reference forms the data carries (a `<kind>/<id>` label, an id field of a known kind), never over free text, and name what must survive unchanged as the mirror case.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
