@@ -1230,6 +1230,56 @@ test_out_of_band_close_is_recordable() {
   pass "an out-of-band close is recordable with the captain's word and nothing else"
 }
 
+# done_keep retention moves an answered call out of the live backlog, where
+# tasks-axi show no longer finds it. The gate reads the done archive for it,
+# and still refuses an id found nowhere or an archived call closed unanswered.
+test_completion_gate_reads_answered_calls_from_the_done_archive() {
+  local home id
+  home=$(make_home done-archive-gate)
+  id=sample-archived-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the archived sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the archived-call origin"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Archived sample review\n\nThe round-one call is answered.\n' > "$home/data/$id/report.md"
+  run_captain "$home" hold "$id-calls" --title "Round-one calls" \
+    --reason "captain round-one calls pending" --repo sample --origin "$id" >/dev/null \
+    || fail "could not hold the round-one calls"
+  printf 'Take the north route.\n' > "$home/answer.txt"
+  run_captain "$home" answer "$id-calls" --decision-file "$home/answer.txt" >/dev/null \
+    || fail "could not answer the round-one calls"
+  run_captain "$home" hold sample-unanswered-call --title "Unanswered call" \
+    --reason "captain call pending" --repo sample --origin "$id" >/dev/null \
+    || fail "could not hold the unanswered call"
+  tasks_in "$home" "done" sample-unanswered-call --keep 0 >/dev/null \
+    || fail "could not close and archive the calls through done retention"
+  assert_no_grep "$id-calls" "$home/data/backlog.md" "retention left the answered calls in the live backlog"
+  assert_grep "- [x] $id-calls - " "$home/data/done-archive.md" "retention did not archive the answered calls"
+  assert_grep "- [x] sample-unanswered-call - " "$home/data/done-archive.md" \
+    "retention did not archive the unanswered call"
+
+  if run_captain "$home" complete "$id" sample-never-held > "$home/absent.out" 2> "$home/absent.err"; then
+    fail "completion accepted an id found in neither the backlog nor the done archive"
+  fi
+  assert_grep "no captain-held task sample-never-held" "$home/absent.err" "the absent-id refusal changed"
+  if run_captain "$home" complete "$id" sample-unanswered-call > "$home/unanswered.out" 2> "$home/unanswered.err"; then
+    fail "completion accepted an archived call closed without a recorded captain answer"
+  fi
+  assert_grep "without a recorded captain answer" "$home/unanswered.err" \
+    "the unanswered-archive refusal must name the missing answer"
+  assert_no_grep "decisions_reviewed=1" "$home/state/$id.meta" "a refused completion recorded an attestation"
+
+  run_captain "$home" complete "$id" "$id-calls" > "$home/complete.out" 2> "$home/complete.err" \
+    || fail "completion refused an answered call archived by retention: $(cat "$home/complete.err")"
+  assert_grep "read from the done archive: $id-calls" "$home/complete.out" \
+    "completion did not name the call it read from the done archive"
+  run_teardown "$home" "$id" > "$home/teardown.out" 2> "$home/teardown.err" \
+    || fail "cleanup refused a finished scout whose answered calls were archived: $(cat "$home/teardown.err")"
+  assert_absent "$home/state/$id.meta" "cleanup kept the finished scout's metadata"
+  pass "the completion gate accepts an answered call from the done archive and nothing weaker"
+}
+
 # A post-teardown visual review completes against the surviving report and
 # durable tasks, with no volatile task metadata and no second decision database.
 test_visual_review_uses_shared_completion_owner() {
@@ -4652,6 +4702,7 @@ test_hold_stamp_precedes_hold_visibility
 test_interrupted_answer_preserves_hold_age
 test_deferral_leaves_captains_call_until_due
 test_out_of_band_close_is_recordable
+test_completion_gate_reads_answered_calls_from_the_done_archive
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
 test_terminal_single_owner_status_decision_does_not_block_empty_inventory
