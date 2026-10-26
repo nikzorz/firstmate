@@ -23,6 +23,10 @@
 # symlink, returns 2 with a path diagnostic on stderr and no backend on stdout.
 # fm_tasks_axi_backend delegates to that resolver and preserves its status;
 # callers must check it before selecting backend-specific flags or exemptions.
+# fm_tasks_axi_markdown_archive_path mirrors where the markdown backend writes
+# the Done entries done_keep retention prunes: `[markdown] archive` from the
+# working root's .tasks.toml, then from $HOME/.tasks-axi/config.toml, resolved
+# against the working root, else done-archive.md beside the backlog file.
 #
 # This file is the single owner of FM_TASKS_AXI_MIN. bin/fm-bootstrap.sh turns a
 # failing check into the operator-facing MISSING diagnostic.
@@ -174,6 +178,54 @@ fm_tasks_axi_backend_resolve() {  # <tasks-axi-working-directory>
 
 fm_tasks_axi_backend() {  # <tasks-axi-working-directory>
   fm_tasks_axi_backend_resolve "$1"
+}
+
+fm_tasks_axi_markdown_archive_from_toml() {  # <toml-path>
+  local toml=$1
+  [ -f "$toml" ] || return 1
+  LC_ALL=C awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    BEGIN { markdown=0; found=0; single=sprintf("%c", 39) }
+    {
+      line=$0
+      sub(/[[:space:]]*#.*/, "", line)
+      line=trim(line)
+      if (line ~ /^\[[^]]+\]$/) {
+        markdown=(line ~ /^\[[[:space:]]*markdown[[:space:]]*\]$/)
+        next
+      }
+      if (markdown && line ~ /^archive[[:space:]]*=/) {
+        sub(/^archive[[:space:]]*=[[:space:]]*/, "", line)
+        line=trim(line)
+        if ((substr(line, 1, 1) == "\"" && substr(line, length(line), 1) == "\"") ||
+            (substr(line, 1, 1) == single && substr(line, length(line), 1) == single)) {
+          print substr(line, 2, length(line) - 2)
+          found=1
+          exit
+        }
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$toml"
+}
+
+fm_tasks_axi_markdown_archive_path() {  # <tasks-axi-working-directory> <backlog-file>
+  local root=$1 backlog=$2 archive
+  if ! archive=$(fm_tasks_axi_markdown_archive_from_toml "$root/.tasks.toml"); then
+    if [ -z "${HOME:-}" ] \
+      || ! archive=$(fm_tasks_axi_markdown_archive_from_toml "$HOME/.tasks-axi/config.toml"); then
+      printf '%s/done-archive.md\n' "${backlog%/*}"
+      return 0
+    fi
+  fi
+  case "$archive" in
+    /*) printf '%s\n' "$archive" ;;
+    *) printf '%s/%s\n' "${root%/}" "$archive" ;;
+  esac
 }
 
 fm_backlog_backend_value() {

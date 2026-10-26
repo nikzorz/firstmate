@@ -138,7 +138,9 @@
 # `--none` is an explicit semantic attestation that the just-reviewed surface
 # has no unresolved captain call, and is refused while the origin still has an
 # open keyed status decision. With a non-empty inventory, every listed task is
-# verified durable (captain-held, or carrying a recorded resolution),
+# verified durable (captain-held, or carrying a recorded resolution, including
+# an answered call done_keep retention moved into the markdown done archive,
+# which `complete` names; an archived entry without a recorded answer refuses),
 # is never the origin itself, and, when `hold --origin` recorded one, was held
 # for this origin; a hold with no recorded origin is accepted on durability
 # alone and named in the output,
@@ -731,11 +733,51 @@ resolve_migrated_entry() {  # <origin-or-empty> <entry>
   return 2
 }
 
+# --- calls that done retention moved out of the live backlog ---------------
+#
+# done_keep retention moves the oldest Done rows of a markdown backlog into its
+# done archive, which tasks-axi show no longer reads. An answered call the
+# retention moved is still a durable captain answer, so the completion gate
+# reads its archived entry instead of refusing an id it attested itself.
+# The entry grammar is the markdown backend's own: a `- [x] <id> - ` bullet,
+# then every following blank or two-space-indented line as its body.
+
+ARCHIVED_BODY=
+archived_entry_body() {  # <id>; sets ARCHIVED_BODY, the newest archived entry's body
+  local data root backend backlog archive
+  ARCHIVED_BODY=
+  data=$(fm_backlog_data_absolute "$DATA") || return 1
+  root=$(fm_backlog_root "$data") || return 1
+  backend=$(fm_tasks_axi_backend "$root") || return 1
+  [ "$backend" = markdown ] || return 1
+  backlog=$(fm_backlog_file "$data") || return 1
+  archive=$(fm_tasks_axi_markdown_archive_path "$root" "$backlog")
+  [ -f "$archive" ] || return 1
+  [ -r "$archive" ] || fail "the done archive $archive cannot be read"
+  ARCHIVED_BODY=$(LC_ALL=C awk -v id="$1" '
+    { sub(/\r$/, "") }
+    in_entry && ($0 ~ /^[[:space:]]*$/ || substr($0, 1, 2) == "  ") {
+      body = body (body_lines++ ? "\n" : "") ($0 ~ /^[[:space:]]*$/ ? "" : substr($0, 3))
+      next
+    }
+    { in_entry = 0 }
+    index($0, "- [x] " id " - ") == 1 {
+      in_entry = 1; found = 1; body = ""; body_lines = 0
+    }
+    END {
+      if (!found) exit 1
+      printf "%s", body
+    }
+  ' "$archive") || return 1
+}
+
 # Resolve one inventory entry or channel key to the task that carries it: the
 # exact task id when it exists, else the legacy derived identity, else - on the
-# beads backend - the migrated row the markdown-to-beads hold migration wrote.
-# Prints "<resolved id> <how>", where <how> is exact, legacy, migrated-note or
-# migrated-prefix, so a caller can record which evidence carried the attestation.
+# beads backend - the migrated row the markdown-to-beads hold migration wrote,
+# else the entry, then its legacy identity, in this home's done archive.
+# Prints "<resolved id> <how>", where <how> is exact, legacy, migrated-note,
+# migrated-prefix or archived, so a caller can record which evidence carried
+# the attestation.
 resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
   local origin=$1 entry=$2 legacy migrated rc
   if task_show "$entry"; then
@@ -756,8 +798,16 @@ resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
     2) return 2 ;;
     124) return 124 ;;
   esac
+  if archived_entry_body "$entry"; then
+    printf '%s archived' "$entry"
+    return 0
+  fi
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
     legacy=$(legacy_hold_id "$origin" "$entry")
+    if archived_entry_body "$legacy"; then
+      printf '%s archived' "$legacy"
+      return 0
+    fi
     fail "no captain-held task $entry and no migrated hold for it in this home's configured backlog (data directory $DATA); the nearest legacy identity $legacy also resolves to nothing"
   fi
   fail "no captain-held task $entry and no migrated hold for it in this home's configured backlog (data directory $DATA)"
@@ -879,10 +929,19 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   fi
   id=${resolved%% *}
   how=${resolved##* }
-  verify_hold_durable "$id"
-  id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
-  validate_slug backend-task-id "$id"
-  stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
+  if [ "$how" = archived ]; then
+    # Only Done rows reach the archive, so the recorded answer is the whole test.
+    archived_entry_body "$id" \
+      || fail "captain-held task $id left this home's done archive while it was being verified"
+    body_has_resolution_record "$ARCHIVED_BODY" \
+      || fail "captain-held task $id was archived by done retention without a recorded captain answer"
+    stored=$(body_hold_origin "$ARCHIVED_BODY")
+  else
+    verify_hold_durable "$id"
+    id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
+    validate_slug backend-task-id "$id"
+    stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
+  fi
   origin_id=$origin
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
     origin_id=$(task_identity "$origin") || exit $?
@@ -1731,7 +1790,7 @@ reconcile_note() {
 
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
-  local resolved_how attested_by_prefix='' origin_state unrecorded_origin=''
+  local resolved_how attested_by_prefix='' attested_from_archive='' origin_state unrecorded_origin=''
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   shift
@@ -1773,6 +1832,9 @@ command_complete() {
       if [ "$resolved_how" = migrated-prefix ]; then
         attested_by_prefix="${attested_by_prefix}${attested_by_prefix:+ }$entry=$resolved"
       fi
+      if [ "$resolved_how" = archived ]; then
+        attested_from_archive="${attested_from_archive}${attested_from_archive:+ }$resolved"
+      fi
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
@@ -1811,8 +1873,9 @@ EOF
       fi
     fi
   fi
-  printf 'complete: %s captain-call inventory reviewed%s%s%s\n' "$origin" "${keys:+ ($keys)}" \
+  printf 'complete: %s captain-call inventory reviewed%s%s%s%s\n' "$origin" "${keys:+ ($keys)}" \
     "${attested_by_prefix:+ [attested through the configured prefix: $attested_by_prefix]}" \
+    "${attested_from_archive:+ [answered calls read from the done archive: $attested_from_archive]}" \
     "${unrecorded_origin:+ [no recorded origin on: $unrecorded_origin; not checked against $origin]}"
 }
 
