@@ -128,6 +128,7 @@ No such service has been measured; the shared validation daemon detaches, as the
 
 (b) A task's own deliberately detached leftover, such as a background server a crewmate started with `setsid`, is refused even though killing it would have been fine.
 The operator resolves that by ending that process and running the same cleanup again.
+The chrome-devtools-axi bridge and the headless browser it drives are the exception teardown resolves itself; the lib header owns that attribution.
 
 (c) A process living in the directory whose session leader has already exited cannot be attributed either way, so it refuses.
 The double-forked daemon has that shape, but the ordinary one is a lane's own leftover orphaned when its window died, which refuses every teardown of that lane until someone ends it.
