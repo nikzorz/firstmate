@@ -264,7 +264,8 @@
 # already closed - is named and refused rather than reaped, and ending it is the
 # operator's deliberate act. The one leftover teardown ends itself is the headless
 # browser a worker left running through chrome-devtools-axi, and only once the lib
-# proves it was started from the directory being given up; it is stopped, the scan
+# proves it was started from the directory being given up under the task's own
+# browser session name, which bin/fm-spawn.sh sets per task; it is stopped, the scan
 # runs again, and whatever is still there refuses as before.
 # bin/fm-adopted-process-lib.sh owns that ownership test and states its limits. The
 # refusal stands on --force too: --force authorizes discarding THIS task's work, never
@@ -2325,14 +2326,15 @@ name_scanned_processes() {
   done <<< "$lines"
 }
 
-# End the headless browser a worker left running from <dir>. Each kill re-proves
+# End the headless browser a worker left running from <dir> under its task's
+# chrome-devtools-axi session name <task-id>. Each kill re-proves
 # its session first, because a session that ended on its own may have handed its
 # number on: the sessions the bridge's tooling setsid'd beneath it go first, while
 # their ancestry still reaches the bridge, then each bridge gets the SIGTERM its
 # own shutdown handler answers by killing its process group, and a bridge still
 # there after that loses its group outright.
-stop_task_browser_leftovers() {  # <dir> <label> <session-and-bridge-lines>
-  local dir=$1 label=$2 lines=$3 sid bridge waited
+stop_task_browser_leftovers() {  # <dir> <task-id> <label> <session-and-bridge-lines>
+  local dir=$1 task_id=$2 label=$3 lines=$4 sid bridge waited
   echo "teardown: $label: stopping the headless browser this task left running from $dir:" >&2
   while IFS=$'\t' read -r sid bridge; do
     [ -n "$sid" ] || continue
@@ -2340,26 +2342,26 @@ stop_task_browser_leftovers() {  # <dir> <label> <session-and-bridge-lines>
   done <<< "$lines"
   while IFS=$'\t' read -r sid bridge; do
     [ -n "$sid" ] && [ "$sid" != "$bridge" ] || continue
-    kill_proved_browser_session "$dir" "$sid"
+    kill_proved_browser_session "$dir" "$task_id" "$sid"
   done <<< "$lines"
   while IFS=$'\t' read -r sid bridge; do
     [ -n "$sid" ] && [ "$sid" = "$bridge" ] || continue
-    fm_adopted_browser_bridge_of "$sid" "$dir" >/dev/null || continue
+    fm_adopted_browser_bridge_of "$sid" "$dir" "$task_id" >/dev/null || continue
     kill -TERM "$sid" 2>/dev/null || true
     waited=0
     while fm_adopted_session_leader_alive "$sid" && [ "$waited" -lt 20 ]; do
       sleep 0.1
       waited=$(( waited + 1 ))
     done
-    kill_proved_browser_session "$dir" "$sid"
+    kill_proved_browser_session "$dir" "$task_id" "$sid"
   done <<< "$lines"
   return 0
 }
 
-kill_proved_browser_session() {  # <dir> <session>
-  local dir=$1 sid=$2
+kill_proved_browser_session() {  # <dir> <task-id> <session>
+  local dir=$1 task_id=$2 sid=$3
   fm_adopted_session_leader_alive "$sid" || return 0
-  fm_adopted_browser_bridge_of "$sid" "$dir" >/dev/null || return 0
+  fm_adopted_browser_bridge_of "$sid" "$dir" "$task_id" >/dev/null || return 0
   if [ "$(fm_adopted_stat_field "$sid" 3)" = "$sid" ]; then
     kill -KILL -- "-$sid" 2>/dev/null || true
   else
@@ -2367,10 +2369,10 @@ kill_proved_browser_session() {  # <dir> <session>
   fi
 }
 
-assert_no_adopted_processes() {  # <dir> <label> [<operation>] [<exempt-session>...]
-  local dir=$1 label=$2 operation=${3:-return} found status attempt=0 losing risk
+assert_no_adopted_processes() {  # <dir> <task-id> <label> [<operation>] [<exempt-session>...]
+  local dir=$1 task_id=$2 label=$3 operation=${4:-return} found status attempt=0 losing risk
   local browser browser_stopped=0
-  shift 2
+  shift 3
   [ "$#" -eq 0 ] || shift
   case "$operation" in
     removal)
@@ -2400,10 +2402,10 @@ assert_no_adopted_processes() {  # <dir> <label> [<operation>] [<exempt-session>
     # Stopping is tried once: a browser that outlives it is named below like any
     # other detached process rather than chased.
     [ "$status" -eq 0 ] && [ "$browser_stopped" != 1 ] || break
-    browser=$(fm_adopted_browser_sessions "$dir" <<< "$found")
+    browser=$(fm_adopted_browser_sessions "$dir" "$task_id" <<< "$found")
     [ -n "$browser" ] || break
     browser_stopped=1
-    stop_task_browser_leftovers "$dir" "$label" "$browser"
+    stop_task_browser_leftovers "$dir" "$task_id" "$label" "$browser"
     attempt=0
   done
 
@@ -3799,8 +3801,8 @@ firstmate_home_process_event_sessions() {  # <home>
 
 # The adopted-process scan of a secondmate home, leaving out the sessions this
 # home's own process-event runners live in.
-assert_no_adopted_processes_in_home() {  # <home> <label> <operation>
-  local home=$1 label=$2 operation=$3 sid
+assert_no_adopted_processes_in_home() {  # <home> <task-id> <label> <operation>
+  local home=$1 task_id=$2 label=$3 operation=$4 sid
   local -a sessions=()
   while IFS= read -r sid; do
     [ -n "$sid" ] || continue
@@ -3808,7 +3810,7 @@ assert_no_adopted_processes_in_home() {  # <home> <label> <operation>
   done <<EOF
 $(firstmate_home_process_event_sessions "$home")
 EOF
-  assert_no_adopted_processes "$home" "$label" "$operation" ${sessions[@]+"${sessions[@]}"}
+  assert_no_adopted_processes "$home" "$task_id" "$label" "$operation" ${sessions[@]+"${sessions[@]}"}
 }
 
 validate_firstmate_home_children_removal() {
@@ -4101,13 +4103,13 @@ cleanup_firstmate_home_children() {
     # found. A refusal here leaves the child's window open too.
     if [ "$child_kind" = secondmate ]; then
       if [ -n "$child_home" ] && [ -d "$child_home" ] \
-        && ! assert_no_adopted_processes_in_home "$child_home" "child firstmate home" "$child_op"; then
+        && ! assert_no_adopted_processes_in_home "$child_home" "$child_id" "child firstmate home" "$child_op"; then
         report_stopped_child_retirement "$child_id" "$child_home" home "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
         return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
       fi
     elif [ "$child_backend" != orca ] && [ "$child_owner_rc" -eq 0 ]; then
       if [ -n "$child_wt" ] && [ -d "$child_wt" ] \
-        && ! assert_no_adopted_processes "$child_wt" "child worktree" "$child_op"; then
+        && ! assert_no_adopted_processes "$child_wt" "$child_id" "child worktree" "$child_op"; then
         report_stopped_child_retirement "$child_id" "$child_wt" worktree "$FM_TEARDOWN_PROCESSED_CHILDREN" "$home"
         return "$TEARDOWN_ADOPTED_PROCESS_REFUSED"
       fi
@@ -4282,7 +4284,7 @@ fi
 # Above the child sweep and every kill, so a refusal here means the retirement
 # never started.
 if [ "$KIND" = secondmate ] && [ -n "$HOME_PATH" ] && [ -d "$HOME_PATH" ]; then
-  if ! assert_no_adopted_processes_in_home "$HOME_PATH" "secondmate home" "$(home_giveup_operation "$HOME_PATH")"; then
+  if ! assert_no_adopted_processes_in_home "$HOME_PATH" "$ID" "secondmate home" "$(home_giveup_operation "$HOME_PATH")"; then
     echo "teardown: STOPPED: retirement of $ID did not start: no child was touched, nothing was removed, its entry in $SECONDMATE_REG and its state records are as they were, and its window is still open." >&2
     echo "teardown: establish what the process above is; end it deliberately if it is that home's leftover, then run the same retirement again." >&2
     exit 1
@@ -4377,7 +4379,7 @@ fi
 # leaves the lane exactly as it was found. Every other directory this run gives
 # up is scanned the same way, at its own call site above its own kill.
 if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && teardown_owns_worktree && [ -d "$WT" ]; then
-  assert_no_adopted_processes "$WT" "worktree" || exit 1
+  assert_no_adopted_processes "$WT" "$ID" "worktree" || exit 1
 fi
 
 # A Herdr close may reposition shared workspace order, so the whole

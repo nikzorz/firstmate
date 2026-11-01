@@ -81,6 +81,9 @@
 #   (af) the task's own leftover headless browser       -> STOPPED, cleanup proceeds
 #   (af2) that browser beside a detached service        -> browser STOPPED, REFUSE on the service
 #   (af3) a browser whose bridge started elsewhere      -> REFUSE, nothing stopped
+#   (af4) a browser whose bridge has no session name     -> REFUSE, nothing stopped
+#   (af5) a browser under another task's session name    -> REFUSE, nothing stopped
+#   (af6) the task's own browser, worktree via a symlink -> STOPPED, cleanup proceeds
 #   (af) two other lanes' services during a third lane's cleanup -> both survive
 #
 # And teardown-empty-return-error: a return failure with no lock in evidence anywhere,
@@ -5526,12 +5529,14 @@ start_window_shell_in() {
 
 # Stand in for the chrome-devtools-axi bridge a worker left running: a detached
 # session leader whose argument names the bridge script, started from
-# <bridge_dir>, with a worker of its own in that session and a browser it setsid'd
-# into a session of its own in <browser_dir>, the shapes measured from the real
-# bridge. Like the real one it answers SIGTERM by killing its process group.
+# <bridge_dir> with CHROME_DEVTOOLS_AXI_SESSION=<session> (unset when empty), with
+# a worker of its own in that session and a browser it setsid'd into a session of
+# its own in <browser_dir>, the shapes measured from the real bridge. Like the real
+# one it answers SIGTERM by killing its process group.
 # Echoes "<bridge> <worker> <browser>".
 start_browser_leftover_in() {
-  local bridge_dir=$1 browser_dir=$2 tag=$3 script out pid waited=0
+  local bridge_dir=$1 browser_dir=$2 tag=$3 session=$4 script out pid waited=0
+  local -a session_env=(-u CHROME_DEVTOOLS_AXI_SESSION)
   local -a pids
   mkdir -p "$bridge_dir" "$browser_dir" "$TMP_ROOT/browser-bridge-bin"
   script="$TMP_ROOT/browser-bridge-bin/chrome-devtools-axi-bridge.js"
@@ -5547,7 +5552,8 @@ wait
 BRIDGE
   out=$(mktemp "$TMP_ROOT/browser-leftover.XXXXXX")
   rm -f "$out"
-  setsid bash -c "cd '$bridge_dir' && exec bash '$script' '$out' '$browser_dir'" \
+  [ -z "$session" ] || session_env=("CHROME_DEVTOOLS_AXI_SESSION=$session")
+  env "${session_env[@]}" setsid bash -c "cd '$bridge_dir' && exec bash '$script' '$out' '$browser_dir'" \
     </dev/null >/dev/null 2>&1 &
   while [ ! -s "$out" ]; do
     [ "$waited" -lt 200 ] || fail "$tag: the stand-in browser bridge never reported its pids"
@@ -6824,8 +6830,10 @@ test_crew_process_in_the_lane_session_does_not_refuse() {
 }
 
 # A worker that checked web pages left its browser and bridge running. They are
-# this task's own, proved by the bridge having started from the worktree, so
-# cleanup ends them itself and returns the worktree instead of refusing.
+# this task's own, proved by the bridge having started from the worktree under the
+# browser session name every launch gives its worker (the task id, exported by
+# bin/fm-spawn.sh and covered in tests/fm-spawn-compact-adviser-disable.test.sh),
+# so cleanup ends them itself and returns the worktree instead of refusing.
 test_task_browser_leftover_is_stopped_and_cleanup_proceeds() {
   local case_dir rc pids pid
   case_dir=$(make_case browser-leftover)
@@ -6833,7 +6841,7 @@ test_task_browser_leftover_is_stopped_and_cleanup_proceeds() {
   add_recording_treehouse "$case_dir"
   wt_commit "$case_dir" "landed work"
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" browser-leftover)
+  pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" browser-leftover task-x1)
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -6863,7 +6871,7 @@ test_browser_leftover_beside_a_detached_service_still_refuses() {
   add_recording_treehouse "$case_dir"
   wt_commit "$case_dir" "landed work"
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" browser-beside-service)
+  pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" browser-beside-service task-x1)
   service=$(start_shared_service_in "$case_dir/wt" browser-beside-service)
 
   set +e
@@ -6895,7 +6903,7 @@ test_browser_from_a_bridge_started_elsewhere_refuses() {
   add_recording_treehouse "$case_dir"
   wt_commit "$case_dir" "landed work"
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  pids=$(start_browser_leftover_in "$case_dir/elsewhere" "$case_dir/wt" browser-elsewhere)
+  pids=$(start_browser_leftover_in "$case_dir/elsewhere" "$case_dir/wt" browser-elsewhere task-x1)
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -6914,6 +6922,70 @@ test_browser_from_a_bridge_started_elsewhere_refuses() {
   done
   kill_registered_adopted_pids
   pass "a browser whose bridge started outside the worktree refuses cleanup and is left running"
+}
+
+# A bridge started from the worktree under the shared default session, or under
+# another task's name, may be the one a different lane is driving right now, so
+# where it was started proves nothing and it is refused and left running.
+test_browser_under_a_session_name_not_the_tasks_refuses() {
+  local session tag case_dir rc pids pid
+  for session in '' default other-task-y2; do
+    tag=browser-session-${session:-unset}
+    case_dir=$(make_case "$tag")
+    write_meta "$case_dir" local-only ship
+    add_recording_treehouse "$case_dir"
+    wt_commit "$case_dir" "landed work"
+    git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+    pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" "$tag" "$session")
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "$tag: a browser under a session name not this task's must refuse cleanup"
+    assert_grep "detached from whatever started them" "$case_dir/stderr" \
+      "$tag: the refusal should name what it found"
+    assert_no_grep "stopping the headless browser" "$case_dir/stderr" \
+      "$tag: nothing should have been stopped"
+    assert_absent "$case_dir/treehouse.calls" \
+      "$tag: the return tool must never be reached"
+    for pid in $pids; do
+      kill -0 "$pid" 2>/dev/null || fail "$tag: process $pid was killed"
+    done
+    kill_registered_adopted_pids
+  done
+  pass "a browser under no session name, the default one, or another task's refuses cleanup and is left running"
+}
+
+# A pooled slot or a symlinked home records the worktree by a path the kernel
+# never reports as a cwd, so the scan and every kill-time re-check have to compare
+# resolved paths alike, or the browser is named, never stopped, and refused.
+test_task_browser_leftover_is_stopped_through_a_symlinked_worktree_path() {
+  local case_dir rc pids pid
+  case_dir=$(make_case browser-symlinked-wt)
+  ln -s "$case_dir/wt" "$case_dir/wt-link"
+  write_meta "$case_dir" local-only ship "$case_dir/wt-link"
+  add_recording_treehouse "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  pids=$(start_browser_leftover_in "$case_dir/wt" "$case_dir/wt" browser-symlinked-wt task-x1)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "browser-symlinked-wt: the task's own browser must not refuse cleanup through a symlinked path"
+  assert_grep "stopping the headless browser this task left running" "$case_dir/stderr" \
+    "browser-symlinked-wt: cleanup should say it stopped the browser"
+  assert_no_grep "detached from whatever started them" "$case_dir/stderr" \
+    "browser-symlinked-wt: no adopted-process refusal should have been printed"
+  for pid in $pids; do
+    browser_process_gone "$pid" || fail "browser-symlinked-wt: browser process $pid survived cleanup"
+  done
+  kill_registered_adopted_pids
+  pass "the task's own leftover browser is stopped when the worktree is recorded through a symlink"
 }
 
 # The measured incident, reproduced end to end: services serving two other lanes
@@ -7280,4 +7352,6 @@ test_crew_process_in_the_lane_session_does_not_refuse
 test_task_browser_leftover_is_stopped_and_cleanup_proceeds
 test_browser_leftover_beside_a_detached_service_still_refuses
 test_browser_from_a_bridge_started_elsewhere_refuses
+test_browser_under_a_session_name_not_the_tasks_refuses
+test_task_browser_leftover_is_stopped_through_a_symlinked_worktree_path
 test_other_lanes_survive_a_third_lanes_cleanup
