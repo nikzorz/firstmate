@@ -1,0 +1,11 @@
+ok - a process that detached into its own session inside the directory is adopted
+ok - a detached service's worker is adopted along with the leader whose session it inherited
+ok - a process that inherited a session led from outside the directory is not adopted
+ok - a directory holding no processes reports clear
+ok - a detached process below the directory is seen, not just one at its root
+ok - a detached process in a directory that merely shares a name prefix is not reported
+ok - a directory named through a symlink is scanned as the directory it resolves to
+ok - a scanning shell that is its own resident session leader never reports itself
+ok - a resident process whose session leader has died reads as unknown and is named
+ok - a window's own shell, leading its session inside the directory on a terminal, is not adopted
+ok - an exempt session is left out of the answer and a detached service beside it is not
