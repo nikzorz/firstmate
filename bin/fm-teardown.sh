@@ -262,7 +262,10 @@
 # what that scan attributed to the lane's own live session; a leftover whose session leader is already gone - such
 # as the go test binaries Fix 2 describes, when the earlier pane that started them has
 # already closed - is named and refused rather than reaped, and ending it is the
-# operator's deliberate act.
+# operator's deliberate act. The one leftover teardown ends itself is the headless
+# browser a worker left running through chrome-devtools-axi, and only once the lib
+# proves it was started from the directory being given up; it is stopped, the scan
+# runs again, and whatever is still there refuses as before.
 # bin/fm-adopted-process-lib.sh owns that ownership test and states its limits. The
 # refusal stands on --force too: --force authorizes discarding THIS task's work, never
 # another lane's. There is deliberately no bypass flag - ending the named process is a
@@ -2322,8 +2325,51 @@ name_scanned_processes() {
   done <<< "$lines"
 }
 
+# End the headless browser a worker left running from <dir>. Each kill re-proves
+# its session first, because a session that ended on its own may have handed its
+# number on: the sessions the bridge's tooling setsid'd beneath it go first, while
+# their ancestry still reaches the bridge, then each bridge gets the SIGTERM its
+# own shutdown handler answers by killing its process group, and a bridge still
+# there after that loses its group outright.
+stop_task_browser_leftovers() {  # <dir> <label> <session-and-bridge-lines>
+  local dir=$1 label=$2 lines=$3 sid bridge waited
+  echo "teardown: $label: stopping the headless browser this task left running from $dir:" >&2
+  while IFS=$'\t' read -r sid bridge; do
+    [ -n "$sid" ] || continue
+    echo "teardown:   session $sid ($(fm_adopted_command_of "$sid")), started by chrome-devtools-axi bridge $bridge" >&2
+  done <<< "$lines"
+  while IFS=$'\t' read -r sid bridge; do
+    [ -n "$sid" ] && [ "$sid" != "$bridge" ] || continue
+    kill_proved_browser_session "$dir" "$sid"
+  done <<< "$lines"
+  while IFS=$'\t' read -r sid bridge; do
+    [ -n "$sid" ] && [ "$sid" = "$bridge" ] || continue
+    fm_adopted_browser_bridge_of "$sid" "$dir" >/dev/null || continue
+    kill -TERM "$sid" 2>/dev/null || true
+    waited=0
+    while fm_adopted_session_leader_alive "$sid" && [ "$waited" -lt 20 ]; do
+      sleep 0.1
+      waited=$(( waited + 1 ))
+    done
+    kill_proved_browser_session "$dir" "$sid"
+  done <<< "$lines"
+  return 0
+}
+
+kill_proved_browser_session() {  # <dir> <session>
+  local dir=$1 sid=$2
+  fm_adopted_session_leader_alive "$sid" || return 0
+  fm_adopted_browser_bridge_of "$sid" "$dir" >/dev/null || return 0
+  if [ "$(fm_adopted_stat_field "$sid" 3)" = "$sid" ]; then
+    kill -KILL -- "-$sid" 2>/dev/null || true
+  else
+    kill -KILL "$sid" 2>/dev/null || true
+  fi
+}
+
 assert_no_adopted_processes() {  # <dir> <label> [<operation>] [<exempt-session>...]
   local dir=$1 label=$2 operation=${3:-return} found status attempt=0 losing risk
+  local browser browser_stopped=0
   shift 2
   [ "$#" -eq 0 ] || shift
   case "$operation" in
@@ -2339,16 +2385,26 @@ assert_no_adopted_processes() {  # <dir> <label> [<operation>] [<exempt-session>
   esac
 
   while :; do
-    found=$(fm_adopted_processes "$dir" "$@")
-    status=$?
-    # A dying process produces both of the answers worth looking twice at: a tool
-    # subshell leads its own session for the instant it exists, and this teardown's
-    # own endpoint kill leaves an orphan whose session leader is already gone. A
-    # platform that cannot run the scan at all will never say anything else.
-    [ "$status" -eq 0 ] || [ "$status" -eq 2 ] || break
-    [ "$attempt" -lt "$ADOPTED_PROCESS_RECHECKS" ] || break
-    attempt=$(( attempt + 1 ))
-    sleep "$ADOPTED_PROCESS_RECHECK_WAIT_SECS"
+    while :; do
+      found=$(fm_adopted_processes "$dir" "$@")
+      status=$?
+      # A dying process produces both of the answers worth looking twice at: a tool
+      # subshell leads its own session for the instant it exists, and this teardown's
+      # own endpoint kill leaves an orphan whose session leader is already gone. A
+      # platform that cannot run the scan at all will never say anything else.
+      [ "$status" -eq 0 ] || [ "$status" -eq 2 ] || break
+      [ "$attempt" -lt "$ADOPTED_PROCESS_RECHECKS" ] || break
+      attempt=$(( attempt + 1 ))
+      sleep "$ADOPTED_PROCESS_RECHECK_WAIT_SECS"
+    done
+    # Stopping is tried once: a browser that outlives it is named below like any
+    # other detached process rather than chased.
+    [ "$status" -eq 0 ] && [ "$browser_stopped" != 1 ] || break
+    browser=$(fm_adopted_browser_sessions "$dir" <<< "$found")
+    [ -n "$browser" ] || break
+    browser_stopped=1
+    stop_task_browser_leftovers "$dir" "$label" "$browser"
+    attempt=0
   done
 
   case "$status" in
