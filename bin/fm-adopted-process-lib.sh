@@ -54,7 +54,21 @@
 # daemon has that shape (fork, setsid, fork again, middle process exits), and so,
 # far more ordinarily, does a lane's own leftover orphaned when its window died.
 # (b) and (c) are both resolved the same way, by ending the named process and
-# running cleanup again.
+# running cleanup again, with one exception the next paragraph owns.
+#
+# ONE ATTRIBUTABLE LEFTOVER. Workers that check web pages leave the
+# chrome-devtools-axi bridge and the headless browser it drives running, and the
+# bridge detaches by design, so limit (b) would refuse every such cleanup. A
+# convicted session is this directory's own browser leftover when walking up from
+# its session leader reaches a process running the bridge script that leads its
+# own session, holds no terminal, was started from inside the directory, and
+# carries the caller's own CHROME_DEVTOOLS_AXI_SESSION name in its environment:
+# the bridge session itself, and every session its browser tooling setsid'd
+# beneath it. The name is what proves the bridge is still this task's alone,
+# because a bridge under the shared default name, or another task's name, can be
+# in use by a different lane long after it was started here. fm_adopted_browser_sessions names those sessions so a caller may end them;
+# a leftover whose ancestry no longer reaches that bridge, because the bridge
+# already exited, stays unattributed and still refuses.
 #
 # A caller that already knows a session belongs to the directory's own owner may
 # name it as exempt, and every process in that session is then left out of the
@@ -173,6 +187,78 @@ fm_adopted_resident_pids() {
 # fm_adopted_name_pid <pid>: the one output line shape callers parse.
 fm_adopted_name_pid() {
   printf '%s\t%s\n' "$1" "$(fm_adopted_command_of "$1")"
+}
+
+# fm_adopted_is_browser_bridge <pid>: 0 when an argument of the process names
+# the chrome-devtools-axi bridge script, the same test that tool applies before
+# it kills its own bridge's process group.
+fm_adopted_is_browser_bridge() {
+  local pid=$1 arg
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  while IFS= read -r -d '' arg; do
+    case "${arg##*/}" in
+      chrome-devtools-axi-bridge.js|chrome-devtools-axi-bridge.ts) return 0 ;;
+    esac
+  done < "/proc/$pid/cmdline"
+  return 1
+}
+
+# fm_adopted_bridge_session_is <pid> <name>: 0 when the process environment
+# sets CHROME_DEVTOOLS_AXI_SESSION to exactly <name>. The tool's own "default"
+# name is shared by every caller that sets none, so it never matches.
+fm_adopted_bridge_session_is() {
+  local pid=$1 name=$2 entry
+  [ -n "$name" ] && [ "$name" != default ] || return 1
+  [ -r "/proc/$pid/environ" ] || return 1
+  while IFS= read -r -d '' entry; do
+    [ "$entry" = "CHROME_DEVTOOLS_AXI_SESSION=$name" ] && return 0
+  done < "/proc/$pid/environ"
+  return 1
+}
+
+# fm_adopted_browser_bridge_of <pid> <dir> <session-name>: print the bridge that
+# <pid> is or descends from when that bridge leads its own session, holds no
+# terminal, lives in <dir> and carries <session-name>; exit 1 otherwise. The first
+# bridge found decides, so a bridge started anywhere else never lends its
+# descendants to this directory.
+fm_adopted_browser_bridge_of() {
+  local pid=$1 dir=$2 name=$3 depth=0 resolved cwd parent
+  resolved=$(cd "$dir" 2>/dev/null && pwd -P) && dir=$resolved
+  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$depth" -lt 64 ]; do
+    if fm_adopted_is_browser_bridge "$pid"; then
+      [ "$(fm_adopted_session_of "$pid" 2>/dev/null)" = "$pid" ] || return 1
+      ! fm_adopted_session_has_terminal "$pid" || return 1
+      cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || return 1
+      fm_adopted_path_within "$cwd" "$dir" || return 1
+      fm_adopted_bridge_session_is "$pid" "$name" || return 1
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    parent=$(fm_adopted_parent_of "$pid") || return 1
+    [ -n "$parent" ] && [ "$parent" != "$pid" ] || return 1
+    pid=$parent
+    depth=$(( depth + 1 ))
+  done
+  return 1
+}
+
+# fm_adopted_browser_sessions <dir> <session-name>: read the "<pid>\t<command>"
+# lines fm_adopted_processes printed on stdin and print "<session>\t<bridge>" once
+# for each session among them that is this directory's own browser leftover under
+# <session-name>. Lines whose session is anything else print nothing; the caller
+# still owns them.
+fm_adopted_browser_sessions() {
+  local dir=$1 name=$2 pid _comm sid bridge seen=' '
+  while IFS=$'\t' read -r pid _comm; do
+    [ -n "$pid" ] || continue
+    sid=$(fm_adopted_session_of "$pid" 2>/dev/null) || continue
+    case "$seen" in *" $sid "*) continue ;; esac
+    fm_adopted_session_leader_alive "$sid" || continue
+    bridge=$(fm_adopted_browser_bridge_of "$sid" "$dir" "$name") || continue
+    seen="$seen$sid "
+    printf '%s\t%s\n' "$sid" "$bridge"
+  done
+  return 0
 }
 
 # fm_adopted_processes <dir> [<exempt-session>...]: print "<pid>\t<command>" for

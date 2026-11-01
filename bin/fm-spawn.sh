@@ -374,7 +374,8 @@
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment, including the
 #   FM_TASK_INBOX export every launch carries (the absolute state/<id>.inbox
-#   path the steering doorbell names). Raw commands must
+#   path the steering doorbell names) and its CHROME_DEVTOOLS_AXI_SESSION=<id>
+#   export (the task's own headless-browser session). Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
@@ -6059,6 +6060,11 @@ fi
 # kill switch below it is an export statement, so it survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
+# Every launch also names its own chrome-devtools-axi session after the task, so
+# a headless browser the worker drives runs under a bridge no other lane shares,
+# and bin/fm-teardown.sh can tell that bridge apart from one another lane is
+# still using. The id already passed the tool's own name charset and length.
+LAUNCH="export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$ID"); $LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's

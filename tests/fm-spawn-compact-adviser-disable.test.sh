@@ -225,6 +225,49 @@ test_launch_exports_task_inbox() {
   pass "ship and secondmate launches export their absolute steering inbox as FM_TASK_INBOX"
 }
 
+# Every worker launch path builds its command here: ship and scout (fresh spawn),
+# secondmate, and relaunch below, while batch dispatch re-execs the same single
+# path. Each must start its agent under a chrome-devtools-axi session named after
+# its own task, because bin/fm-teardown.sh stops a leftover headless browser only
+# when its bridge carries that name. The pane carries the tool's shared "default"
+# name, so a launch that merely inherited it would be caught here.
+test_launch_names_the_tasks_own_browser_session() {
+  local kind rec id sm out status seen launch preamble
+  for kind in ship scout secondmate; do
+    id="browser-$kind-a1"
+    rec=$(make_case "browser-$kind" codex "$id")
+    read_case "$rec"
+    : > "$HOME_DIR/config/launch-env-allowlist"
+    case "$kind" in
+      ship) out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off) ;;
+      scout) out=$(run_case_spawn "$id" "$PROJ_DIR" --scout) ;;
+      secondmate)
+        sm="$CASE_DIR/secondmate-home"
+        mkdir -p "$sm/bin" "$sm/data"
+        printf '# Firstmate\n' > "$sm/AGENTS.md"
+        printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
+        printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
+        printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$sm/.gitignore"
+        git -C "$sm" init -q -b main
+        out=$(run_case_spawn "$id" "$sm" --secondmate)
+        ;;
+    esac
+    status=$?
+    expect_code 0 "$status" "$kind spawn should succeed: $out"
+    install_env_probe "$FAKEBIN_DIR" codex CHROME_DEVTOOLS_AXI_SESSION
+    launch=$(cat "$LAUNCH_LOG")
+    preamble=$(grep '^export ' "$PANE_LOG")
+    seen=$(env -i HOME="$TMP_ROOT/pane-home" PATH="$FAKEBIN_DIR:$PATH" TERM=xterm \
+      TMUX=synthetic-pane CHROME_DEVTOOLS_AXI_SESSION=default \
+      /bin/sh -c "$preamble
+$launch") \
+      || fail "$kind: the emitted launch failed to run"
+    assert_equals "$id" "$seen" \
+      "a $kind agent must start with CHROME_DEVTOOLS_AXI_SESSION set to its own task id"
+  done
+  pass "ship, scout and secondmate launches name the task's own browser session"
+}
+
 # --- relaunch ---------------------------------------------------------------
 #
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
@@ -344,6 +387,14 @@ $launch") \
       || fail "relaunch with allowlist=$setting: the replacement launch failed to run"
     assert_equals 1 "$seen" \
       "a relaunched agent with allowlist=$setting must start with the compact adviser disabled, exactly as a fresh spawn does"
+    install_env_probe "$dir/fakebin" codex CHROME_DEVTOOLS_AXI_SESSION
+    seen=$(env -i HOME="$dir/user-home" PATH="$dir/fakebin:$PATH" TERM=xterm \
+      TMUX=synthetic-pane CHROME_DEVTOOLS_AXI_SESSION=default \
+      /bin/sh -c "$preamble
+$launch") \
+      || fail "relaunch with allowlist=$setting: the replacement launch failed to run"
+    assert_equals "$id" "$seen" \
+      "a relaunched agent with allowlist=$setting must start under its own task's browser session"
   done
   pass "relaunch rebuilds the compact-adviser switch for the replacement agent in both allowlist postures"
 }
@@ -387,5 +438,6 @@ test_ship_allowlist_enabled
 test_launch_command_carries_the_switch_without_the_pane_export
 test_secondmate_launch
 test_launch_exports_task_inbox
+test_launch_names_the_tasks_own_browser_session
 test_relaunch_rebuilds_the_switch
 test_raw_compound_launch_command_carries_the_switch
