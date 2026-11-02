@@ -1862,10 +1862,9 @@ MERGE_HOLD_UNTIL_RETURN=4
 relay_refusals_need_attended_session() {  # <refusals>
   [ "$FM_PR_AWAY_POSTURE" = true ] || return 1
   [ -n "$1" ] && [ "$1" = "$FM_NM_RELAY_MISMATCHES" ] || return 1
-  printf '%s' "$1" | sed -En 's/^  - no-mistakes run ([^ ]+) step ([^ ]+) round ([0-9]+) was fixed with instructions that lack .*/\1:\2:\3/p' |
-    while IFS= read -r round; do
-      printf 'hold: needs the attended session: --accept-relay %s; hold until return\n' "$round" >&2
-    done
+  printf '%s\n' "$FM_NM_RELAY_ROUNDS" | while IFS= read -r round; do
+    printf 'hold: needs the attended session: --accept-relay %s; hold until return\n' "$round" >&2
+  done
 }
 
 FM_PR_MERGE_AUTHORITY=
