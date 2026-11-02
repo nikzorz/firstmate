@@ -1,0 +1,8 @@
+ok - fm-nm-rulings-owed owes unselected ask-user findings of auto-fix rounds and a completed step's last round
+ok - fm-nm-rulings-owed owes the gate ids a same-theme line left out
+ok - fm-nm-rulings-owed takes a same-theme line's round= as the round its ids are named for
+ok - fm-nm-rulings-owed owes nothing for a task that is not a pipeline task
+ok - fm-nm-rulings-owed names an unreadable database instead of reporting nothing owed
+ok - fm-nm-rulings-owed refuses a missing or unsafe task id
+ok - the wake drain lists owed rulings while a pipeline task's ready report is its latest event
+ok - the wake drain names a task whose owed rulings exceed the byte cap
