@@ -240,6 +240,15 @@ case "${1:-} ${2:-}" in
         ;;
     esac
     ;;
+  "pr edit")
+    [ ! -f "${FM_TEST_GH_EDIT_FAIL:-}" ] || exit 1
+    prev=
+    for arg in "$@"; do
+      [ "$prev" != --body-file ] || cp "$arg" "$FM_TEST_GH_EDIT_BODY"
+      prev=$arg
+    done
+    exit 0
+    ;;
   "pr merge")
     prev=
     for arg in "$@"; do
@@ -732,6 +741,8 @@ run_pr_merge() {
   FM_TEST_GH_SQUASH_SUBJECT="$case_dir/squash-subject" \
   FM_TEST_GH_SQUASH_BODY="$case_dir/squash-body" \
   FM_TEST_GH_MERGE_BODY="$case_dir/merge-body" \
+  FM_TEST_GH_EDIT_BODY="$case_dir/edit-body" \
+  FM_TEST_GH_EDIT_FAIL="$case_dir/github-edit-fail" \
   FM_TEST_GH_ISSUE_STATE="$case_dir/issue-state" \
   FM_TEST_GH_ISSUE_FAIL="$case_dir/github-issue-fail" \
   FM_TEST_GH_RULES_FAIL="$case_dir/github-rules-fail" \
@@ -4970,35 +4981,51 @@ test_queued_merge_reads_no_issue_back() {
 }
 
 # The owned-issue body line is the only ownership signal: an issue it names is
-# checked even when the row's title carries no URL, and a missing keyword for it
-# refuses before anything reaches the forge.
-test_owned_issue_missing_keyword_refuses() {
+# checked even when the row's title carries no URL, and a body that does not
+# close it gets the plain closing line appended before the forge merges.
+test_owned_issue_missing_keyword_appends_closing_line() {
   local case_dir rc
   case_dir=$(make_issue_case owned-missing 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a 'Close issues #7 and #8')
   add_task_row_with_body "$case_dir" '' 'Mode no-mistakes.' "Owns issue: $ISSUE_7"
 
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "owned-missing: the merge did not proceed after appending the closing line"$'\n'"$(cat "$case_dir/stderr")"
+
+  assert_grep 'pr edit 50 --repo example/repo --body-file' "$case_dir/gh.log" \
+    "owned-missing: the body was not edited"
+  [ "$(head -1 "$case_dir/edit-body")" = 'Close issues #7 and #8' ] \
+    || fail "owned-missing: the edit did not keep the original body"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-missing: the edit did not end with the plain closing line: $(cat "$case_dir/edit-body")"
+  assert_grep 'appended the line "Closes #7" to the body' "$case_dir/stderr" \
+    "owned-missing: the append was not reported"
+  assert_logged_gh_merge "$case_dir" 50 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  assert_grep "issue view $ISSUE_7" "$case_dir/gh.log" \
+    "owned-missing: the owned issue the body now closes was not read back"
+
+  case_dir=$(make_issue_case owned-code-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4b 'Fixes `Closes #7`')
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-code-span: fm-pr-merge failed"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-code-span: a code-formatted keyword was read as closing the issue"
+
+  case_dir=$(make_issue_case owned-edit-fails 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4c 'no keyword')
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  : > "$case_dir/github-edit-fail"
   set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
-
-  expect_code 1 "$rc" "owned-missing: an owned issue the body does not close must refuse the merge"
-  assert_grep "does not close #7 ($ISSUE_7), which task task-x1's record marks as owned; nothing was merged" "$case_dir/stderr" \
-    "owned-missing: the refusal did not name the owned issue"
+  expect_code 1 "$rc" "owned-edit-fails: a failed body edit must refuse the merge"
+  assert_grep 'appending the closing line to it failed; nothing was merged' "$case_dir/stderr" \
+    "owned-edit-fails: the refusal did not name the failed edit"
   assert_grep 'directly before the reference: Closes #7' "$case_dir/stderr" \
-    "owned-missing: the refusal did not print the line the body needs"
-  assert_grep 'pass --no-closing-keyword' "$case_dir/stderr" \
-    "owned-missing: the refusal did not name the override flag"
-  assert_no_grep 'nothing is wrong' "$case_dir/stderr" \
-    "owned-missing: an owned issue was reported with the context hedge"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "owned-missing: the forge was asked to merge despite the refusal"
-  assert_no_grep 'issue view' "$case_dir/gh.log" \
-    "owned-missing: an issue was read back after a refusal"
-  assert_no_grep 'closing_keyword_override=' "$case_dir/state/task-x1.meta" \
-    "owned-missing: a refused merge recorded an override"
-  pass "fm-pr-merge refuses when the body does not close the task's owned issue, and names the line and the flag"
+    "owned-edit-fails: the refusal did not print the line the body needs"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "owned-edit-fails: the forge was asked to merge"
+  pass "fm-pr-merge appends the plain closing line for an owned issue the body does not close, and refuses only when that edit fails"
 }
 
 # The override is for a stage PR that should leave its owned issue open, and it
@@ -5433,6 +5460,38 @@ test_accept_relay_clears_exactly_its_round() {
     "nm-1752-relay-away: the refusal did not name attended-only"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-away: gh pr merge ran"
   pass "fm-pr-merge --accept-relay clears only its named round, records it, and is attended-only"
+}
+
+test_relay_only_refusal_while_away_holds_for_return() {
+  local case_dir
+  case_dir=$(make_case nm-1752-relay-away-hold)
+  add_gh_mocks "$case_dir" 5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  run_nm_merge "$case_dir"
+  expect_code 4 "$NM_MERGE_RC" "nm-1752-relay-away-hold: a relay-only refusal while away must exit 4"
+  assert_grep "hold: needs the attended session: --accept-relay $NM_RUN_1752:review:1; hold until return" "$case_dir/stderr" \
+    "nm-1752-relay-away-hold: the attended command was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-away-hold: gh pr merge ran"
+
+  case_dir=$(make_case nm-1752-relay-away-red)
+  add_gh_mocks "$case_dir" 5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d
+  write_github_red_json "$case_dir" 5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d lint
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-away-red: a refusal with more than relay lines keeps exit 1"
+  assert_no_grep 'hold: needs the attended session' "$case_dir/stderr" \
+    "nm-1752-relay-away-red: the hold line was printed beside another refusal"
+
+  case_dir=$(make_case nm-1752-relay-attended)
+  add_gh_mocks "$case_dir" 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED"
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-attended: an attended relay refusal keeps exit 1"
+  assert_no_grep 'hold: needs the attended session' "$case_dir/stderr" \
+    "nm-1752-relay-attended: the hold line was printed with no away record"
+  pass "fm-pr-merge exits 4 naming the attended --accept-relay when a relay refusal is all that stands while away"
 }
 
 test_approved_ask_user_finding_no_decision_named_refuses_merge() {
@@ -6023,7 +6082,7 @@ test_unreadable_pr_body_warns_and_merges
 test_issue_not_observed_closed_after_merge_is_reported
 test_unreadable_issue_is_reported_as_unknown
 test_queued_merge_reads_no_issue_back
-test_owned_issue_missing_keyword_refuses
+test_owned_issue_missing_keyword_appends_closing_line
 test_no_closing_keyword_overrides_and_is_recorded
 test_no_closing_keyword_unused_records_nothing
 test_no_closing_keyword_is_recorded_when_authority_persist_fails
@@ -6052,6 +6111,7 @@ test_pr_1713_run_shape_refuses_merge
 test_relayed_ruling_missing_the_steer_refuses_merge
 test_relay_check_pairs_only_the_line_that_closed_the_round
 test_accept_relay_clears_exactly_its_round
+test_relay_only_refusal_while_away_holds_for_return
 test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings
 test_test_step_grant_matches_only_the_pipelines_live_validation_question
