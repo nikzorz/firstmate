@@ -124,6 +124,10 @@
 # refuses when that round is not refused, is refused while the away-posture
 # record exists, and a merge the forge accepts records it in the task record as
 # accepted_relay=<pr-url> <run>:<step>:<round>.
+# While the away-posture record exists, a refusal whose only lines are such
+# rounds also prints, per round, "hold: needs the attended session:
+# --accept-relay <run>:<step>:<round>; hold until return" and exits 4, which
+# means hold the merge for the captain's return rather than retry it.
 # A Forgejo merge is refused unless every pre-merge condition holds, each read
 # live at merge time: the pull request is open, not a draft, mergeable is
 # true, and the combined commit status at the exact current head, read across
@@ -216,8 +220,8 @@
 # replays the branch commits untouched, trailers included. A GitLab merge is left
 # alone, because its message is the project's own setting.
 #
-# A GitHub merge also runs a closing-keyword check that refuses for the one
-# issue the task owns and is advisory for every other. It reads the issue URLs
+# A GitHub merge also runs a closing-keyword check that repairs the body for
+# the one issue the task owns and is advisory for every other. It reads the issue URLs
 # on the task's backlog row (the links: entry
 # tasks-axi derives from them) and the pull request body from the same live view
 # the pre-merge conditions use, and reports, naming each issue, when no closing
@@ -230,9 +234,12 @@
 # reads exactly like one the work owns. The one explicit ownership marker is a
 # line in the task body reading "Owns issue: <full GitHub issue URL>", written
 # at intake only for an issue the work is meant to close; the issue it names is
-# checked too, and a missing keyword for it refuses the merge before anything
-# is handed to the forge, printing the keyword line the body needs. The check
-# never edits the body. --no-closing-keyword overrides that one refusal, for a
+# checked too, and when the body does not close it the plain line
+# "Closes <reference>" is appended to the body before anything is handed to the
+# forge; only a failed edit refuses, printing the line the body needs. A keyword
+# inside a code span or fenced block closes nothing on GitHub and counts as
+# missing here. The body is never edited for any other issue.
+# --no-closing-keyword skips that edit, for a
 # stage PR that is "Part of #N" and should not close the issue; once the forge
 # accepts the merge, the override is recorded in the task's metadata record as
 # a line reading "closing_keyword_override=<PR URL> <issue URL>", so the line
@@ -748,6 +755,7 @@ FIELDS
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
     print_unruled_finding_clearing_lines
+    relay_refusals_need_attended_session "$refusals" && return "$MERGE_HOLD_UNTIL_RETURN"
     return 1
   fi
   printf 'verified: %s is open and mergeable, with a successful pipeline at head %s\n' \
@@ -880,6 +888,7 @@ FIELDS
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
     print_unruled_finding_clearing_lines
+    relay_refusals_need_attended_session "$refusals" && return "$MERGE_HOLD_UNTIL_RETURN"
     return 1
   fi
   printf 'verified: %s is open and mergeable, with a successful combined status at head %s\n' \
@@ -1237,6 +1246,7 @@ EOF
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
     print_unruled_finding_clearing_lines
+    relay_refusals_need_attended_session "$refusals" && return "$MERGE_HOLD_UNTIL_RETURN"
     return 1
   fi
   printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
@@ -1644,14 +1654,25 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   if issue_is_in_pr_repo "$2" "$3"; then
     refs="#$number|$refs"
   fi
-  grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)" "$body"
+  # GitHub reads no keyword inside a code span or fenced block, so neither counts.
+  awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced { gsub(/`[^`]*`/, ""); print }' "$body" |
+    grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)"
+}
+
+# Appends the plain closing line for the owned issue to the pull request body,
+# because the body is written by a pipeline step no gate can follow, so a body
+# missing the line is repaired here rather than handed back to a person.
+append_owned_closing_line() {  # <body-file> <reference>
+  printf '\n\nCloses %s\n' "$2" >> "$1" || return 1
+  gh pr edit "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" --body-file "$1" >/dev/null 2>&1
 }
 
 closing_check_did_not_run() {  # <why>
   echo "warning: the closing-keyword check did not run: $1" >&2
 }
 
-# Returns 1 only for an owned issue the body does not close (see the header);
+# Returns 1 only for an owned issue the body does not close and could not be
+# given its closing line (see the header);
 # every other answer it reaches is a report.
 closing_keyword_gate() {
   local url owner repo number ref rc=0 body_file refused=0
@@ -1690,9 +1711,12 @@ URLS
     elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ] && [ "$NO_CLOSING_KEYWORD" = true ]; then
       CLOSING_KEYWORD_OVERRIDE_ISSUE=$url
       echo "warning: this PR's body does not close $ref ($url), which task $ID's record marks as owned; merging anyway under --no-closing-keyword, so the issue stays open" >&2
+    elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ] && append_owned_closing_line "$body_file" "$ref"; then
+      closing+=("$url")
+      echo "notice: this PR's body did not close $ref ($url), which task $ID's record marks as owned; appended the line \"Closes $ref\" to the body" >&2
     elif [ "$url" = "$TASK_OWNED_ISSUE_URL" ]; then
       refused=1
-      echo "error: PR merge refused - this PR's body does not close $ref ($url), which task $ID's record marks as owned; nothing was merged" >&2
+      echo "error: PR merge refused - this PR's body does not close $ref ($url), which task $ID's record marks as owned, and appending the closing line to it failed; nothing was merged" >&2
       echo "error: add this line to the PR body, with the keyword directly before the reference: Closes $ref" >&2
       echo "error: pass --no-closing-keyword only for a stage PR that is \"Part of $ref\" and should not close it" >&2
     else
@@ -1827,6 +1851,20 @@ print_unruled_finding_clearing_lines() {
   [ -n "$UNRULED_FINDING_CLEARING_LINES" ] || return 0
   printf 'error: %s' "$(fm_nm_rulings_clearing_text "$STATE/$ID.status")
 " >&2
+}
+
+# Exit status for a refusal only the attended session can clear; see the header.
+MERGE_HOLD_UNTIL_RETURN=4
+
+# While away, a refusal whose every line is a relayed-instructions round has
+# one remedy, the attended --accept-relay, so retrying under away authority
+# can never clear it. Prints the command per round and returns 0 in that case.
+relay_refusals_need_attended_session() {  # <refusals>
+  [ "$FM_PR_AWAY_POSTURE" = true ] || return 1
+  [ -n "$1" ] && [ "$1" = "$FM_NM_RELAY_MISMATCHES" ] || return 1
+  printf '%s\n' "$FM_NM_RELAY_ROUNDS" | while IFS= read -r round; do
+    printf 'hold: needs the attended session: --accept-relay %s; hold until return\n' "$round" >&2
+  done
 }
 
 FM_PR_MERGE_AUTHORITY=
@@ -2140,6 +2178,7 @@ case "$PROVIDER" in
       if [ "$mergeable_status" -eq 3 ]; then
         printf 'error: mergeability for %s is still being computed by GitHub; retry shortly\n' "$URL" >&2
       fi
+      [ "$mergeable_status" -ne "$MERGE_HOLD_UNTIL_RETURN" ] || exit "$MERGE_HOLD_UNTIL_RETURN"
       exit 1
     fi
     closing_keyword_gate || exit 1
@@ -2197,7 +2236,10 @@ case "$PROVIDER" in
     fi
     ;;
   gitlab)
-    gitlab_verify_mergeable || exit 1
+    verify_status=0
+    gitlab_verify_mergeable || verify_status=$?
+    [ "$verify_status" -ne "$MERGE_HOLD_UNTIL_RETURN" ] || exit "$MERGE_HOLD_UNTIL_RETURN"
+    [ "$verify_status" -eq 0 ] || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;
@@ -2234,7 +2276,10 @@ case "$PROVIDER" in
     forgejo_reject_unsupported_args "$@" || exit 1
     forgejo_method=$(caller_merge_method "$@")
     [ -n "$forgejo_method" ] || forgejo_method=$(forgejo_default_merge_style) || exit 1
-    forgejo_verify_mergeable || exit 1
+    verify_status=0
+    forgejo_verify_mergeable || verify_status=$?
+    [ "$verify_status" -ne "$MERGE_HOLD_UNTIL_RETURN" ] || exit "$MERGE_HOLD_UNTIL_RETURN"
+    [ "$verify_status" -eq 0 ] || exit 1
     # The away record is locked first, so this last presence and authority
     # read and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
