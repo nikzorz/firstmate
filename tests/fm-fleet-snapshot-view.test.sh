@@ -1510,6 +1510,30 @@ test_mid_run_decision_cleared_by_terminal_run() {
   pass "a mid-run request the crew reported on past is still cleared by the finished run"
 }
 
+# A worker can append a gate's request seconds before its done line with no
+# resolved line, so a finished run must not clear it from any surface.
+test_request_appended_just_before_done_survives_terminal_run() {
+  local home fakebin out
+  read -r home fakebin <<<"$(setup_terminal_run_task request-before-done before-done)"
+  {
+    printf 'working: implementing\n'
+    printf 'needs-decision [key=nm-r1-review]: ask-user round=1 findings=review-1\n'
+    printf 'done: PR https://github.com/o/r/pull/9 checks green\n'
+  } > "$home/state/before-done.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "before-done")
+    | .current_state.state == "done"
+      and .hints.pending_decision == true
+      and (.hints.open_decisions | map(.key)) == ["nm-r1-review"]
+  ' >/dev/null || fail "a request appended just before done must survive the finished run: $out"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    (.decisions_open | map({id,key})) == [{id:"before-done",key:"nm-r1-review"}]
+  ' >/dev/null || fail "the home summary lost a request appended just before done: $out"
+  pass "a request appended just before done stays open in the fleet view and home summary"
+}
+
 test_answered_post_run_decision_keeps_its_unanswered_sibling() {
   local home fakebin out
   read -r home fakebin <<<"$(setup_terminal_run_task two-post-run-decisions two-post)"
@@ -1815,6 +1839,7 @@ test_stalled_child_is_active_work_not_no_active_work
 test_unreadable_only_home_does_not_claim_no_active_work
 test_post_run_decision_survives_terminal_run
 test_mid_run_decision_cleared_by_terminal_run
+test_request_appended_just_before_done_survives_terminal_run
 test_answered_post_run_decision_keeps_its_unanswered_sibling
 test_blocked_done_clears_the_request_it_reported_past
 test_oversized_backlog_still_reports_every_record

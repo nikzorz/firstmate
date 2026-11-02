@@ -1012,7 +1012,8 @@ status_open_decisions() {  # <status-file> [<kind>]
 # rule, key grammar, reserved-key guard and output shape are the fold's own. Only
 # a recognised non-decision status event (a verb whose unstamped head carries a
 # colon) ends the trailing run; continuation prose cannot, exactly as it cannot
-# move the fold. This reports WHERE in the append-only stream a still-open
+# move the fold. A ship or scout done line carries forward the keyed requests the
+# fold itself keeps open past done. This reports WHERE in the append-only stream a still-open
 # request was raised, so it adds no ordering to the log and reads no clock.
 #
 # It exists because "the crew moved on" and "a later line exists" are different
@@ -1038,7 +1039,14 @@ status_trailing_open_decisions() {  # <status-file> [<kind>]
         ;;
       working|done|failed|note|"$paused")
         _fm_status_unstamped "$line" unstamped
-        case "$unstamped" in *:*) trailing='' ;; esac
+        case "$unstamped" in
+          *:*)
+            case "$verb:$kind" in
+              done:ship|done:scout) trailing=$(_fm_decision_keep_keyed_requests "$trailing") ;;
+              *) trailing='' ;;
+            esac
+            ;;
+        esac
         ;;
     esac
   done < "$f"

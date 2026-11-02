@@ -102,9 +102,10 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
-# On every forge a task is also refused while its status log holds a decision
-# or blocker open per bin/fm-classify-lib.sh's status_open_decisions fold, and
-# each refusal names the open key that an fm-send.sh --resolve-key answer closes.
+# On every forge a task is also refused while its status log holds a keyed
+# needs-decision open per bin/fm-classify-lib.sh's status_open_decisions fold,
+# and each refusal names the open key that an fm-send.sh --resolve-key answer
+# closes. Blockers and keyless requests do not refuse the merge.
 # On every forge a no-mistakes task (task record mode=no-mistakes) is also
 # refused while its pipeline left a finding unruled that no decision request
 # named, because nothing else stands between a finding a worker approved unseen
@@ -1848,7 +1849,7 @@ collect_unruled_finding_refusals() {
   fi
 }
 
-# Sets OPEN_DECISION_REFUSALS to one refusal line per decision or blocker the
+# Sets OPEN_DECISION_REFUSALS to one refusal line per keyed needs-decision the
 # task's status log still holds open, so a request appended just before the
 # task's done line cannot reach the merge unanswered.
 OPEN_DECISION_REFUSALS=
@@ -1856,7 +1857,7 @@ collect_open_decision_refusals() {
   local key verb note
   OPEN_DECISION_REFUSALS=
   while IFS=$'\t' read -r key verb note; do
-    [ -n "$key" ] || continue
+    [ "$verb" = needs-decision ] && [ "$key" != default ] || continue
     OPEN_DECISION_REFUSALS="$OPEN_DECISION_REFUSALS  - task $ID's status log still holds $verb '$key' open ($note); answer it with fm-send.sh --resolve-key $key
 "
   done <<EOF

@@ -840,6 +840,18 @@ test_request_left_open_before_done_refuses_until_resolved() {
   rc=$?
   set -e
   expect_code 0 "$rc" "request-before-done: the resolved request must no longer refuse: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case blocker-and-keyless-request)
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  printf 'blocked [at=1792000000] [key=ci-wait]: waiting on the ci queue\nneeds-decision [at=1792000001]: rebase now or later?\n' \
+    > "$case_dir/state/task-x1.status"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "blocker-and-keyless-request: only a keyed needs-decision may refuse: $(cat "$case_dir/stderr")"
   pass "fm-pr-merge refuses a request left open before the done line until its resolved line lands"
 }
 
