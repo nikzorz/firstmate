@@ -51,6 +51,7 @@ commands:
 test:
   instructions: |
     Run the colocated tests/<script>.test.sh files that cover the run intent and the changed behavior, and never walk the whole tests/ suite. Leave the full suite to CI.
+    Verify a fix by running only the failing case with FM_TEST_ONLY=<test_function> where the test file supports it.
     Drive a scenario live only through a harness that already exists, such as the guarded Herdr lab (bin/fm-herdr-lab.sh), the live supervision lab (bin/fm-live-lab.sh), or the disposable lab home below. Build no new driver.
     Write nothing inside the worktree outside the evidence directory. A one-off probe goes in the evidence directory.
     Report a scenario that only a test covers as untested, naming that test as its reason.
