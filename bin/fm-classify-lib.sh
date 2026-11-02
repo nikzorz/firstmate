@@ -648,7 +648,8 @@ status_event_recorded() {  # <status-file> <new-status-line>
 # statement of the status-fold contract that fixes this - a needs-decision/blocked
 # line OPENS a keyed decision, and an explicit resolution or a verified
 # captain-held backlog transfer referencing that key CLOSES it.
-# Ship/scout terminal declarations supersede stale log decisions; a secondmate's
+# A ship/scout failed line supersedes every stale log decision, and a done line
+# every one but a keyed needs-decision, which still needs its answer; a secondmate's
 # terminal event may describe other work and cannot close an unrelated decision.
 # Who WRITES the closing line is owned elsewhere: the answering firstmate closes
 # at answer time through fm-send's --resolve-key (bin/fm-send.sh header), and a
@@ -904,6 +905,23 @@ _fm_status_kind() {
   case "$kind" in ship|scout|secondmate) printf '%s' "$kind" ;; *) printf unknown ;; esac
 }
 
+# The records a ship or scout done line leaves open: a keyed needs-decision is a
+# question someone must still answer, and a worker can append it moments before
+# its done line, so only its resolved line closes it. Blockers and keyless
+# requests are superseded by the done line as before.
+_fm_decision_keep_keyed_requests() {  # <open-set>
+  local line out=''
+  while IFS= read -r line; do
+    case "$line" in
+      default$'\t'*) ;;
+      *$'\t'needs-decision$'\t'*) out="${out}${line}"$'\n' ;;
+    esac
+  done <<EOF
+$1
+EOF
+  printf '%s' "$out"
+}
+
 _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb> <kind>
   local open=$1 line=$2 resolve=$3 held=$4 kind=$5 verb key note unstamped
   # Both colon tests below ask where the head ends, the same question the note
@@ -927,7 +945,12 @@ _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb
   esac
   status_line_verb "$line" verb
   case "$unstamped" in
-    *:*) case "$verb:$kind" in done:ship|done:scout|failed:ship|failed:scout) return 0 ;; esac ;;
+    *:*)
+      case "$verb:$kind" in
+        failed:ship|failed:scout) return 0 ;;
+        done:ship|done:scout) _fm_decision_keep_keyed_requests "$open"; return 0 ;;
+      esac
+      ;;
   esac
   case "$verb" in
     needs-decision|blocked|"$resolve"|"$held") ;;
@@ -1304,10 +1327,12 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 # malformed worker stamp whose colons used to pose as the head/note separator
 # no longer opens or closes anything; cursors folded under that reading are
 # discarded.
+# 10: a done line on a ship or scout no longer closes a keyed needs-decision,
+# so a cursor folded when it did is discarded and the request reopens.
 # Version 4 was already spent on the bracketed-tag parser change above, and a
 # cursor persisted under that reading predates this one, so it must still be
 # discarded and rebuilt from byte 0 under the new reading.
-FM_OPEN_DECISIONS_FOLD_VERSION=9
+FM_OPEN_DECISIONS_FOLD_VERSION=10
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> strongest available identity

@@ -951,7 +951,7 @@ test_open_decision_clears_on_keyed_resolution() {
 # must not linger as pending. Decisions come purely from the keyed fold reconciled
 # against the crew lifecycle; report prose never opens or reopens a decision.
 test_completed_scout_report_is_pointer_not_pending() {
-  local home fakebin out kind terminal id phase single mate single_state mate_state
+  local home fakebin out kind terminal id phase single done_set mate single_state mate_state
   home=$(make_home completed-scout)
   mkdir -p "$home/projects/scout-wt" "$home/data/lavish-103"
   fm_write_meta "$home/state/lavish-103.meta" \
@@ -978,7 +978,8 @@ test_completed_scout_report_is_pointer_not_pending() {
   ' >/dev/null || fail "a completed scout report must be a pointer, not a pending decision: $out"
 
   # Same terminal-supersession contract across ship/scout/secondmate, both snapshot
-  # modes, and reopen/resolve after cleanup.
+  # modes, and reopen/resolve after cleanup. A ship or scout done line leaves its
+  # keyed request open until that request's resolved line.
   home=$(make_home terminal-cleanup)
   mkdir -p "$home/projects/task"
   fakebin=$(make_fakebin "$home")
@@ -995,9 +996,9 @@ test_completed_scout_report_is_pointer_not_pending() {
   done
   for phase in terminal reopened resolved; do
     case "$phase" in
-      terminal) single='[]'; mate='["access","choice"]'; single_state=unknown; mate_state=parked ;;
-      reopened) single='["access","new-choice"]'; mate='["access","choice","new-choice"]'; single_state=parked; mate_state=parked ;;
-      resolved) single='[]'; mate='["choice"]'; single_state=unknown; mate_state=parked ;;
+      terminal) single='[]'; done_set='["choice"]'; mate='["access","choice"]'; single_state=unknown; mate_state=parked ;;
+      reopened) single='["access","new-choice"]'; done_set='["access","choice","new-choice"]'; mate='["access","choice","new-choice"]'; single_state=parked; mate_state=parked ;;
+      resolved) single='[]'; done_set='["choice"]'; mate='["choice"]'; single_state=unknown; mate_state=parked ;;
     esac
     for kind in ship scout secondmate; do
       for terminal in 'done' failed; do
@@ -1009,19 +1010,21 @@ test_completed_scout_report_is_pointer_not_pending() {
       done
     done
     out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
-    printf '%s' "$out" | jq -e --argjson single "$single" --argjson mate "$mate" \
+    printf '%s' "$out" | jq -e --argjson single "$single" --argjson done_set "$done_set" --argjson mate "$mate" \
       --arg single_state "$single_state" --arg mate_state "$mate_state" '
       .tasks | length == 6 and all(.[];
         (.kind == "secondmate") as $persistent
-        | (.hints.open_decisions | map(.key) | sort) == (if $persistent then $mate else $single end)
-          and .current_state.state == (if $persistent then $mate_state else $single_state end)
-          and .hints.blocked_event == (if $persistent then $mate else $single end | index("access") != null)
-          and .hints.pending_decision == (if $persistent then $mate else $single end | any(. != "access")))
+        | (if $persistent then $mate elif (.id | endswith("-done")) then $done_set else $single end) as $want
+        | (.hints.open_decisions | map(.key) | sort) == $want
+          and .current_state.state == (if $persistent or (.id | endswith("-done")) then $mate_state else $single_state end)
+          and .hints.blocked_event == ($want | index("access") != null)
+          and .hints.pending_decision == ($want | any(. != "access")))
     ' >/dev/null || fail "$phase snapshot revived a completed decision or lost a current one: $out"
     out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
-    printf '%s' "$out" | jq -e --argjson single "$single" --argjson mate "$mate" '
+    printf '%s' "$out" | jq -e --argjson single "$single" --argjson done_set "$done_set" --argjson mate "$mate" '
       (.decisions_open | map({id,key}) | sort_by(.id,.key)) ==
-        (([ ("ship-done","ship-failed","scout-done","scout-failed") as $id | $single[] | {id:$id,key:.} ]
+        (([ ("ship-failed","scout-failed") as $id | $single[] | {id:$id,key:.} ]
+          + [ ("ship-done","scout-done") as $id | $done_set[] | {id:$id,key:.} ]
           + [ ("secondmate-done","secondmate-failed") as $id | $mate[] | {id:$id,key:.} ]) | sort_by(.id,.key))
     ' >/dev/null || fail "$phase home summary revived a completed decision or lost a current one: $out"
   done
@@ -1532,7 +1535,8 @@ test_answered_post_run_decision_keeps_its_unanswered_sibling() {
 # A done: crew-state reads back as blocked (here a direct-PR done naming no pull
 # request) is the same finish as a done, so it narrows the open decisions the
 # same way instead of resurfacing a request the crew reported on past beside the
-# row asking for the delivery steer.
+# row asking for the delivery steer. The request is keyless because a keyed one
+# stays open past done until its own resolved line.
 test_blocked_done_clears_the_request_it_reported_past() {
   local home fakebin out wt
   home=$(make_home blocked-done-no-pr)
@@ -1552,7 +1556,7 @@ test_blocked_done_clears_the_request_it_reported_past() {
     "mode=direct-PR"
   record_claude_idle "$home/state" handoff
   {
-    printf 'needs-decision [key=rollout]: stage the rollout or ship it whole\n'
+    printf 'needs-decision: stage the rollout or ship it whole\n'
     printf 'working: applying the agreed rollout\n'
     printf 'done: implemented and committed on the branch\n'
   } > "$home/state/handoff.status"

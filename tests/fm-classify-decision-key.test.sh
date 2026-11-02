@@ -443,7 +443,7 @@ test_bare_prose_cannot_impersonate_a_terminal_declaration() {
         || fail "$kind: bare '$word' prose closed a still-open key"
       f="$dir/$kind-$word-real.status"
       printf 'kind=%s\n' "$kind" > "$dir/$kind-$word-real.meta"
-      printf 'needs-decision [key=route]: A or B?\n%s: real outcome\n' "$word" > "$f"
+      printf 'blocked [key=route]: A or B?\n%s: real outcome\n' "$word" > "$f"
       assert_fold "$f" '' "$kind: genuine $word supersedes"
       [ "$(status_key_closing_verb "$f" route)" = "$word" ] \
         || fail "$kind: genuine $word no longer supersedes the open key"

@@ -3021,6 +3021,13 @@ test_single_owner_terminal_declaration_supersedes_stale_decision() {
         printf '%s [key=choice]: an earlier decision\n%s: final outcome\nContinuation prose.\n\n' \
           "$opener" "$terminal" > "$d/state/task.status"
         out=$(run_crew_state "$d" task)
+        if [ "$opener:$terminal" = needs-decision:done ]; then
+          # Only its own resolved line closes a keyed request, even one appended
+          # just before the done line.
+          assert_contains "$out" "state: parked" "$kind done line closed a keyed request"
+          assert_contains "$out" "an earlier decision" "the keyed request supplies the detail past done"
+          continue
+        fi
         assert_contains "$out" "state: $terminal" "$kind terminal declaration supersedes stale $opener"
         assert_contains "$out" "final outcome" "the terminal declaration supplies the detail"
         printf 'note: cleanup complete\n' >> "$d/state/task.status"

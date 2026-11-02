@@ -314,11 +314,31 @@ test_routine_steer_never_closes() {
   out=$(drain_out "$home")
   printf '%s' "$out" | grep -F '[key=schema]' >/dev/null \
     || fail "a routine steer or later working line cleared an unanswered captain decision: $out"
-  printf 'done: task complete\nnote: cleanup complete\n' >> "$home/state/t3.status"
+  printf 'failed: task stopped\nnote: cleanup complete\n' >> "$home/state/t3.status"
   run_send "$fb" "$home" "$log" t3 --resolve-key schema "answer to a stale decision" > "$dir/terminal.out" 2> "$dir/terminal.err"; rc=$?
   expect_code 1 "$rc" "an answer to a terminally superseded decision must refuse"
   [ ! -e "$home/state/t3.inbox/002.msg" ] || fail "a stale decision answer was delivered"
   pass "fm-send preserves decisions through routine work and refuses superseded terminal decisions"
+}
+
+test_keyed_request_before_done_stays_answerable() {
+  local dir fb log home rc out
+  dir="$TMP_ROOT/request-before-done"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home request-before-done)
+  fm_write_meta "$home/state/t9.meta" "window=sess:fm-t9" "kind=ship"
+  printf 'needs-decision [key=nm-r1-review]: ask-user round=2 findings=review-1\n' > "$home/state/t9.status"
+  printf 'done: PR https://github.com/example/repo/pull/9 checks green\n' >> "$home/state/t9.status"
+
+  run_send "$fb" "$home" "$log" t9 --resolve-key nm-r1-review "approve review-1" > "$dir/out" 2> "$dir/err"; rc=$?
+  expect_code 0 "$rc" "a keyed request appended before done must still be answerable: $(cat "$dir/err")"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t9.status" | grep -qF 'resolved [key=nm-r1-review]: answered: approve review-1' \
+    || fail "the closing resolved line is missing:"$'\n'"$(cat "$home/state/t9.status")"
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the answered request still lists as open: $out"
+  fi
+  pass "fm-send --resolve-key answers and closes a keyed request appended before the done line"
 }
 
 test_not_open_key_refuses_before_send() {
@@ -967,6 +987,7 @@ test_separate_resolve_key_answers_do_not_rewake
 test_colon_first_key_position_is_answerable
 test_answer_starts_work_never_orphans
 test_routine_steer_never_closes
+test_keyed_request_before_done_stays_answerable
 test_not_open_key_refuses_before_send
 test_gate_fix_ruling_requires_property_line
 test_failed_ring_still_closes_at_enqueue
