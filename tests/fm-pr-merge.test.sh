@@ -5955,8 +5955,12 @@ test_forgejo_merge_refuses_unruled_finding() {
 
 
 if [ -n "${FM_TEST_ONLY:-}" ]; then
+  if ! declare -F "$FM_TEST_ONLY" >/dev/null; then
+    echo "FM_TEST_ONLY names no test function in this file: $FM_TEST_ONLY" >&2
+    exit 1
+  fi
   "$FM_TEST_ONLY"
-  exit 0
+  exit $?
 fi
 
 test_github_zero_exit_queue_required_refuses_with_exact_retry
