@@ -220,8 +220,8 @@
 # replays the branch commits untouched, trailers included. A GitLab merge is left
 # alone, because its message is the project's own setting.
 #
-# A GitHub merge also runs a closing-keyword check that refuses for the one
-# issue the task owns and is advisory for every other. It reads the issue URLs
+# A GitHub merge also runs a closing-keyword check that repairs the body for
+# the one issue the task owns and is advisory for every other. It reads the issue URLs
 # on the task's backlog row (the links: entry
 # tasks-axi derives from them) and the pull request body from the same live view
 # the pre-merge conditions use, and reports, naming each issue, when no closing
@@ -1671,7 +1671,8 @@ closing_check_did_not_run() {  # <why>
   echo "warning: the closing-keyword check did not run: $1" >&2
 }
 
-# Returns 1 only for an owned issue the body does not close (see the header);
+# Returns 1 only for an owned issue the body does not close and could not be
+# given its closing line (see the header);
 # every other answer it reaches is a report.
 closing_keyword_gate() {
   local url owner repo number ref rc=0 body_file refused=0
