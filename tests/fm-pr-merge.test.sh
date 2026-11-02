@@ -5005,7 +5005,7 @@ test_owned_issue_missing_keyword_appends_closing_line() {
     "owned-missing: the owned issue the body now closes was not read back"
 
   # shellcheck disable=SC2016 # the backticks are the literal code span under test
-  case_dir=$(make_issue_case owned-code-span4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4b 'Fixes `Closes #7`')
+  case_dir=$(make_issue_case owned-code-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4b 'Fixes `Closes #7`')
   add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-code-span: fm-pr-merge failed"
