@@ -50,9 +50,9 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
    A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
    It reads any standalone word fix, "fix round" included, as a Fix ruling, so a ruling that only mentions a fix carries a `Property:` line saying it rules none.
-   A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example (for example, ...) or leave it out, so the fix round tests it against the property rather than building it.
+   A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example (for example, ...) only when every premise it rests on is checked against the code or record, and otherwise leave it out, so the fix round tests it against the property rather than building it.
    Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
-   Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison.
+   Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison; a property that changes a value or claim also covers every claim whose truth depends on it (counts, negations, sameness, attribution, and for a size or position the grid and support it must keep), and those dependents are its mirror-case check.
    When the property bans names from the output, state it over the reference forms the data carries (a `<kind>/<id>` label, an id field of a known kind), never over free text, and name what must survive unchanged as the mirror case.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
@@ -68,7 +68,7 @@ State all five of these elements in one concise, evidence-first escalation:
 
 1. The original requirement or accepted task criterion.
 2. The proposed product or engineering contract expansion.
-3. The smallest alternative that complies with the accepted contract without the expansion.
+3. The smallest alternative that complies with the accepted contract without the expansion; recommend a remedy option only when every premise it rests on is checked against the code or record, and otherwise leave it out.
 4. The concrete consequences of accepting and declining the expansion.
 5. A recommendation with the reason it best serves the accepted intent.
 
