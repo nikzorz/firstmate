@@ -3127,6 +3127,10 @@ exit_if_watcher_world_gone() {
   fi
 }
 
+# A deletion can land mid-cycle, after the loop-top check, while any lock wait
+# the cycle reaches is in progress.
+FM_LOCK_WAIT_DIR_GONE_HOOK=exit_if_watcher_world_gone
+
 while :; do
   exit_if_watcher_world_gone
 

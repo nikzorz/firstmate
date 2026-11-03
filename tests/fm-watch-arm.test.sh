@@ -1475,6 +1475,72 @@ test_recovery_arm_check_gives_up_when_its_state_directory_is_removed() {
   pass "watch-arm: the recovery arm check gives up when its state directory is removed"
 }
 
+# A deletion can also land mid-cycle, after the loop-top state check, while the
+# stale triage's wake append is waiting on the queue lock: no lock can be created
+# there again, so the watcher must take its logged state-gone exit rather than
+# spin in that wait. The current-state read the triage takes just before the
+# append starts a live holder, so the append is waiting whenever the deletion
+# lands; a retry's transient owner record beside the holder's proves it is.
+test_watcher_exits_when_its_state_directory_is_removed_before_a_stale_wake() {
+  local dir state fakebin out capture window key pid status lock holder_owner owner waiting deadline i
+  dir=$(make_case stale-append-state-removed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  capture="$dir/pane.txt"
+  lock="$state/.wake-queue.lock"
+  window="test:fm-quiet"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/quiet.meta"
+  printf 'idle prompt' > "$capture"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'idle prompt')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  cat > "$fakebin/fm-crew-state.sh" <<SH
+#!/usr/bin/env bash
+FM_STATE_OVERRIDE='$state' bash -c '. "\$1"; fm_lock_try_acquire "\$FM_WAKE_QUEUE_LOCK" && echo \$\$ > "\$2" && exec sleep 60' \\
+  _ '$ROOT/bin/fm-wake-lib.sh' '$dir/holder.pid' > /dev/null 2>&1 &
+while [ ! -s '$dir/holder.pid' ]; do sleep 0.05; done
+printf 'state: unknown · source: pane · no verdict\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ ! -s "$dir/holder.pid" ] && [ "$i" -lt 300 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$dir/holder.pid" ] \
+    || { wait_for_exit "$pid" 1 >/dev/null 2>&1; fail "the stale triage never reached its current-state read: $(cat "$out")"; }
+  holder_owner=$(readlink "$lock")
+  waiting=1
+  deadline=$((SECONDS + 30))
+  while [ "$waiting" -ne 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+    for owner in "$lock".owner.*; do
+      [ -e "$owner" ] && [ "$owner" != "$holder_owner" ] && waiting=0
+    done
+  done
+  [ "$waiting" -eq 0 ] || {
+    kill -KILL "$(cat "$dir/holder.pid")" 2>/dev/null
+    wait_for_exit "$pid" 1 >/dev/null 2>&1
+    fail "the watcher never waited on the held wake queue lock: $(cat "$out")"
+  }
+  rm -rf "$state"
+  wait_for_exit "$pid" 100 2>/dev/null
+  status=$?
+  kill -KILL "$(cat "$dir/holder.pid")" 2>/dev/null || true
+  [ "$status" -ne 124 ] || fail "the watcher kept waiting to append a stale wake into a deleted state directory: $(cat "$out")"
+  grep -qF 'watcher: exiting - state directory no longer exists' "$out" \
+    || fail "the watcher did not take its logged state-gone exit: $(cat "$out")"
+  ! grep -q '^stale:' "$out" \
+    || fail "the watcher reported a stale wake it could not have queued: $(cat "$out")"
+  pass "watch-arm: a watcher exits when its state directory is removed during a stale-wake append"
+}
+
 # The same for a deleted home whose state directory still exists elsewhere: the
 # lock is released through the ordinary cleanup so nothing stale is left behind.
 test_watcher_exits_when_its_home_is_removed() {
@@ -1767,6 +1833,7 @@ test_arm_refuses_an_unusable_launch_confirm_window
 test_arm_refuses_a_disposable_validation_checkout
 test_watcher_exits_when_its_state_directory_is_removed
 test_recovery_arm_check_gives_up_when_its_state_directory_is_removed
+test_watcher_exits_when_its_state_directory_is_removed_before_a_stale_wake
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
