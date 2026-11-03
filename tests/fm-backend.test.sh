@@ -20,9 +20,9 @@
 #      and the blocked `codex-app` backend loudly.
 #
 # fm-watch.sh's signal/stale/check/heartbeat wake-string contract is already
-# exercised end-to-end against this refactor by tests/fm-watch-triage.test.sh
-# and tests/wake-helpers.sh (same fake-tmux convention, run against the
-# now-refactored bin/fm-watch.sh); this suite adds one direct old-vs-new
+# exercised end-to-end against this refactor by tests/fm-watch-triage.test.sh,
+# tests/fm-watch-triage-2.test.sh, and tests/wake-helpers.sh (same fake-tmux
+# convention, run against the now-refactored bin/fm-watch.sh); this suite adds one direct old-vs-new
 # diff for the stale-pane path specifically, since that is the one wake path
 # that now calls through fm_backend_capture instead of tmux directly.
 # The real tmux smoke test (create session, send text + Enter, capture, list,
