@@ -1961,6 +1961,8 @@ unit_keep_awake_lifecycle() {
 # ---------------------------------------------------------------------------
 # Self-release: the request cannot outlive its reason even when nothing ever
 # asks it to stop.
+# The holder removes its record on the way out, before it has exited, so a
+# vanished record does not yet mean a dead holder: wait for that too.
 # ---------------------------------------------------------------------------
 unit_keep_awake_self_releases() {
   local home daemon pwsh holder child
@@ -1975,7 +1977,7 @@ unit_keep_awake_self_releases() {
   kill -KILL "$daemon" 2>/dev/null || true
   wait "$daemon" 2>/dev/null || true
   if keep_awake_wait_released "$home" 30 \
-    && ! kill -0 "$holder" 2>/dev/null && ! kill -0 "$child" 2>/dev/null; then
+    && keep_awake_wait_gone "$holder" 10 && keep_awake_wait_gone "$child" 10; then
     pass "keep-awake self-release: losing the away-mode daemon releases the request unprompted"
   else
     fail "keep-awake self-release: the request outlived the away-mode daemon"
@@ -1988,7 +1990,7 @@ unit_keep_awake_self_releases() {
   ( keep_awake_env "$home"; "$KEEP_AWAKE" start >/dev/null 2>&1 )
   holder=$(cut -f1 "$home/state/.afk-keep-awake" 2>/dev/null || true)
   rm -f "$home/state/.afk"
-  if keep_awake_wait_released "$home" 30 && ! kill -0 "$holder" 2>/dev/null; then
+  if keep_awake_wait_released "$home" 30 && keep_awake_wait_gone "$holder" 10; then
     pass "keep-awake self-release: standing down away mode releases the request unprompted"
   else
     fail "keep-awake self-release: the request outlived away mode itself"
