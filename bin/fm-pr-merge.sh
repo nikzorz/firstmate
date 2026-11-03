@@ -1660,26 +1660,15 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   fi
   # GitHub reads no keyword inside a code span or fenced block, so neither counts.
   # A fence closes only on a run of its own character at least as long as its
-  # opener, and a span of n backticks ends at the next run of exactly n on the
-  # same line. A span that crosses a line break is not handled.
+  # opener, and a backtick run with another backtick after it on its line opens
+  # no fence. A span of n backticks ends at the next run of exactly n in the same
+  # paragraph, which can lie on a later line, so spans are matched per paragraph.
+  # A heading, a thematic break or a list item ends a paragraph as a blank line does.
   awk '
-    fence_len {
-      if (match($0, /^[[:space:]]*(`+|~+)[[:space:]]*$/)) {
-        run = $0
-        gsub(/[[:space:]]/, "", run)
-        if (substr(run, 1, 1) == fence_char && length(run) >= fence_len) fence_len = 0
-      }
-      next
-    }
-    match($0, /^[[:space:]]*(```+|~~~+)/) {
-      run = substr($0, RSTART, RLENGTH)
-      sub(/^[[:space:]]*/, "", run)
-      fence_char = substr(run, 1, 1)
-      fence_len = length(run)
-      next
-    }
-    {
-      rest = $0
+    function flush(  rest, out, width, opener, tail, closed) {
+      if (para == "") return
+      rest = para
+      para = ""
       out = ""
       while (match(rest, /`+/)) {
         width = RLENGTH
@@ -1699,7 +1688,35 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
         if (!closed) out = out opener
       }
       print out rest
-    }' "$body" |
+    }
+    fence_len {
+      if (match($0, /^[[:space:]]*(`+|~+)[[:space:]]*$/)) {
+        run = $0
+        gsub(/[[:space:]]/, "", run)
+        if (substr(run, 1, 1) == fence_char && length(run) >= fence_len) fence_len = 0
+      }
+      next
+    }
+    match($0, /^[[:space:]]*(```+|~~~+)/) &&
+      !(substr($0, RSTART + RLENGTH - 1, 1) == "`" && index(substr($0, RSTART + RLENGTH), "`")) {
+      flush()
+      run = substr($0, RSTART, RLENGTH)
+      sub(/^[[:space:]]*/, "", run)
+      fence_char = substr(run, 1, 1)
+      fence_len = length(run)
+      next
+    }
+    /^[[:space:]]*$/ { flush(); next }
+    /^[[:space:]]*(#|##|###|####|#####|######)([[:space:]]|$)/ ||
+      /^[[:space:]]*(\*[[:space:]]*\*[[:space:]]*\*[*[:space:]]*|-[[:space:]]*-[[:space:]]*-[-[:space:]]*|_[[:space:]]*_[[:space:]]*_[_[:space:]]*|=+[[:space:]]*|-+[[:space:]]*)$/ {
+      flush()
+      para = $0
+      flush()
+      next
+    }
+    /^[[:space:]]*([-+*]|[0-9]+[.)])([[:space:]]|$)/ { flush() }
+    { para = para == "" ? $0 : para "\n" $0 }
+    END { flush() }' "$body" |
     grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)"
 }
 
