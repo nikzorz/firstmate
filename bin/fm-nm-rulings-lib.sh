@@ -57,7 +57,8 @@
 #   its gate, naming the round and both texts, FM_NM_RELAY_ROUNDS to one
 #   <run>:<step>:<round> line per such round, and FM_NM_RELAY_ACCEPTED to one
 #   <run>:<step>:<round> line per optional accepted round (newline-separated,
-#   same form) that was one of them; each such round is then left out of both. The steer binds to a round through the task's status log:
+#   same form) that was one of them; each such round is then left out of both.
+#   The steer binds to a round through the task's status log:
 #   a `needs-decision [key=nm-<run>-<step>] ... round=<n>` line, the first later
 #   `resolved [key=<that key>] ...: answered: <excerpt>` close bin/fm-send.sh
 #   wrote for it, and the task inbox record (pending or handled) whose body,

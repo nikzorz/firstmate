@@ -127,8 +127,9 @@
 # ran, so no appended line clears it: an attended --accept-relay
 # <run>:<step>:<round> records firstmate's judgment that the merged code meets
 # the whole ruling anyway. It may be repeated, each value clears exactly its
-# own round, any value whose round is not refused refuses the merge, it is refused while the away-posture
-# record exists, and a merge the forge accepts records it in the task record as
+# own round, any value whose round is not refused refuses the merge, it is
+# refused while the away-posture record exists, and a merge the forge accepts
+# records each in the task record as
 # accepted_relay=<pr-url> <run>:<step>:<round>, one line per value.
 # While the away-posture record exists, a refusal whose only lines are such
 # rounds also prints, per round, "hold: needs the attended session:
