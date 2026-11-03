@@ -812,6 +812,49 @@ test_verified_merge_records_pr_and_head() {
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
 }
 
+# A worker can append a gate's request seconds before its done line, so the
+# merge must wait for that request's own resolved line.
+test_request_left_open_before_done_refuses_until_resolved() {
+  local case_dir rc status
+  case_dir=$(make_case request-before-done)
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  status="$case_dir/state/task-x1.status"
+  printf 'needs-decision [at=1792000000] [key=nm-r1-review]: ask-user round=2 findings=review-1\n' > "$status"
+  printf 'done [at=1792000001]: PR https://github.com/example/repo/pull/9 checks green\n' >> "$status"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "request-before-done: a request left open before done must refuse"
+  assert_grep "still holds needs-decision 'nm-r1-review' open" "$case_dir/stderr" \
+    "request-before-done: the refusal did not name the open key"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "request-before-done: gh pr merge ran over an open request"
+
+  printf 'resolved [at=1792000002] [key=nm-r1-review]: answered: approve review-1\n' >> "$status"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "request-before-done: the resolved request must no longer refuse: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case blocker-and-keyless-request)
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  printf 'blocked [at=1792000000] [key=ci-wait]: waiting on the ci queue\nneeds-decision [at=1792000001]: rebase now or later?\n' \
+    > "$case_dir/state/task-x1.status"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "blocker-and-keyless-request: only a keyed needs-decision may refuse: $(cat "$case_dir/stderr")"
+  pass "fm-pr-merge refuses a request left open before the done line until its resolved line lands"
+}
+
 # The forge call is the point of no return: once gh-axi has merged, nothing this
 # script does afterwards can un-merge it. Proving pr= is already in the task's
 # meta at that moment is what makes a later failure unable to lose the merge.
@@ -5202,9 +5245,16 @@ write_nm_decision_line() {
 
 # Runs the merge of PR 70 for a case, passing NM_EXTRA_ARGS, leaving its exit
 # code in NM_MERGE_RC.
+# These cases judge pipeline rulings, so every decision request they wrote is
+# first closed the way a firstmate answer closes it; the open-decision refusal
+# has its own cases. A close that is not an "answered:" one never pairs with a
+# relayed steer, and it lands after any answered close a case wrote.
 NM_EXTRA_ARGS=()
 run_nm_merge() {
-  local case_dir=$1
+  local case_dir=$1 key
+  for key in $(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2" | cut -f1' _ "$ROOT" "$case_dir/state/task-x1.status"); do
+    printf 'resolved [at=1792200000] [key=%s]: ruled\n' "$key" >> "$case_dir/state/task-x1.status"
+  done
   : > "$case_dir/gh-axi.log"
   set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 \
@@ -6000,6 +6050,7 @@ test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
 test_verified_merge_records_pr_and_head
+test_request_left_open_before_done_refuses_until_resolved
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording
 test_github_open_unqueued_outcome_refuses

@@ -768,7 +768,7 @@ test_malformed_event_time_never_moves_the_decision_fold() {
   for tag in '[at=17:00]' '[at=10:30]' '[at=2026-09-20T14:03:00Z]' '[at=<epoch>]' '[at=bad]'; do
     printf '%s\n%s\n' \
       'needs-decision [key=api-shape] [at=1700000000]: REST or gRPC?' \
-      "done $tag finished the audit" > "$status"
+      "failed $tag the audit stopped" > "$status"
     case "$(status_open_decisions "$status")" in
       'api-shape'$'\t''needs-decision'$'\t''REST or gRPC?') : ;;
       *) fail "malformed tag $tag closed an open decision: [$(status_open_decisions "$status")]" ;;
@@ -781,7 +781,7 @@ test_malformed_event_time_never_moves_the_decision_fold() {
   # terminal rule itself.
   printf '%s\n%s\n' \
     'needs-decision [key=api-shape] [at=1700000000]: REST or gRPC?' \
-    'done [at=1700000001]: finished the audit' > "$status"
+    'failed [at=1700000001]: the audit stopped' > "$status"
   [ -z "$(status_open_decisions "$status")" ] \
     || fail "a well-formed terminal event stopped closing the decision"
   pass "malformed event times never open or close a decision"

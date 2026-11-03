@@ -102,6 +102,10 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
+# On every forge a task is also refused while its status log holds a keyed
+# needs-decision open per bin/fm-classify-lib.sh's status_open_decisions fold,
+# and each refusal names the open key that an fm-send.sh --resolve-key answer
+# closes. Blockers and keyless requests do not refuse the merge.
 # On every forge a no-mistakes task (task record mode=no-mistakes) is also
 # refused while its pipeline left a finding unruled that no decision request
 # named, because nothing else stands between a finding a worker approved unseen
@@ -749,7 +753,7 @@ FIELDS
   [ "$pipeline_sha" = "$live_head" ] \
     || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
-  refusals="$refusals$UNRULED_FINDING_REFUSALS"
+  refusals="$refusals$UNRULED_FINDING_REFUSALS$OPEN_DECISION_REFUSALS"
 
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
@@ -882,7 +886,7 @@ FIELDS
   [ "$ci_state" = success ] \
     || refusals="$refusals  - the combined commit status is \"$ci_state\", not success
 "
-  refusals="$refusals$UNRULED_FINDING_REFUSALS"
+  refusals="$refusals$UNRULED_FINDING_REFUSALS$OPEN_DECISION_REFUSALS"
 
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
@@ -1231,7 +1235,7 @@ $missing
 EOF
   fi
 
-  refusals="$refusals$UNRULED_FINDING_REFUSALS"
+  refusals="$refusals$UNRULED_FINDING_REFUSALS$OPEN_DECISION_REFUSALS"
 
   if [ -n "$mergeable_refusal" ]; then
     if [ -z "$refusals" ] && [ "$mergeable" = UNKNOWN ]; then
@@ -1845,6 +1849,22 @@ collect_unruled_finding_refusals() {
   fi
 }
 
+# Sets OPEN_DECISION_REFUSALS to one refusal line per keyed needs-decision the
+# task's status log still holds open, so a request appended just before the
+# task's done line cannot reach the merge unanswered.
+OPEN_DECISION_REFUSALS=
+collect_open_decision_refusals() {
+  local key verb note
+  OPEN_DECISION_REFUSALS=
+  while IFS=$'\t' read -r key verb note; do
+    [ "$verb" = needs-decision ] && [ "$key" != default ] || continue
+    OPEN_DECISION_REFUSALS="$OPEN_DECISION_REFUSALS  - task $ID's status log still holds $verb '$key' open ($note); answer it with fm-send.sh --resolve-key $key
+"
+  done <<EOF
+$(status_open_decisions "$STATE/$ID.status")
+EOF
+}
+
 # Prints, after a refusal list, the decision request lines that clear its
 # unruled findings.
 print_unruled_finding_clearing_lines() {
@@ -2138,6 +2158,7 @@ require_recorded_pr_identity || exit 1
 record_pr_metadata || exit 1
 require_released_captain_hold || exit 1
 collect_unruled_finding_refusals
+collect_open_decision_refusals
 
 # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an
 # oversight: if this lock-owning shell dies while its gh or glab child lives,

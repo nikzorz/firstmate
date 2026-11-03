@@ -102,6 +102,49 @@ test_later_unrelated_terminal_line_does_not_close_it() {
   pass "a later unrelated terminal line never clears an open decision"
 }
 
+test_ship_done_keeps_a_keyed_request_open_until_resolved() {
+  local dir state out
+  dir=$(make_case ship-done-keyed)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # A worker can append a gate's request seconds before its done line; only the
+  # request's own resolved line may close it. A keyed blocker and a keyless
+  # request are still superseded by the done line.
+  fm_write_meta "$state/task4.meta" "kind=ship"
+  printf '%s\n' \
+    'blocked [key=infra]: waiting on runner' \
+    'needs-decision: keyless question' \
+    'needs-decision [key=nm-r1-review]: ask-user round=2 findings=review-1' \
+    'done: PR https://github.com/example/repo/pull/9 checks green' > "$state/task4.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after a ship done line"
+  grep -F 'task4' "$out" | grep -F '[key=nm-r1-review]' >/dev/null \
+    || fail "a ship done line closed a keyed request that had no resolved line: $(cat "$out")"
+  if grep -F -e '[key=infra]' -e 'keyless question' "$out" >/dev/null; then
+    fail "a ship done line no longer supersedes a blocker or keyless request: $(cat "$out")"
+  fi
+
+  # The second drain reads through the persisted cursor rather than byte 0.
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  grep -F '[key=nm-r1-review]' "$out" >/dev/null \
+    || fail "the cursor-backed fold dropped the keyed request: $(cat "$out")"
+
+  printf 'resolved [key=nm-r1-review]: answered: approve\n' >> "$state/task4.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after the resolution"
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "the resolved request still printed as open: $(cat "$out")"
+  fi
+
+  printf '%s\n' 'needs-decision [key=nm-r2-ci]: ask-user round=1 findings=ci-1' 'failed: pipeline aborted' \
+    > "$state/task5.status"
+  fm_write_meta "$state/task5.meta" "kind=ship"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after a ship failed line"
+  if grep -F '[key=nm-r2-ci]' "$out" >/dev/null; then
+    fail "a ship failed line stopped superseding a keyed request: $(cat "$out")"
+  fi
+  pass "a ship done line keeps a keyed request open until its resolved line"
+}
+
 test_no_open_decisions_prints_nothing() {
   local dir state out
   dir=$(make_case none-open)
@@ -219,6 +262,7 @@ test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it
+test_ship_done_keeps_a_keyed_request_open_until_resolved
 test_reserved_key_namespace_is_owned_by_its_library
 test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake

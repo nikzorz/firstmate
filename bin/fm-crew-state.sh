@@ -171,8 +171,8 @@
 #      pull request never is, because the forge starts no workflow for one.
 #   3. Reconcile the status log through fm-classify-lib.sh's status_current_line:
 #      open decisions survive unrelated events and continuation prose cannot
-#      hide a declaration. Ship/scout terminal declarations supersede stale log
-#      decisions. If it says needs-decision/blocked but
+#      hide a declaration, and a ship/scout terminal declaration retires only the
+#      decisions that fold's terminal rule closes. If it says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
 #      agree, and are reported as parked. A `blocked:` line that reports a
