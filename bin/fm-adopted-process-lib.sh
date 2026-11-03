@@ -190,14 +190,14 @@ fm_adopted_name_pid() {
 }
 
 # fm_adopted_is_browser_bridge <pid>: 0 when an argument of the process names
-# the chrome-devtools-axi bridge script, the same test that tool applies before
-# it kills its own bridge's process group.
+# the chrome-devtools-axi bridge script the installed package ships. The .ts
+# form that tool also accepts runs only in its own development checkout.
 fm_adopted_is_browser_bridge() {
   local pid=$1 arg
   [ -r "/proc/$pid/cmdline" ] || return 1
   while IFS= read -r -d '' arg; do
     case "${arg##*/}" in
-      chrome-devtools-axi-bridge.js|chrome-devtools-axi-bridge.ts) return 0 ;;
+      chrome-devtools-axi-bridge.js) return 0 ;;
     esac
   done < "/proc/$pid/cmdline"
   return 1
