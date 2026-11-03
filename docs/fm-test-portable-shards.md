@@ -15,7 +15,8 @@ Observed maxima provide conservative packing weights, not an upper bound on futu
 
 The serial hint table was refreshed on 2026-11-03 after `ubuntu-latest` moved from the ubuntu-24.04 image to ubuntu-26.04, which runs the serial lane about 1.1 to 1.6 times slower per script with large per-runner variance.
 Its samples come only from ubuntu-26.04 runs on nikzorz/firstmate: 41526349903, 41546664266, 41548922904, 41553727585, 41554954642, 41555845909, 41562933431, 41565086182, 41571785695, 41575283167, and the second attempt of 41579515978.
-That covers all 243 serial members; an existing live-capability skip is a portable-runner measurement, not a timing claim for the unavailable live integration.
+That covers 243 of the 244 serial members; `tests/fm-claim-lib.test.sh` has no sample yet and packs at the default weight.
+An existing live-capability skip is a portable-runner measurement, not a timing claim for the unavailable live integration.
 The stale table had packed `tests/fm-remote-secondmate-lifecycle-e2e.test.sh` at 485047 ms against 26.04 samples of 660426 to 1055462 ms, so serial 3 reached its 30-minute cap.
 
 A cancelled job uploads no artifact.
