@@ -1,0 +1,9 @@
+MATCH   [sh /tmp/tmp.LYb7ttDWq0/chrome-devtools-axi-bridge.js ]
+NOMATCH [sh /tmp/tmp.LYb7ttDWq0/chrome-devtools-axi-bridge.ts ]
+NOMATCH [sh /tmp/tmp.LYb7ttDWq0/other.js ]
+ok - herdr projection teardown retains every record when post-close presence is unknown
+ok - herdr projection teardown surfaces failed focus restoration without turning confirmed cleanup into a hard failure
+ok - teardown retires the task's own watcher markers and orphaned presentation journal, leaving other tasks' markers alone
+ok - herdr projection teardown retires its journal only after confirming the exact recorded pane is gone
+ok - herdr projection teardown retains every record when post-close presence is unknown
+ok - herdr projection teardown surfaces failed focus restoration without turning confirmed cleanup into a hard failure
