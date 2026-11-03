@@ -1659,9 +1659,9 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
     refs="#$number|$refs"
   fi
   # GitHub reads no keyword inside a code span or fenced block, so neither counts.
-  # Both follow CommonMark: a fence closes only on a run of its own character at
-  # least as long as its opener, and a span of n backticks ends at the next run
-  # of exactly n.
+  # A fence closes only on a run of its own character at least as long as its
+  # opener, and a span of n backticks ends at the next run of exactly n on the
+  # same line. A span that crosses a line break is not handled.
   awk '
     fence_len {
       if (match($0, /^[[:space:]]*(`+|~+)[[:space:]]*$/)) {
