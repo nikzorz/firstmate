@@ -2250,9 +2250,9 @@ EOF
   long=$(printf 'r%.0s' $(seq 1 1195))TAIL-
   printf -- '- [ ] long-held - Long held work (repo: firstmate) (kind: ship) (hold: %s) (hold-kind: captain) (hold-until: 2026-11-01)\n' \
     "$long" >> "$home/data/backlog.md.queued"
-  # Insert the long-held row into Queued, ahead of the Done section.
+  # Insert the long-held row into In flight, whose title lines print in full.
   awk -v add="$home/data/backlog.md.queued" '
-    /^## Done/ { while ((getline line < add) > 0) print line }
+    /^## Queued/ { while ((getline line < add) > 0) print line }
     { print }
   ' "$home/data/backlog.md" > "$home/data/backlog.md.new"
   mv "$home/data/backlog.md.new" "$home/data/backlog.md"
@@ -2263,16 +2263,12 @@ EOF
   assert_contains "$out" "- [ ] long-held - Long held work (repo: firstmate) (kind: ship) (hold: \"$(printf 'r%.0s' $(seq 1 200))\\n... (truncated, 1200 chars total - use show long-held --full to see complete text)\") (hold-kind: captain) (hold-until: 2026-11-01)" \
     "manual rendering did not bound an over-long hold reason while keeping its kind and until date"
   assert_not_contains "$out" "TAIL-" "the manual listing still printed the tail of a bounded hold reason"
-  assert_contains "$out" "- [ ] held-queued - Held queued work (repo: firstmate) (kind: ship) (hold: captain choice pending) (hold-kind: captain)" \
-    "manual rendering changed a held title line with a short reason"
   assert_contains "$out" "- [ ] compact-startup - Compact startup digest (repo: firstmate) (kind: ship) (since 2026-07-15) (hold: captain choice pending) (hold-kind: captain)" \
     "manual rendering changed an in-flight title line with a short reason"
-  assert_contains "$out" "blocked-by: compact-startup - waits for implementation" \
-    "the hold-reason bound dropped a blocked title line"
-  assert_contains "$out" "(shown 1 in-flight, 3 held or blocked queued, 20 of 25 other queued title line(s); 1 done row(s) omitted)" \
+  assert_contains "$out" "(shown 2 in-flight, 20 of 25 other queued title line(s); 2 held or blocked queued as ids; 1 done row(s) omitted)" \
     "the hold-reason bound changed which title lines the manual listing kept"
 
-  pass "manual backlog rendering bounds an over-long hold reason and keeps every held title line"
+  pass "manual backlog rendering bounds an over-long hold reason and keeps every in-flight title line"
 }
 
 # A plain reason that opens with a quoted word is not a quoted string, and a
@@ -2294,7 +2290,7 @@ EOF
     printf -- '-\t[ ] tab-bullet - Tab bulleted work (repo: firstmate) (kind: ship) (hold: %s) (hold-kind: captain)\n' "$filler"
   } > "$home/data/backlog.md.queued"
   awk -v add="$home/data/backlog.md.queued" '
-    /^## Done/ { while ((getline line < add) > 0) print line }
+    /^## Queued/ { while ((getline line < add) > 0) print line }
     { print }
   ' "$home/data/backlog.md" > "$home/data/backlog.md.new"
   mv "$home/data/backlog.md.new" "$home/data/backlog.md"
@@ -2307,7 +2303,7 @@ EOF
   assert_contains "$out" "-${tab}[ ] tab-bullet - Tab bulleted work (repo: firstmate) (kind: ship) (hold: \"$(printf 'x%.0s' $(seq 1 200))\\n... (truncated, 300 chars total - use show tab-bullet --full to see complete text)\") (hold-kind: captain)" \
     "manual rendering did not bound an over-long hold reason on a tab-bulleted title line"
   assert_not_contains "$out" "TAIL-" "the manual listing still printed the tail of a bounded hold reason"
-  assert_contains "$out" "(shown 1 in-flight, 4 held or blocked queued, 20 of 25 other queued title line(s); 1 done row(s) omitted)" \
+  assert_contains "$out" "(shown 3 in-flight, 20 of 25 other queued title line(s); 2 held or blocked queued as ids; 1 done row(s) omitted)" \
     "the hold-reason bound changed which title lines the manual listing kept"
 
   pass "manual backlog rendering bounds a quote-led plain reason and a tab-bulleted title line"
@@ -2323,20 +2319,27 @@ EOF
   make_fake_ps_claude "$fakebin"
   printf '%s\n' manual > "$home/config/backlog-backend"
   write_long_body_backlog "$home/data/backlog.md"
+  awk '
+    /^## Done/ { print "* [ ] both-gated - Held and blocked work blocked-by: held-queued (repo: firstmate) (kind: ship) (hold: captain choice pending)" }
+    { print }
+  ' "$home/data/backlog.md" > "$home/data/backlog.md.new"
+  mv "$home/data/backlog.md.new" "$home/data/backlog.md"
 
   out=$(FM_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; hold reasons bounded to 200 chars; other queued bounded to 4; indented task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight title line kept; held and blocked queued as counts and ids; hold reasons bounded to 200 chars; other queued bounded to 4; indented task bodies omitted)" \
     "manual backend did not use compact title-line rendering"
   assert_contains "$out" "## In flight" "manual compact rendering omitted the in-flight section heading"
-  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
-    "manual compact rendering omitted the in-flight title line"
-  assert_contains "$out" "(hold: captain choice pending) (hold-kind: captain)" \
-    "manual compact rendering omitted hold metadata"
-  assert_contains "$out" "blocked-by: compact-startup - waits for implementation" \
-    "manual compact rendering omitted blocker metadata"
-  assert_contains "$out" "- [ ] held-queued - Held queued work" \
-    "manual compact rendering dropped a held queued title line"
+  assert_contains "$out" "- [ ] compact-startup - Compact startup digest (repo: firstmate) (kind: ship) (since 2026-07-15) (hold: captain choice pending) (hold-kind: captain)" \
+    "manual compact rendering did not keep the full in-flight title line"
+  assert_contains "$out" "$(printf 'held queued:\n2 item(s): held-queued both-gated')" \
+    "manual compact rendering did not print the held queued count and ids"
+  assert_contains "$out" "$(printf 'blocked queued (a held item that is also blocked appears in both groups):\n2 item(s): blocked-followup both-gated')" \
+    "manual compact rendering did not print the blocked queued count and ids"
+  assert_contains "$out" "(full title line: data/backlog.md)" \
+    "manual compact rendering omitted the pointer to the full held and blocked title lines"
+  assert_not_contains "$out" "Held queued work" "manual compact rendering printed a held queued title line in full"
+  assert_not_contains "$out" "waits for implementation" "manual compact rendering printed a blocked queued title line in full"
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "manual compact digest leaked an in-flight task body"
   assert_not_contains "$out" "QUEUED-BODY-LINE" "manual compact digest leaked a queued task body"
   assert_not_contains "$out" "DONE-ROW-LINE" "manual compact digest listed a done row at startup"
@@ -2345,13 +2348,13 @@ EOF
     "manual compact rendering dropped a queued title line inside its bound"
   assert_not_contains "$out" "- [ ] plain-5 - Plain queued item 5" \
     "manual compact rendering did not bound its plain queued listing"
-  assert_contains "$out" "(shown 1 in-flight, 2 held or blocked queued, 4 of 25 other queued title line(s); 1 done row(s) omitted)" \
+  assert_contains "$out" "(shown 1 in-flight, 4 of 25 other queued title line(s); 3 held or blocked queued as ids; 1 done row(s) omitted)" \
     "manual compact rendering did not report its bound accounting"
   assert_contains "$out" "(21 more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)" \
     "manual compact rendering did not disclose an exact queued remainder"
   assert_contains "$out" "or data/backlog.md" "manual compact digest omitted the data/backlog.md full-body pointer"
 
-  pass "manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest"
+  pass "manual backlog rendering drops done rows, lists held and blocked queued as counts and ids, and bounds the rest"
 }
 
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback() {

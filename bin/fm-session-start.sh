@@ -167,7 +167,8 @@
 #     (This replaces FM_SESSION_START_BACKLOG_LIMIT, which bounded the whole
 #     listing indiscriminately and so could drop a held or blocked row.)
 #     The manual-backend path below, also used when a tasks-axi list call
-#     fails, still prints held and blocked title lines in full.
+#     fails, prints the same held and blocked counts plus ids, taking each id
+#     from its title line.
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
@@ -176,11 +177,10 @@
 # `tasks-axi ready`), so this script never reimplements task state; the groups
 # can overlap, because an in-flight item that is also held appears under both.
 # When manual mode is selected, or tasks-axi is unavailable or incompatible,
-# this script prints only backlog section headings and item title lines, so
-# title-line hold and blocked-by metadata remain visible while indented bodies
-# stay out of the startup digest; the same never-bound-a-held-or-blocked-row
-# rule applies, recognized there from the title line's own hold/blocked-by
-# markers.
+# this script prints only backlog section headings, in-flight and plain queued
+# title lines, and the held and blocked queued ids, so indented bodies stay out
+# of the startup digest; held and blocked are recognized there from the title
+# line's own hold/blocked-by markers, and no such id is ever bounded away.
 # Full bodies are targeted follow-up only: `bin/fm-tasks-axi.sh show <id> --full` when
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
@@ -459,7 +459,8 @@ print_backlog_pointer() {
 # is the one tasks-axi's markdown backend writes: "(hold: ...)", "(hold-kind:
 # ...)", and "blocked-by: ...". Bracket expressions rather than backslashes,
 # because awk's -v applies escape processing before the regex is ever compiled.
-MANUAL_KEEP_RE='[(]hold|blocked-by:'
+MANUAL_HELD_RE='[(]hold'
+MANUAL_BLOCKED_RE='blocked-by:'
 
 # bound_hold_reasons [toon|markdown]: cut each already-decoded hold reason
 # longer than HOLD_REASON_LIMIT characters, keeping its row and every other
@@ -508,9 +509,9 @@ bound_hold_reasons() {
 
 print_backlog_manual_compact() {
   local path=$1 reason=$2
-  printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; hold reasons bounded to %s chars; other queued bounded to %s; indented task bodies omitted)\n' \
+  printf 'compact backlog listing (%s; done rows omitted; every in-flight title line kept; held and blocked queued as counts and ids; hold reasons bounded to %s chars; other queued bounded to %s; indented task bodies omitted)\n' \
     "$reason" "$HOLD_REASON_LIMIT" "$QUEUED_LIMIT"
-  awk -v max="$QUEUED_LIMIT" -v keep_re="$MANUAL_KEEP_RE" '
+  awk -v max="$QUEUED_LIMIT" -v held_re="$MANUAL_HELD_RE" -v blocked_re="$MANUAL_BLOCKED_RE" '
     function state_for_heading(line, heading) {
       heading = line
       sub(/^##[[:space:]]+/, "", heading)
@@ -520,6 +521,12 @@ print_backlog_manual_compact() {
       if (heading == "Done") return "done"
       return ""
     }
+    function title_id(line) {
+      sub(/^[-*][[:space:]]+(\[.\][[:space:]]+)?/, "", line)
+      sub(/[[:space:]].*/, "", line)
+      return line
+    }
+    function print_ids(n, ids) { printf "%d item(s)%s\n", n, (n ? ": " ids : "") }
     /^##[[:space:]]+/ {
       state = state_for_heading($0)
       # The Done heading is recognized so its items are skipped, never printed.
@@ -530,7 +537,11 @@ print_backlog_manual_compact() {
     state == "done" && /^[-*][[:space:]]+/ { done_total++; next }
     state == "queued" && /^[-*][[:space:]]+/ {
       queued_total++
-      if ($0 ~ keep_re) { gated++; print $0; next }
+      is_held = $0 ~ held_re
+      is_blocked = $0 ~ blocked_re
+      if (is_held) held_ids = held_ids (held++ ? " " : "") title_id($0)
+      if (is_blocked) blocked_ids = blocked_ids (blocked++ ? " " : "") title_id($0)
+      if (is_held || is_blocked) { gated++; next }
       if (plain_shown < max) { plain_shown++; print $0 }
       next
     }
@@ -538,12 +549,17 @@ print_backlog_manual_compact() {
       plain_total = queued_total - gated
       if (in_flight + queued_total + done_total == 0) {
         print "(no backlog item title lines found)"
-      } else {
-        printf "(shown %d in-flight, %d held or blocked queued, %d of %d other queued title line(s); %d done row(s) omitted)\n", \
-          in_flight, gated, plain_shown, plain_total, done_total
-        if (plain_total > plain_shown) {
-          printf "(%d more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)\n", plain_total - plain_shown
-        }
+        exit
+      }
+      printf "\nheld queued:\n"
+      print_ids(held, held_ids)
+      printf "\nblocked queued (a held item that is also blocked appears in both groups):\n"
+      print_ids(blocked, blocked_ids)
+      printf "(full title line: data/backlog.md)\n"
+      printf "(shown %d in-flight, %d of %d other queued title line(s); %d held or blocked queued as ids; %d done row(s) omitted)\n", \
+        in_flight, plain_shown, plain_total, gated, done_total
+      if (plain_total > plain_shown) {
+        printf "(%d more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)\n", plain_total - plain_shown
       }
     }
   ' "$path" | fm_hold_reason_decode_stream markdown | bound_hold_reasons markdown
