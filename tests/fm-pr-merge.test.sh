@@ -3593,19 +3593,47 @@ test_allow_red_requires_one_separate_name() {
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "github-allow-red-equals: gh pr merge ran for the equals alias"
 
-  case_dir=$(make_case github-allow-red-duplicate)
+  pass "fm-pr-merge accepts only a separately named red-check waiver"
+}
+
+test_github_allow_red_repeats_one_check_each() {
+  local case_dir rc head=2121212121212121212121212121212121212121
+  case_dir=$(make_case github-allow-red-two)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
-  write_github_red_json "$case_dir" "$head" lint
+  printf '%s\n' "$head" > "$case_dir/github-head"
+  cat > "$case_dir/github-view.json" <<JSON
+{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[$(check_run lint COMPLETED FAILURE),$(check_run unit COMPLETED FAILURE)]}
+JSON
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/88 \
+    --allow-red lint --allow-red unit > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "github-allow-red-two: two named waivers should merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 88 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  assert_grep 'allowed_red=https://github.com/example/repo/pull/88 lint' "$case_dir/state/task-x1.meta" \
+    "github-allow-red-two: the lint waiver was not recorded"
+  assert_grep 'allowed_red=https://github.com/example/repo/pull/88 unit' "$case_dir/state/task-x1.meta" \
+    "github-allow-red-two: the unit waiver was not recorded"
+
+  case_dir=$(make_case github-allow-red-one-of-two)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  printf '%s\n' "$head" > "$case_dir/github-head"
+  cat > "$case_dir/github-view.json" <<JSON
+{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[$(check_run lint COMPLETED FAILURE),$(check_run unit COMPLETED FAILURE)]}
+JSON
   set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/88 \
-    --allow-red lint --allow-red unit > "$case_dir/stdout" 2> "$case_dir/stderr"
+    --allow-red lint --allow-red docs > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
-  expect_code 2 "$rc" "github-allow-red-duplicate: duplicate waiver must be refused"
+  expect_code 1 "$rc" "github-allow-red-one-of-two: an unwaived red check must still refuse"
+  assert_grep "check 'unit' is not green" "$case_dir/stderr" \
+    "github-allow-red-one-of-two: the unwaived red check was not named"
+  assert_no_grep "check 'lint' is not green" "$case_dir/stderr" \
+    "github-allow-red-one-of-two: the waived red check was still refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "github-allow-red-duplicate: gh pr merge ran for duplicate waivers"
-  pass "fm-pr-merge accepts exactly one separately named red-check waiver"
+    "github-allow-red-one-of-two: gh pr merge ran with an unwaived red check"
+  pass "fm-pr-merge --allow-red repeats, each value waiving and recording only its own check"
 }
 
 test_away_record_permits_any_green_merge_under_away_authority() {
@@ -5564,6 +5592,75 @@ test_accept_relay_clears_exactly_its_round() {
   pass "fm-pr-merge --accept-relay clears only its named round, records it, and is attended-only"
 }
 
+# Two relayed rounds of one step, rounds 1 and 3, each answered by its own
+# steer and fixed with reworded instructions.
+write_nm_relay_two_rounds() {
+  local case_dir=$1 status="$1/state/task-x1.status"
+  local steer3='Ruling for review round 3: fix tests-yml-lane only, and change nothing else in the guard lanes.'
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$NM_1752_RELAYED" '
+    {run: $run, steps: [
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["caps-import-cache"],
+         instructions: {"caps-import-cache": $text},
+         findings: [["caps-import-cache", "ask-user", ""]]},
+        {round: 3, source: "user", selected: ["tests-yml-lane"],
+         instructions: {"tests-yml-lane": "Ruling: fix tests-yml-lane."},
+         findings: [["tests-yml-lane", "ask-user", ""]]}]}]}')"
+  mkdir -p "$case_dir/state/task-x1.inbox/handled"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 1 caps-import-cache
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T15:00:07Z\n--\n%s' "$NM_1752_STEER" \
+    > "$case_dir/state/task-x1.inbox/handled/001.msg"
+  printf 'resolved [key=nm-%s-review] [at=1792162807]: answered: %s [truncated]\n' \
+    "$NM_RUN_1752" "${NM_1752_STEER:0:140}" >> "$status"
+  write_nm_decision_line "$case_dir" "$NM_RUN_1752" review 3 tests-yml-lane
+  printf 'schema=fm-task-inbox.v1\nat=2026-10-16T16:00:07Z\n--\n%s' "$steer3" \
+    > "$case_dir/state/task-x1.inbox/handled/002.msg"
+  printf 'resolved [key=nm-%s-review] [at=1792166407]: answered: %s\n' "$NM_RUN_1752" "$steer3" >> "$status"
+}
+
+test_accept_relay_repeats_one_round_each() {
+  local case_dir
+  case_dir=$(make_case nm-relay-two-rounds-refused)
+  add_gh_mocks "$case_dir" 6565656565656565656565656565656565656565
+  write_nm_relay_two_rounds "$case_dir"
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:1")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 1 "$NM_MERGE_RC" "nm-relay-two-rounds-refused: accepting one round must leave the other refused"
+  assert_grep "no-mistakes run $NM_RUN_1752 step review round 3 was fixed with instructions that lack" "$case_dir/stderr" \
+    "nm-relay-two-rounds-refused: round 3 was not refused"
+  assert_no_grep "step review round 1 was fixed" "$case_dir/stderr" \
+    "nm-relay-two-rounds-refused: the accepted round 1 was still refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-relay-two-rounds-refused: gh pr merge ran"
+
+  case_dir=$(make_case nm-relay-two-rounds-accepted)
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  write_nm_relay_two_rounds "$case_dir"
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:1" --accept-relay "$NM_RUN_1752:review:3")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 0 "$NM_MERGE_RC" "nm-relay-two-rounds-accepted: both named rounds must clear: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+  assert_grep "accepted_relay=https://github.com/example/repo/pull/70 $NM_RUN_1752:review:1" "$case_dir/state/task-x1.meta" \
+    "nm-relay-two-rounds-accepted: round 1 was not recorded"
+  assert_grep "accepted_relay=https://github.com/example/repo/pull/70 $NM_RUN_1752:review:3" "$case_dir/state/task-x1.meta" \
+    "nm-relay-two-rounds-accepted: round 3 was not recorded"
+
+  case_dir=$(make_case nm-relay-two-rounds-stray)
+  add_gh_mocks "$case_dir" 6767676767676767676767676767676767676767
+  write_nm_relay_two_rounds "$case_dir"
+  NM_EXTRA_ARGS=(--accept-relay "$NM_RUN_1752:review:1" --accept-relay "$NM_RUN_1752:review:2" --accept-relay "$NM_RUN_1752:review:3")
+  run_nm_merge "$case_dir"
+  NM_EXTRA_ARGS=()
+  expect_code 1 "$NM_MERGE_RC" "nm-relay-two-rounds-stray: a value naming an unrefused round must refuse"
+  assert_grep "--accept-relay names $NM_RUN_1752:review:2, which is not a round refused over relayed instructions" "$case_dir/stderr" \
+    "nm-relay-two-rounds-stray: the stray value was not refused"
+  assert_no_grep "names $NM_RUN_1752:review:1,\|names $NM_RUN_1752:review:3," "$case_dir/stderr" \
+    "nm-relay-two-rounds-stray: a valid value was refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-relay-two-rounds-stray: gh pr merge ran"
+  pass "fm-pr-merge --accept-relay repeats, each value clearing and recording only its own round"
+}
+
 test_relay_only_refusal_while_away_holds_for_return() {
   local case_dir
   case_dir=$(make_case nm-1752-relay-away-hold)
@@ -6263,6 +6360,7 @@ test_untraversable_user_backend_config_directory_refuses_the_merge
 test_absent_user_backend_config_directory_and_backlog_still_merge
 test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
+test_github_allow_red_repeats_one_check_each
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts
@@ -6333,6 +6431,7 @@ test_relayed_ruling_missing_the_steer_refuses_merge
 test_relay_check_reads_either_instructions_key
 test_relay_check_pairs_only_the_line_that_closed_the_round
 test_accept_relay_clears_exactly_its_round
+test_accept_relay_repeats_one_round_each
 test_relay_only_refusal_while_away_holds_for_return
 test_approved_round_refuses_every_unnamed_finding_whatever_its_action
 test_skipped_step_refuses_its_unnamed_findings

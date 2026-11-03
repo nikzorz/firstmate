@@ -51,13 +51,13 @@
 # fm_nm_rulings_clearing_text <status-file>
 #   Prints, after a list of owed rulings, the lines that clear them; prints
 #   nothing when none are owed.
-# fm_nm_relay_mismatches <task-id> <state-dir> [<run>:<step>:<round>]
+# fm_nm_relay_mismatches <task-id> <state-dir> [<accepted rounds>]
 #   Sets FM_NM_RELAY_MISMATCHES to one "  - ..." line per user-selected round
 #   whose stored respond instructions lack the body of the steer that answered
 #   its gate, naming the round and both texts, FM_NM_RELAY_ROUNDS to one
-#   <run>:<step>:<round> line per such round, and FM_NM_RELAY_ACCEPTED to true
-#   when the optional accepted round was one of them; that round is then left
-#   out of both. The steer binds to a round through the task's status log:
+#   <run>:<step>:<round> line per such round, and FM_NM_RELAY_ACCEPTED to one
+#   <run>:<step>:<round> line per optional accepted round (newline-separated,
+#   same form) that was one of them; each such round is then left out of both. The steer binds to a round through the task's status log:
 #   a `needs-decision [key=nm-<run>-<step>] ... round=<n>` line, the first later
 #   `resolved [key=<that key>] ...: answered: <excerpt>` close bin/fm-send.sh
 #   wrote for it, and the task inbox record (pending or handled) whose body,
@@ -263,11 +263,11 @@ FM_NM_RELAY_ROUNDS=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
 FM_NM_RELAY_ACCEPTED=false
 # shellcheck disable=SC2034 # FM_NM_RELAY_MISMATCHES, FM_NM_RELAY_ROUNDS and FM_NM_RELAY_ACCEPTED are read by the sourcing callers.
-fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<run>:<step>:<round>]
+fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<accepted rounds>]
   local id=$1 state=$2 accept=${3:-} meta mode branch project db rounds out
   FM_NM_RELAY_MISMATCHES=
   FM_NM_RELAY_ROUNDS=
-  FM_NM_RELAY_ACCEPTED=false
+  FM_NM_RELAY_ACCEPTED=
   meta="$state/$id.meta"
   [ -f "$meta" ] && [ -r "$meta" ] && [ -f "$state/$id.status" ] && [ -r "$state/$id.status" ] || return 0
   mode=$(grep '^mode=' "$meta" | tail -1 | cut -d= -f2- || true)
@@ -361,7 +361,7 @@ for i, line in enumerate(lines):
     if excerpt and answers:
         bound[(run, step, int(round_no.group(1)))] = answers[-1].strip()
 
-accepted = False
+accept = set(accept.split("\n")) - {""}
 for line in sys.stdin:
     if not line.strip():
         continue
@@ -373,17 +373,17 @@ for line in sys.stdin:
     lacking = [text for text in given if not (isinstance(text, str) and steer in text)]
     if not lacking:
         continue
-    if accept == "%s:%s:%s" % (r["run"], r["step"], r["round"]):
-        accepted = True
+    if "%s:%s:%s" % (r["run"], r["step"], r["round"]) in accept:
+        print("accepted=%s:%s:%s" % (r["run"], r["step"], r["round"]))
         continue
     print("refused=%s:%s:%s" % (r["run"], r["step"], r["round"]))
     print("  - no-mistakes run %s step %s round %s was fixed with instructions that lack the body of the steer that answered its gate; steer: %s; instructions: %s"
           % (r["run"], r["step"], r["round"], json.dumps(steer), json.dumps(lacking[0] or "")))
-print("accepted=%s" % ("true" if accepted else "false"))
 ' "$state/$id.status" "$state/$id.inbox" "$accept" 2>/dev/null) || return 0
   FM_NM_RELAY_ROUNDS=$(printf '%s\n' "$out" | sed -n 's/^refused=//p')
-  out=$(printf '%s\n' "$out" | grep -v '^refused=')
-  case "$out" in *accepted=true) FM_NM_RELAY_ACCEPTED=true ;; esac
-  out=${out%accepted=*}
+  FM_NM_RELAY_ACCEPTED=$(printf '%s\n' "$out" | sed -n 's/^accepted=//p')
+  out=$(printf '%s\n' "$out" | grep -v '^refused=\|^accepted=' || true)
+  [ -z "$out" ] || out="$out
+"
   FM_NM_RELAY_MISMATCHES=$out
 }

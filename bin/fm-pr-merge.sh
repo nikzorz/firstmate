@@ -46,9 +46,11 @@
 # --match-head-commit, so a push that lands between that read and the merge
 # fails the merge instead of landing commits nothing verified. Reading that
 # state needs gh and jq, and either one absent stops the merge before any
-# state is recorded. An attended --allow-red <check-name> may be passed once,
-# with the name as a separate argument; it waives only checks with that exact
-# name, still requires every other check green, and still binds the head. Its
+# state is recorded. An attended --allow-red <check-name> may be repeated,
+# each with the name as a separate argument; each waives only checks with that
+# exact name, every other check must still be green, the head is still bound,
+# and a merge the forge accepts records each in the task record as
+# allowed_red=<pr-url> <check-name>. Its
 # twin, an attended --allow-missing <check-name>, follows the same rules for one
 # required check that has not reported: it waives only that exact name, still
 # requires every other required check to have reported and every check to be
@@ -124,10 +126,10 @@
 # round, and the refusal names the round and both texts. The fix round already
 # ran, so no appended line clears it: an attended --accept-relay
 # <run>:<step>:<round> records firstmate's judgment that the merged code meets
-# the whole ruling anyway. It may be passed once, clears exactly that round,
-# refuses when that round is not refused, is refused while the away-posture
+# the whole ruling anyway. It may be repeated, each value clears exactly its
+# own round, any value whose round is not refused refuses the merge, it is refused while the away-posture
 # record exists, and a merge the forge accepts records it in the task record as
-# accepted_relay=<pr-url> <run>:<step>:<round>.
+# accepted_relay=<pr-url> <run>:<step>:<round>, one line per value.
 # While the away-posture record exists, a refusal whose only lines are such
 # rounds also prints, per round, "hold: needs the attended session:
 # --accept-relay <run>:<step>:<round>; hold until return" and exits 4, which
@@ -264,7 +266,7 @@
 # job that can finish after that read. A queued or refused merge reads nothing
 # back.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--accept-relay <run>:<step>:<round>] [--no-closing-keyword] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>]... [--allow-missing <check-name>] [--accept-relay <run>:<step>:<round>]... [--no-closing-keyword] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -339,7 +341,7 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
-ACCEPT_RELAY=
+ACCEPT_RELAY=()
 NO_CLOSING_KEYWORD=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -353,7 +355,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-red)
       [ -n "${2:-}" ] || { echo "error: --allow-red requires a check name" >&2; exit 2; }
-      [ "${#ALLOW_RED[@]}" -eq 0 ] || { echo "error: --allow-red may be specified only once" >&2; exit 2; }
       ALLOW_RED+=("$2")
       shift 2
       ;;
@@ -374,8 +375,7 @@ while [ "$#" -gt 0 ]; do
     --accept-relay)
       printf '%s' "${2:-}" | grep -Eqx '[^[:space:]:]+:[^[:space:]:]+:[0-9]+' \
         || { echo "error: --accept-relay requires <run>:<step>:<round>" >&2; exit 2; }
-      [ -z "$ACCEPT_RELAY" ] || { echo "error: --accept-relay may be specified only once" >&2; exit 2; }
-      ACCEPT_RELAY=$2
+      ACCEPT_RELAY+=("$2")
       shift 2
       ;;
     --accept-relay=*)
@@ -390,7 +390,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-# --allow-red names one check run to waive, which only GitHub's per-check
+# Each --allow-red names a check run to waive, which only GitHub's per-check
 # reading can match. GitLab and Forgejo each collapse their checks into a
 # single head verdict - a head pipeline status and a combined commit status -
 # so there is no per-check name to waive there and the green requirement stays
@@ -1848,10 +1848,23 @@ record_closing_keyword_override() {
 }
 
 record_relay_acceptance() {
-  [ -n "$ACCEPT_RELAY" ] || return 0
-  record_merge_override "accepted_relay=$URL $ACCEPT_RELAY" && return 0
-  printf 'actionable: %s was merged under --accept-relay %s, but that acceptance could not be recorded\n' \
-    "$URL" "$ACCEPT_RELAY" >&2
+  local round
+  [ "${#ACCEPT_RELAY[@]}" -gt 0 ] || return 0
+  for round in "${ACCEPT_RELAY[@]}"; do
+    record_merge_override "accepted_relay=$URL $round" && continue
+    printf 'actionable: %s was merged under --accept-relay %s, but that acceptance could not be recorded\n' \
+      "$URL" "$round" >&2
+  done
+}
+
+record_red_waivers() {
+  local check
+  [ "${#ALLOW_RED[@]}" -gt 0 ] || return 0
+  for check in "${ALLOW_RED[@]}"; do
+    record_merge_override "allowed_red=$URL $check" && continue
+    printf 'actionable: %s was merged under --allow-red %s, but that waiver could not be recorded\n' \
+      "$URL" "$check" >&2
+  done
 }
 
 # The one check no keyword form can fool, run only after a verified landed merge.
@@ -1905,12 +1918,15 @@ collect_unruled_finding_refusals() {
   fm_nm_rulings_owed "$ID" "$STATE" "$MERGE_DATA"
   UNRULED_FINDING_REFUSALS=$FM_NM_RULINGS_OWED
   UNRULED_FINDING_CLEARING_LINES=$FM_NM_RULINGS_CLEARING
-  fm_nm_relay_mismatches "$ID" "$STATE" "$ACCEPT_RELAY"
+  local round
+  fm_nm_relay_mismatches "$ID" "$STATE" "$(printf '%s\n' ${ACCEPT_RELAY[@]+"${ACCEPT_RELAY[@]}"})"
   UNRULED_FINDING_REFUSALS=$UNRULED_FINDING_REFUSALS$FM_NM_RELAY_MISMATCHES
-  if [ -n "$ACCEPT_RELAY" ] && [ "$FM_NM_RELAY_ACCEPTED" != true ]; then
-    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - --accept-relay names $ACCEPT_RELAY, which is not a round refused over relayed instructions
+  [ "${#ACCEPT_RELAY[@]}" -gt 0 ] || return 0
+  for round in "${ACCEPT_RELAY[@]}"; do
+    printf '%s\n' "$FM_NM_RELAY_ACCEPTED" | grep -qxF -- "$round" && continue
+    UNRULED_FINDING_REFUSALS="$UNRULED_FINDING_REFUSALS  - --accept-relay names $round, which is not a round refused over relayed instructions
 "
-  fi
+  done
 }
 
 # Sets OPEN_DECISION_REFUSALS to one refusal line per keyed needs-decision the
@@ -2003,7 +2019,7 @@ require_current_away_authority() {
     echo "error: --allow-missing is attended-only; while the away-posture record exists every required check must report" >&2
     return 2
   fi
-  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ -n "$ACCEPT_RELAY" ]; then
+  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "${#ACCEPT_RELAY[@]}" -gt 0 ]; then
     echo "error: --accept-relay is attended-only; while the away-posture record exists a relayed ruling must reach its fix round whole" >&2
     return 2
   fi
@@ -2283,6 +2299,8 @@ case "$PROVIDER" in
       FM_PR_GITHUB_MERGE_ACCEPTED=true
       record_closing_keyword_override
       record_relay_acceptance
+    record_red_waivers
+      record_red_waivers
       persist_accepted_merge_authority || exit 1
       fm_afk_contract_lock_release || true
       fm_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -2349,6 +2367,7 @@ case "$PROVIDER" in
       exit "$merge_status"
     fi
     record_relay_acceptance
+    record_red_waivers
     persist_accepted_merge_authority || exit 1
     fm_afk_contract_lock_release || true
     fm_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -2403,6 +2422,7 @@ case "$PROVIDER" in
       exit 1
     fi
     record_relay_acceptance
+    record_red_waivers
     persist_accepted_merge_authority || exit 1
     fm_afk_contract_lock_release || true
     fm_lock_release "$MERGE_CONTROL_LOCK" || true
