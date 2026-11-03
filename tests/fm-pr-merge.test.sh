@@ -5039,6 +5039,33 @@ test_owned_issue_missing_keyword_appends_closing_line() {
     || fail "owned-indented-heading-span: a heading indented 4 spaces ended a paragraph"
 
   # shellcheck disable=SC2016 # the backticks are the literal code span under test
+  case_dir=$(make_issue_case owned-sibling-item-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a59 \
+    "$(printf '%s\n' '1. Note `x' '2. a `Closes #7` b')")
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-sibling-item-span: fm-pr-merge failed"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-sibling-item-span: an ordered item after item 1 was joined to it"
+
+  # shellcheck disable=SC2016 # the backticks are the literal code span under test
+  case_dir=$(make_issue_case owned-sibling-item-live 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a5a \
+    "$(printf '%s\n' '1. Use `foo' '2. Closes #7 with `bar`')")
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-sibling-item-live: fm-pr-merge failed"
+  assert_no_grep 'pr edit' "$case_dir/gh.log" \
+    "owned-sibling-item-live: a backtick in item 1 hid a closing keyword in item 2"
+
+  # shellcheck disable=SC2016 # the backticks are the literal code span under test
+  case_dir=$(make_issue_case owned-empty-sibling-item-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a5b \
+    "$(printf '%s\n' '- Note `x' '*' ' a `Closes #7` b')")
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-empty-sibling-item-span: fm-pr-merge failed"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-empty-sibling-item-span: an empty item after a list item was joined to it"
+
+  # shellcheck disable=SC2016 # the backticks are the literal code span under test
   case_dir=$(make_issue_case owned-backtick-info-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a52 \
     "$(printf '%s\n' '```x`y```' '' '```' 'Closes #7' '```')")
   add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"

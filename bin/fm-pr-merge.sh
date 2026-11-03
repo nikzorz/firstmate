@@ -1665,7 +1665,8 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   # paragraph, which can lie on a later line, so spans are matched per paragraph.
   # Only lines CommonMark lets interrupt a paragraph end one early: a heading, a
   # thematic break, a non-empty list item (ordered only from 1), or a block quote
-  # opening after non-quote text, each indented at most 3 spaces.
+  # opening after non-quote text, each indented at most 3 spaces. Inside a list
+  # item any marker, empty or not, starts a sibling item and so ends the paragraph.
   awk '
     function flush(  rest, out, width, opener, tail, closed) {
       if (para == "") return
@@ -1717,8 +1718,10 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
       flush()
       next
     }
-    /^ ? ? ?([-+*]|0*1[.)])[[:space:]]+[^[:space:]]/ { flush() }
+    /^ ? ? ?([-+*]|0*1[.)])[[:space:]]+[^[:space:]]/ ||
+      listed && /^ ? ? ?([-+*]|[0-9]+[.)])([[:space:]]|$)/ { flush() }
     /^ ? ? ?>/ { if (!quoted) flush(); quoted = 1 }
+    para == "" { listed = $0 ~ /^ ? ? ?([-+*]|[0-9]+[.)])([[:space:]]|$)/ }
     { para = para == "" ? $0 : para "\n" $0 }
     END { flush() }' "$body" |
     grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)"
