@@ -2665,7 +2665,7 @@ EOF
   pass "--reemit reprints the digest without repeating startup's mutating sweeps and still drains queued wakes"
 }
 
-test_claude_clear_reemit_presents_wakes_without_taking_them_for_handling() {
+test_claude_clear_and_compact_reemit_present_wakes_without_taking_them_for_handling() {
   local rec root home fakebin marker before cleared compacted
   rec=$(new_world reemit-clear)
   IFS='|' read -r root home fakebin <<EOF
@@ -2696,13 +2696,14 @@ EOF
   compacted=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     "$SESSION_START" --reemit --source compact)
-  assert_contains "$compacted" "WAKE_ACK_REQUIRED:" "a compact re-emit stopped draining the queue it hands to the running turn"
-  case "$(cat "$marker")" in
-    pending:handling:*) ;;
-    *) fail "a compact re-emit did not take the episode for handling: $(cat "$marker")" ;;
-  esac
+  assert_contains "$compacted" "needs-decision: queued as the clear landed" "a compact re-emit hid the queued wake"
+  assert_contains "$compacted" "WAKE_ACK_DEFERRED:" "a compact re-emit did not say the wake waits for its delivery turn"
+  assert_not_contains "$compacted" "WAKE_ACK_REQUIRED:" "a compact re-emit offered an acknowledgement for a turn a typed compact never runs"
+  [ "$(cat "$marker")" = "$before" ] \
+    || fail "a compact re-emit took the episode for handling, so its rewake owner would stand down: $(cat "$marker")"
+  [ -s "$home/state/.wake-queue" ] || fail "a compact re-emit removed the queued wake"
 
-  pass "a Claude clear re-emit presents queued wakes but leaves them for the supervision wake turn"
+  pass "a Claude clear or compact re-emit presents queued wakes but leaves them for the supervision wake turn"
 }
 
 test_claude_clear_full_startup_presents_wakes_without_taking_them_for_handling() {
@@ -3385,7 +3386,7 @@ test_portable_timeout_escalates_term_resistant_process
 test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain
-test_claude_clear_reemit_presents_wakes_without_taking_them_for_handling
+test_claude_clear_and_compact_reemit_present_wakes_without_taking_them_for_handling
 test_claude_clear_full_startup_presents_wakes_without_taking_them_for_handling
 test_reemit_cue_survives_the_hook_output_preview
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact
