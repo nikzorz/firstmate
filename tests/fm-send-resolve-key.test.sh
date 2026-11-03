@@ -392,8 +392,8 @@ test_gate_fix_ruling_requires_property_line() {
   fi
 
   run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-review \
-    $'Ruling: review-1 fix.\nProperty: every script the lane runs wakes it; derive the members from the code.\nExamples: a, b, c.'; rc=$?
-  expect_code 0 "$rc" "a fix ruling with a Property: line should send"
+    $'Ruling: review-1 fix.\nProperty: every script the lane runs wakes it; derive the members from the code.\nDependents: the wake drain that counts those scripts.\nExamples: a, b, c.'; rc=$?
+  expect_code 0 "$rc" "a fix ruling with Property: and Dependents: lines should send"
   grep -qF "Property: every script the lane runs" "$home/state/t1.inbox/001.msg" \
     || fail "the fix ruling did not reach the worker's inbox"
 
@@ -421,6 +421,47 @@ test_gate_fix_ruling_requires_property_line() {
   run_send "$fb" "$home" "$log" t1 --resolve-key api-fix 'fix it now'; rc=$?
   expect_code 0 "$rc" "a non-pipeline decision key should not need a Property: line"
   pass "fm-send --resolve-key: a pipeline fix ruling without a Property: line refuses before sending"
+}
+
+# A property that changes a value leaves stale every claim that reads it unless
+# the ruling names those dependents, so a fix ruling must answer that question.
+test_gate_fix_ruling_requires_dependents_line() {
+  local dir fb log home err rc
+  dir="$TMP_ROOT/dependents"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_home dependents)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [key=nm-x-review]: ask-user round=1 findings=review-1 file=f\n' > "$home/state/t1.status"
+
+  for msg in $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nExamples: a.' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none.' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: None' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none \u2014' \
+    $'Ruling: review-1 fix.\nProperty: none of the rendered labels carries a raw id.'; do
+    env PATH="$fb:$PATH" \
+      FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+      "$SEND" t1 --resolve-key nm-x-review "$msg" >/dev/null 2>"$err"; rc=$?
+    [ "$rc" -ne 0 ] || fail "a fix ruling without a reasoned Dependents: line should refuse: $msg"
+    assert_contains "$(cat "$err")" '"Dependents:"' "the refusal should name the missing Dependents: line"
+    [ ! -d "$home/state/t1.inbox" ] || fail "a refused fix ruling still enqueued an inbox record"
+  done
+  if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
+    fail "a refused fix ruling still closed the decision: $(cat "$home/state/t1.status")"
+  fi
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-review \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none - nothing else reads the defaults.'; rc=$?
+  expect_code 0 "$rc" "a fix ruling with Dependents: none - <reason> should send"
+
+  printf 'needs-decision [key=nm-x-two]: ask-user round=1 findings=review-2 file=f\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-two \
+    $'Ruling: review-2 fix.\nProperty: defaults are the mutated values.\nDependents: the equivalent-return skip that reads them.'; rc=$?
+  expect_code 0 "$rc" "a fix ruling naming its dependents should send"
+  grep -qF "Dependents: the equivalent-return skip" "$home/state/t1.inbox/002.msg" \
+    || fail "the fix ruling with dependents did not reach the worker's inbox"
+  pass "fm-send --resolve-key: a pipeline fix ruling without a Dependents: line refuses before sending"
 }
 
 # The close is an enqueue-time fact: the durable record IS the delivery, so a
@@ -990,6 +1031,7 @@ test_routine_steer_never_closes
 test_keyed_request_before_done_stays_answerable
 test_not_open_key_refuses_before_send
 test_gate_fix_ruling_requires_property_line
+test_gate_fix_ruling_requires_dependents_line
 test_failed_ring_still_closes_at_enqueue
 test_failed_enqueue_does_not_close
 test_multiple_keys_close_together
