@@ -128,6 +128,8 @@ jobs:
           set -eu
           npm install -g @earendil-works/pi-coding-agent@1.2.0 --before=2026-10-13T00:00:00Z
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
+          npm install -g typescript@5.9.3
+          tsc --version
       - name: Run portable parallel shard 1
         run: |
           set -eu
@@ -234,11 +236,14 @@ jobs:
       # release turn unchanged code red. The publish-date cutoff does the same
       # for the sibling packages it depends on by range, whose types the
       # typecheck also reads, so a version bump has to move the date with it.
+      # The runner image does not ship tsc, so its compiler is pinned here too.
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
           npm install -g @earendil-works/pi-coding-agent@1.2.0 --before=2026-10-13T00:00:00Z
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
+          npm install -g typescript@5.9.3
+          tsc --version
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
