@@ -5655,8 +5655,10 @@ test_accept_relay_repeats_one_round_each() {
   expect_code 1 "$NM_MERGE_RC" "nm-relay-two-rounds-stray: a value naming an unrefused round must refuse"
   assert_grep "--accept-relay names $NM_RUN_1752:review:2, which is not a round refused over relayed instructions" "$case_dir/stderr" \
     "nm-relay-two-rounds-stray: the stray value was not refused"
-  assert_no_grep "names $NM_RUN_1752:review:1,\|names $NM_RUN_1752:review:3," "$case_dir/stderr" \
-    "nm-relay-two-rounds-stray: a valid value was refused"
+  assert_no_grep "names $NM_RUN_1752:review:1," "$case_dir/stderr" \
+    "nm-relay-two-rounds-stray: valid round 1 was refused"
+  assert_no_grep "names $NM_RUN_1752:review:3," "$case_dir/stderr" \
+    "nm-relay-two-rounds-stray: valid round 3 was refused"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-relay-two-rounds-stray: gh pr merge ran"
   pass "fm-pr-merge --accept-relay repeats, each value clearing and recording only its own round"
 }

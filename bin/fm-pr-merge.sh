@@ -2299,7 +2299,6 @@ case "$PROVIDER" in
       FM_PR_GITHUB_MERGE_ACCEPTED=true
       record_closing_keyword_override
       record_relay_acceptance
-    record_red_waivers
       record_red_waivers
       persist_accepted_merge_authority || exit 1
       fm_afk_contract_lock_release || true
