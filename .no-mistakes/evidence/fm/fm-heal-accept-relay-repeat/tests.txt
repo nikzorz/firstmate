@@ -1,0 +1,1 @@
+6 targeted fm-pr-merge tests ok (repeat allow-red, repeat accept-relay, single accept-relay, allow-red waive, allow-red single name, allow-missing single-use)
