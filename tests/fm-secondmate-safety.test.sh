@@ -61,7 +61,12 @@ test_herdr_guard_fails_a_suite_that_leaks_herdr() {
   assert_contains "$out" 'unstubbed herdr calls reached the real CLI path' "the herdr guard did not report the unstubbed call"
 
   [ -d /proc ] || { pass "herdr guard fails an unstubbed call (process check needs /proc)"; return; }
-  cp "$(command -v sleep)" "$dir/herdr"
+  # A copied sleep binary cannot stand in: multicall coreutils such as uutils
+  # refuse to run under another file name. A script names its process after
+  # the script file only while its interpreter path is absolute.
+  # shellcheck disable=SC2016 # $ARGV is literal Perl.
+  printf '#!%s\nsleep $ARGV[0];\n' "$(command -v perl)" > "$dir/herdr"
+  chmod +x "$dir/herdr"
   if out=$(bash -c '. "$1/tests/secondmate-helpers.sh"; "$2/herdr" 300 >/dev/null 2>&1 & printf "%s\n" "$!" > "$2/pid"' _ "$ROOT" "$dir" 2>&1); then
     fail "the herdr guard let a suite that leaked a herdr process pass"
   fi

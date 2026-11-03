@@ -88,6 +88,10 @@ run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...
       exec @ARGV;
       die "exec failed: $!\n";
     }
+    my $forwarded;
+    for my $name (qw(TERM INT HUP)) {
+      $SIG{$name} = sub { $forwarded //= $name; kill $name, -$pid; };
+    }
     my $timed_out = 0;
     local $SIG{ALRM} = sub {
       if ($timed_out) {
@@ -104,6 +108,7 @@ run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...
       my $waited = waitpid $pid, WNOHANG;
       if ($waited == $pid) {
         alarm 0;
+        exit(128 + POSIX->can("SIG$forwarded")->()) if defined $forwarded;
         exit($timed_out ? 124 : ($? >> 8));
       }
       select undef, undef, undef, 0.05;
@@ -124,7 +129,11 @@ run_bounded() {  # <seconds> <signal> <kill-after-seconds> <command...>
     [ "$cleanup_lock_bound" -gt "$kill_after" ] || cleanup_lock_bound=$kill_after
     kill_after=$cleanup_lock_bound
   fi
-  if command -v timeout >/dev/null 2>&1; then
+  # uutils timeout sends KILL at once after a non-TERM signal instead of
+  # waiting --kill-after, which kills the watcher before it releases its lock.
+  if [ "$kill_after" -gt 0 ] && timeout --version 2>/dev/null | grep -q uutils; then
+    run_with_perl_timeout "$seconds" "$signal" "$kill_after" "$@"
+  elif command -v timeout >/dev/null 2>&1; then
     if [ "$kill_after" -gt 0 ]; then
       timeout --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
     else
