@@ -1577,6 +1577,10 @@ test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append
     if [ -z "$sleeper" ] || ! kill -STOP "$sleeper" 2>/dev/null; then
       sleeper=
       sleep 0.05
+    elif ! ps -o stat= -p "$sleeper" | grep -q '^T'; then
+      kill -CONT "$sleeper" 2>/dev/null
+      sleeper=
+      sleep 0.05
     fi
   done
   [ -n "$sleeper" ] \
