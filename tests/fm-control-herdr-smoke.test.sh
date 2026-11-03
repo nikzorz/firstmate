@@ -193,9 +193,14 @@ FAKEBIN="$SCRATCH/fakebin"
 mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/codex" <<EOF
 #!/usr/bin/env bash
-: > "$SCRATCH/codex-launched"
+echo launched > "$SCRATCH/codex-launched"
 EOF
 chmod +x "$FAKEBIN/codex"
+# A relaunch returns once it has typed the launch line, so the pane shell can run
+# that line well after fm-spawn exits; a loaded runner has outlasted two seconds.
+wait_replacement_launched() {
+  "$ROOT/bin/fm-await.sh" "$SCRATCH/codex-launched" --match '^launched$' --max 60 >/dev/null
+}
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \
@@ -212,11 +217,7 @@ done
 OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
   "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness codex) \
   || fail "a drifted, agent-free Herdr pane should be re-homed and relaunched: $OUT"
-for _ in $(seq 1 20); do
-  [ ! -e "$SCRATCH/codex-launched" ] || break
-  sleep 0.1
-done
-[ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness was not launched"
+wait_replacement_launched || fail "the replacement harness was not launched"
 [ "$(fm_backend_herdr_current_path "$SESSION:$PANE_ID" 2>/dev/null || true)" = "$WT_REAL" ] \
   || fail "the relaunched Herdr shell did not end up in its recorded worktree"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
@@ -326,11 +327,7 @@ rm -f "$SCRATCH/codex-launched"
 OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
   "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness codex) \
   || fail "a stale-registration Herdr pane should be relaunched: $OUT"
-for _ in $(seq 1 20); do
-  [ ! -e "$SCRATCH/codex-launched" ] || break
-  sleep 0.1
-done
-[ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness was not launched after the stale registration"
+wait_replacement_launched || fail "the replacement harness was not launched after the stale registration"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
   || fail "the relaunch replaced its endpoint instead of reusing it"
 herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
