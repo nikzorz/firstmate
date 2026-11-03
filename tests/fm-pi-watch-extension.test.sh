@@ -5145,8 +5145,11 @@ test_opencode_healthy_arm_output_does_not_suppress_guard() {
 printf 'args=%s\n' "$*" >> "${FM_ARM_LOG:?}"
 printf 'watcher: healthy pid=1 (beacon 0s)\n'
 SH
+  # The stub reads its whole payload first, as the real guard does: exiting with
+  # the plugin's stdin write still unread crashes node on an unhandled EPIPE.
   cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
+cat >/dev/null
 printf 'guard\n' >> "${FM_GUARD_LOG:?}"
 printf 'guard ran after external healthy watcher\n' >&2
 exit 2
