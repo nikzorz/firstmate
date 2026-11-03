@@ -37,8 +37,8 @@ TMP_ROOT=$(fm_test_tmproot fm-wake-daemon-e2e)
 # watcher is one-shot - it exits with a single reason line on EVERY wake and the
 # daemon does the triage. This e2e exercises exactly that path, so it runs with
 # state/.afk present (which the daemon owns) to keep the watcher one-shot; the
-# always-on standalone triage is covered by fm-watch-triage.test.sh. fakebin
-# shadows tmux. Echoes nothing; the caller reads $out.
+# always-on standalone triage is covered by fm-watch-triage.test.sh and
+# fm-watch-triage-2.test.sh. fakebin shadows tmux. Echoes nothing; the caller reads $out.
 run_watcher_once() {
   local state=$1 fakebin=$2 out=$3
   mkdir -p "$state"
