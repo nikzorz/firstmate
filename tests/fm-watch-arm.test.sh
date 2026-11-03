@@ -1445,6 +1445,36 @@ test_watcher_exits_when_its_state_directory_is_removed() {
   pass "watch-arm: a watcher exits when its state directory is removed"
 }
 
+# A watcher's first poll consumes the downtime marker under the wake queue lock.
+# When the state directory is deleted while that lock wait is in progress, no
+# lock can be created there again, so the wait must give up rather than leave
+# the watcher spinning past its own state-gone exit. A live holder keeps the
+# lock taken so the wait is in progress whenever the deletion lands.
+test_recovery_arm_check_gives_up_when_its_state_directory_is_removed() {
+  local dir state ready holder waiter status
+  dir=$(make_case arm-check-state-removed)
+  state="$dir/state"
+  ready="$dir/holder.ready"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" && echo held > "$2" && exec sleep 60' \
+    _ "$ROOT/bin/fm-wake-lib.sh" "$ready" &
+  holder=$!
+  wait_for_file_text "$ready" held || fail "the fixture holder did not take the wake queue lock"
+  # Sourcing the library recreates a missing state directory, so the deletion
+  # waits until the waiter has loaded it, as a running watcher long since has.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; echo loaded > "$3"; fm_recovery_marker_arm_check "$2"' \
+    _ "$ROOT/bin/fm-wake-lib.sh" "$state/.watcher-down" "$dir/waiter.loaded" &
+  waiter=$!
+  wait_for_file_text "$dir/waiter.loaded" loaded || fail "the arm check never loaded the wake library"
+  rm -rf "$state"
+  wait_for_exit "$waiter" 100 2>/dev/null
+  status=$?
+  kill -KILL "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -ne 124 ] || fail "the arm check kept waiting for a lock in a deleted state directory"
+  [ "$status" -ne 0 ] || fail "the arm check reported success with its state directory deleted"
+  pass "watch-arm: the recovery arm check gives up when its state directory is removed"
+}
+
 # The same for a deleted home whose state directory still exists elsewhere: the
 # lock is released through the ordinary cleanup so nothing stale is left behind.
 test_watcher_exits_when_its_home_is_removed() {
@@ -1736,6 +1766,7 @@ test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
 test_arm_refuses_a_disposable_validation_checkout
 test_watcher_exits_when_its_state_directory_is_removed
+test_recovery_arm_check_gives_up_when_its_state_directory_is_removed
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
