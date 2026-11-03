@@ -883,8 +883,8 @@ _fm_recovery_marker_arm_check() {
   local marker=$1 lock line quarantine
   FM_RECOVERY_MARKER_ACTION='none'
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait_unless_dir_gone "$FM_WAKE_QUEUE_LOCK" || return 1
+  if ! fm_lock_acquire_wait_unless_dir_gone "$lock"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1306,6 +1306,21 @@ fm_lock_try_acquire() {
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
+    sleep 0.1
+  done
+}
+
+# A lock whose directory was deleted can never be created again by waiting, so
+# a watcher-cycle wait gives up instead of spinning as an orphan of a torn-down
+# home. The caller decides how to report it; ordinary waits keep blocking.
+fm_lock_acquire_wait_unless_dir_gone() {  # <lockdir>
+  local lockdir=$1 dir
+  case "$lockdir" in
+    */*) dir=${lockdir%/*}; dir=${dir:-/} ;;
+    *) dir=. ;;
+  esac
+  while ! fm_lock_try_acquire "$lockdir"; do
+    [ -d "$dir" ] || return 1
     sleep 0.1
   done
 }

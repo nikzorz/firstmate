@@ -2458,7 +2458,10 @@ procevent_surface_queued() {
   local key reason captured="" stranded="" unstarted=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_lock_acquire_wait_unless_dir_gone "$FM_WAKE_QUEUE_LOCK" || {
+    exit_if_watcher_world_gone
+    return 0
+  }
   while IFS= read -r key; do
     case "$key" in procevent:*) ;; *) continue ;; esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -3079,6 +3082,7 @@ resurface_after_downtime() {
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
     if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+      exit_if_watcher_world_gone
       echo "watcher: recovery state could not be consumed safely" >&2
       exit 1
     fi
@@ -3098,16 +3102,16 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
-while :; do
-  # Home-gone exit: a deleted home, state directory, or code root means this
-  # watcher's world is gone (a torn-down temporary home or a discarded
-  # disposable checkout). Exit with a logged reason rather than writing state
-  # into nothing, or into a live home from a checkout that no longer exists.
-  # A detached helper this watcher started (home-summary refresh, reconcile)
-  # can recreate a deleted state directory before the next poll, so a lock
-  # with no holder at all is read as the same teardown: only a fresh watcher
-  # ever recreates the lock, and that case is the self-eviction below.
-  # Scoped to this process alone: no other watcher is signalled.
+# Home-gone exit: a deleted home, state directory, or code root means this
+# watcher's world is gone (a torn-down temporary home or a discarded
+# disposable checkout). Exit with a logged reason rather than writing state
+# into nothing, or into a live home from a checkout that no longer exists.
+# A detached helper this watcher started (home-summary refresh, reconcile)
+# can recreate a deleted state directory before the next poll, so a lock
+# with no holder at all is read as the same teardown: only a fresh watcher
+# ever recreates the lock, and that case is the self-eviction below.
+# Scoped to this process alone: no other watcher is signalled.
+exit_if_watcher_world_gone() {
   if [ "$WATCH_HOME_EXISTED" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
     echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
     exit 1
@@ -3121,6 +3125,10 @@ while :; do
     echo "watcher: exiting - code root no longer exists: $SCRIPT_DIR" >&2
     exit 1
   fi
+}
+
+while :; do
+  exit_if_watcher_world_gone
 
   # Self-eviction: if the singleton lock no longer names this process, a second
   # watcher has taken over (e.g. a transient duplicate from a racy arm). Stand
