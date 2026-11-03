@@ -34,7 +34,7 @@ SSH_LOG="$TMP_ROOT/ssh.log"
 SSH_COUNT="$TMP_ROOT/ssh.count"
 mkdir -p "$LOCAL_HOME/data" "$REMOTE_ROOT/bin" "$REMOTE_HOME"
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
-cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
+cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-claim-lib.sh" \
   "$ROOT/bin/fm-remote-job-worker.sh" "$REMOTE_ROOT/bin/"
 
 cat > "$REMOTE_ROOT/bin/fm-probe-one.sh" <<'SH'

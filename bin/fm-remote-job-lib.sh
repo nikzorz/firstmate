@@ -12,7 +12,7 @@
 # state; deadline and exit are added as execution advances, cancel is an
 # optional caller-cancellation marker, and .claim may hold owner, owner_start,
 # supervisor, supervisor_start, group, group_start, and armed records while
-# work executes.
+# work executes, beside the claim token bin/fm-claim-lib.sh owns.
 # Stage writes state=queued last. seq is a queue-wide monotonic staging
 # sequence reserved atomically by its persistent .seq-claims directory; the
 # counter is only a forward-moving allocation hint. If the bounded hint walk
@@ -96,6 +96,9 @@
 # it to stop itself once its root is pruned, and
 # bin/fm-remote-job-reap-orphans.sh uses it to reap workers that were already
 # orphaned that way.
+
+# shellcheck source=bin/fm-claim-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fm-claim-lib.sh"
 
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
@@ -480,7 +483,7 @@ fm_remote_job_regular_bounded() { # <file> <max-bytes>
 fm_remote_job_remove_claim_records() { # <claim-dir>
   local claim=$1 file
   [ -d "$claim" ] && [ ! -L "$claim" ] || return 1
-  for file in "$claim"/owner "$claim"/owner_start "$claim"/supervisor \
+  for file in "$claim/$FM_CLAIM_TOKEN" "$claim"/owner "$claim"/owner_start "$claim"/supervisor \
     "$claim"/supervisor_start "$claim"/group "$claim"/group_start "$claim"/armed \
     "$claim"/.owner.* "$claim"/.owner_start.* "$claim"/.supervisor.* \
     "$claim"/.supervisor_start.* "$claim"/.group.* "$claim"/.group_start.* \
@@ -606,7 +609,7 @@ fm_remote_job_next_seq() { # [stage-dir destination]
     attempt=$((attempt + 1))
     value=$((value + 1))
     claim="$FM_REMOTE_JOB_SEQ_CLAIMS/$value"
-    if (umask 077; mkdir "$claim") 2>/dev/null; then
+    if (umask 077; fm_claim_dir "$claim"); then
       chmod 700 "$claim" || return 1
       fm_remote_job_advance_seq_hint "$value" || true
       if [ -n "$stage" ]; then
@@ -864,11 +867,17 @@ fm_remote_job_reap_stale() { # <account-home>
       if [ -n "$tmp" ] && printf '%s\n' "$now" > "$tmp" && chmod 600 "$tmp" \
         && mv -f -- "$tmp" "$marker"; then
         # One directory walk: ! -newer matches whole-second mtime <= cutoff
-        # (the former >= age check). Batched rmdir tolerates concurrent mkdir/rmdir races
-        # and non-empty dirs the same way the old per-claim rmdir || true did.
+        # (the former >= age check). One bash per batch drops each claim
+        # token and then rmdirs the batch, tolerating concurrent mkdir/rmdir
+        # races and non-empty dirs the same way the old per-claim rmdir || true did.
+        # shellcheck disable=SC2016 # Expanded by the batch shell.
         find "$FM_REMOTE_JOB_SEQ_CLAIMS" -mindepth 1 -maxdepth 1 -type d \
           -name '[0-9]*' ! -name '*[!0-9]*' ! -name 0 \
-          ! -newer "$ref" -exec rmdir {} + 2>/dev/null || true
+          ! -newer "$ref" -exec "${BASH:-bash}" -c '
+            token=$1; shift; tokens=()
+            for claim do tokens+=("$claim/$token"); done
+            rm -f -- "${tokens[@]}"; rmdir -- "$@"' fm-seq-reap "$FM_CLAIM_TOKEN" {} + \
+          2>/dev/null || true
       else
         [ -z "$tmp" ] || rm -f -- "$tmp"
       fi

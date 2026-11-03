@@ -47,7 +47,7 @@ cleanup_lane_fixture() {
 }
 trap cleanup_lane_fixture EXIT
 
-cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" \
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-claim-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" \
   "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-delta-read.sh" \
   "$ROOT/bin/fm-remote-secondmate-control.sh" "$ROOT/bin/fm-backend.sh" \
   "$ROOT/bin/fm-pending-reply-lib.sh" "$ROOT/bin/fm-task-inbox-lib.sh" \
@@ -134,7 +134,31 @@ SEQ_EXPECTED=$(seq 1 20)
   || fail "concurrent sequence claims were not unique and monotonic: $SEQ_RESULTS"
 [ "$(find "$STATE_ROOT/.seq-claims" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = 20 ] \
   || fail "concurrent sequence allocations did not retain every durable claim"
-mkdir "$STATE_ROOT/.seq-claims/999998" "$STATE_ROOT/.seq-claims/999999"
+# A mkdir that reports success to every caller once the directory exists, the
+# non-atomic shape uutils coreutils mkdir has under contention.
+NONATOMIC_BIN="$TMP_ROOT/nonatomic-mkdir-bin"
+mkdir -p "$NONATOMIC_BIN"
+cat > "$NONATOMIC_BIN/mkdir" <<SH
+#!/bin/sh
+[ "\$1" = -- ] && shift
+[ -d "\$1" ] && exit 0
+"$(command -v mkdir)" -p -- "\$1"
+SH
+chmod +x "$NONATOMIC_BIN/mkdir"
+SEQ_PIDS=()
+for i in $(seq 21 40); do
+  PATH="$NONATOMIC_BIN:$PATH" fm_remote_job_next_seq > "$TMP_ROOT/seq-$i" &
+  SEQ_PIDS+=("$!")
+done
+for pid in "${SEQ_PIDS[@]}"; do
+  wait "$pid" || fail "a concurrent sequence allocator failed under a non-atomic mkdir"
+done
+SEQ_RESULTS=$(cat "$TMP_ROOT"/seq-* | sort -n)
+SEQ_EXPECTED=$(seq 1 40)
+[ "$SEQ_RESULTS" = "$SEQ_EXPECTED" ] \
+  || fail "concurrent sequence claims under a non-atomic mkdir were not unique: $SEQ_RESULTS"
+(umask 077; fm_claim_dir "$STATE_ROOT/.seq-claims/999998") || fail "could not claim an expiring sequence"
+mkdir "$STATE_ROOT/.seq-claims/999999"
 touch -t 200001010000 "$STATE_ROOT/.seq-claims/999998"
 fm_remote_job_reap_stale "$ACCOUNT_HOME" || fail "sequence claim reaping failed"
 assert_absent "$STATE_ROOT/.seq-claims/999998" "an expired sequence claim survived stale reaping"

@@ -68,6 +68,8 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-claim-lib.sh
+. "$SCRIPT_DIR/fm-claim-lib.sh"
 
 CMD=${1:-}
 case "$CMD" in
@@ -136,7 +138,7 @@ fi
 # pair; a holder that died mid-write is broken after FM_BUSY_LOCK_STALE_SECS.
 lock_acquire() {
   local tries=0 now mtime age
-  while ! mkdir "$LOCK" 2>/dev/null; do
+  while ! fm_claim_dir "$LOCK"; do
     tries=$((tries + 1))
     if [ "$tries" -ge 40 ]; then
       now=$(date +%s)
@@ -147,8 +149,8 @@ lock_acquire() {
       case "$mtime" in ''|*[!0-9]*) mtime=$now ;; esac
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
-        rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true
-        mkdir "$LOCK" 2>/dev/null && break
+        fm_claim_dir_release "$LOCK" || rm -rf "$LOCK" 2>/dev/null || true
+        fm_claim_dir "$LOCK" && break
       fi
       echo "error: busy-state lock timeout for $ID" >&2
       return 1
@@ -157,7 +159,7 @@ lock_acquire() {
   done
   return 0
 }
-lock_release() { rmdir "$LOCK" 2>/dev/null || true; }
+lock_release() { fm_claim_dir_release "$LOCK" || true; }
 
 write_record() {  # <gen> <seq>
   local tmp

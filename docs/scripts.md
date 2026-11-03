@@ -122,6 +122,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `fm-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and secondmate syncs, with durable divergence markers |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
+| `fm-claim-lib.sh`        | Shared exclusive directory claim that holds even where `mkdir` is not atomic          |
 | `fm-adopted-process-lib.sh` | Shared "which processes living in this directory did nobody here start?" scan used by teardown |
 | `fm-episode-records-lib.sh` | Own the endpoint- and id-keyed supervision records a task must not inherit, cleared at the spawn claim and reclaimed at teardown |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |

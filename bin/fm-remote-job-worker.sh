@@ -223,7 +223,7 @@ worker_recover_quarantine() { # <account-home>
 worker_acquire_lock() { # <account-home> <identity>
   local account_home=$1 identity=$2 attempt=0
   while [ "$attempt" -lt 150 ]; do
-    if (umask 077; mkdir "$WORKER_LOCK") 2>/dev/null; then
+    if (umask 077; fm_claim_dir "$WORKER_LOCK"); then
       WORKER_LOCK_HELD=1
       # Discard the predecessor's heartbeat before publishing our identity:
       # readiness must come from this owner after lock publication succeeds.
@@ -245,7 +245,7 @@ worker_acquire_lock() { # <account-home> <identity>
     fi
     [ ! -L "$WORKER_LOCK/pid" ] && [ ! -L "$WORKER_LOCK/start" ] && [ ! -L "$WORKER_LOCK/command" ] || return 1
     rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" || return 1
-    rmdir "$WORKER_LOCK" || return 1
+    fm_claim_dir_release "$WORKER_LOCK" || return 1
   done
   return 1
 }
@@ -326,7 +326,7 @@ worker_cleanup() {
   if [ -z "$owner_pid" ]; then
     [ ! -L "$WORKER_LOCK/start" ] && [ ! -L "$WORKER_LOCK/command" ] &&
       rm -f -- "$WORKER_LOCK/start" "$WORKER_LOCK/command" 2>/dev/null || true
-    rmdir "$WORKER_LOCK" 2>/dev/null || true
+    fm_claim_dir_release "$WORKER_LOCK" || true
     WORKER_LOCK_HELD=0
     return 0
   fi
@@ -338,7 +338,7 @@ worker_cleanup() {
   [ ! -L "$ready" ] && rm -f -- "$ready" 2>/dev/null || true
   [ ! -L "$identity" ] && rm -f -- "$identity" 2>/dev/null || true
   rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" 2>/dev/null || true
-  rmdir "$WORKER_LOCK" 2>/dev/null || true
+  fm_claim_dir_release "$WORKER_LOCK" || true
   WORKER_LOCK_HELD=0
 }
 
@@ -596,20 +596,20 @@ worker_claim() { # <job-dir>
   local job=$1 claim pid start pid_tmp start_tmp
   claim="$job/.claim"
   [ ! -e "$claim" ] && [ ! -L "$claim" ] || return 1
-  (umask 077; mkdir "$claim") || return 1
+  (umask 077; fm_claim_dir "$claim") || return 1
   pid=${BASHPID:-$$}
-  start=$(fm_remote_job_process_start "$pid") || { rmdir "$claim" 2>/dev/null || true; return 1; }
-  pid_tmp=$(umask 077; mktemp "$claim/.owner.XXXXXX") || { rmdir "$claim" 2>/dev/null || true; return 1; }
+  start=$(fm_remote_job_process_start "$pid") || { fm_claim_dir_release "$claim" || true; return 1; }
+  pid_tmp=$(umask 077; mktemp "$claim/.owner.XXXXXX") || { fm_claim_dir_release "$claim" || true; return 1; }
   start_tmp=$(umask 077; mktemp "$claim/.owner_start.XXXXXX") || {
     rm -f -- "$pid_tmp"
-    rmdir "$claim" 2>/dev/null || true
+    fm_claim_dir_release "$claim" || true
     return 1
   }
   if ! printf '%s\n' "$pid" > "$pid_tmp" || ! printf '%s\n' "$start" > "$start_tmp" \
     || ! chmod 600 "$pid_tmp" "$start_tmp" || ! mv -f -- "$start_tmp" "$claim/owner_start" \
     || ! mv -f -- "$pid_tmp" "$claim/owner"; then
     rm -f -- "$pid_tmp" "$start_tmp" "$claim/owner" "$claim/owner_start"
-    rmdir "$claim" 2>/dev/null || true
+    fm_claim_dir_release "$claim" || true
     return 1
   fi
 }
@@ -1274,7 +1274,7 @@ worker_supervisor_cleanup_dead_child() { # <account-home> <pid>
   [ ! -L "$identity" ] && rm -f -- "$identity" || return 1
   [ ! -L "$lock/start" ] && [ ! -L "$lock/command" ] || return 1
   rm -f -- "$lock/pid" "$lock/start" "$lock/command" || return 1
-  rmdir "$lock"
+  fm_claim_dir_release "$lock"
 }
 
 worker_supervisor_shutdown() {
