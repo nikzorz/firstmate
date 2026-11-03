@@ -660,8 +660,8 @@ if [ -n "$RESOLVE_KEYS" ]; then
       exit 1
     }
     printf '%s\n' "$*" | awk '
-      awaiting { if ($0 !~ /^[[:space:]]*$/) { if ($0 !~ /^[[:space:]]*Dependents:[[:space:]]*[^[:space:]]/ || $0 ~ /^[[:space:]]*Dependents:[[:space:]]*none[[:space:]]*-?[[:space:]]*$/) exit 1; awaiting = 0 } next }
-      /^[[:space:]]*Property:[[:space:]]*none([^[:alnum:]_]|$)/ { next }
+      awaiting { if ($0 !~ /^[[:space:]]*$/) { if ($0 !~ /^[[:space:]]*Dependents:[[:space:]]*[^[:space:]]/ || tolower($0) ~ /^[[:space:]]*dependents:[[:space:]]*none[^[:alnum:]]*$/) exit 1; awaiting = 0 } next }
+      /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
       /^[[:space:]]*Property:/ { awaiting = 1 }
       END { if (awaiting) exit 1 }' && continue
     echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling whose Property: line is not followed by a line beginning \"Dependents:\"; name what reads or depends on the value the property changes, or write \"Dependents: none - <reason>\" (ask-user-authority step 5). Nothing was sent." >&2

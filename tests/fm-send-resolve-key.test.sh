@@ -435,7 +435,11 @@ test_gate_fix_ruling_requires_dependents_line() {
 
   for msg in $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.' \
     $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nExamples: a.' \
-    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none'; do
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none.' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: None' \
+    $'Ruling: review-1 fix.\nProperty: defaults are the mutated values.\nDependents: none \u2014' \
+    $'Ruling: review-1 fix.\nProperty: none of the rendered labels carries a raw id.'; do
     env PATH="$fb:$PATH" \
       FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
       "$SEND" t1 --resolve-key nm-x-review "$msg" >/dev/null 2>"$err"; rc=$?
