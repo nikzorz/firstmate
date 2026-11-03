@@ -1475,6 +1475,135 @@ test_recovery_arm_check_gives_up_when_its_state_directory_is_removed() {
   pass "watch-arm: the recovery arm check gives up when its state directory is removed"
 }
 
+# A deletion can also land mid-cycle, after the loop-top state check, while the
+# stale triage's wake append is waiting on the queue lock: no lock can be created
+# there again, so the watcher must take its logged state-gone exit rather than
+# spin in that wait. The current-state read the triage takes just before the
+# append starts a live holder, so the append is waiting whenever the deletion
+# lands; a retry's transient owner record beside the holder's proves it is.
+test_watcher_exits_when_its_state_directory_is_removed_before_a_stale_wake() {
+  local dir state fakebin out capture window key pid status lock holder_owner owner waiting deadline i
+  dir=$(make_case stale-append-state-removed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  capture="$dir/pane.txt"
+  lock="$state/.wake-queue.lock"
+  window="test:fm-quiet"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/quiet.meta"
+  printf 'idle prompt' > "$capture"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'idle prompt')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  cat > "$fakebin/fm-crew-state.sh" <<SH
+#!/usr/bin/env bash
+FM_STATE_OVERRIDE='$state' bash -c '. "\$1"; fm_lock_try_acquire "\$FM_WAKE_QUEUE_LOCK" && echo \$\$ > "\$2" && exec sleep 60' \\
+  _ '$ROOT/bin/fm-wake-lib.sh' '$dir/holder.pid' > /dev/null 2>&1 &
+while [ ! -s '$dir/holder.pid' ]; do sleep 0.05; done
+printf 'state: unknown · source: pane · no verdict\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ ! -s "$dir/holder.pid" ] && [ "$i" -lt 300 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$dir/holder.pid" ] \
+    || { wait_for_exit "$pid" 1 >/dev/null 2>&1; fail "the stale triage never reached its current-state read: $(cat "$out")"; }
+  holder_owner=$(readlink "$lock")
+  waiting=1
+  deadline=$((SECONDS + 30))
+  while [ "$waiting" -ne 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+    for owner in "$lock".owner.*; do
+      [ -e "$owner" ] && [ "$owner" != "$holder_owner" ] && waiting=0
+    done
+  done
+  [ "$waiting" -eq 0 ] || {
+    kill -KILL "$(cat "$dir/holder.pid")" 2>/dev/null
+    wait_for_exit "$pid" 1 >/dev/null 2>&1
+    fail "the watcher never waited on the held wake queue lock: $(cat "$out")"
+  }
+  rm -rf "$state"
+  wait_for_exit "$pid" 100 2>/dev/null
+  status=$?
+  kill -KILL "$(cat "$dir/holder.pid")" 2>/dev/null || true
+  [ "$status" -ne 124 ] || fail "the watcher kept waiting to append a stale wake into a deleted state directory: $(cat "$out")"
+  grep -qF 'watcher: exiting - state directory no longer exists' "$out" \
+    || fail "the watcher did not take its logged state-gone exit: $(cat "$out")"
+  ! grep -q '^stale:' "$out" \
+    || fail "the watcher reported a stale wake it could not have queued: $(cat "$out")"
+  pass "watch-arm: a watcher exits when its state directory is removed during a stale-wake append"
+}
+
+# The process-event reconcile the cycle runs and waits on is a child process,
+# beyond the reach of the watcher's own lock-wait exit. When the state directory
+# is deleted while that child waits to append a captured result's wake, the
+# child must give up without appending so the watcher reaches its logged
+# state-gone exit. The watcher's startup takes the wake queue lock itself, so a
+# live holder takes it only once the first cycle has begun, and the captured
+# result is registered after that, making the reconcile child the one waiting.
+test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append() {
+  local dir state fakebin out lock pid status holder holder_owner owner waiting deadline i
+  dir=$(make_case procevent-append-state-removed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  lock="$state/.wake-queue.lock"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
+    FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ ! -e "$state/.last-watcher-beat" ] && [ "$i" -lt 300 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$state/.last-watcher-beat" ] \
+    || { wait_for_exit "$pid" 1 >/dev/null 2>&1; fail "the watcher never began its first cycle: $(cat "$out")"; }
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" && echo held > "$2" && exec sleep 60' \
+    _ "$ROOT/bin/fm-wake-lib.sh" "$dir/holder.ready" &
+  holder=$!
+  wait_for_file_text "$dir/holder.ready" held || fail "the fixture holder did not take the wake queue lock"
+  holder_owner=$(readlink "$lock")
+  mkdir -p "$dir/inbox"
+  printf 'captured result\n' > "$dir/inbox/src-gone.1.result"
+  printf 'lavish\n' > "$dir/inbox/src-gone.1.adapter"
+  chmod 0600 "$dir/inbox/src-gone.1.result" "$dir/inbox/src-gone.1.adapter"
+  mv "$dir/inbox" "$state/procevent-inbox"
+  mkdir "$state/procevent"
+  waiting=1
+  deadline=$((SECONDS + 30))
+  while [ "$waiting" -ne 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+    if ps -A -o ppid= -o command= | awk -v p="$pid" '$1 == p && /fm-procevent\.sh reconcile/' | grep -q .; then
+      for owner in "$lock".owner.*; do
+        [ -e "$owner" ] && [ "$owner" != "$holder_owner" ] && waiting=0
+      done
+    fi
+    sleep 0.05
+  done
+  [ "$waiting" -eq 0 ] || {
+    kill -KILL "$holder" 2>/dev/null
+    wait_for_exit "$pid" 1 >/dev/null 2>&1
+    fail "the reconcile child never waited on the held wake queue lock: $(cat "$out")"
+  }
+  rm -rf "$state"
+  wait_for_exit "$pid" 100 2>/dev/null
+  status=$?
+  kill -KILL "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -ne 124 ] || fail "the watcher kept waiting on a reconcile child appending into a deleted state directory: $(cat "$out")"
+  grep -qF 'watcher: exiting - state directory no longer exists' "$out" \
+    || fail "the watcher did not take its logged state-gone exit: $(cat "$out")"
+  [ ! -e "$state/.wake-queue" ] || fail "the reconcile child appended a wake without the queue lock"
+  pass "watch-arm: a watcher exits when its state directory is removed during a reconcile child's append"
+}
+
 # The same for a deleted home whose state directory still exists elsewhere: the
 # lock is released through the ordinary cleanup so nothing stale is left behind.
 test_watcher_exits_when_its_home_is_removed() {
@@ -1767,6 +1896,8 @@ test_arm_refuses_an_unusable_launch_confirm_window
 test_arm_refuses_a_disposable_validation_checkout
 test_watcher_exits_when_its_state_directory_is_removed
 test_recovery_arm_check_gives_up_when_its_state_directory_is_removed
+test_watcher_exits_when_its_state_directory_is_removed_before_a_stale_wake
+test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver

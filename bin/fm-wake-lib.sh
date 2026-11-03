@@ -1303,24 +1303,43 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
+# A lock whose directory was deleted can never be created again by waiting.
+fm_lock_dir_present() {  # <lockdir>
+  local dir
+  case "$1" in
+    */*) dir=${1%/*}; dir=${dir:-/} ;;
+    *) dir=. ;;
+  esac
+  [ -d "$dir" ]
+}
+
+# A process that must not outlive a deleted lock directory, such as a watcher in
+# its poll cycle, names a command in FM_LOCK_WAIT_DIR_GONE_HOOK that exits it;
+# should the hook return, the wait keeps blocking so no caller runs unlocked.
+# A function cannot cross into a child process, so an exported
+# FM_LOCK_WAIT_EXIT_IF_DIR_GONE=1 exits the waiting process instead; returning
+# would let a caller that ignores the wait's status run unlocked.
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
+    if ! fm_lock_dir_present "$lockdir"; then
+      if [ -n "${FM_LOCK_WAIT_DIR_GONE_HOOK:-}" ]; then
+        "$FM_LOCK_WAIT_DIR_GONE_HOOK" "$lockdir"
+      elif [ "${FM_LOCK_WAIT_EXIT_IF_DIR_GONE:-0}" = 1 ]; then
+        printf 'lock wait abandoned - lock directory no longer exists: %s\n' "$lockdir" >&2
+        exit 1
+      fi
+    fi
     sleep 0.1
   done
 }
 
-# A lock whose directory was deleted can never be created again by waiting, so
-# a watcher-cycle wait gives up instead of spinning as an orphan of a torn-down
-# home. The caller decides how to report it; ordinary waits keep blocking.
+# Gives up instead of spinning as an orphan of a torn-down home when the lock's
+# directory is deleted. The caller decides how to report it.
 fm_lock_acquire_wait_unless_dir_gone() {  # <lockdir>
-  local lockdir=$1 dir
-  case "$lockdir" in
-    */*) dir=${lockdir%/*}; dir=${dir:-/} ;;
-    *) dir=. ;;
-  esac
+  local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
-    [ -d "$dir" ] || return 1
+    fm_lock_dir_present "$lockdir" || return 1
     sleep 0.1
   done
 }
