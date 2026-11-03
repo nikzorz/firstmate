@@ -1,0 +1,31 @@
+commit e55184d015f1f86a82e0826d02e7c8a9acf49cc8
+Author: Nik Rajcevich <nik@rajcevich.com>
+Date:   Tue Nov 3 07:21:57 2026 -0700
+
+    test(fm-send): write the em-dash refusal case as UTF-8 bytes so it holds under LC_ALL=C
+
+ tests/fm-send-resolve-key.test.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== C
+ok - fm-send --resolve-key: an overlong decision key refuses before sending
+ok - fm-send --resolve-key: a stamped close line stays inside the status-line cap
+ok - fm-send --resolve-key: failed-close recovery commands safely quote operator text and paths
+ok - fm-send --resolve-key: a remote secondmate reserved-key close is the same local ledger append
+ok - fm-send --resolve-key: a decision answer refuses the attended branch before sending, a blocked: key stays steering, and the away-posture record relocates the answer
+exit=0
+== POSIX
+ok - fm-send --resolve-key: an overlong decision key refuses before sending
+ok - fm-send --resolve-key: a stamped close line stays inside the status-line cap
+ok - fm-send --resolve-key: failed-close recovery commands safely quote operator text and paths
+ok - fm-send --resolve-key: a remote secondmate reserved-key close is the same local ledger append
+ok - fm-send --resolve-key: a decision answer refuses the attended branch before sending, a blocked: key stays steering, and the away-posture record relocates the answer
+exit=0
+== C.UTF-8
+ok - fm-send --resolve-key: an overlong decision key refuses before sending
+ok - fm-send --resolve-key: a stamped close line stays inside the status-line cap
+ok - fm-send --resolve-key: failed-close recovery commands safely quote operator text and paths
+ok - fm-send --resolve-key: a remote secondmate reserved-key close is the same local ledger append
+ok - fm-send --resolve-key: a decision answer refuses the attended branch before sending, a blocked: key stays steering, and the away-posture record relocates the answer
+exit=0
+
+[exited with code 0]
