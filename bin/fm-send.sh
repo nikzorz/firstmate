@@ -182,7 +182,10 @@
 # outcome. A message rules fix when the word fix stands alone in it, "fix
 # round" included, since sending a finding to a fix round rules it fix; a
 # message that only mentions a fix may carry a Property: line saying it rules
-# none.
+# none. Each other Property: line must be followed by a `Dependents:` line
+# naming what reads or depends on the value it changes, or `Dependents: none -
+# <reason>`. That check is a heuristic: it proves the dependents question was
+# answered, not that the list is complete.
 #
 # Answering a decision is the gate-answer path and is main-owned while
 # attended: when any named key is an open needs-decision or a captain-held task
@@ -652,8 +655,16 @@ if [ -n "$RESOLVE_KEYS" ]; then
   for k in $RESOLVE_KEYS; do
     case "$k" in nm-*) ;; *) continue ;; esac
     printf '%s' "$*" | grep -Eiq '(^|[^[:alnum:]_-])fix([^[:alnum:]_-]|$)' || continue
-    printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' && continue
-    echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent." >&2
+    printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' || {
+      echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent." >&2
+      exit 1
+    }
+    printf '%s\n' "$*" | awk '
+      awaiting { if ($0 !~ /^[[:space:]]*$/) { if ($0 !~ /^[[:space:]]*Dependents:[[:space:]]*[^[:space:]]/ || $0 ~ /^[[:space:]]*Dependents:[[:space:]]*none[[:space:]]*-?[[:space:]]*$/) exit 1; awaiting = 0 } next }
+      /^[[:space:]]*Property:[[:space:]]*none([^[:alnum:]_]|$)/ { next }
+      /^[[:space:]]*Property:/ { awaiting = 1 }
+      END { if (awaiting) exit 1 }' && continue
+    echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling whose Property: line is not followed by a line beginning \"Dependents:\"; name what reads or depends on the value the property changes, or write \"Dependents: none - <reason>\" (ask-user-authority step 5). Nothing was sent." >&2
     exit 1
   done
   RESOLVE_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
