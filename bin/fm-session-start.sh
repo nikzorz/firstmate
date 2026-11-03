@@ -233,10 +233,11 @@
 #             re-emit the rest. Wake-queue presentation is NOT skipped: queued
 #             records are this turn's work queue, they arrived after startup,
 #             and a session that owns the lock is exactly the session that must
-#             handle and acknowledge them. A Claude `--source clear` run, re-emit
-#             or full startup alike, still presents them but leaves them
-#             untaken, because no turn follows a clear and the automatic
-#             supervision wake delivers them instead. Lock acquisition still runs, because
+#             handle and acknowledge them. A Claude `--source clear` or
+#             `--source compact` run, re-emit or full startup alike, still
+#             presents them but leaves them untaken, because no turn follows a
+#             clear or typed compact and the automatic supervision wake
+#             delivers them instead. Lock acquisition still runs, because
 #             ownership must be re-verified rather than assumed: fm-lock.sh
 #             already treats a lock owned through shared ancestry or a trusted
 #             same-session Claude id as its own, so the re-emit proceeds, while
@@ -751,12 +752,18 @@ EOF
   fi
 }
 
-# A Claude /clear opens no model turn after its digest, whether it re-emits or
-# runs a full startup, so draining here would take the queue into handling with
-# nobody to handle it, and the rewake that would have delivered it stands down
-# (bin/fm-wake-drain.sh --present-only).
+# A Claude /clear or typed /compact opens no model turn after its digest,
+# whether it re-emits or runs a full startup, so draining here would take the
+# queue into handling with nobody to handle it, and the rewake that would have
+# delivered it stands down (bin/fm-wake-drain.sh --present-only). The compact
+# payload cannot tell a typed /compact from an automatic mid-turn one, so every
+# compact holds, and an automatic one's running turn meets the queue at its
+# turn end instead.
 wake_queue_held_for_rewake() {
-  [ "$PRIMARY_HARNESS:$SESSION_SOURCE" = claude:clear ]
+  case "$PRIMARY_HARNESS:$SESSION_SOURCE" in
+    claude:clear|claude:compact) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 AGENTS_START_HASH=
@@ -778,8 +785,9 @@ if [ "$REEMIT" -eq 1 ]; then
   printf 'secondmate convergence and liveness, pending remote handoff\n'
   printf 'retry, X-mode artifact writes, and stale Herdr child cleanup - are NOT repeated.\n'
   if wake_queue_held_for_rewake; then
-    printf 'Queued wakes are shown but NOT drained: a clear opens no turn, so the automatic\n'
-    printf 'supervision wake that follows delivers them; drain and acknowledge them in that turn.\n'
+    printf 'Queued wakes are shown but NOT drained: a clear or compact opens no turn of its own,\n'
+    printf 'so the automatic supervision wake that follows delivers them; drain and acknowledge\n'
+    printf 'them in that turn.\n'
   else
     printf 'Queued wakes ARE still drained: they arrived after startup and are this turn work.\n'
   fi
