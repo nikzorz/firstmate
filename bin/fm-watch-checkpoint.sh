@@ -88,6 +88,10 @@ run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...
       exec @ARGV;
       die "exec failed: $!\n";
     }
+    my $forwarded;
+    for my $name (qw(TERM INT HUP)) {
+      $SIG{$name} = sub { $forwarded //= $name; kill $name, -$pid; };
+    }
     my $timed_out = 0;
     local $SIG{ALRM} = sub {
       if ($timed_out) {
@@ -104,6 +108,7 @@ run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...
       my $waited = waitpid $pid, WNOHANG;
       if ($waited == $pid) {
         alarm 0;
+        exit(128 + POSIX->can("SIG$forwarded")->()) if defined $forwarded;
         exit($timed_out ? 124 : ($? >> 8));
       }
       select undef, undef, undef, 0.05;

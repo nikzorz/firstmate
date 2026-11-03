@@ -90,6 +90,54 @@ PL
   pass "Perl fallback honors the cleanup bound before escalating an INT-ignoring direct watcher"
 }
 
+test_perl_timeout_fallback_forwards_termination_to_the_watcher() {
+  local home fallback_bin tool tool_path checkpoint_pid status watcher_pid wrapper_pid i
+  home=$(make_home perl-forward)
+  fallback_bin="$home/fallback-bin"
+  mkdir -p "$home/root/bin" "$fallback_bin"
+  cp "$CHECKPOINT" "$home/root/bin/fm-watch-checkpoint.sh"
+  cp "$ROOT/bin/fm-supervision-engine-lib.sh" "$home/root/bin/fm-supervision-engine-lib.sh"
+  for tool in bash dirname mktemp rm perl grep cat; do
+    tool_path=$(command -v "$tool") || fail "could not locate $tool for the Perl fallback fixture"
+    ln -s "$tool_path" "$fallback_bin/$tool"
+  done
+  cat > "$home/root/bin/fm-watch.sh" <<'PL'
+#!/usr/bin/env perl
+use strict;
+use warnings;
+$SIG{TERM} = sub {
+  open my $marker, '>', "$ENV{FM_HOME}/watcher-got-term" or die "open term marker: $!";
+  close $marker;
+  exit 0;
+};
+open my $pid_file, '>', "$ENV{FM_HOME}/watcher.pid" or die "open pid file: $!";
+printf {$pid_file} "%s\n", $$;
+close $pid_file;
+sleep 1 for 1 .. 30;
+PL
+  chmod +x "$home/root/bin/fm-watch-checkpoint.sh" "$home/root/bin/fm-watch.sh"
+
+  PATH="$fallback_bin" FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    "$home/root/bin/fm-watch-checkpoint.sh" --seconds 30 >"$home/out.txt" 2>"$home/err.txt" &
+  checkpoint_pid=$!
+  i=0
+  while [ ! -s "$home/watcher.pid" ] && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+  [ -s "$home/watcher.pid" ] || fail "the watcher did not start under the Perl fallback"
+  watcher_pid=$(cat "$home/watcher.pid")
+  wrapper_pid=$(ps -o ppid= -p "$watcher_pid" | tr -d ' ')
+  kill -TERM "$wrapper_pid"
+  status=0
+  wait "$checkpoint_pid" || status=$?
+
+  [ -e "$home/watcher-got-term" ] || fail "the Perl fallback did not forward TERM to the watcher"
+  if kill -0 "$watcher_pid" 2>/dev/null; then
+    kill -KILL "$watcher_pid" 2>/dev/null
+    fail "the watcher outlived the terminated Perl fallback"
+  fi
+  [ "$status" -ne 0 ] || fail "a terminated checkpoint reported success"
+  pass "Perl fallback forwards TERM to the watcher before it exits"
+}
+
 test_announced_recovery_is_not_reannounced_by_next_checkpoint() {
   local home out err status marker
   home=$(make_home announced-recovery)
@@ -346,6 +394,7 @@ test_real_host_checkpoint_ends_quietly_at_its_bound() {
 
 test_quiet_checkpoint_exits_124_cleanly
 test_perl_timeout_fallback_honors_cleanup_bound_before_escalating
+test_perl_timeout_fallback_forwards_termination_to_the_watcher
 test_announced_recovery_is_not_reannounced_by_next_checkpoint
 test_never_announced_recovery_is_announced_once
 test_queue_append_during_checkpoint_still_resurfaces
