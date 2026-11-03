@@ -1659,7 +1659,47 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
     refs="#$number|$refs"
   fi
   # GitHub reads no keyword inside a code span or fenced block, so neither counts.
-  awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced { gsub(/`[^`]*`/, ""); print }' "$body" |
+  # Both follow CommonMark: a fence closes only on a run of its own character at
+  # least as long as its opener, and a span of n backticks ends at the next run
+  # of exactly n.
+  awk '
+    fence_len {
+      if (match($0, /^[[:space:]]*(`+|~+)[[:space:]]*$/)) {
+        run = $0
+        gsub(/[[:space:]]/, "", run)
+        if (substr(run, 1, 1) == fence_char && length(run) >= fence_len) fence_len = 0
+      }
+      next
+    }
+    match($0, /^[[:space:]]*(```+|~~~+)/) {
+      run = substr($0, RSTART, RLENGTH)
+      sub(/^[[:space:]]*/, "", run)
+      fence_char = substr(run, 1, 1)
+      fence_len = length(run)
+      next
+    }
+    {
+      rest = $0
+      out = ""
+      while (match(rest, /`+/)) {
+        width = RLENGTH
+        opener = substr(rest, RSTART, width)
+        out = out substr(rest, 1, RSTART - 1)
+        rest = substr(rest, RSTART + width)
+        tail = rest
+        closed = 0
+        while (match(tail, /`+/)) {
+          if (RLENGTH == width) {
+            rest = substr(tail, RSTART + width)
+            closed = 1
+            break
+          }
+          tail = substr(tail, RSTART + RLENGTH)
+        }
+        if (!closed) out = out opener
+      }
+      print out rest
+    }' "$body" |
     grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)"
 }
 
