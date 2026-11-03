@@ -668,13 +668,14 @@ test_every_ship_dod_sweeps_before_delivery() {
     else
       assert_contains "$dod" "fm-restatement-sweep.sh\`" "$combo DoD passes a base it was not given"
     fi
+    assert_contains "$dod" "run every matching test file, not only the colocated one" "$combo DoD does not run tests asserting changed output"
     sweep_at=$(printf '%s\n' "$dod" | grep -n -m1 'fm-restatement-sweep.sh' | cut -d: -f1)
     deliver_at=$(printf '%s\n' "$dod" | grep -n -m1 -e 'run /no-mistakes yourself' -e 'push your branch and open a PR' \
       -e 'Follow the review tool instructions' -e 'append `done' -e 'publish it' | cut -d: -f1)
     [ -n "$deliver_at" ] && [ "$sweep_at" -lt "$deliver_at" ] \
       || fail "$combo DoD does not sweep before delivery (sweep line $sweep_at, delivery line ${deliver_at:-none})"
   done
-  pass "every ship delivery mode runs the restatement sweep before it validates, publishes, or reports"
+  pass "every ship delivery mode runs the restatement sweep and every test asserting changed output before it validates, publishes, or reports"
 }
 
 test_every_ship_dod_sweeps_before_delivery

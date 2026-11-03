@@ -502,9 +502,11 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
-# The worker step that runs bin/fm-restatement-sweep.sh on committed work
-# before any delivery, so a sentence elsewhere still restating a rule the
-# change moved or retired reaches its author rather than the reviewer.
+# The worker steps run on committed work before any delivery: the
+# bin/fm-restatement-sweep.sh pass, so a sentence elsewhere still restating a
+# rule the change moved or retired reaches its author rather than the reviewer,
+# and every test file naming a changed script or altered output, because a
+# colocated test alone misses another file still asserting the old output.
 fm_restatement_sweep_step() {  # [<base-branch>]
   local base=${1:-} sweep base_q
   printf -v sweep '%q' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-restatement-sweep.sh"
@@ -517,6 +519,7 @@ Before you validate, publish, or report the work, run \`$sweep\` in this worktre
 It lists sentences elsewhere in the repository that resemble one your diff added or removed, so a stale copy of a rule you changed surfaces before review does.
 Read each listed sentence: where it restates a rule your change moved, widened, narrowed, or retired, correct it or replace it with a one-line pointer to where the rule is stated in full, commit, and run the sweep again; a pointer, a deliberate one-line reinforcement at a risk point, or an unrelated sentence needs no change.
 If it exits nonzero, fix what its error names and run it again.
+Also before you validate, search \`tests/\` for each changed script's name and for every literal output string your change alters, and run every matching test file, not only the colocated one, because a test elsewhere can still assert the old output.
 EOF
 }
 
