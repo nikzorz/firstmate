@@ -1546,10 +1546,13 @@ SH
 # is deleted while that child waits to append a captured result's wake, the
 # child must give up without appending so the watcher reaches its logged
 # state-gone exit. The watcher's startup takes the wake queue lock itself, so a
-# live holder takes it only once the first cycle has begun, and the captured
-# result is registered after that, making the reconcile child the one waiting.
+# live holder takes it only once the first cycle has begun. The cycle also takes
+# that lock in-process after its reconcile, so a cycle that passed the reconcile
+# before the result was registered would wait there itself; the watcher is held
+# in its end-of-cycle sleep while the holder takes the lock and the result is
+# registered, making the next cycle's reconcile child the one waiting.
 test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append() {
-  local dir state fakebin out lock pid status holder holder_owner owner waiting deadline i
+  local dir state fakebin out lock pid status holder holder_owner owner waiting deadline i sleeper
   dir=$(make_case procevent-append-state-removed)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1566,10 +1569,27 @@ test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append
   done
   [ -e "$state/.last-watcher-beat" ] \
     || { wait_for_exit "$pid" 1 >/dev/null 2>&1; fail "the watcher never began its first cycle: $(cat "$out")"; }
+  sleeper=
+  deadline=$((SECONDS + 30))
+  while [ -z "$sleeper" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    sleeper=$(ps -A -o pid= -o ppid= -o command= | awk -v p="$pid" '$2 == p && $3 == "sleep" && $4 == "1" { print $1; exit }')
+    # A sleep that ends before it is stopped leaves the watcher mid-cycle.
+    if [ -z "$sleeper" ] || ! kill -STOP "$sleeper" 2>/dev/null; then
+      sleeper=
+      sleep 0.05
+    elif ! ps -o stat= -p "$sleeper" | grep -q '^T'; then
+      kill -CONT "$sleeper" 2>/dev/null
+      sleeper=
+      sleep 0.05
+    fi
+  done
+  [ -n "$sleeper" ] \
+    || { wait_for_exit "$pid" 1 >/dev/null 2>&1; fail "the watcher never reached its end-of-cycle sleep: $(cat "$out")"; }
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" && echo held > "$2" && exec sleep 60' \
     _ "$ROOT/bin/fm-wake-lib.sh" "$dir/holder.ready" &
   holder=$!
-  wait_for_file_text "$dir/holder.ready" held || fail "the fixture holder did not take the wake queue lock"
+  wait_for_file_text "$dir/holder.ready" held \
+    || { kill -CONT "$sleeper"; fail "the fixture holder did not take the wake queue lock"; }
   holder_owner=$(readlink "$lock")
   mkdir -p "$dir/inbox"
   printf 'captured result\n' > "$dir/inbox/src-gone.1.result"
@@ -1577,6 +1597,7 @@ test_watcher_exits_when_its_state_directory_is_removed_before_a_procevent_append
   chmod 0600 "$dir/inbox/src-gone.1.result" "$dir/inbox/src-gone.1.adapter"
   mv "$dir/inbox" "$state/procevent-inbox"
   mkdir "$state/procevent"
+  kill -CONT "$sleeper"
   waiting=1
   deadline=$((SECONDS + 30))
   while [ "$waiting" -ne 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
