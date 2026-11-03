@@ -5135,7 +5135,8 @@ for s, step in enumerate(shape["steps"]):
         found = rnd.get("raw") or json.dumps({"verdict": rnd.get("verdict"), "findings": [
             {"id": i, "action": a, "severity": "warning", "description": d} for i, a, d in rnd.get("findings", [])]})
         given = rnd.get("instructions")
-        given = json.dumps({"findings": [{"id": i, "user_instructions": t} for i, t in given.items()]}) if given else None
+        key = rnd.get("instructions_key", "user_instructions")
+        given = json.dumps({"findings": [dict({"id": i}, **({key: t} if key else {})) for i, t in given.items()]}) if given else None
         db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, ?, ?, ?)",
                    ("s%dr%d" % (s, r), "s%d" % s, rnd["round"], found,
                     json.dumps(rnd.get("selected", [])), rnd.get("source"), given))
@@ -5222,13 +5223,14 @@ NM_1752_RELAYED='Ruling: caps-import-cache: import first only when the class cac
 # Run 01M52KCB3JD1D4AVBY40ZG9EPW's review round 1 gate, its decision line, the
 # steer that answered it, and fm-send's close of its key. Every finding was
 # selected for the fix round with the given instructions.
-# Args: case_dir instructions
+# Args: case_dir instructions [key the findings store them under, empty for none]
 write_nm_relay_1752() {
   local case_dir=$1 status="$1/state/task-x1.status"
-  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$2" '
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_1752" --arg text "$2" --arg key "${3-user_instructions}" '
     {run: $run, steps: [
       {name: "review", order: 3, rounds: [
         {round: 1, source: "user", selected: ["caps-import-cache", "tests-yml-lane", "wrapper-contract-weak"],
+         instructions_key: $key,
          instructions: {"caps-import-cache": $text, "tests-yml-lane": $text, "wrapper-contract-weak": $text},
          findings: [["caps-import-cache", "ask-user", ""], ["tests-yml-lane", "auto-fix", ""],
                     ["wrapper-contract-weak", "auto-fix", ""]]}]}]}')"
@@ -5264,6 +5266,36 @@ test_relayed_ruling_missing_the_steer_refuses_merge() {
   assert_no_grep 'accepted_relay=' "$case_dir/state/task-x1.meta" \
     "nm-1752-relay-verbatim: a merge with nothing accepted recorded an acceptance"
   pass "fm-pr-merge refuses a fix round whose instructions lack the steer that answered its gate"
+}
+
+# no-mistakes v1.108 stores respond instructions under driver_instructions;
+# rounds stored earlier hold user_instructions, and a finding with neither key
+# carries no instructions.
+test_relay_check_reads_either_instructions_key() {
+  local case_dir
+  case_dir=$(make_case nm-1752-relay-driver-verbatim)
+  add_gh_mocks "$case_dir" 6262626262626262626262626262626262626262
+  write_nm_relay_1752 "$case_dir" "$NM_1752_STEER" driver_instructions
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-1752-relay-driver-verbatim: a verbatim relay under driver_instructions must merge: $(cat "$case_dir/stderr")"
+
+  case_dir=$(make_case nm-1752-relay-driver-dropped)
+  add_gh_mocks "$case_dir" 6363636363636363636363636363636363636363
+  write_nm_relay_1752 "$case_dir" "$NM_1752_RELAYED" driver_instructions
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-driver-dropped: reworded driver_instructions must refuse"
+  assert_grep "(if it cannot be called without running gut, move it so both call one definition)" "$case_dir/stderr" \
+    "nm-1752-relay-driver-dropped: the refusal did not quote the driver_instructions"
+
+  case_dir=$(make_case nm-1752-relay-no-key)
+  add_gh_mocks "$case_dir" 6464646464646464646464646464646464646464
+  write_nm_relay_1752 "$case_dir" "$NM_1752_STEER" ''
+  run_nm_merge "$case_dir"
+  expect_code 1 "$NM_MERGE_RC" "nm-1752-relay-no-key: a finding with no instructions key must refuse"
+  assert_grep "no-mistakes run $NM_RUN_1752 step review round 1 was fixed with instructions that lack" "$case_dir/stderr" \
+    "nm-1752-relay-no-key: the refusal did not name the round"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "nm-1752-relay-no-key: gh pr merge ran with no instructions"
+  pass "fm-pr-merge reads relayed instructions under driver_instructions or user_instructions"
 }
 
 # A round whose key a captain-held transfer closed is not answered on the inbox
@@ -6116,6 +6148,7 @@ test_ask_user_finding_a_fix_round_left_unselected_refuses_merge
 test_granted_test_finding_needs_an_approval_reason
 test_pr_1713_run_shape_refuses_merge
 test_relayed_ruling_missing_the_steer_refuses_merge
+test_relay_check_reads_either_instructions_key
 test_relay_check_pairs_only_the_line_that_closed_the_round
 test_accept_relay_clears_exactly_its_round
 test_relay_only_refusal_while_away_holds_for_return

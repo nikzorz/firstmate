@@ -145,8 +145,13 @@ for run, step_id, step, status, approval, skip, log_path, round_no, source, sele
         answered = answered.get("findings") or []
         if not isinstance(answered, list) or not all(isinstance(f, dict) for f in answered):
             raise ValueError
-        instructions = {f["id"]: f["user_instructions"] for f in answered
-                        if isinstance(f.get("id"), str) and isinstance(f.get("user_instructions"), str)}
+        # no-mistakes v1.108 renamed user_instructions to driver_instructions;
+        # rounds stored before it keep the old key.
+        instructions = {}
+        for f in answered:
+            text = f.get("driver_instructions", f.get("user_instructions"))
+            if isinstance(f.get("id"), str) and isinstance(text, str):
+                instructions[f["id"]] = text
     except ValueError:
         unreadable("the findings of %s" % where)
     verdict = record.get("verdict")
