@@ -3575,8 +3575,12 @@ test_wedge_threshold_defers_to_a_backlog_captain_hold() {
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
+  if ! declare -F "$FM_TEST_ONLY" >/dev/null; then
+    echo "FM_TEST_ONLY names no test function in this file: $FM_TEST_ONLY" >&2
+    exit 1
+  fi
   "$FM_TEST_ONLY"
-  exit 0
+  exit $?
 fi
 
 test_status_span_actionable_classifier

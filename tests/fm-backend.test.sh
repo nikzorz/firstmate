@@ -1205,8 +1205,12 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
 }
 
 if [ -n "${FM_TEST_ONLY:-}" ]; then
+  if ! declare -F "$FM_TEST_ONLY" >/dev/null; then
+    echo "FM_TEST_ONLY names no test function in this file: $FM_TEST_ONLY" >&2
+    exit 1
+  fi
   "$FM_TEST_ONLY"
-  exit 0
+  exit $?
 fi
 
 backend_base_ref >/dev/null
