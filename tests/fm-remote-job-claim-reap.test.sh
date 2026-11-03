@@ -45,7 +45,7 @@ cleanup_claim_reap_fixture() {
 trap cleanup_claim_reap_fixture EXIT
 
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME"
-cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" \
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-claim-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" \
   "$ROOT/bin/fm-remote-delta-read.sh" "$REMOTE_ROOT/bin/"
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 cat > "$REMOTE_ROOT/bin/fm-touch-job.sh" <<'SH'
