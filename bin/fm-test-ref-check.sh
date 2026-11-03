@@ -45,8 +45,8 @@ git ls-files -z -- docs tests | xargs -0 -r grep -nHE -I \
       if (key in cache) return cache[key]
       found = 0
       while ((getline line < file) > 0) {
-        if (line ~ ("^[[:space:]]*(function[[:space:]]+)?" id "[[:space:]]*(\\(\\))?[[:space:]]*\\{?[[:space:]]*$") && \
-            (line ~ /\(\)/ || line ~ /^[[:space:]]*function[[:space:]]/)) { found = 1; break }
+        if (line ~ ("^[[:space:]]*(function[[:space:]]+)?" id "[[:space:]]*\\(\\)") || \
+            line ~ ("^[[:space:]]*function[[:space:]]+" id "([[:space:]({]|$)")) { found = 1; break }
       }
       close(file)
       cache[key] = found
