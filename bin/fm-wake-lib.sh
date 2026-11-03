@@ -1316,11 +1316,19 @@ fm_lock_dir_present() {  # <lockdir>
 # A process that must not outlive a deleted lock directory, such as a watcher in
 # its poll cycle, names a command in FM_LOCK_WAIT_DIR_GONE_HOOK that exits it;
 # should the hook return, the wait keeps blocking so no caller runs unlocked.
+# A function cannot cross into a child process, so an exported
+# FM_LOCK_WAIT_EXIT_IF_DIR_GONE=1 exits the waiting process instead; returning
+# would let a caller that ignores the wait's status run unlocked.
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
-    if [ -n "${FM_LOCK_WAIT_DIR_GONE_HOOK:-}" ] && ! fm_lock_dir_present "$lockdir"; then
-      "$FM_LOCK_WAIT_DIR_GONE_HOOK" "$lockdir"
+    if ! fm_lock_dir_present "$lockdir"; then
+      if [ -n "${FM_LOCK_WAIT_DIR_GONE_HOOK:-}" ]; then
+        "$FM_LOCK_WAIT_DIR_GONE_HOOK" "$lockdir"
+      elif [ "${FM_LOCK_WAIT_EXIT_IF_DIR_GONE:-0}" = 1 ]; then
+        printf 'lock wait abandoned - lock directory no longer exists: %s\n' "$lockdir" >&2
+        exit 1
+      fi
     fi
     sleep 0.1
   done
