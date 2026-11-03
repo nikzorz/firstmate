@@ -1,0 +1,1 @@
+ok - fm-pr-merge appends the plain closing line for an owned issue the body does not close, and refuses only when that edit fails
