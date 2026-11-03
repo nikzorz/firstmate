@@ -303,7 +303,7 @@ family_for_basename() {
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
-    fm-timeout-lib.test.sh|fm-nm-findings.test.sh|fm-spec-intent-check.test.sh|fm-restatement-sweep.test.sh|\
+    fm-timeout-lib.test.sh|fm-nm-findings.test.sh|fm-spec-intent-check.test.sh|fm-restatement-sweep.test.sh|fm-test-ref-check.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
@@ -913,6 +913,7 @@ tests/fm-teardown.test.sh 582213
 tests/fm-test-fixture-cleanup.test.sh 1480
 tests/fm-test-fixtures.test.sh 14747
 tests/fm-test-isolation-proof.test.sh 4827
+tests/fm-test-ref-check.test.sh 600
 tests/fm-timeout-lib.test.sh 12438
 tests/fm-tmux-agent-liveness.test.sh 4741
 tests/fm-tool-update-check.test.sh 20234
