@@ -50,8 +50,8 @@
 # each with the name as a separate argument; each waives only checks with that
 # exact name, every other check must still be green, the head is still bound,
 # and a merge the forge accepts records each in the task record as
-# allowed_red=<pr-url> <check-name>. Its
-# twin, an attended --allow-missing <check-name>, follows the same rules for one
+# allowed_red=<pr-url> <check-name>. Its twin, an attended --allow-missing
+# <check-name>, may be passed once and otherwise follows the same rules for one
 # required check that has not reported: it waives only that exact name, still
 # requires every other required check to have reported and every check to be
 # green unless separately waived by --allow-red. It matches the required
