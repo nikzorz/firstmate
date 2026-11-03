@@ -312,10 +312,12 @@ transcript=%s
   pass "only the lock-owning session types the reset, and only its own stow verdict clears it"
 }
 
-# Runs the typist in-process against scripted pane reads.
-deliver() {  # <home> <token> <idle-script> <submit-verdict> -> submits appended to $home/submits
+# Runs the typist in-process against scripted pane reads. The idle budget is
+# whole seconds measured from before the first read, so a short one can expire
+# between two idle reads on a loaded runner; only the timeout case passes one.
+deliver() {  # <home> <token> <idle-script> <submit-verdict> [idle-budget-secs] -> submits appended to $home/submits
   local home=$1
-  FM_CONTEXT_RESET_WAIT_SECS=2 FM_CONTEXT_RESET_SETTLE_SECS=1 bash -c '
+  FM_CONTEXT_RESET_WAIT_SECS="${5:-60}" FM_CONTEXT_RESET_SETTLE_SECS=1 bash -c '
     home=$1 token=$2 idle_script=$3 submit_verdict=$4
     . "$home/bin/fm-context-reset-reminder.sh"
     fm_context_reset_pane_idle() { eval "$idle_script"; }
@@ -332,13 +334,14 @@ test_deliver_types_only_into_an_idle_pane() {
   assert_equals stow "$(record_field "$home" phase)" "a confirmed stow submit is recorded"
   rm -f "$home/submits"
   printf 'transcript=t\nphase=typing\ntoken=k2\n' > "$home/state/.context-reset"
-  deliver "$home" k2 'return 1' empty
+  deliver "$home" k2 'return 1' empty 2
   [ ! -e "$home/submits" ] || fail "a pane that never went idle was typed into"
   assert_equals armed "$(record_field "$home" phase)" "an idle wait that times out leaves the attempt armed"
   assert_contains "$(record_field "$home" note)" "not idle" "the timeout is noted"
   printf 'transcript=t\nphase=typing\ntoken=k3\n' > "$home/state/.context-reset"
   deliver "$home" k3 'return 0' pending
   assert_equals armed "$(record_field "$home" phase)" "an unconfirmed submit leaves the attempt armed"
+  assert_contains "$(record_field "$home" note)" "unconfirmed" "the unconfirmed submit, not an idle timeout, is noted"
   rm -f "$home/submits"
   printf 'transcript=t\nphase=typing\ntoken=newer\n' > "$home/state/.context-reset"
   deliver "$home" k4 'return 0' empty
