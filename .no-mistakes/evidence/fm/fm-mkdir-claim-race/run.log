@@ -1,0 +1,27 @@
+== fm-claim-lib
+ok - the non-atomic mkdir stub lets several plain mkdir callers win one directory
+ok - fm_claim_dir gives each claim exactly one winner under a non-atomic mkdir
+ok - fm_claim_dir gives each claim exactly one winner under the host mkdir
+ok - a held claim refuses, release frees it only once its records are gone
+ok - a directory that already exists is not claimed
+ALL TESTS PASSED
+exit=0
+== fm-remote-transport-lanes
+ok - bounded reads after a cancellation meet their own budget with no convoy
+ok - an open caller stdin no longer wedges a non-payload remote command
+ok - a live explicit-stdin stage survives the staging-litter age bound
+ok - --stdin still delivers a payload caller's bytes
+ok - abandoned stage litter is reaped by age while live staging survives
+ALL TESTS PASSED
+exit=0
+== fm-remote-job-claim-reap
+ok - a due claim sweep over ~17460 dirs does not starve job serving
+exit=0
+== fm-remote-job
+ok - the builtin record reads bound bytes, not characters, in a UTF-8 locale
+ok - the lane scan reads staged records without execs and honors home isolation
+ok - a same-home queued command still preempts the poll through the builtin scan
+ok - the lane scan bounds argv in bytes, not characters, in a UTF-8 locale
+ok - barely healthy worker failures remain bounded by the restart guard
+ALL TESTS PASSED
+exit=0
