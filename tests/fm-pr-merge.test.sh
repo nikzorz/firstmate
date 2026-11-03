@@ -4975,6 +4975,24 @@ test_owned_issue_missing_keyword_appends_closing_line() {
   assert_no_grep 'pr edit' "$case_dir/gh.log" \
     "owned-mixed-fence-mirror: a closing line after a matching fence close was not read as closing"
 
+  # shellcheck disable=SC2016 # the backticks are the literal code span under test
+  case_dir=$(make_issue_case owned-multiline-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a51 \
+    "$(printf '%s\n' 'Run `fm-pr-merge --issue' 'Closes #7` to retry')")
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-multiline-span: fm-pr-merge failed"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-multiline-span: a keyword in a code span crossing a line break was read as closing"
+
+  # shellcheck disable=SC2016 # the backticks are the literal code span under test
+  case_dir=$(make_issue_case owned-backtick-info-span 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a52 \
+    "$(printf '%s\n' '```x`y```' '' '```' 'Closes #7' '```')")
+  add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/50 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "owned-backtick-info-span: fm-pr-merge failed"
+  [ "$(tail -1 "$case_dir/edit-body")" = 'Closes #7' ] \
+    || fail "owned-backtick-info-span: a backtick run with a backtick after it opened a fence"
+
   case_dir=$(make_issue_case owned-edit-fails 4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4c 'no keyword')
   add_task_row_with_body "$case_dir" '' "Owns issue: $ISSUE_7"
   : > "$case_dir/github-edit-fail"
