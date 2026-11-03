@@ -1663,6 +1663,7 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
   # opener, and a backtick run with another backtick after it on its line opens
   # no fence. A span of n backticks ends at the next run of exactly n in the same
   # paragraph, which can lie on a later line, so spans are matched per paragraph.
+  # A heading, a thematic break or a list item ends a paragraph as a blank line does.
   awk '
     function flush(  rest, out, width, opener, tail, closed) {
       if (para == "") return
@@ -1706,6 +1707,14 @@ body_closes_issue() {  # <body-file> <owner> <repo> <number>
       next
     }
     /^[[:space:]]*$/ { flush(); next }
+    /^[[:space:]]*(#|##|###|####|#####|######)([[:space:]]|$)/ ||
+      /^[[:space:]]*(\*[[:space:]]*\*[[:space:]]*\*[*[:space:]]*|-[[:space:]]*-[[:space:]]*-[-[:space:]]*|_[[:space:]]*_[[:space:]]*_[_[:space:]]*|=+[[:space:]]*|-+[[:space:]]*)$/ {
+      flush()
+      para = $0
+      flush()
+      next
+    }
+    /^[[:space:]]*([-+*]|[0-9]+[.)])([[:space:]]|$)/ { flush() }
     { para = para == "" ? $0 : para "\n" $0 }
     END { flush() }' "$body" |
     grep -Eiq "(^|[^[:alnum:]_])${CLOSING_KEYWORD_RE}(:[[:space:]]*|[[:space:]]+)($refs)([^[:alnum:]_]|\$)"
