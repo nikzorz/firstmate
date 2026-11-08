@@ -16,11 +16,10 @@ CHECK="$ROOT/bin/fm-spec-intent-check.sh"
 FIXTURES="$ROOT/tests/spec-intent-fixtures"
 TMP_ROOT=$(fm_test_tmproot fm-spec-intent-check)
 LOG="$TMP_ROOT/judge.log"
-RECORD="$TMP_ROOT/record.txt"
 
 run_check() {  # <brief> -> sets OUT and STATUS
-  rm -f "$LOG" "$RECORD"
-  OUT=$(FM_STUB_JUDGE_LOG="$LOG" "$CHECK" "$1" "$RECORD" 2>&1)
+  rm -f "$LOG"
+  OUT=$(FM_STUB_JUDGE_LOG="$LOG" "$CHECK" "$1" 2>&1)
   STATUS=$?
 }
 
@@ -47,14 +46,12 @@ test_fixture_briefs_flag_their_extra_bullet() {
   expect_code 1 "$STATUS" "the round-binding brief should be refused: $OUT"
   assert_contains "$OUT" 'bullet 3 adds matched the stub pattern: A `needs-decision` line written before this change, with no round' \
     "the refusal did not name the no-round fallback bullet"
-  assert_contains "$(cat "$RECORD")" '# Unjustified bullets' "the record does not show the refused bullet"
   pass "each fixture brief is refused naming its extra bullet"
 }
 
 test_pure_build_spec_passes() {
   run_check "$FIXTURES/pure-build.md"
   expect_code 0 "$STATUS" "a spec of pure build instructions should pass: $OUT"
-  assert_contains "$(cat "$RECORD")" 'result: pass' "the record does not show the pass"
   pass "a spec of pure build instructions passes"
 }
 
@@ -63,7 +60,6 @@ test_justified_bullet_passes() {
   brief=$(brief_with_spec justified "$(printf -- '- Edit `bin/widget.sh`.\n- Old widgets still work. [justified: parked lanes use them]')")
   FM_STUB_JUDGE_FLAG='Old widgets' run_check "$brief"
   expect_code 0 "$STATUS" "a flagged bullet carrying a justification should pass: $OUT"
-  assert_contains "$(cat "$RECORD")" '# Justified bullets' "the record does not show the justified flag"
 
   brief=$(brief_with_spec empty-reason "$(printf -- '- Edit `bin/widget.sh`.\n- Old widgets still work. [justified: ]')")
   FM_STUB_JUDGE_FLAG='Old widgets' run_check "$brief"
@@ -93,22 +89,22 @@ test_judge_runs_without_tools() {
 expect_cannot_run() {  # <label> <expected-detail>
   expect_code 2 "$STATUS" "$1 should refuse as unable to judge: $OUT"
   assert_contains "$OUT" "could not judge" "$1 refusal does not say the check could not judge"
-  assert_contains "$(cat "$RECORD")" "result: cannot-run: $2" "$1 record does not name why"
+  assert_contains "$OUT" "(cannot-run: $2)" "$1 refusal does not name why"
 }
 
 test_skips_when_the_judge_is_not_installed() {
-  OUT=$(FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$TMP_ROOT/no-such-claude" "$CHECK" "$FIXTURES/pure-build.md" "$RECORD" 2>&1)
+  OUT=$(FM_SPEC_INTENT_CHECK_CLAUDE_BIN="$TMP_ROOT/no-such-claude" "$CHECK" "$FIXTURES/pure-build.md" 2>&1)
   STATUS=$?
   expect_code 3 "$STATUS" "a judge that is not installed should skip the check: $OUT"
   assert_contains "$OUT" "warning: the spec-intent check of $FIXTURES/pure-build.md was skipped" \
     "the skip does not warn that the check did not run"
-  assert_contains "$(cat "$RECORD")" "result: skipped: $TMP_ROOT/no-such-claude is not installed" "the record does not name the skip"
   pass "a judge that is not installed skips the check with a warning"
 }
 
 test_refuses_when_the_judge_cannot_answer() {
-  FM_STUB_JUDGE_EXIT=3 run_check "$FIXTURES/pure-build.md"
+  FM_STUB_JUDGE_EXIT=3 FM_STUB_JUDGE_STDERR='quota exhausted' run_check "$FIXTURES/pure-build.md"
   expect_cannot_run "a failing judge" 'the judge exited 3'
+  assert_contains "$OUT" $'judge errors:\nquota exhausted' "a failing judge's errors did not reach stderr"
 
   FM_STUB_JUDGE_ANSWER=$(answer_file prose "$(printf 'Here is my verdict:\n1 ok\n2 ok\n3 ok\n4 ok\n5 ok\n')") run_check "$FIXTURES/pure-build.md"
   expect_cannot_run "an answer with prose" 'unexpected answer line: Here is my verdict:'
