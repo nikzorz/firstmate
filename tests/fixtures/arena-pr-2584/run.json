@@ -1,0 +1,14 @@
+{"run": "01M6F808Y88AAT5H96JNQDSJ2F", "steps": [
+  {"name": "intent", "order": 1, "rounds": [{"round": 1, "source": null}]},
+  {"name": "rebase", "order": 2, "rounds": [{"round": 1, "source": null}]},
+  {"name": "review", "order": 3, "rounds": [{"round": 1, "source": null, "findings": [
+    ["flinch-test-header-overclaims-pulse", "auto-fix", "The new test's header says it rejects a hit that drops the pulse for the flinch; it cannot. Fix: change the header to say what this test actually rules out."],
+    ["flinch-take-provisional-pick", "no-op", "The take's provenance marks it as a provisional pass, held for the human's look at the built flinch."]]}]},
+  {"name": "test", "order": 4, "approval": "scenario covered by integration tests and rendered captures; no live Match drive", "rounds": [
+    {"round": 1, "source": "user_declined", "verdict": "inconclusive", "findings": [
+      ["test-1", "ask-user", "live validation verdict: inconclusive (0 of 1 scenarios were driven live against the product); untested: A hit on the Wyrm plays the filmed flinch over its back, neck and head"]]}]},
+  {"name": "document", "order": 5, "rounds": [{"round": 1, "source": null}]},
+  {"name": "lint", "order": 6, "rounds": [{"round": 1, "source": null}]},
+  {"name": "push", "order": 7, "rounds": [{"round": 1, "source": null}]},
+  {"name": "pr", "order": 8, "rounds": [{"round": 1, "source": null}]},
+  {"name": "ci", "order": 9, "rounds": [{"round": 1, "source": null}]}]}

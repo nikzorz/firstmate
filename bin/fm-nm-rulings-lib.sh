@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The one judge of which no-mistakes pipeline rounds a task still owes a
 # decision line, shared by bin/fm-nm-rulings-owed.sh, which reports them before
-# a merge is attempted, and bin/fm-pr-merge.sh, which refuses a merge over them.
+# a merge is attempted, bin/fm-status.sh, which refuses a worker's done over
+# them, and bin/fm-pr-merge.sh, which refuses a merge over them.
 #
 # A round answered with an approval or skip leaves every finding unruled,
 # whatever its action, since a worker approves or skips a gate only after
