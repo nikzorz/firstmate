@@ -44,6 +44,14 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
+# Honored from the default branch only. Document and Lint fix rounds commit
+# after Test has run, so a script they break would otherwise reach CI untested.
+# The script's header owns which commits and tests it selects.
+gates:
+  - name: post-test-retest
+    after: lint
+    command: 'bin/fm-nm-post-test-retest.sh'
+
 # Honored from the default branch only: a pull request that edits these rules is
 # still tested under the copy already merged.
 # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
