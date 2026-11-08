@@ -34,8 +34,8 @@
 #
 # Exit status: 0 when no unjustified bullet is flagged; 1 when one or more is,
 # printing each on stdout; 2 when the installed judge failed or its answer was
-# malformed, or on a usage error; 3 when claude is not installed and the check
-# was skipped.
+# malformed, or on a usage error, printing why and the judge's own stderr on
+# stderr; 3 when claude is not installed and the check was skipped.
 set -u
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
