@@ -514,8 +514,9 @@ INBOX_DIR=$(shell_quote "$STATE/$ID.inbox")
 # secondmate charter keeps STATUS_APPEND and the plain inbox commands, because a
 # remote second mate's host need not carry this code root's bin/.
 WORKER_STATUS_CMD="$(shell_quote "$FM_ROOT/bin/fm-status.sh") $STATUS_FILE"
-# fm-status.sh finds config/ beside state/ on its own; name it only when moved.
+# fm-status.sh finds config/ and data/ beside state/ on its own; name each only when moved.
 [ "$CONFIG" = "${STATE%/*}/config" ] || WORKER_STATUS_CMD="$WORKER_STATUS_CMD --config $(shell_quote "$CONFIG")"
+[ "$DATA" = "${STATE%/*}/data" ] || WORKER_STATUS_CMD="$WORKER_STATUS_CMD --data $(shell_quote "$DATA")"
 # The pane does not inherit this environment, so a configured paused verb rides
 # in the command for fm-status.sh to accept the verb this brief names.
 [ "$PAUSED_VERB" = "$FM_CLASSIFY_PAUSED_VERB_DEFAULT" ] \
