@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression tests for bin/fm-nm-post-test-retest.sh, the post-Lint gate that
-# re-runs tests for scripts a Document or Lint fix round changed after Test.
+# re-runs tests for scripts a Document, Lint, or gate fix round changed after Test.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -42,13 +42,13 @@ test_selects_only_post_test_fix_commits() {
   commit_touching "$repo" "no-mistakes(document): doc fix" bin/c.sh docs/x.md
   commit_touching "$repo" "no-mistakes(lint): lint fix" tests/d.test.sh bin/e.sh bin/sub/g.sh
   commit_touching "$repo" "no-mistakes(gate.lint.post-test-retest): gate repair" bin/f.sh
-  out=$("$GATE" --root "$repo" --list 2>"$TMP_ROOT/select.err") || fail "--list failed: $out"
+  out=$(cd "$repo" && "$GATE" --list 2>"$TMP_ROOT/select.err") || fail "--list failed: $out"
   err=$(cat "$TMP_ROOT/select.err")
-  assert_equals "$(printf 'tests/c.test.sh\ntests/d.test.sh')" "$out" \
-    "only the Document and Lint commits after the last other commit should select tests"
+  assert_equals "$(printf 'tests/c.test.sh\ntests/d.test.sh\ntests/f.test.sh')" "$out" \
+    "only the Document, Lint, and gate commits after the last other commit should select tests"
   assert_contains "$err" "no tests/e.test.sh for bin/e.sh; skipped" \
     "a touched script with no colocated test was not reported"
-  pass "the gate selects colocated tests for the Document and Lint commits at the tip, stepping past gate repairs"
+  pass "the gate selects colocated tests for the Document, Lint, and gate repair commits at the tip"
 }
 
 test_no_post_test_commits_passes() {
@@ -56,7 +56,7 @@ test_no_post_test_commits_passes() {
   make_repo "$repo"
   commit_touching "$repo" "no-mistakes(lint): earlier lint fix" bin/c.sh
   commit_touching "$repo" "no-mistakes(test): test fix" bin/a.sh
-  out=$("$GATE" --root "$repo") || fail "a tip with no post-test fix commit should pass: $out"
+  out=$(cd "$repo" && "$GATE") || fail "a tip with no post-test fix commit should pass: $out"
   assert_equals "fm-nm-post-test-retest: no tests to re-run" "$out" \
     "the passing gate did not say it had nothing to re-run"
   pass "a fix commit that a later Test step already covered selects nothing and passes"

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # fm-nm-post-test-retest.sh - re-run the colocated tests for scripts that a
-# no-mistakes Document or Lint fix round changed after the Test step ran.
+# no-mistakes Document, Lint, or gate fix round changed after the Test step ran.
 #
 # Usage:
-#   bin/fm-nm-post-test-retest.sh [--root <repo>] [--list]
+#   bin/fm-nm-post-test-retest.sh [--list]
 #
-# Walks back from HEAD of <repo> (default: the current directory) over the
-# commits whose subject starts "no-mistakes(document):" or "no-mistakes(lint):",
-# stepping past "no-mistakes(gate.<anchor>.<name>):" repair commits, and stops
-# at the first other commit. Document and Lint are the only core steps that run
+# Run from the repository root. Walks back from HEAD over the commits whose
+# subject starts "no-mistakes(document):", "no-mistakes(lint):", or
+# "no-mistakes(gate.<anchor>.<name>):", and stops at the first other commit.
+# Document, Lint, and gates anchored after them are the only steps that commit
 # after Test, so that tip run is exactly what Test never saw.
 #
 # Each touched bin/<name>.sh maps to tests/<name>.test.sh, and each touched
 # tests/<name>.test.sh maps to itself; a mapped file absent from the current
-# tree is reported and skipped. The selected tests run through <repo>'s own
+# tree is reported and skipped. The selected tests run through the repository's own
 # bin/fm-test-run.sh, and this script exits with its status. With nothing
 # selected it prints "fm-nm-post-test-retest: no tests to re-run" and exits 0.
 #
@@ -28,26 +28,19 @@ usage() {
   ' "$0"
 }
 
-ROOT=.
 LIST=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --root)
-      [ "$#" -ge 2 ] || { echo "fm-nm-post-test-retest: --root needs a path" >&2; exit 2; }
-      ROOT=$2; shift 2 ;;
     --list) LIST=1; shift ;;
     *) echo "fm-nm-post-test-retest: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-cd "$ROOT"
-
 commits=()
 while IFS=' ' read -r sha subject; do
   case "$subject" in
-    'no-mistakes(document):'*|'no-mistakes(lint):'*) commits+=("$sha") ;;
-    'no-mistakes(gate.'*) ;;
+    'no-mistakes(document):'*|'no-mistakes(lint):'*|'no-mistakes(gate.'*) commits+=("$sha") ;;
     *) break ;;
   esac
 done < <(git log --format='%H %s' HEAD)
