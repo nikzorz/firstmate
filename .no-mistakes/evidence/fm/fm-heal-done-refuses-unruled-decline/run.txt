@@ -1,0 +1,19 @@
+ok - fm-status: a plain line carries the clock's stamp and parses as the supervisor reads it
+ok - fm-status: --key writes a decision key that opens and closes through the classifier
+ok - fm-classify: a time-only until reads from its stamp, and an unreadable one is due at once
+ok - fm-status: --until +N[smh] becomes the recheck time rounded up to the minute
+ok - fm-status: an explicit --until is kept, and a malformed or misplaced one is refused unwritten
+ok - fm-status: --line appends a printed line, stamping it only when it carries no time
+ok - fm-status: every usage error exits 2 and writes nothing
+ok - fm-status: a failed append exits 1
+ok - fm-status: the fleet ledger records a line only while the flag exists, read from config/ or --config
+ok - fm-status: a no-mistakes done is refused over findings the worker declined itself, naming the line that escalates them
+ok - fm-status: only a no-mistakes done whose runs can be read is judged
+ok - fm-nm-rulings-owed owes unselected ask-user findings of auto-fix rounds and a completed step's last round
+ok - fm-nm-rulings-owed owes the gate ids a same-theme line left out
+ok - fm-nm-rulings-owed takes a same-theme line's round= as the round its ids are named for
+ok - fm-nm-rulings-owed owes nothing for a task that is not a pipeline task
+ok - fm-nm-rulings-owed names an unreadable database instead of reporting nothing owed
+ok - fm-nm-rulings-owed refuses a missing or unsafe task id
+ok - the wake drain lists owed rulings while a pipeline task's ready report is its latest event
+ok - the wake drain names a task whose owed rulings exceed the byte cap
