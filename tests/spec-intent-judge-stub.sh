@@ -6,6 +6,7 @@
 #   FM_STUB_JUDGE_FLAG     ERE; a bullet whose text matches is answered flag.
 #   FM_STUB_JUDGE_ANSWER   file whose contents are the whole answer instead.
 #   FM_STUB_JUDGE_EXIT     exit status to return after answering.
+#   FM_STUB_JUDGE_STDERR   text written to stderr after answering.
 #   FM_STUB_JUDGE_LOG      file that receives the arguments and the message.
 set -u
 message=$(cat)
@@ -24,4 +25,5 @@ else
     }
   '
 fi
+[ -z "${FM_STUB_JUDGE_STDERR:-}" ] || printf '%s\n' "$FM_STUB_JUDGE_STDERR" >&2
 exit "${FM_STUB_JUDGE_EXIT:-0}"

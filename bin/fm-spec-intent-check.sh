@@ -2,7 +2,7 @@
 # fm-spec-intent-check.sh - flag ship-brief spec bullets that add scope the
 # captain's words never asked for.
 #
-# Usage: fm-spec-intent-check.sh <brief> <record>
+# Usage: fm-spec-intent-check.sh <brief>
 #
 # AGENTS.md section 11 requires every trigger, condition, case or guarantee a
 # `## Firstmate spec` bullet adds to trace to words in `## Captain's intent`.
@@ -32,14 +32,10 @@
 # FM_SPEC_INTENT_CHECK_CLAUDE_BIN names the claude executable (default: claude
 # on PATH), so a hermetic test can run a stub judge through the real call.
 #
-# <record> receives the model, the judge's exit status, the intent, the
-# numbered bullets, the raw answer and the verdict, so every pass and refusal
-# can be read back after the launch.
-#
 # Exit status: 0 when no unjustified bullet is flagged; 1 when one or more is,
 # printing each on stdout; 2 when the installed judge failed or its answer was
-# malformed, or on a usage error; 3 when claude is not installed and the check
-# was skipped.
+# malformed, or on a usage error, printing why and the judge's own stderr on
+# stderr; 3 when claude is not installed and the check was skipped.
 set -u
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -54,9 +50,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPEC_INTENT_CHECK_MODEL=opus
 SPEC_INTENT_CHECK_TIMEOUT_SECS=300
 
-[ "$#" -eq 2 ] || { usage >&2; exit 2; }
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
 BRIEF=$1
-RECORD=$2
 [ -f "$BRIEF" ] && [ -r "$BRIEF" ] || { echo "error: cannot read brief $BRIEF" >&2; exit 2; }
 
 INTENT=$(fm_brief_task_heading_body "$BRIEF" "## Captain's intent")
@@ -151,7 +146,6 @@ VERDICT=$(tr -d '\r' < "$WORK/answer.txt" | awk -v count="$BULLET_COUNT" '
 ')
 
 FLAGGED=''
-JUSTIFIED=''
 if [ -n "$RESULT" ]; then
   :
 elif [ "$JUDGE_STATUS" -ne 0 ]; then
@@ -163,13 +157,9 @@ else
   while read -r kind n reason; do
     [ "$kind" = flag ] || continue
     bullet=$(printf '%s\n' "$BULLETS" | sed -n "${n}p")
-    if printf '%s\n' "$bullet" | grep -Eq '\[justified:[[:space:]]*[^][:space:]][^]]*\]'; then
-      JUSTIFIED="${JUSTIFIED}bullet $n adds $reason: $bullet
+    printf '%s\n' "$bullet" | grep -Eq '\[justified:[[:space:]]*[^][:space:]][^]]*\]' && continue
+    FLAGGED="${FLAGGED}bullet $n adds $reason: $bullet
 "
-    else
-      FLAGGED="${FLAGGED}bullet $n adds $reason: $bullet
-"
-    fi
   done <<EOF
 $VERDICT
 EOF
@@ -177,26 +167,13 @@ EOF
   [ -z "$FLAGGED" ] || RESULT=flagged
 fi
 
-{
-  printf 'model: %s\njudge exit: %s\nresult: %s\n\n' "$SPEC_INTENT_CHECK_MODEL" "$JUDGE_STATUS" "$RESULT"
-  cat "$WORK/message.txt"
-  printf '\n# Judge answer\n'
-  cat "$WORK/answer.txt"
-  if [ -s "$WORK/errors.txt" ]; then
-    printf '\n# Judge errors\n'
-    cat "$WORK/errors.txt"
-  fi
-  if [ -n "$JUSTIFIED" ]; then
-    printf '\n# Justified bullets\n%s' "$JUSTIFIED"
-  fi
-  if [ -n "$FLAGGED" ]; then
-    printf '\n# Unjustified bullets\n%s' "$FLAGGED"
-  fi
-} > "$RECORD" || { echo "error: cannot write the check record $RECORD" >&2; exit 2; }
-
 case "$RESULT" in
   pass) exit 0 ;;
   flagged) printf '%s' "$FLAGGED"; exit 1 ;;
   skipped:*) echo "warning: the spec-intent check of $BRIEF was skipped ($CLAUDE_BIN is not installed); its spec bullets were not judged against the captain's intent" >&2; exit 3 ;;
-  *) echo "error: the spec-intent check could not judge $BRIEF ($RESULT); see $RECORD" >&2; exit 2 ;;
+  *)
+    echo "error: the spec-intent check could not judge $BRIEF ($RESULT)" >&2
+    [ -s "$WORK/errors.txt" ] && { echo "judge errors:"; cat "$WORK/errors.txt"; } >&2
+    exit 2
+    ;;
 esac

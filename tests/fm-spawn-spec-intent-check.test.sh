@@ -71,7 +71,6 @@ expect_refused() {  # <id> <label> <expected-text>
   assert_contains "$out" "$expected" "$label refusal does not explain itself"
   [ ! -s "$TMUX_LOG" ] || fail "$label refusal happened after a backend call: $(cat "$TMUX_LOG")"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$label refusal left task metadata behind"
-  [ -s "$HOME_DIR/data/$id/spec-intent-check.txt" ] || fail "$label left no check record"
 }
 
 expect_spawned() {  # <id> <kind> <label>
@@ -91,14 +90,12 @@ test_refuses_a_flagged_bullet() {
 test_launches_a_justified_bullet() {
   make_case justified "$(brief "$FALLBACK_SPEC [justified: parked lanes use them]")"
   FM_STUB_JUDGE_FLAG='Old widgets' expect_spawned justified ship "a justified bullet"
-  assert_contains "$(cat "$HOME_DIR/data/justified/spec-intent-check.txt")" '# Justified bullets' \
-    "the record does not show the justified flag"
   pass "a ship whose flagged bullet is justified launches"
 }
 
 test_refuses_when_the_check_cannot_run() {
   make_case unjudged "$(brief "$FALLBACK_SPEC")"
-  FM_STUB_JUDGE_EXIT=1 expect_refused unjudged "an unjudged spec" 'cannot launch until the spec-intent check'
+  FM_STUB_JUDGE_EXIT=1 FM_STUB_JUDGE_STDERR='quota exhausted' expect_refused unjudged "an unjudged spec" $'judge errors:\nquota exhausted'
   pass "a ship is refused when its spec cannot be judged"
 }
 
@@ -115,8 +112,9 @@ test_launches_with_a_warning_when_no_judge_is_installed() {
 
 test_scout_is_not_checked() {
   make_case scout "$(brief "$FALLBACK_SPEC")"
-  FM_STUB_JUDGE_FLAG='Old widgets' expect_spawned scout scout "a scout brief"
-  [ ! -e "$HOME_DIR/data/scout/spec-intent-check.txt" ] || fail "a scout brief was checked"
+  local judge_log="$TMP_ROOT/scout-judge.log"
+  FM_STUB_JUDGE_LOG="$judge_log" FM_STUB_JUDGE_FLAG='Old widgets' expect_spawned scout scout "a scout brief"
+  [ ! -e "$judge_log" ] || fail "a scout brief was checked"
   pass "a scout brief is not checked"
 }
 

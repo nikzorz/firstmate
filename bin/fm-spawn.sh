@@ -1857,14 +1857,13 @@ SPEC_INTENT_BRIEF="$DATA/$ID/brief.md"
 if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] && [ -f "$SPEC_INTENT_BRIEF" ] &&
   fm_brief_task_heading_present "$SPEC_INTENT_BRIEF" "## Firstmate spec" &&
   ! fm_brief_task_placeholders_present "$SPEC_INTENT_BRIEF" && fm_brief_task_content_valid "$SPEC_INTENT_BRIEF"; then
-  SPEC_INTENT_RECORD="$DATA/$ID/spec-intent-check.txt"
   SPEC_INTENT_STATUS=0
-  SPEC_INTENT_FLAGGED=$("$FM_ROOT/bin/fm-spec-intent-check.sh" "$SPEC_INTENT_BRIEF" "$SPEC_INTENT_RECORD") || SPEC_INTENT_STATUS=$?
+  SPEC_INTENT_FLAGGED=$("$FM_ROOT/bin/fm-spec-intent-check.sh" "$SPEC_INTENT_BRIEF") || SPEC_INTENT_STATUS=$?
   case $SPEC_INTENT_STATUS in
     0 | 3) ;;
     1)
       printf '%s\n' "$SPEC_INTENT_FLAGGED" >&2
-      echo "error: $SPEC_INTENT_BRIEF ## Firstmate spec adds scope with no matching words in ## Captain's intent (above); cut each flagged bullet's addition, or end the bullet with [justified: <reason>], then spawn again; the judge's full answer is in $SPEC_INTENT_RECORD" >&2
+      echo "error: $SPEC_INTENT_BRIEF ## Firstmate spec adds scope with no matching words in ## Captain's intent (above); cut each flagged bullet's addition, or end the bullet with [justified: <reason>], then spawn again" >&2
       exit 1
       ;;
     *)
