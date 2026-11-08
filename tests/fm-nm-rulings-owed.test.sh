@@ -6,6 +6,8 @@ set -u
 
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+# shellcheck source=tests/nm-state-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/nm-state-helpers.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-nm-rulings-owed)
 CHECK="$ROOT/bin/fm-nm-rulings-owed.sh"
@@ -14,52 +16,14 @@ RUN_1749=01M52JSXS8KXT89X4FE5H6REKN
 
 # A case directory holding a no-mistakes task record for task-x1 on branch
 # fm/task-x1 of project <case>/project, and a state database of the runs the
-# JSON shape describes: {"run": id, "steps": [{"name", "order", "status",
-# "approval", "rounds": [{"round", "source", "selected", "verdict",
-# "findings": [[id, action], ...]}]}]}. A step's status defaults to completed;
-# each review step gets a log with one unparked review segment per round.
+# JSON shape describes (nm_state_fixture in tests/nm-state-helpers.sh).
 # Args: name shape_json
 make_nm_case() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/state" "$dir/data" "$dir/nm" "$dir/project"
   printf '%s\n' "mode=no-mistakes" "kind=ship" "branch=fm/task-x1" "project=$dir/project" > "$dir/state/task-x1.meta"
   : > "$dir/state/task-x1.status"
-  python3 -I - "$dir/nm/state.sqlite" "$dir/project" "$2" <<'PY' || fail "could not write the no-mistakes fixture"
-import json
-import os
-import sqlite3
-import sys
-
-db_path, project, shape = sys.argv[1:]
-shape = json.loads(shape)
-log_dir = os.path.join(os.path.dirname(db_path), "logs")
-os.makedirs(log_dir, exist_ok=True)
-db = sqlite3.connect(db_path)
-db.executescript("""
-CREATE TABLE repos (id TEXT PRIMARY KEY, working_path TEXT NOT NULL UNIQUE);
-CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT NULL, created_at INTEGER NOT NULL);
-CREATE TABLE step_results (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_name TEXT NOT NULL,
-  step_order INTEGER NOT NULL, status TEXT NOT NULL, approval_reason TEXT, skip_reason TEXT, log_path TEXT);
-CREATE TABLE step_rounds (id TEXT PRIMARY KEY, step_result_id TEXT NOT NULL, round INTEGER NOT NULL,
-  findings_json TEXT, selected_finding_ids TEXT, selection_source TEXT);
-""")
-db.execute("INSERT INTO repos VALUES ('r1', ?)", (project,))
-db.execute("INSERT INTO runs VALUES (?, 'r1', 'fm/task-x1', 1)", (shape["run"],))
-for s, step in enumerate(shape["steps"]):
-    log_path = os.path.join(log_dir, "s%d.log" % s)
-    with open(log_path, "w") as log:
-        log.write("reviewing changes...\n" * len(step["rounds"]))
-    db.execute("INSERT INTO step_results VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
-               ("s%d" % s, shape["run"], step["name"], step["order"], step.get("status", "completed"),
-                step.get("approval"), log_path))
-    for rnd in step["rounds"]:
-        found = json.dumps({"verdict": rnd.get("verdict"), "findings": [
-            {"id": i, "action": a, "severity": "warning", "description": ""} for i, a in rnd.get("findings", [])]})
-        db.execute("INSERT INTO step_rounds VALUES (?, ?, ?, ?, ?, ?)",
-                   ("s%dr%d" % (s, rnd["round"]), "s%d" % s, rnd["round"], found,
-                    json.dumps(rnd.get("selected", [])), rnd.get("source")))
-db.commit()
-PY
+  nm_state_fixture "$dir/nm/state.sqlite" "$dir/project" fm/task-x1 "$2" || fail "could not write the no-mistakes fixture"
   printf '%s\n' "$dir"
 }
 

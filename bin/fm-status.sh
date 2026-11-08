@@ -2,8 +2,8 @@
 # fm-status.sh - append one worker status line and record it in the fleet ledger.
 #
 # Usage:
-#   fm-status.sh <status-file> <state> [--key <slug>] [--until <when>] [--config <dir>] [--] <note>...
-#   fm-status.sh <status-file> --line <status-line> [--config <dir>]
+#   fm-status.sh <status-file> <state> [--key <slug>] [--until <when>] [--config <dir>] [--data <dir>] [--] <note>...
+#   fm-status.sh <status-file> --line <status-line> [--config <dir>] [--data <dir>]
 #
 # The first form writes "<state> [at=<epoch>] [key=<slug>]: <note>", the
 # grammar bin/fm-classify-lib.sh parses, with the epoch read from the clock
@@ -20,6 +20,18 @@
 # A note or line holding a newline is refused, because each status event is
 # one line.
 #
+# A done line is refused, unwritten, while the task still owes a decision line
+# for a no-mistakes pipeline round, so a worker that answered a finding itself
+# escalates it before handing off rather than at the merge. The task is the
+# status file's name without .status, its record is <id>.meta beside it, and
+# bin/fm-nm-rulings-lib.sh, the judge bin/fm-pr-merge.sh refuses a merge with,
+# owns which rounds owe a line. The refusal lists each owed finding and the
+# exact needs-decision lines that name them, with snapshot files under <data>,
+# which defaults to the data/ directory beside the status file's state/
+# directory. A task with no record, one that is not a no-mistakes task, or one
+# whose runs cannot be read is not judged here; the merge still refuses over
+# what could not be read.
+#
 # After the append succeeds, and only while <config>/fleet-ledger exists, the
 # line is handed to bin/fm-fleet-ledger.sh `appended`; a ledger failure is
 # silent and never changes this command's result (docs/fleet-ledger.md).
@@ -28,7 +40,8 @@
 # config location.
 #
 # Prints the appended line. Exit status: 0 when the line was appended, 1 when
-# the append failed, 2 on a usage error (nothing is written).
+# the append failed, 2 on a usage error, 3 when a done line was refused over an
+# owed decision line (nothing is written on 2 or 3).
 set -u
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -54,6 +67,7 @@ UNTIL_SET=0
 RAW_LINE=
 RAW_SET=0
 CONFIG=
+DATA=
 NOTE=
 positional=0
 take_value() {  # <option> <remaining-arg-count>
@@ -65,6 +79,7 @@ while [ "$#" -gt 0 ]; do
     --until) take_value "$1" "$#"; UNTIL=$2; UNTIL_SET=1; shift 2; continue ;;
     --line) take_value "$1" "$#"; RAW_LINE=$2; RAW_SET=1; shift 2; continue ;;
     --config) take_value "$1" "$#"; CONFIG=$2; shift 2; continue ;;
+    --data) take_value "$1" "$#"; DATA=$2; shift 2; continue ;;
     --) shift
       while [ "$#" -gt 0 ]; do NOTE="${NOTE:+$NOTE }$1"; shift; done
       break ;;
@@ -138,16 +153,33 @@ else
   LINE="$LINE: $NOTE"
 fi
 
+state_dir=${STATUS_FILE%/*}
+if [ "$(status_line_verb "$LINE")" = "done" ]; then
+  task_id=${STATUS_FILE##*/}
+  task_id=${task_id%.status}
+  if [ "$task_id.status" = "${STATUS_FILE##*/}" ] && [ -f "$state_dir/$task_id.meta" ]; then
+    [ -n "$DATA" ] || DATA="${state_dir%/*}/data"
+    case "$DATA" in /*) ;; *) DATA="$PWD/$DATA" ;; esac
+    # shellcheck source=bin/fm-nm-rulings-lib.sh
+    . "$SCRIPT_DIR/fm-nm-rulings-lib.sh"
+    fm_nm_rulings_owed "$task_id" "$state_dir" "$DATA"
+    if [ "$FM_NM_RULINGS_UNREADABLE" != true ] && [ -n "$FM_NM_RULINGS_OWED" ]; then
+      {
+        printf 'fm-status.sh: done refused: task %s owes a decision line for:\n%s' "$task_id" "$FM_NM_RULINGS_OWED"
+        fm_nm_rulings_clearing_text "$STATUS_FILE"
+      } >&2
+      exit 3
+    fi
+  fi
+fi
+
 printf '%s\n' "$LINE" >> "$STATUS_FILE" || {
   echo "fm-status.sh: could not append to $STATUS_FILE" >&2
   exit 1
 }
 printf '%s\n' "$LINE"
 
-if [ -z "$CONFIG" ]; then
-  state_dir=${STATUS_FILE%/*}
-  CONFIG="${state_dir%/*}/config"
-fi
+[ -n "$CONFIG" ] || CONFIG="${state_dir%/*}/config"
 case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 if [ -e "$CONFIG/fleet-ledger" ]; then
   "$SCRIPT_DIR/fm-fleet-ledger.sh" appended "$CONFIG" "$STATUS_FILE" >/dev/null 2>&1 || true

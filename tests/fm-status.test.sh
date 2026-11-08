@@ -8,6 +8,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/nm-state-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/nm-state-helpers.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-status)
 STATUS="$ROOT/bin/fm-status.sh"
@@ -190,6 +192,60 @@ test_ledger_follows_the_flag_and_config_override() {
   pass "fm-status: the fleet ledger records a line only while the flag exists, read from config/ or --config"
 }
 
+# A case replaying arena PR 2584: the recorded run of tests/fixtures/arena-pr-2584
+# under NM_HOME=$HOME_DIR/nm, and the task's status log as it stood when its
+# worker reported the PR green, before any line named the review round it had
+# answered itself. Sets HOME_DIR, FILE, and RUN.
+make_pr_2584_case() {  # <name> <mode>
+  local fixture="$ROOT/tests/fixtures/arena-pr-2584"
+  make_case "$1"
+  FILE="$HOME_DIR/state/arena-2363-flinch.status"
+  RUN=01M6F808Y88AAT5H96JNQDSJ2F
+  mkdir -p "$HOME_DIR/nm" "$HOME_DIR/project"
+  printf '%s\n' "mode=$2" kind=ship branch=fm/arena-2363-flinch "project=$HOME_DIR/project" \
+    > "$HOME_DIR/state/arena-2363-flinch.meta"
+  cp "$fixture/status.log" "$FILE"
+  nm_state_fixture "$HOME_DIR/nm/state.sqlite" "$HOME_DIR/project" fm/arena-2363-flinch "$(cat "$fixture/run.json")" \
+    || fail "could not write the no-mistakes fixture"
+}
+
+test_done_is_refused_over_findings_the_worker_declined_itself() {
+  local out rc before clearing
+  make_pr_2584_case pr-2584 no-mistakes
+  before=$(cat "$FILE")
+  rc=0
+  out=$(NM_HOME="$HOME_DIR/nm" bash "$STATUS" "$FILE" 'done' "PR https://github.com/nikzorz/arena/pull/2584 checks green" 2>&1) || rc=$?
+  expect_code 3 "$rc" "a done over self-declined findings"
+  assert_equals "$before" "$(cat "$FILE")" "a refused done appends nothing"
+  assert_contains "$out" "no-mistakes run $RUN step review round 1 declined auto-fix finding 'flinch-test-header-overclaims-pulse'" \
+    "the declined auto-fix finding is named"
+  assert_contains "$out" "no-mistakes run $RUN step review round 1 declined no-op finding 'flinch-take-provisional-pick'" \
+    "the declined no-op finding is named"
+  case "$out" in *test-1*) fail "the test step's granted inconclusive question was owed: $out" ;; esac
+  clearing=$(printf '%s\n' "$out" | grep '^needs-decision ') || fail "no decision line was printed: $out"
+  assert_contains "$clearing" "[key=nm-$RUN-review]: ask-user round=1 findings=flinch-test-header-overclaims-pulse,flinch-take-provisional-pick file=$HOME_DIR/data/arena-2363-flinch/nm-$RUN-findings.txt" \
+    "the printed line names both findings for the round"
+
+  bash "$STATUS" "$FILE" --line "$clearing" >/dev/null 2>&1 || fail "the printed decision line could not be appended"
+  out=$(NM_HOME="$HOME_DIR/nm" bash "$STATUS" "$FILE" 'done' "PR https://github.com/nikzorz/arena/pull/2584 checks green" 2>&1) \
+    || fail "a done after the printed line was refused: $out"
+  assert_equals "done" "$(read_field verb "$(tail -1 "$FILE")")" "the done is appended once the round is named"
+  pass "fm-status: a no-mistakes done is refused over findings the worker declined itself, naming the line that escalates them"
+}
+
+test_done_outside_the_pipeline_is_not_judged() {
+  local out
+  make_pr_2584_case pr-2584-direct direct-PR
+  out=$(NM_HOME="$HOME_DIR/nm" bash "$STATUS" "$FILE" 'done' "PR https://github.com/nikzorz/arena/pull/2584" 2>&1) \
+    || fail "a direct-PR done was refused: $out"
+  make_pr_2584_case pr-2584-working no-mistakes
+  out=$(NM_HOME="$HOME_DIR/nm" bash "$STATUS" "$FILE" working still going 2>&1) || fail "a working line was refused: $out"
+  rm -f "$HOME_DIR/nm/state.sqlite"
+  out=$(NM_HOME="$HOME_DIR/nm" bash "$STATUS" "$FILE" 'done' "PR https://github.com/nikzorz/arena/pull/2584 checks green" 2>&1) \
+    || fail "a done whose runs cannot be read was refused: $out"
+  pass "fm-status: only a no-mistakes done whose runs can be read is judged"
+}
+
 test_plain_line_is_stamped_and_parsed
 test_keyed_line_round_trips_the_key
 test_until_time_only_and_unreadable
@@ -199,3 +255,5 @@ test_line_form_stamps_only_an_unstamped_line
 test_usage_errors_write_nothing
 test_append_failure_is_reported
 test_ledger_follows_the_flag_and_config_override
+test_done_is_refused_over_findings_the_worker_declined_itself
+test_done_outside_the_pipeline_is_not_judged
