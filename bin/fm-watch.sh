@@ -137,6 +137,12 @@
 #                          incomplete review coverage and still owes a ruling
 #                          (coverage_park_tick below), raised once per run and
 #                          round so firstmate rules before the worker approves it
+#   check: same-theme-unreported <id>: run <run> step <step> round <n> finding <ids>
+#                          a no-mistakes ship task's round selected again a
+#                          finding id an earlier round of its run and step
+#                          selected, and no same-theme decision line names that
+#                          round (same_theme_tick below), raised once per run,
+#                          step, and round
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -340,6 +346,8 @@ MERGE_READY_INTERVAL=${FM_MERGE_READY_INTERVAL:-30}  # seconds between merge-rea
 case "$MERGE_READY_INTERVAL" in ''|*[!0-9]*) MERGE_READY_INTERVAL=30 ;; esac
 COVERAGE_PARK_INTERVAL=${FM_COVERAGE_PARK_INTERVAL:-30}  # seconds between coverage-park reads
 case "$COVERAGE_PARK_INTERVAL" in ''|*[!0-9]*) COVERAGE_PARK_INTERVAL=30 ;; esac
+SAME_THEME_INTERVAL=${FM_SAME_THEME_INTERVAL:-30}  # seconds between same-theme reads
+case "$SAME_THEME_INTERVAL" in ''|*[!0-9]*) SAME_THEME_INTERVAL=30 ;; esac
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2387,6 +2395,77 @@ coverage_park_tick() {
   done
 }
 
+# Prints run<TAB>step<TAB>round<TAB>ids for every round of one branch's
+# no-mistakes runs whose driver selection (source user) names a finding id an
+# earlier round of the same run and step already selected, ids comma-joined.
+# A declined round fixed nothing, so its selection never counts as earlier.
+# Prints nothing when the rounds cannot be read.
+nm_same_theme_rounds() {  # <state-db> <project> <branch>
+  local rounds
+  rounds=$(fm_nm_rounds "$1" --branch "$2" "$3" 2>/dev/null) || return 0
+  printf '%s\n' "$rounds" | python3 -I -c '
+import json
+import re
+import sys
+
+SAFE = re.compile(r"[^\s,]+")
+earlier = {}
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    r = json.loads(line)
+    seen = earlier.setdefault(r["step_result"], set())
+    selected = [i for i in r["selected"] if isinstance(i, str) and SAFE.fullmatch(i)]
+    if r["source"] == "user":
+        again = [i for i in dict.fromkeys(selected) if i in seen]
+        if again:
+            print("%s\t%s\t%s\t%s" % (r["run"], r["step"], r["round"], ",".join(again)))
+    if r["source"] != "user_declined":
+        seen.update(selected)
+'
+}
+
+# Same-theme notice for a no-mistakes ship task. The Definition of done tells a
+# worker to stop at a finding on a theme an earlier fix round of its run already
+# fixed and record a `needs-decision [key=nm-<run>-same-theme]` line, but that
+# cutoff is prose a worker driving its own gates can skip, round after round. A
+# round whose driver selection repeats a finding id an earlier round of the same
+# run and step selected wakes firstmate unless such a line names that round, as
+# the merge guard reads one (fm_nm_decision_lines_named). It keys on the finding id alone, so a same-theme review
+# finding that returns under a new id is not caught.
+# .same-theme-unreported-<id key> holds every `<run> <step> <round>` already
+# raised, so one round yields one wake. It is appended after the wake record, as
+# everywhere else here: a record written ahead of a failed append would swallow
+# the retry.
+# A remote secondmate's run lives on its own host and is never read here.
+same_theme_tick() {
+  local meta id branch project record named run step round ids reason db
+  [ "$(age_of "$STATE/.last-same-theme")" -ge "$SAME_THEME_INTERVAL" ] || return 0
+  touch "$STATE/.last-same-theme"
+  db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(fm_meta_get "$meta" kind)" = ship ] || continue
+    [ "$(fm_meta_get "$meta" mode)" = no-mistakes ] || continue
+    [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+    branch=$(fm_meta_get "$meta" branch)
+    project=$(fm_meta_get "$meta" project)
+    [ -n "$branch" ] && [ -n "$project" ] || continue
+    id=$(basename "$meta" .meta)
+    named=$(fm_nm_decision_lines_named "$STATE/$id.status" 2>/dev/null)
+    record="$STATE/.same-theme-unreported-$(fm_episode_key "$id")"
+    while IFS=$'\t' read -r run step round ids; do
+      [ -n "$run" ] || continue
+      grep -qxF "$run $step $round" "$record" 2>/dev/null && continue
+      printf '%s\n' "$named" | grep -q "^$run"$'\t\\*\t'"$round"$'\t' && continue
+      reason="check: same-theme-unreported $id: run $run step $step round $round finding $ids"
+      fm_wake_append check "same-theme-unreported-$id-$run-$step-$round" "$reason" || exit 1
+      printf '%s %s %s\n' "$run" "$step" "$round" >> "$record"
+      wake "$reason"
+    done < <(nm_same_theme_rounds "$db" "$project" "$branch")
+  done
+}
+
 # Layer 2 + 3 signal scan: status files and turn-end markers.
 # Each file is compared against its persisted reported signature in .seen-* rather
 # than mtime-vs-a-startup-touch, so signals that land while no watcher is running
@@ -3355,6 +3434,7 @@ EOF
   # sibling's signals would otherwise starve it.
   merge_ready_tick
   coverage_park_tick
+  same_theme_tick
 
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end

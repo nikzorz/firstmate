@@ -5906,18 +5906,19 @@ test_approved_coverage_park_needs_a_decision_request() {
   pass "fm-pr-merge refuses a review coverage park approved without a decision request naming coverage for that run and round"
 }
 
-# Runs the watcher's coverage-park read once over case_dir's state and
-# no-mistakes fixture, printing every wake it raised.
-run_coverage_park_tick() {
-  local case_dir=$1
+# Runs one of the watcher's no-mistakes reads (coverage_park_tick or
+# same_theme_tick) once over case_dir's state and no-mistakes fixture, printing
+# every wake it raised.
+run_watch_tick() {
+  local case_dir=$1 tick=$2
   (
     export FM_STATE_OVERRIDE="$case_dir/state" FM_ROOT_OVERRIDE="$ROOT" NM_HOME="$case_dir/nm"
-    export FM_COVERAGE_PARK_INTERVAL=0
+    export FM_COVERAGE_PARK_INTERVAL=0 FM_SAME_THEME_INTERVAL=0
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
-    # shellcheck disable=SC2329 # Invoked by coverage_park_tick in place of the watcher's own wake.
+    # shellcheck disable=SC2329 # Invoked by the tick in place of the watcher's own wake.
     wake() { printf '%s\n' "$1"; }
-    coverage_park_tick
+    "$tick"
   )
 }
 
@@ -5925,12 +5926,12 @@ test_coverage_park_wakes_firstmate() {
   local case_dir out
   case_dir=$(make_case nm-coverage-wake)
   write_nm_coverage_approval "$case_dir"
-  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the coverage-park read failed"
+  out=$(run_watch_tick "$case_dir" coverage_park_tick) || fail "nm-coverage-wake: the coverage-park read failed"
   assert_equals "check: coverage-park task-x1: run $NM_RUN_1704 round 2 unverified tools/ci/gut_split.py" "$out" \
     "nm-coverage-wake: only the approved, unruled park may wake firstmate, naming its run, round and unverified files"
   assert_grep "coverage-park task-x1: run $NM_RUN_1704 round 2" "$case_dir/state/.wake-queue" \
     "nm-coverage-wake: the coverage-park wake was not queued durably"
-  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-wake: the second coverage-park read failed"
+  out=$(run_watch_tick "$case_dir" coverage_park_tick) || fail "nm-coverage-wake: the second coverage-park read failed"
   assert_equals "" "$out" "nm-coverage-wake: the same coverage park woke firstmate twice"
   pass "an approved coverage park no decision line names wakes firstmate once, and a park answered with fix never does"
 }
@@ -5943,7 +5944,7 @@ test_awaiting_coverage_park_wakes_firstmate() {
       {name: "review", order: 3, status: "awaiting_approval", coverage_parked: [1, 2], rounds: [
         {round: 1, source: "user", selected: ["fixed-1"], findings: [["fixed-1", "auto-fix", ""]]},
         {round: 2, source: null}]}]}')"
-  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-live: the coverage-park read failed"
+  out=$(run_watch_tick "$case_dir" coverage_park_tick) || fail "nm-coverage-live: the coverage-park read failed"
   assert_equals "check: coverage-park task-x1: run $NM_RUN_1704 round 2 unverified tools/ci/gut_split.py" "$out" \
     "nm-coverage-live: a park still awaiting its answer did not wake firstmate, or the park answered with fix did"
   pass "a coverage park still awaiting its answer wakes firstmate before the worker answers"
@@ -5959,7 +5960,7 @@ test_answered_or_ruled_coverage_parks_do_not_wake() {
         {round: 2, source: null}]},
       {name: "review", order: 3, status: "running", rounds: [{round: 1, source: null}]}]}')"
   write_nm_decision_line "$case_dir" "$NM_RUN_1713" review 2 coverage
-  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-old: the coverage-park read failed"
+  out=$(run_watch_tick "$case_dir" coverage_park_tick) || fail "nm-coverage-old: the coverage-park read failed"
   assert_equals "" "$out" "nm-coverage-old: an earlier run's park answered with fix or already ruled woke firstmate"
   pass "an earlier run's coverage parks answered with fix or already ruled raise no wake on the first read"
 }
@@ -5971,9 +5972,78 @@ test_park_without_coverage_does_not_wake() {
     {run: $run, steps: [
       {name: "review", order: 3, status: "running", rounds: [
         {round: 1, source: null, findings: [["parked-1", "ask-user", ""]]}]}]}')"
-  out=$(run_coverage_park_tick "$case_dir") || fail "nm-coverage-quiet: the coverage-park read failed"
+  out=$(run_watch_tick "$case_dir" coverage_park_tick) || fail "nm-coverage-quiet: the coverage-park read failed"
   assert_equals "" "$out" "nm-coverage-quiet: a park with no coverage line woke firstmate"
   pass "a review round parked without incomplete coverage raises no coverage-park wake"
+}
+
+NM_RUN_2699=01M6Y8FTTZRJAZ7JNMGZQ592E0
+
+# The Definition of done's same-theme line for one gate round.
+# Args: case_dir run round finding-id...
+write_nm_same_theme_gate_line() {
+  local case_dir=$1 run=$2 round=$3 ids
+  shift 3
+  ids=$(IFS=,; printf '%s' "$*")
+  printf 'needs-decision [at=1792000000] [key=nm-%s-same-theme]: same theme fixed again round=%s findings=%s rounds=1\n' \
+    "$run" "$round" "$ids" >> "$case_dir/state/task-x1.status"
+}
+
+# Run 01M6Y8FTTZRJAZ7JNMGZQ592E0's lint step: the worker's own selection of
+# lint-1 in each of six rounds, with no same-theme decision line in its log.
+test_same_theme_replay_wakes_at_lint_round_2() {
+  local case_dir out
+  case_dir=$(make_case nm-same-theme-replay)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_2699" '
+    {run: $run, steps: [
+      {name: "lint", order: 2, status: "failed", rounds: [range(1; 7) as $n |
+        {round: $n, source: "user", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]}]}]}')"
+  write_nm_same_theme_gate_line "$case_dir" "$NM_RUN_2699" 3 lint-1
+  out=$(run_watch_tick "$case_dir" same_theme_tick) || fail "nm-same-theme-replay: the same-theme read failed"
+  assert_equals "$(printf 'check: same-theme-unreported task-x1: run %s step lint round %s finding lint-1\n' \
+    "$NM_RUN_2699" 2 "$NM_RUN_2699" 4 "$NM_RUN_2699" 5 "$NM_RUN_2699" 6)" "$out" \
+    "nm-same-theme-replay: lint round 2 and every later unreported repeat must wake, and round 3's decision line must hold it quiet"
+  assert_grep "same-theme-unreported task-x1: run $NM_RUN_2699 step lint round 2 finding lint-1" \
+    "$case_dir/state/.wake-queue" "nm-same-theme-replay: the same-theme wake was not queued durably"
+  out=$(run_watch_tick "$case_dir" same_theme_tick) || fail "nm-same-theme-replay: the second same-theme read failed"
+  assert_equals "" "$out" "nm-same-theme-replay: the same rounds woke firstmate twice"
+  pass "a round repeating its step's earlier driver selection wakes firstmate once per run, step, and round unless a same-theme line names it"
+}
+
+test_same_theme_line_of_another_run_does_not_hold_the_wake() {
+  local case_dir out
+  case_dir=$(make_case nm-same-theme-other-run)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_2699" '
+    {run: $run, steps: [
+      {name: "lint", order: 2, rounds: [
+        {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]},
+        {round: 2, source: "user", selected: ["lint-1", "lint-2"],
+         findings: [["lint-1", "ask-user", ""], ["lint-2", "ask-user", ""]]}]}]}')"
+  write_nm_same_theme_gate_line "$case_dir" "$NM_RUN_1704" 2 lint-1
+  write_nm_decision_line "$case_dir" "$NM_RUN_2699" lint 2 lint-1
+  out=$(run_watch_tick "$case_dir" same_theme_tick) || fail "nm-same-theme-other-run: the same-theme read failed"
+  assert_equals "check: same-theme-unreported task-x1: run $NM_RUN_2699 step lint round 2 finding lint-1" "$out" \
+    "nm-same-theme-other-run: only a same-theme line of the round's own run may hold the wake, naming only the repeated id"
+  pass "a same-theme line of another run, or a step-keyed decision line, does not hold the same-theme wake"
+}
+
+test_repeat_outside_the_driver_selection_does_not_wake() {
+  local case_dir out
+  case_dir=$(make_case nm-same-theme-quiet)
+  write_nm_db "$case_dir" "$(jq -nc --arg run "$NM_RUN_2699" --arg other "$NM_RUN_1704" '
+    {run: $run, steps: [
+      {name: "lint", order: 2, run: $other, rounds: [
+        {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]}]},
+      {name: "lint", order: 2, rounds: [
+        {round: 1, source: "user_declined", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]},
+        {round: 2, source: "user", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]},
+        {round: 3, source: "auto_fix", selected: ["lint-1"], findings: [["lint-1", "auto-fix", ""]]}]},
+      {name: "review", order: 3, rounds: [
+        {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "ask-user", ""]]}]}]}')"
+  out=$(run_watch_tick "$case_dir" same_theme_tick) || fail "nm-same-theme-quiet: the same-theme read failed"
+  assert_equals "" "$out" \
+    "nm-same-theme-quiet: an id first selected in another run, after a declined round, by the pipeline, or in another step woke firstmate"
+  pass "a repeat in another run or step, after a declined round, or by the pipeline's own selection raises no same-theme wake"
 }
 
 test_unreadable_review_log_refuses_merge() {
@@ -6443,6 +6513,9 @@ test_coverage_park_wakes_firstmate
 test_awaiting_coverage_park_wakes_firstmate
 test_answered_or_ruled_coverage_parks_do_not_wake
 test_park_without_coverage_does_not_wake
+test_same_theme_replay_wakes_at_lint_round_2
+test_same_theme_line_of_another_run_does_not_hold_the_wake
+test_repeat_outside_the_driver_selection_does_not_wake
 test_unreadable_review_log_refuses_merge
 test_empty_diff_review_round_reads_as_not_coverage_parked
 test_decision_named_in_another_run_does_not_rule_a_reused_id

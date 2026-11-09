@@ -49,6 +49,10 @@
 #   owed coverage park; and FM_NM_RULINGS_UNREADABLE to true, with FM_NM_RULINGS_OWED holding the
 #   one line naming what could not be read, when nothing could be judged.
 #   Returns 0 in every case; reads only.
+# fm_nm_decision_lines_named <status-file>
+#   Prints run<TAB>step<TAB>round<TAB>id for every finding id the status log's
+#   decision lines name, under the rules above, with step * for a same-theme
+#   line. Reads only.
 # fm_nm_rulings_clearing_text <status-file>
 #   Prints, after a list of owed rulings, the lines that clear them; prints
 #   nothing when none are owed.
@@ -151,6 +155,28 @@ for entry in steps.values():
 '
 }
 
+fm_nm_decision_lines_named() {  # <status-file>
+  sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-\([^]]*\)\][^:]*:\(.*\)/\1 \2 \3/p' "$1" \
+    | awk '{
+        step = $2; ids = ""; rounds = ""; listed = ""
+        for (i = 3; i <= NF; i++) {
+          if ($i ~ /^findings=/) ids = substr($i, 10)
+          else if ($i ~ /^round=/) rounds = substr($i, 7)
+          else if ($i ~ /^rounds=/) listed = substr($i, 8)
+        }
+        if (rounds !~ /^[0-9]+$/) rounds = ""
+        if (step == "same-theme") {
+          step = "*"
+          if (listed ~ /^[0-9]+(,[0-9]+)*$/) rounds = rounds (rounds == "" ? "" : ",") listed
+        }
+        if (rounds == "") next
+        r = split(rounds, round, ",")
+        n = split(ids, id, ",")
+        for (j = 1; j <= r; j++)
+          for (i = 1; i <= n; i++) print $1 "\t" step "\t" round[j] "\t" id[i]
+      }'
+}
+
 FM_NM_RULINGS_OWED=
 FM_NM_RULINGS_CLEARING=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
@@ -191,26 +217,7 @@ fm_nm_rulings_owed() {  # <task-id> <state-dir> <data-dir>
 "
       return 0
     fi
-    # run<TAB>step<TAB>round<TAB>id, with step * for a same-theme line.
-    named=$(sed -n 's/^needs-decision[^:]*\[key=nm-\([^]-]*\)-\([^]]*\)\][^:]*:\(.*\)/\1 \2 \3/p' "$status_file" \
-      | awk '{
-          step = $2; ids = ""; rounds = ""; listed = ""
-          for (i = 3; i <= NF; i++) {
-            if ($i ~ /^findings=/) ids = substr($i, 10)
-            else if ($i ~ /^round=/) rounds = substr($i, 7)
-            else if ($i ~ /^rounds=/) listed = substr($i, 8)
-          }
-          if (rounds !~ /^[0-9]+$/) rounds = ""
-          if (step == "same-theme") {
-            step = "*"
-            if (listed ~ /^[0-9]+(,[0-9]+)*$/) rounds = rounds (rounds == "" ? "" : ",") listed
-          }
-          if (rounds == "") next
-          r = split(rounds, round, ",")
-          n = split(ids, id, ",")
-          for (j = 1; j <= r; j++)
-            for (i = 1; i <= n; i++) print $1 "\t" step "\t" round[j] "\t" id[i]
-        }')
+    named=$(fm_nm_decision_lines_named "$status_file")
   fi
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
   reader_err=$(mktemp "${TMPDIR:-/tmp}/fm-nm-rulings.XXXXXX" 2>/dev/null) || reader_err=

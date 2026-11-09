@@ -7,7 +7,8 @@
 # step logs read-only.
 # bin/fm-nm-findings.sh prints a run's findings whole, and
 # bin/fm-nm-rulings-lib.sh judges which findings and coverage parks a branch's
-# runs left unruled.
+# runs left unruled, and bin/fm-watch.sh's same-theme wake reads which rounds
+# select again a finding an earlier round selected.
 #
 # fm_nm_rounds <state-db> --run <run-id>
 # fm_nm_rounds <state-db> --branch <repo-working-path> <branch>
