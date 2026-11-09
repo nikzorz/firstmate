@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-restatement-sweep.sh: a sentence elsewhere that
 # restates a rule the branch changed is listed, while moves, the diff's own
-# file, unrelated prose, test paths, and interpreter here-documents are not.
+# file, unrelated prose, test paths, and interpreter here-documents are not;
+# a line anywhere that keeps a phrase a rewritten sentence dropped is listed.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -121,6 +122,33 @@ test_test_paths_and_interpreter_heredocs_are_skipped() {
   pass "test paths and interpreter here-documents are skipped, prose here-documents are swept"
 }
 
+test_rewrite_lists_lines_keeping_its_dropped_phrases() {
+  local repo="$TMP_ROOT/dropped" out
+  new_repo "$repo"
+  mkdir -p "$repo/scripts" "$repo/tests/unit"
+  printf '# The Boons this seat holds, by Source id, in the order it took them, the older first (ADR-0066): Match-Scoped State beside owned_relics.\nvar held_boons := []\n' >"$repo/scripts/player_progression.gd"
+  printf '# The seat'\''s held Boons as the instances a fresh body is granted, the older first, each\n# once.\nfunc granted() -> void:\n\tpass\n' >"$repo/scripts/source_grant_wiring.gd"
+  printf 'extends GutTest\n# A Blob draws the Element of each Boon\n# whose spell it holds, in the order it took them, and each Part at its place.\n# Every Boon is keyed by Source id here.\n' >"$repo/tests/unit/test_blob_body_look.gd"
+  commit_all "$repo" 'hold boons oldest first'
+  git -C "$repo" branch -f main
+  printf '# The Boons this seat holds, by Source id, the lead first (ADR-0066): Match-Scoped State beside owned_relics.\nvar held_boons := []\n' >"$repo/scripts/player_progression.gd"
+  printf '# Unlike the seat, the bench keeps its Boons the older first.\n' >"$repo/scripts/bench.gd"
+  commit_all "$repo" 'hold boons lead first'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a rewrite: $out"
+  printf '%s\n' "$out" | grep -qF "stale? scripts/source_grant_wiring.gd:1: # The seat's held Boons" \
+    || fail "a line keeping 'the older first' was not listed: $out"
+  printf '%s\n' "$out" | grep -qF 'stale? tests/unit/test_blob_body_look.gd:3: # whose spell it holds, in the order it took them' \
+    || fail "a test-path line keeping 'in the order it took them' was not listed: $out"
+  printf '%s\n' "$out" | grep -qF '  keeps "the older first" from - scripts/player_progression.gd:1: The Boons this seat holds' \
+    || fail "the hit did not name its phrase and removed sentence: $out"
+  printf '%s\n' "$out" | grep -q '^stale? scripts/bench.gd:' && fail "a line the diff added was listed: $out"
+  printf '%s\n' "$out" | grep -q '^stale? tests/unit/test_blob_body_look.gd:4:' \
+    && fail "a line sharing only words the rewrite kept was listed: $out"
+  printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 2 stale? lines' \
+    || fail "the removed-phrase summary was wrong: $out"
+  pass "a rewritten sentence lists the lines that keep the phrases it dropped"
+}
+
 test_dirty_worktree_is_refused() {
   local repo="$TMP_ROOT/dirty" out rc
   new_repo "$repo"
@@ -189,6 +217,7 @@ test_move_is_not_a_restatement
 test_two_new_copies_are_listed
 test_removed_dash_comment_keeps_later_hunks
 test_test_paths_and_interpreter_heredocs_are_skipped
+test_rewrite_lists_lines_keeping_its_dropped_phrases
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
 test_default_base_resolution
