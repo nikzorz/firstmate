@@ -1451,11 +1451,12 @@ fm_lock_acquire_wait_bounded() {
   return "$rc"
 }
 
-# Contention, for a bounded acquire past its deadline, is a live owner or a
-# fresh lock directory or link whose owner has not yet written its pid; any
-# other lock path is malformed rather than mid-acquire.
+# Contention, for a bounded acquire past its deadline, is a live owner, a
+# fresh lock directory or link whose owner has not yet written its pid, or a
+# live steal-mutex holder mid-way through reclaiming the lock; any other lock
+# path is malformed rather than mid-acquire.
 _fm_lock_bounded_contended() {  # <lockdir>
-  local lockdir=$1 owner_pid
+  local lockdir=$1 owner_pid stealer_pid
   owner_pid=$(cat "$lockdir/pid" 2>/dev/null || true)
   case "$owner_pid" in
     '')
@@ -1469,6 +1470,16 @@ _fm_lock_bounded_contended() {  # <lockdir>
     *)
       if [ "$owner_pid" -gt 0 ] 2>/dev/null && fm_pid_alive "$owner_pid"; then
         FM_LOCK_HELD_PID=$owner_pid
+        return 0
+      fi
+      ;;
+  esac
+  stealer_pid=$(cat "$lockdir.steal/pid" 2>/dev/null || true)
+  case "$stealer_pid" in
+    ''|*[!0-9]*|0) ;;
+    *)
+      if fm_pid_alive "$stealer_pid"; then
+        FM_LOCK_HELD_PID=$stealer_pid
         return 0
       fi
       ;;

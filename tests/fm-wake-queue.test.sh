@@ -2989,6 +2989,26 @@ test_bounded_deadline_during_handover_reports_contention() {
   kill "$successor_pid" 2>/dev/null || true
   wait "$successor_pid" 2>/dev/null || true
   [ "$rc" -eq 0 ] || fail "a holder handover at the deadline did not report the successor as contention (rc=$rc)"
+
+  # A stale reclaim in flight: the recorded owner is dead and another acquirer
+  # holds the steal mutex while it replaces the lock.
+  mkdir "$state/.wake-queue.lock" || fail "could not stage the dead owner"
+  sleep 0 &
+  successor_pid=$!
+  wait "$successor_pid" || true
+  printf '%s\n' "$successor_pid" > "$state/.wake-queue.lock/pid"
+  mkdir "$state/.wake-queue.lock.steal" || fail "could not stage the reclaiming stealer"
+  sleep 30 &
+  successor_pid=$!
+  printf '%s\n' "$successor_pid" > "$state/.wake-queue.lock.steal/pid"
+  rc=0
+  FM_STATE_OVERRIDE="$state" FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 \
+    "$DRAIN" > "$out" 2> "$err" || rc=$?
+  kill "$successor_pid" 2>/dev/null || true
+  wait "$successor_pid" 2>/dev/null || true
+  [ "$rc" -eq 0 ] || fail "a stale reclaim in flight made the drain exit $rc: $(cat "$err")"
+  grep -F "WAKE DRAIN SKIPPED: queue lock remains held by live pid $successor_pid" "$out" >/dev/null \
+    || fail "a stale reclaim in flight was not reported as contention by the stealer"
   pass "a bounded acquire deadline during a holder handover reports contention"
 }
 
