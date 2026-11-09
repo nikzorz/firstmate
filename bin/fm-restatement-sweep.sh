@@ -36,10 +36,24 @@
 # listed sentence may be an unrelated neighbour on the same topic or a
 # legitimate one-line pointer.
 #
+# A rewrite can keep a sentence's words while dropping its claim, and a copy
+# of that claim elsewhere then shares too few words to resemble the new text.
+# So a removed sentence whose closest added sentence holds most of its words
+# is a rewrite, and each three-word phrase of the removed sentence that holds
+# a word the rewrite dropped is grepped for across every tracked text file at
+# HEAD, test paths included, over each file's words joined across lines so a
+# phrase a comment wraps is still found; a hit is reported at the line of its
+# first word, and is not listed when the diff added that line. This grep does not catch a claim falsified
+# with no sentence removed, nor stale lines a later pipeline fix round
+# creates, because the sweep runs before validation.
+#
 # Output: a summary line, then for each candidate
 #   <path>:<line>: <candidate sentence>
 #     resembles <+|-> <path>:<line>: <changed sentence>
-# where + marks a sentence the diff added and - one it removed.
+# where + marks a sentence the diff added and - one it removed; then a
+# removed-phrase summary line, then for each grep hit
+#   stale? <path>:<line>: <line>
+#     keeps "<phrase>" from - <path>:<line>: <removed sentence>
 #
 # Exit status: 0 when the sweep ran, whether or not it listed candidates; 2 on
 # a usage error, a dirty worktree, an unresolvable revision, or a missing
@@ -101,6 +115,10 @@ PER_PROBE = 5
 MAX_BLOB_BYTES = 512 * 1024
 # A word in more than this share of all sentences carries no rule of its own.
 COMMON_SHARE = 0.05
+# A removed sentence whose closest added one holds more than this share of its
+# words was rewritten rather than retired.
+REWRITE_SHARE = 0.5
+PHRASE_WORDS = 3
 
 STOP = set("""
 a an the and or but if then else of to in on at by for with from as is are was were be been being it its this
@@ -291,7 +309,7 @@ def changed_lines(diff_text):
 
 
 def read_blobs(rev, paths):
-    """Return {path: text} for the non-binary, small, non-test files at rev, all of them when paths is None."""
+    """Return {path: text} for the non-binary, small files at rev, all of them when paths is None."""
     if paths is not None and not paths:
         return {}
     scope = ["--", *paths] if paths is not None else []
@@ -302,7 +320,7 @@ def read_blobs(rev, paths):
             continue
         meta, path = entry.split("\t", 1)
         _, kind, oid, size = meta.split()
-        if kind == "blob" and size != "-" and int(size) <= MAX_BLOB_BYTES and not TEST_PATH.search(path):
+        if kind == "blob" and size != "-" and int(size) <= MAX_BLOB_BYTES:
             wanted.append((path, oid))
     if not wanted:
         return {}
@@ -324,8 +342,11 @@ def main():
                "--src-prefix=a/", "--dst-prefix=b/", MERGE_BASE, HEAD).decode("utf-8", "surrogateescape")
     removed, added = changed_lines(diff)
 
+    tree = read_blobs(HEAD, None)
     corpus = []  # (path, first, last, text, words, added_here)
-    for path, text in read_blobs(HEAD, None).items():
+    for path, text in tree.items():
+        if TEST_PATH.search(path):
+            continue
         lines_added = added.get(path, ())
         for first, last, sentence in sentences(path, text):
             touched = any(n in lines_added for n in range(first, last + 1))
@@ -333,6 +354,8 @@ def main():
 
     probes = [(c[0], c[1], c[3], c[4], "+") for c in corpus if c[5]]
     for path, text in read_blobs(MERGE_BASE, sorted(removed)).items():
+        if TEST_PATH.search(path):
+            continue
         for first, last, sentence in sentences(path, text):
             if any(n in removed[path] for n in range(first, last + 1)):
                 probes.append((path, first, sentence, words_of(sentence), "-"))
@@ -387,6 +410,96 @@ def main():
         note = " (also added by this diff)" if c_added else ""
         print(f"{c_path}:{c_first}:{note} {c_text}")
         print(f"  resembles {probe[4]} {probe[0]}:{probe[1]}: {probe[2]}")
+
+    rewrites, stale = dropped_phrase_hits(probes, tree, added)
+    print(f"removed-phrase grep: {rewrites} rewritten sentences; {len(stale)} stale? lines")
+    for (path, number), (text, phrase, probe) in sorted(stale.items()):
+        print(f"stale? {path}:{number}: {text}")
+        print(f"  keeps \"{phrase}\" from - {probe[0]}:{probe[1]}: {probe[2]}")
+
+
+def tokens(text):
+    return [word.lower() for word in WORD.findall(text)]
+
+
+def dropped_phrases(old, new_words, dropped):
+    """Yield the phrases of old that the rewrite lost.
+
+    A lost run is a stretch of old's words the rewrite does not use, holding at
+    least one dropped word; a long run yields its own phrases that hold one,
+    and a short run the phrases that span it with its neighbours.
+    """
+    start = 0
+    while start < len(old):
+        if old[start] in new_words:
+            start += 1
+            continue
+        end = start
+        while end < len(old) and old[end] not in new_words:
+            end += 1
+        if any(stem(w) in dropped for w in old[start:end]):
+            if end - start >= PHRASE_WORDS:
+                firsts = range(start, end - PHRASE_WORDS + 1)
+            else:
+                firsts = range(max(0, end - PHRASE_WORDS), min(start, len(old) - PHRASE_WORDS) + 1)
+            for first in firsts:
+                phrase = tuple(old[first: first + PHRASE_WORDS])
+                if any(stem(w) in dropped for w in phrase):
+                    yield phrase
+        start = end
+
+
+def dropped_phrase_hits(probes, tree, added):
+    """Grep the tree for the phrases each rewritten sentence lost.
+
+    A removed sentence is rewritten when an added sentence holds most of its
+    words; each run of three of its words that holds a word the rewrite
+    dropped, and that the rewrite does not repeat, is a phrase whose other
+    copies may still state the old claim.
+    """
+    removed_probes = [p for p in probes if p[4] == "-"]
+    added_probes = [p for p in probes if p[4] == "+"]
+    added_by_word = collections.defaultdict(list)
+    for index, probe in enumerate(added_probes):
+        for word in probe[3]:
+            added_by_word[word].append(index)
+
+    wanted = {}  # phrase -> removed probe
+    rewrites = 0
+    for probe in removed_probes:
+        words = probe[3]
+        if not words:
+            continue
+        shared = collections.Counter()
+        for word in words:
+            for index in added_by_word.get(word, ()):
+                shared[index] += 1
+        if not shared:
+            continue
+        index, count = max(shared.items(), key=lambda item: (item[1], -item[0]))
+        rewrite = added_probes[index]
+        if count / len(words) <= REWRITE_SHARE:
+            continue
+        dropped = words - rewrite[3]
+        if not dropped:
+            continue
+        rewrites += 1
+        for phrase in dropped_phrases(tokens(probe[2]), set(tokens(rewrite[2])), dropped):
+            wanted.setdefault(phrase, probe)
+
+    stale = {}
+    if wanted:
+        for path, text in tree.items():
+            lines_added = added.get(path, ())
+            lines = text.split("\n")
+            stream = [(word, number) for number, line in enumerate(lines, 1) for word in tokens(line)]
+            words = [word for word, _ in stream]
+            for first in range(len(stream) - PHRASE_WORDS + 1):
+                phrase = tuple(words[first: first + PHRASE_WORDS])
+                number = stream[first][1]
+                if phrase in wanted and number not in lines_added:
+                    stale.setdefault((path, number), (lines[number - 1].strip(), " ".join(phrase), wanted[phrase]))
+    return rewrites, stale
 
 
 main()
