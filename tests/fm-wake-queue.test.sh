@@ -2927,6 +2927,71 @@ test_malformed_presentation_lock_reports_acquire_failure() {
   pass "malformed presentation locks report acquire failure instead of contention"
 }
 
+# A deadline that lands during a handover between other holders is contention,
+# not an unsafe acquire: the owner read after the final failed try can find a
+# successor that has claimed the lock without yet writing its pid, or name the
+# previous holder after it exited.
+test_bounded_deadline_during_handover_reports_contention() {
+  local dir state lock out err rc successor_pid
+  dir=$(make_case bounded-deadline-handover)
+  state="$dir/state"
+  out="$dir/drain.out"
+  err="$dir/drain.err"
+
+  append_wake "$state" signal task.status "signal: $state/task.status" \
+    || fail "could not seed the handover wake"
+  mkdir "$state/.wake-queue.lock" || fail "could not stage the pidless successor claim"
+  rc=0
+  FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=30 FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 \
+    "$DRAIN" > "$out" 2> "$err" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a pidless successor claim made the drain exit $rc: $(cat "$err")"
+  grep -F 'WAKE DRAIN SKIPPED: queue lock remains held by live pid unknown' "$out" >/dev/null \
+    || fail "a pidless successor claim was not reported as contention"
+  if grep -F 'queue lock could not be acquired safely' "$err" >/dev/null; then
+    fail "a pidless successor claim was reported as an unsafe acquire"
+  fi
+  grep "$(printf '\tsignal\t')" "$state/.wake-queue" >/dev/null \
+    || fail "the skipped drain changed the durable wake"
+  rmdir "$state/.wake-queue.lock"
+
+  lock="$state/.fixture.lock"
+  sleep 30 &
+  successor_pid=$!
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    lock=$2 successor=$3
+    sleep 30 &
+    previous=$!
+    mkdir "$lock" && printf "%s\n" "$previous" > "$lock/pid" || exit 20
+    eval "_fixture_real_try() $(declare -f fm_lock_try_acquire | tail -n +2)"
+    tries=0
+    # The parent tries once before the timed helper and once after it; the
+    # previous holder exits after that second try fails, and the successor
+    # claims the lock only after the owner read has seen the dead pid.
+    fm_lock_try_acquire() {
+      tries=$((tries + 1))
+      if [ "$tries" -eq 3 ]; then
+        printf "%s\n" "$successor" > "$lock/pid"
+      fi
+      _fixture_real_try "$@" && return 0
+      if [ "$tries" -eq 2 ]; then
+        kill "$previous"
+        wait "$previous" 2>/dev/null
+      fi
+      return 1
+    }
+    fm_lock_acquire_wait_bounded "$lock" 1
+    rc=$?
+    [ "$rc" -eq 124 ] || exit "$rc"
+    [ "$FM_LOCK_HELD_PID" = "$successor" ] || exit 21
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" "$successor_pid" || rc=$?
+  kill "$successor_pid" 2>/dev/null || true
+  wait "$successor_pid" 2>/dev/null || true
+  [ "$rc" -eq 0 ] || fail "a holder handover at the deadline did not report the successor as contention (rc=$rc)"
+  pass "a bounded acquire deadline during a holder handover reports contention"
+}
+
 # The owned-append ledger is wake-only: it must never withhold a captain-facing
 # turn-ended annotation. An in-flight watcher classification that commits after
 # this home's own close regresses the classified offset behind the owned bytes -
@@ -3575,6 +3640,7 @@ test_subshell_lock_ownership_without_bashpid
 test_bounded_lock_handoff_after_contention
 test_live_presentation_holder_is_deadlined_without_weakening_ack
 test_malformed_presentation_lock_reports_acquire_failure
+test_bounded_deadline_during_handover_reports_contention
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once
 test_secondmate_declared_pause_rows_do_not_feed_stall_escalation
 test_secondmate_reprovisioned_queue_starts_a_fresh_interval
