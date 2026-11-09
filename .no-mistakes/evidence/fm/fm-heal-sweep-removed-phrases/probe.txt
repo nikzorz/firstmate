@@ -1,0 +1,4 @@
+restatement sweep: 2 changed sentences in 1 files since main (2d7bd0b2d9d5); 0 candidate restatements
+removed-phrase grep: 1 rewritten sentences; 1 stale? lines
+stale? s/w.gd:1: # Granted boons come back the older
+  keeps "the older first" from - s/p.gd:1: Returns the granted boons held by the player, in the order it took them, the older first.
