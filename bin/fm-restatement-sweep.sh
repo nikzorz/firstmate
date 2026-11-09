@@ -453,9 +453,9 @@ def dropped_phrase_hits(probes, tree, added):
     """Grep the tree for the phrases each rewritten sentence lost.
 
     A removed sentence is rewritten when an added sentence holds most of its
-    words; each run of three of its words that holds a word the rewrite
-    dropped, and that the rewrite does not repeat, is a phrase whose other
-    copies may still state the old claim.
+    words; each run of three of its words that holds a word no added
+    sentence of the rewrite's file kept, and that none of them repeats, is a
+    phrase whose other copies may still state the old claim.
     """
     removed_probes = [p for p in probes if p[4] == "-"]
     added_probes = [p for p in probes if p[4] == "+"]
