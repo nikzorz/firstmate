@@ -1,0 +1,9 @@
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 1027086.1794238463.zisUL9
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0
+ok - bounded acquire hands ownership to the waiting caller after contention
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0
+ok - bounded acquire hands ownership to the waiting caller after contention
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0

@@ -1,0 +1,9 @@
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 32 --recovery-generation 828347.1794238322.7OruFt
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 20 --recovery-generation 917233.1794238382.UraEty
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 979067.1794238425.pmZqhu
+ok - concurrent append plus drain preserves durable records through acknowledgement
+rc=0
