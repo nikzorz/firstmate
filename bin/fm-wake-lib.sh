@@ -1389,8 +1389,9 @@ _fm_lock_acquire_wait_handoff() {  # <lockdir> <caller-pid>
 # fm_lock_acquire_wait_bounded <lockdir> <positive-seconds>
 #
 # Bounded acquire variant. It preserves the ordinary wait/reclaim behavior
-# until fm-timeout-lib.sh's hard deadline, returns 124 when a live holder still
-# owns the lock, and leaves FM_LOCK_HELD_PID naming that holder.
+# until fm-timeout-lib.sh's hard deadline, returns 124 when another holder still
+# owns or is claiming the lock, and leaves FM_LOCK_HELD_PID naming that holder
+# (empty for a claim that has not yet written its pid).
 # Use it where a caller must refuse rather than block: wake presentation, and
 # the guarded remote link clear, whose whole contract is to return a
 # reconciliation refusal instead of wedging an unattended close.
@@ -1429,21 +1430,62 @@ fm_lock_acquire_wait_bounded() {
     return 0
   fi
   if [ "$rc" -eq 124 ]; then
-    owner_pid=$(cat "$lockdir/pid" 2>/dev/null || true)
-    case "$owner_pid" in
-      ''|*[!0-9]*|0) ;;
-      *)
-        if [ "$owner_pid" -gt 0 ] 2>/dev/null && fm_pid_alive "$owner_pid"; then
-          FM_LOCK_HELD_PID=$owner_pid
-          return 124
-        fi
-        ;;
-    esac
+    # That try can lose to a handover between other holders: the holder it saw
+    # releases before the owner read, which then names a dead process, or a
+    # successor has claimed the lock without yet writing its pid. One more try
+    # takes a lock the handover left free, and a successor still mid-acquire
+    # is contention rather than an unsafe lock.
+    if _fm_lock_bounded_contended "$lockdir"; then
+      return 124
+    fi
+    if fm_lock_try_acquire "$lockdir"; then
+      return 0
+    fi
+    if _fm_lock_bounded_contended "$lockdir"; then
+      return 124
+    fi
     # shellcheck disable=SC2034 # Output read by callers after bounded acquisition.
     FM_LOCK_HELD_PID=
     return 1
   fi
   return "$rc"
+}
+
+# Contention, for a bounded acquire past its deadline, is a live owner, a
+# fresh lock directory or link whose owner has not yet written its pid, or a
+# live steal-mutex holder mid-way through reclaiming the lock; any other lock
+# path is malformed rather than mid-acquire.
+_fm_lock_bounded_contended() {  # <lockdir>
+  local lockdir=$1 owner_pid stealer_pid
+  owner_pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  case "$owner_pid" in
+    '')
+      if { [ -d "$lockdir" ] || [ -L "$lockdir" ]; } \
+        && fm_lock_mid_acquire_is_fresh "$lockdir" "$owner_pid"; then
+        FM_LOCK_HELD_PID=
+        return 0
+      fi
+      ;;
+    *[!0-9]*|0) ;;
+    *)
+      if [ "$owner_pid" -gt 0 ] 2>/dev/null && fm_pid_alive "$owner_pid"; then
+        FM_LOCK_HELD_PID=$owner_pid
+        return 0
+      fi
+      ;;
+  esac
+  stealer_pid=$(cat "$lockdir.steal/pid" 2>/dev/null || true)
+  case "$stealer_pid" in
+    ''|*[!0-9]*|0) ;;
+    *)
+      if fm_pid_alive "$stealer_pid"; then
+        # shellcheck disable=SC2034 # Output read by callers after bounded acquisition.
+        FM_LOCK_HELD_PID=$stealer_pid
+        return 0
+      fi
+      ;;
+  esac
+  return 1
 }
 
 fm_lock_release() {

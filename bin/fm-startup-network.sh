@@ -109,7 +109,7 @@
 # aggregate deadline covering both the inactive-outcome scan and network sweeps
 # plus every lock the worker waits on before them.
 # Publication and delivery are bounded the same way by FM_SESSION_START_TIMEOUT.
-# A lock that a live process still holds at either deadline ends the worker with
+# A lock that another holder still holds at either deadline ends the worker with
 # a failed record naming that holder and the rerun command, never a wait that
 # outlives the budget with its output discarded.
 # Hitting the bound is reported as an actionable NETWORK_CHECKS: line, never as
@@ -190,8 +190,8 @@ seconds_until() {  # <deadline-epoch>
 }
 
 # Every lock this script takes goes through here: bounded by the caller's
-# remaining budget, 124 when a live holder still owns it at the deadline
-# (FM_LOCK_HELD_PID names it). An unbounded wait here is what let a wedged
+# remaining budget, with fm_lock_acquire_wait_bounded's contention result at
+# the deadline. An unbounded wait here is what let a wedged
 # harvest keep the detached worker alive for hours past its own timeout.
 take_lock() {  # <lockdir> <seconds>
   fm_lock_acquire_wait_bounded "$1" "$2"
