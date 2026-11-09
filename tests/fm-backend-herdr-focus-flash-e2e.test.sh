@@ -296,14 +296,32 @@ done
 # A short proof budget keeps the exhausted-proof path fast; the count below is
 # what proves the proof was exhausted rather than skipped.
 C_PROOF_POLLS=3
+# On a defective release the wrong-focus window spans only the few CLI calls
+# between the explicit close and the backstop's corrective tab focus, so a
+# descheduled sampler can miss it entirely. The wrapper therefore holds that
+# corrective focus until two more samples land after the close: the sample in
+# flight when the close returned may have read focus before it.
+C_CLOSE_MARK="$TMP_ROOT/close-c.mark"
 C_OUT=$(PATH="$FAKEBIN:$HERDR_ORIGINAL_PATH" FM_FLASH_CALL_LOG="$C_CALL_LOG" \
+  FM_FLASH_SAMPLES="$C_FOCUS_SAMPLES" FM_FLASH_CLOSE_MARK="$C_CLOSE_MARK" \
   FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS="$C_PROOF_POLLS" bash -c '
   . "$1/bin/backends/herdr.sh"
   fm_backend_herdr_cli() {
-    local session=$1
+    local session=$1 status=0 closed_at waited=0
     shift
     printf "%s\n" "$*" >> "$FM_FLASH_CALL_LOG"
-    HERDR_SESSION="$session" herdr "$@" --session "$session"
+    if [ "${1:-} ${2:-}" = "tab focus" ] && [ -s "$FM_FLASH_CLOSE_MARK" ]; then
+      read -r closed_at < "$FM_FLASH_CLOSE_MARK"
+      while [ "$(wc -l < "$FM_FLASH_SAMPLES")" -lt $((closed_at + 2)) ] && [ "$waited" -lt 200 ]; do
+        sleep 0.05
+        waited=$((waited + 1))
+      done
+    fi
+    HERDR_SESSION="$session" herdr "$@" --session "$session" || status=$?
+    if [ "$status" -eq 0 ] && [ "${1:-} ${2:-}" = "pane close" ]; then
+      wc -l < "$FM_FLASH_SAMPLES" > "$FM_FLASH_CLOSE_MARK"
+    fi
+    return "$status"
   }
   fm_backend_herdr_projection_close_pane_focus_preserving "$2" "$3"
 ' _ "$ROOT" "$HERDR_LAB_SESSION" "$C_DOOMED_PANE" 2>&1)
@@ -340,6 +358,8 @@ if [ "$STEAL_LIVE" = 1 ]; then
   # explicitly accepted here, but only as a BOUNDED one: the restore backstop
   # must have put the anchor back exactly, and the whole exposure must end with
   # the operation rather than parking the captain somewhere else.
+  grep -q '^tab focus' "$C_CALL_LOG" \
+    || fail 'Part C reached the fallback on a defective release but the close never moved focus, so the restore backstop never fired'
   [ "$C_WRONG" -ge 1 ] \
     || fail 'Part C reached the fallback on a defective release but observed no wrong-focus sample at all, so the sampler proved nothing'
   pass "fallback on a defective release: a bounded wrong-focus window of $C_WRONG samples was fully restored to the anchor"
