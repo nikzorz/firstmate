@@ -1521,8 +1521,9 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       ;;
     bin/fm-watch.sh)
-      # The coverage-park wake reads the merge guard's own no-mistakes fixture,
-      # so its tests sit beside the guard's in fm-pr-merge.test.sh.
+      # The coverage-park and same-theme wakes read the merge guard's own
+      # no-mistakes fixture, so their tests sit beside the guard's in
+      # fm-pr-merge.test.sh.
       printf '%s\n' watcher-wake-lock
       printf '%s\n' "__script__:fm-pr-merge.test.sh"
       ;;
@@ -1666,7 +1667,7 @@ families_for_changed_path() {
       # bin/fm-nm-findings.sh (pure-contract-unit), and through
       # bin/fm-nm-rulings-lib.sh by bin/fm-pr-merge.sh's unruled-finding guard
       # (pr-forge) and bin/fm-watch.sh (watcher-wake-lock, with its coverage-park
-      # wake tested in pr-forge).
+      # and same-theme wakes tested in pr-forge).
       printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
       printf '%s\n' watcher-wake-lock

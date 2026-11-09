@@ -32,6 +32,7 @@ A `check: coverage-park <id>: run <run> round <n> unverified <files>` wake means
 
 A validation run fixes each theme once.
 A theme is one root cause in one piece of code, such as the input cases of one heuristic, however many lines or files its findings name.
+A `check: same-theme-unreported <id>: run <run> step <step> round <n> finding <ids>` wake means the worker answered fix on a finding id an earlier round of that step already selected without recording the same-theme decision, so apply this cutoff to that theme now.
 When a run returns a finding on a theme already fixed in an earlier round of that run, stop fixing that theme: file the theme as one follow-up issue naming every round's finding on it, have the worker record it as a stated limitation in the PR body, and answer the gate leaving those findings unfixed so the run continues.
 A finding on that theme that blocks the change, as `ask-user-authority` defines blocking, escalates to the captain under that skill's step 6 instead of another fix round.
 The cutoff holds for a regression an earlier fix round introduced and for a finding that would complete a captain's ruling.

@@ -114,6 +114,7 @@ fm_episode_records_clear() {  # <state-dir> <target> <id>
       "$state/.hb-surfaced-$idkey" \
       "$state/.merge-ready-$idkey" \
       "$state/.coverage-park-$idkey" \
+      "$state/.same-theme-unreported-$idkey" \
       "$state/.seen-${idkey}_status" \
       "$state/.seen-${idkey}_turn-ended" || return 1
     # The secondmate wake-stall episode, keyed by the raw id its writers accept.
