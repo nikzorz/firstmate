@@ -174,6 +174,23 @@ test_dropped_phrase_is_found_across_a_wrap_and_on_every_line() {
   pass "a dropped phrase is listed across a comment wrap and on however many lines keep it"
 }
 
+test_phrase_wrapping_onto_an_added_line_is_skipped() {
+  local repo="$TMP_ROOT/wrap-added" out
+  new_repo "$repo"
+  mkdir -p "$repo/s"
+  printf '# Granted Boons come back in the order it took them, the older first today.\n' >"$repo/s/p.gd"
+  printf '# Notes on boons follow and keep the\n# end.\n' >"$repo/s/q.gd"
+  commit_all "$repo" 'hold boons oldest first'
+  git -C "$repo" branch -f main
+  printf '# Granted Boons come back in the order it took them, the lead first today.\n' >"$repo/s/p.gd"
+  printf '# Notes on boons follow and keep the\n# older first order for ties.\n# end.\n' >"$repo/s/q.gd"
+  commit_all "$repo" 'hold boons lead first'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a rewrite: $out"
+  printf '%s\n' "$out" | grep -q '^stale? s/q.gd:' \
+    && fail "a phrase the diff added was listed because it wraps from the line above: $out"
+  pass "a phrase reaching onto a line the diff added is not listed"
+}
+
 test_split_rewrite_keeps_words_moved_to_its_other_sentence() {
   local repo="$TMP_ROOT/split" out
   new_repo "$repo"
@@ -264,6 +281,7 @@ test_removed_dash_comment_keeps_later_hunks
 test_test_paths_and_interpreter_heredocs_are_skipped
 test_rewrite_lists_lines_keeping_its_dropped_phrases
 test_dropped_phrase_is_found_across_a_wrap_and_on_every_line
+test_phrase_wrapping_onto_an_added_line_is_skipped
 test_split_rewrite_keeps_words_moved_to_its_other_sentence
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
