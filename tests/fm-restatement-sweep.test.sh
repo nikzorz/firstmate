@@ -179,14 +179,19 @@ test_split_rewrite_keeps_words_moved_to_its_other_sentence() {
   new_repo "$repo"
   printf '#!/bin/sh\n# Hits on added lines are skipped, and a phrase on more than three lines is stock wording.\n' >"$repo/a.sh"
   printf 'Note that hits on added lines are skipped here.\n' >"$repo/notes.md"
+  printf 'Any phrase repeated that often is stock wording.\n' >"$repo/style.md"
   commit_all "$repo" 'one sentence'
   git -C "$repo" branch -f main
-  printf '#!/bin/sh\n# Hits on added lines are skipped.\n# A phrase on more than three lines is stock wording.\n' >"$repo/a.sh"
+  printf '#!/bin/sh\n# Hits on added lines are skipped.\n# A phrase on more than three added lines is house wording.\n' >"$repo/a.sh"
   commit_all "$repo" 'split sentence'
   out=$(sweep "$repo" --base main) || fail "sweep exited $? on a split rewrite: $out"
   printf '%s\n' "$out" | grep -q '^stale? notes.md:' \
     && fail "a line keeping a claim the split rewrite still states was listed: $out"
-  pass "a split rewrite does not count words moved to its other sentence as dropped"
+  printf '%s\n' "$out" | grep -qF 'stale? style.md:1: Any phrase repeated that often is stock wording.' \
+    || fail "a line keeping a word the split rewrite dropped from its file was not listed: $out"
+  printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 1 stale? lines' \
+    || fail "the removed-phrase summary was wrong: $out"
+  pass "a split rewrite lists only words that left its file, not words moved to its other sentence"
 }
 
 test_dirty_worktree_is_refused() {
