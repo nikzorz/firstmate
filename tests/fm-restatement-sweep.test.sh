@@ -149,6 +149,31 @@ test_rewrite_lists_lines_keeping_its_dropped_phrases() {
   pass "a rewritten sentence lists the lines that keep the phrases it dropped"
 }
 
+test_dropped_phrase_is_found_across_a_wrap_and_on_every_line() {
+  local repo="$TMP_ROOT/wrapped" out n
+  new_repo "$repo"
+  mkdir -p "$repo/scripts"
+  printf '# Granted Boons come back in the order it took them, the older first today.\n' >"$repo/scripts/p.gd"
+  printf '# The granted Boons come back the older\n# first, each once.\n' >"$repo/scripts/wrap.gd"
+  for n in 1 2 3 4; do
+    printf '# Copy %s keeps its Boons the older first.\n' "$n" >"$repo/scripts/copy$n.gd"
+  done
+  commit_all "$repo" 'hold boons oldest first'
+  git -C "$repo" branch -f main
+  printf '# Granted Boons come back in the order it took them, the lead first today.\n' >"$repo/scripts/p.gd"
+  commit_all "$repo" 'hold boons lead first'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a rewrite: $out"
+  printf '%s\n' "$out" | grep -qF 'stale? scripts/wrap.gd:1: # The granted Boons come back the older' \
+    || fail "a phrase wrapped onto the next comment line was not listed at its first line: $out"
+  for n in 1 2 3 4; do
+    printf '%s\n' "$out" | grep -qF "stale? scripts/copy$n.gd:1:" \
+      || fail "copy $n of a phrase kept on four lines was not listed: $out"
+  done
+  printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 5 stale? lines' \
+    || fail "the removed-phrase summary was wrong: $out"
+  pass "a dropped phrase is listed across a comment wrap and on however many lines keep it"
+}
+
 test_dirty_worktree_is_refused() {
   local repo="$TMP_ROOT/dirty" out rc
   new_repo "$repo"
@@ -218,6 +243,7 @@ test_two_new_copies_are_listed
 test_removed_dash_comment_keeps_later_hunks
 test_test_paths_and_interpreter_heredocs_are_skipped
 test_rewrite_lists_lines_keeping_its_dropped_phrases
+test_dropped_phrase_is_found_across_a_wrap_and_on_every_line
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
 test_default_base_resolution

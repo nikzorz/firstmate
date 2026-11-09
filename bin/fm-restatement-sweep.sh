@@ -40,10 +40,10 @@
 # of that claim elsewhere then shares too few words to resemble the new text.
 # So a removed sentence whose closest added sentence holds most of its words
 # is a rewrite, and each three-word phrase of the removed sentence that holds
-# a word the rewrite dropped is grepped for, line by line, across every
-# tracked text file at HEAD, test paths included. A hit on a line the diff
-# added is not listed, and a phrase found on more than three lines is stock
-# wording rather than a claim. This grep does not catch a claim falsified
+# a word the rewrite dropped is grepped for across every tracked text file at
+# HEAD, test paths included, over each file's words joined across lines so a
+# phrase a comment wraps is still found; a hit is reported at the line of its
+# first word, and is not listed when the diff added that line. This grep does not catch a claim falsified
 # with no sentence removed, nor stale lines a later pipeline fix round
 # creates, because the sweep runs before validation.
 #
@@ -119,8 +119,6 @@ COMMON_SHARE = 0.05
 # words was rewritten rather than retired.
 REWRITE_SHARE = 0.5
 PHRASE_WORDS = 3
-# A dropped phrase found on more lines than this is stock wording, not a claim.
-MAX_PHRASE_HITS = 3
 
 STOP = set("""
 a an the and or but if then else of to in on at by for with from as is are was were be been being it its this
@@ -424,10 +422,6 @@ def tokens(text):
     return [word.lower() for word in WORD.findall(text)]
 
 
-def trigrams(sequence):
-    return {tuple(sequence[i: i + PHRASE_WORDS]) for i in range(len(sequence) - PHRASE_WORDS + 1)}
-
-
 def dropped_phrases(old, new_words, dropped):
     """Yield the phrases of old that the rewrite lost.
 
@@ -493,22 +487,18 @@ def dropped_phrase_hits(probes, tree, added):
         for phrase in dropped_phrases(tokens(probe[2]), set(tokens(rewrite[2])), dropped):
             wanted.setdefault(phrase, probe)
 
-    hits = collections.defaultdict(list)
+    stale = {}
     if wanted:
         for path, text in tree.items():
             lines_added = added.get(path, ())
-            for number, line in enumerate(text.split("\n"), 1):
-                if number in lines_added:
-                    continue
-                for phrase in trigrams(tokens(line)) & wanted.keys():
-                    hits[phrase].append((path, number, line.strip()))
-
-    stale = {}
-    for phrase, found in hits.items():
-        if len(found) > MAX_PHRASE_HITS:
-            continue
-        for path, number, line in found:
-            stale.setdefault((path, number), (line, " ".join(phrase), wanted[phrase]))
+            lines = text.split("\n")
+            stream = [(word, number) for number, line in enumerate(lines, 1) for word in tokens(line)]
+            words = [word for word, _ in stream]
+            for first in range(len(stream) - PHRASE_WORDS + 1):
+                phrase = tuple(words[first: first + PHRASE_WORDS])
+                number = stream[first][1]
+                if phrase in wanted and number not in lines_added:
+                    stale.setdefault((path, number), (lines[number - 1].strip(), " ".join(phrase), wanted[phrase]))
     return rewrites, stale
 
 
