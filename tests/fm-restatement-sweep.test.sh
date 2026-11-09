@@ -188,6 +188,8 @@ test_phrase_wrapping_onto_an_added_line_is_skipped() {
   out=$(sweep "$repo" --base main) || fail "sweep exited $? on a rewrite: $out"
   printf '%s\n' "$out" | grep -q '^stale? s/q.gd:' \
     && fail "a phrase the diff added was listed because it wraps from the line above: $out"
+  printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 0 stale? lines' \
+    || fail "the removed-phrase summary was wrong: $out"
   pass "a phrase reaching onto a line the diff added is not listed"
 }
 
