@@ -43,7 +43,7 @@
 # a word no added sentence of the rewrite's file kept is grepped for across every tracked text file at
 # HEAD, test paths included, over each file's words joined across lines so a
 # phrase a comment wraps is still found; a hit is reported at the line of its
-# first word, and is not listed when the diff added that line. This grep does not catch a claim falsified
+# first word, and is not listed when the diff added any of the phrase's lines. This grep does not catch a claim falsified
 # with no sentence removed, nor stale lines a later pipeline fix round
 # creates, because the sweep runs before validation.
 #
@@ -501,7 +501,7 @@ def dropped_phrase_hits(probes, tree, added):
             for first in range(len(stream) - PHRASE_WORDS + 1):
                 phrase = tuple(words[first: first + PHRASE_WORDS])
                 number = stream[first][1]
-                if phrase in wanted and number not in lines_added:
+                if phrase in wanted and not any(stream[first + k][1] in lines_added for k in range(PHRASE_WORDS)):
                     stale.setdefault((path, number), (lines[number - 1].strip(), " ".join(phrase), wanted[phrase]))
     return rewrites, stale
 
