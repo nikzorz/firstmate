@@ -40,7 +40,7 @@
 # of that claim elsewhere then shares too few words to resemble the new text.
 # So a removed sentence whose closest added sentence holds most of its words
 # is a rewrite, and each three-word phrase of the removed sentence that holds
-# a word the rewrite dropped is grepped for across every tracked text file at
+# a word no added sentence of the rewrite's file kept is grepped for across every tracked text file at
 # HEAD, test paths included, over each file's words joined across lines so a
 # phrase a comment wraps is still found; a hit is reported at the line of its
 # first word, and is not listed when the diff added that line. This grep does not catch a claim falsified
@@ -453,9 +453,9 @@ def dropped_phrase_hits(probes, tree, added):
     """Grep the tree for the phrases each rewritten sentence lost.
 
     A removed sentence is rewritten when an added sentence holds most of its
-    words; each run of three of its words that holds a word the rewrite
-    dropped, and that the rewrite does not repeat, is a phrase whose other
-    copies may still state the old claim.
+    words; each run of three of its words that holds a word no added
+    sentence of the rewrite's file kept, and that none of them repeats, is a
+    phrase whose other copies may still state the old claim.
     """
     removed_probes = [p for p in probes if p[4] == "-"]
     added_probes = [p for p in probes if p[4] == "+"]
@@ -480,11 +480,15 @@ def dropped_phrase_hits(probes, tree, added):
         rewrite = added_probes[index]
         if count / len(words) <= REWRITE_SHARE:
             continue
-        dropped = words - rewrite[3]
+        # A rewrite that splits a sentence moves words into its file's other
+        # added sentences, so those words are kept, not dropped.
+        siblings = [p for p in added_probes if p[0] == rewrite[0]]
+        dropped = words.difference(*(p[3] for p in siblings))
         if not dropped:
             continue
         rewrites += 1
-        for phrase in dropped_phrases(tokens(probe[2]), set(tokens(rewrite[2])), dropped):
+        new_words = set().union(*(tokens(p[2]) for p in siblings))
+        for phrase in dropped_phrases(tokens(probe[2]), new_words, dropped):
             wanted.setdefault(phrase, probe)
 
     stale = {}
