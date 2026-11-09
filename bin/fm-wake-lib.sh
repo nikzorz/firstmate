@@ -1479,6 +1479,7 @@ _fm_lock_bounded_contended() {  # <lockdir>
     ''|*[!0-9]*|0) ;;
     *)
       if fm_pid_alive "$stealer_pid"; then
+        # shellcheck disable=SC2034 # Output read by callers after bounded acquisition.
         FM_LOCK_HELD_PID=$stealer_pid
         return 0
       fi
