@@ -387,7 +387,7 @@ test_gate_fix_ruling_requires_property_line() {
   [ "$rc" -ne 0 ] || fail "a fix ruling with no Property: line should refuse"
   assert_contains "$(cat "$err")" '"Property:"' "the refusal should name the missing Property: line"
   assert_contains "$(cat "$err")" "ask-user-authority step 5" "the refusal should name the rule it enforces"
-  assert_contains "$(cat "$err")" "saying it rules none" "the refusal should name the Property: escape for a message that only mentions a fix"
+  assert_contains "$(cat "$err")" 'the line "Property: none"' "the refusal should name the Property: escape for a message that only mentions a fix"
   [ ! -d "$home/state/t1.inbox" ] || fail "a refused fix ruling still enqueued an inbox record"
   if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
     fail "a refused fix ruling still closed the decision: $(cat "$home/state/t1.status")"
@@ -1192,6 +1192,14 @@ test_gate_reclose_keeps_saved_ruling() {
     $'Rerun only, as already sent to the fix round.\nProperty: none - rules no new fix.'; rc=$?
   expect_code 0 "$rc" "a re-close that mentions the fix round should send"
   assert_equals "$first" "$(cat "$file")" "a re-close that mentions fix but names no property must not replace the saved ruling"
+
+  for msg in $'Rerun only, as already sent to the fix round.\nProperty: None - rules no new fix.' \
+    $'Rerun only, as already sent to the fix round.\nProperty: none (re-close)'; do
+    printf 'needs-decision [at=2] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' >> "$home/state/t1.status"
+    run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "$msg"; rc=$?
+    expect_code 0 "$rc" "a re-close whose Property: line rules none should send: $msg"
+    assert_equals "$first" "$(cat "$file")" "a re-close ruling none in any case or punctuation must not replace the saved ruling: $msg"
+  done
 
   rerun=$'Corrected ruling for round 4: rerun the review step on the current head.\nProperty: the review covers every changed file; derive them from the diff.\nDependents: none - nothing is edited.'
   printf 'needs-decision [at=2] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' >> "$home/state/t1.status"

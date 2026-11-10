@@ -658,7 +658,7 @@ fm_send_rules_fix() { # <answer-text>
 
 fm_send_names_property() { # <answer-text>
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
+    /^[[:space:]]*Property:[[:space:]]*[Nn][Oo][Nn][Ee][[:space:]]*([^[:alnum:]_[:space:]]|$)/ { next }
     /^[[:space:]]*Property:[[:space:]]*[^[:space:]]/ { found = 1 }
     END { exit !found }'
 }
@@ -788,12 +788,12 @@ if [ -n "$RESOLVE_KEYS" ]; then
     case "$k" in nm-*) ;; *) continue ;; esac
     fm_send_rules_fix "$*" || continue
     printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' || {
-      echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent." >&2
+      echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry the line \"Property: none\", optionally followed by punctuation and a reason, such as \"Property: none - rules no new fix\". Nothing was sent." >&2
       exit 1
     }
     printf '%s\n' "$*" | awk '
       awaiting { if ($0 !~ /^[[:space:]]*$/) { if ($0 !~ /^[[:space:]]*Dependents:[[:space:]]*[^[:space:]]/ || tolower($0) ~ /^[[:space:]]*dependents:[[:space:]]*none[^[:alnum:]]*$/) exit 1; awaiting = 0 } next }
-      /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
+      /^[[:space:]]*Property:[[:space:]]*[Nn][Oo][Nn][Ee][[:space:]]*([^[:alnum:]_[:space:]]|$)/ { next }
       /^[[:space:]]*Property:/ { awaiting = 1 }
       END { if (awaiting) exit 1 }' && continue
     echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling whose Property: line is not followed by a line beginning \"Dependents:\"; name what reads or depends on the value the property changes, or write \"Dependents: none - <reason>\" (ask-user-authority step 5). Nothing was sent." >&2
