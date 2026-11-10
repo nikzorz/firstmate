@@ -955,17 +955,23 @@ test_abandoned_claim_reclaim_reaps_dead_steal_without_nesting() {
   pid=$!
   record_autoarm_owner "$dir" "$pid"
   record_autoarm_epoch "$dir" 464 "$pid" rewake
+  # The holder reports a finished claim itself: the mutex's pid file is
+  # visible while fm_lock_try_create is still rewriting it, and a holder
+  # killed inside that rewrite leaves an empty pid, which the reaper rightly
+  # treats as a fresh mid-acquire mutex rather than a dead owner.
   FM_STATE_OVERRIDE="$dir/state" bash -c '
     . "$1"
     fm_lock_try_create "$2" || exit 7
+    : > "$3"
     exec sleep 30
-  ' _ "$dir/bin/fm-wake-lib.sh" "$dir/state/.claude-autoarm.lock.steal" >/dev/null 2>&1 &
+  ' _ "$dir/bin/fm-wake-lib.sh" "$dir/state/.claude-autoarm.lock.steal" "$dir/steal-held" >/dev/null 2>&1 &
   holder=$!
   i=0
-  while [ "$i" -lt 50 ] && [ ! -s "$dir/state/.claude-autoarm.lock.steal/pid" ]; do
+  while [ "$i" -lt 500 ] && [ ! -e "$dir/steal-held" ]; do
     sleep 0.02
     i=$((i + 1))
   done
+  [ -e "$dir/steal-held" ] || fail "fixture holder never finished claiming the steal mutex"
   kill -KILL "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   assert_present "$dir/state/.claude-autoarm.lock.steal" "fixture did not leave a dead-owner steal mutex"
