@@ -143,6 +143,12 @@
 #                          selected, and no same-theme decision line names that
 #                          round (same_theme_tick below), raised once per run,
 #                          step, and round
+#   check: relay-dropped <id>: run <run> step <step> round <n> instructions lack the relayed ruling
+#                          a no-mistakes ship task's fix round was started with
+#                          instructions that lack the ruling firstmate relayed
+#                          for it, the gap the merge guard refuses over
+#                          (relay_dropped_tick below), raised once per run,
+#                          step, and round while the run can still be steered
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -348,6 +354,8 @@ COVERAGE_PARK_INTERVAL=${FM_COVERAGE_PARK_INTERVAL:-30}  # seconds between cover
 case "$COVERAGE_PARK_INTERVAL" in ''|*[!0-9]*) COVERAGE_PARK_INTERVAL=30 ;; esac
 SAME_THEME_INTERVAL=${FM_SAME_THEME_INTERVAL:-30}  # seconds between same-theme reads
 case "$SAME_THEME_INTERVAL" in ''|*[!0-9]*) SAME_THEME_INTERVAL=30 ;; esac
+RELAY_DROPPED_INTERVAL=${FM_RELAY_DROPPED_INTERVAL:-30}  # seconds between relayed-ruling reads
+case "$RELAY_DROPPED_INTERVAL" in ''|*[!0-9]*) RELAY_DROPPED_INTERVAL=30 ;; esac
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2466,6 +2474,40 @@ same_theme_tick() {
   done
 }
 
+# Relayed-ruling notice for a no-mistakes ship task. The merge guard refuses a
+# round whose stored fix instructions lack the ruling firstmate relayed for it,
+# but by merge time the fix round is long past and only an attended
+# --accept-relay clears it. Running the merge guard's own comparison
+# (fm_nm_relay_mismatches) as soon as the round records its instructions lets
+# firstmate steer while the run is live.
+# .relay-dropped-<id key> holds every `<run> <step> <round>` already raised, so
+# one round yields one wake. It is appended after the wake record, as
+# everywhere else here: a record written ahead of a failed append would swallow
+# the retry.
+# A remote secondmate's run lives on its own host and is never read here.
+relay_dropped_tick() {
+  local meta id record round run step n reason
+  [ "$(age_of "$STATE/.last-relay-dropped")" -ge "$RELAY_DROPPED_INTERVAL" ] || return 0
+  touch "$STATE/.last-relay-dropped"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(fm_meta_get "$meta" kind)" = ship ] || continue
+    [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+    id=$(basename "$meta" .meta)
+    fm_nm_relay_mismatches "$id" "$STATE" "${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+    record="$STATE/.relay-dropped-$(fm_episode_key "$id")"
+    while IFS= read -r round; do
+      [ -n "$round" ] || continue
+      IFS=: read -r run step n <<< "$round"
+      grep -qxF "$run $step $n" "$record" 2>/dev/null && continue
+      reason="check: relay-dropped $id: run $run step $step round $n instructions lack the relayed ruling"
+      fm_wake_append check "relay-dropped-$id-$run-$step-$n" "$reason" || exit 1
+      printf '%s %s %s\n' "$run" "$step" "$n" >> "$record"
+      wake "$reason"
+    done <<< "$FM_NM_RELAY_ROUNDS"
+  done
+}
+
 # Layer 2 + 3 signal scan: status files and turn-end markers.
 # Each file is compared against its persisted reported signature in .seen-* rather
 # than mtime-vs-a-startup-touch, so signals that land while no watcher is running
@@ -3435,6 +3477,7 @@ EOF
   merge_ready_tick
   coverage_park_tick
   same_theme_tick
+  relay_dropped_tick
 
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end

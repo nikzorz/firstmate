@@ -1521,7 +1521,7 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       ;;
     bin/fm-watch.sh)
-      # The coverage-park and same-theme wakes read the merge guard's own
+      # The coverage-park, same-theme and relay-dropped wakes read the merge guard's own
       # no-mistakes fixture, so their tests sit beside the guard's in
       # fm-pr-merge.test.sh.
       printf '%s\n' watcher-wake-lock

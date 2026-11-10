@@ -26,6 +26,8 @@ The worker preserves the run head, aborts, rebuilds from the base branch rather 
 
 An ask-user finding returns as `needs-decision`; firstmate loads `ask-user-authority` and either decides or escalates per that skill.
 Send the same worker one exact decision naming the decision key, step, action, affected finding IDs, instructions where needed, and exact response command, passing `--resolve-key` so the worker's open decision record closes at answer time; every fact it states about the branch, main or the run is one you checked this turn against the pull request's file list, `git log`, or the run's record, or it is left out.
+For a local worker's pipeline gate whose `needs-decision` line carries `round=`, the message is the ruling the fix round reads, so leave the response command out and put stop rules and report-blocked conditions in `--worker-note` instead; `bin/fm-send.sh` saves the ruling for that round and ends the steer with those notes and the response command (its header owns which answer a round keeps).
+A `check: relay-dropped <id>: run <run> step <step> round <n> instructions lack the relayed ruling` wake means that fix round started with instructions lacking the ruling you sent, the gap the merge refuses over: while the run is live, check what the round applies against the whole ruling and steer the worker to carry any missing part at its next gate.
 A fix instruction never asks the round to merge, rebase or reset; a round that needs main's state reads it in a throwaway merged copy and commits only the fix.
 Require the matching `resolved` event, forbid `--yes`, and require the worker to process every synchronous return until completion or a genuinely new escalation.
 Resume fleet supervision immediately after the decision lands.

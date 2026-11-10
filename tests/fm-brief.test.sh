@@ -655,8 +655,10 @@ test_no_mistakes_dod_relays_ruling_verbatim() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "passing the ruling message's body verbatim as \`--instructions\` whenever it answers fix" "$brief" \
+  assert_grep "passing the ruling verbatim as the instructions whenever you answer fix" "$brief" \
     "no-mistakes DOD lets the worker reword a relayed ruling"
+  assert_grep "answer fix with the exact respond command it ends with, filling in only the two finding lists" "$brief" \
+    "no-mistakes DOD does not send the worker to the respond command a ruling ends with"
   # shellcheck disable=SC2016  # single quotes are deliberate: the command must stay literal
   assert_grep '--instructions "$(sed '"'"'1,/^--$/d'"'"' <the ruling'"'"'s message file in your steering inbox>)"' "$brief" \
     "no-mistakes DOD does not show how to pass the ruling body"

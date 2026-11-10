@@ -5552,6 +5552,107 @@ test_relay_check_pairs_only_the_line_that_closed_the_round() {
   pass "fm-pr-merge pairs a round only with the close of its own key and the steer enqueued by that close"
 }
 
+NM_RUN_2711=01M704XG1PZE7MZXGRAYRBETNR
+NM_2711_KEY=nm-$NM_RUN_2711-lint
+# Run 01M704XG1PZE7MZXGRAYRBETNR lint round 1: firstmate's ruling of a rerun
+# with no code change, and the instructions the worker passed in its place.
+NM_2711_STEER='Property: this ruling rules no code change.
+Dependents: none - nothing is edited.
+lint-1 is environmental (shared /tmp tmpfs full), not a code finding. Do not approve the step on local evidence and do not delete other lanes'"'"' /tmp clones. Rerun the lint step so gd_mutants checks out under a TMPDIR on disk (not tmpfs); if the pipeline cannot take that TMPDIR, report blocked with the exact failure.'
+NM_2711_PARAPHRASE="Scope: lint-1 was the shared /tmp running out of space during gd_mutants' checkout, not a code finding. Edit no file and run nothing yourself; let the step rerun its own commands."
+
+# Run 01M704XG1PZE7MZXGRAYRBETNR's lint round 1 as the fix round stored it.
+# Args: case_dir instructions
+write_nm_lint_2711() {
+  write_nm_db "$1" "$(jq -nc --arg run "$NM_RUN_2711" --arg text "$2" '
+    {run: $run, steps: [
+      {name: "lint", order: 2, rounds: [
+        {round: 1, source: "user", selected: ["lint-1"], instructions_key: "driver_instructions",
+         instructions: {"lint-1": $text}, findings: [["lint-1", "", ""]]}]}]}')"
+}
+
+write_nm_lint_2711_gate_line() {  # <case_dir> <epoch>
+  printf 'needs-decision [at=%s] [key=%s]: ask-user round=1 findings=lint-1 file=%s\n' \
+    "$2" "$NM_2711_KEY" "$1/home/data/task-x1/nm-$NM_RUN_2711-findings.txt" >> "$1/state/task-x1.status"
+}
+
+# Sends a ruling to task-x1 through the real fm-send, as firstmate answers a
+# gate. Args: case_dir fm-send-args...
+send_gate_ruling() {
+  local case_dir=$1 fb="$1/sendbin"
+  shift
+  mkdir -p "$fb"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fb/tmux"
+  chmod +x "$fb/tmux"
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
+    FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" task-x1 "$@" > "$case_dir/send.out" 2>&1 \
+    || fail "fm-send refused the gate ruling: $(cat "$case_dir/send.out")"
+}
+
+# The instructions a worker passes by running the respond command the steer
+# ends with: the contents of the file its --instructions-file names.
+printed_command_instructions() {  # <inbox-record>
+  local file
+  file=$(sed -n 's/^no-mistakes axi respond .* --instructions-file \(.*\) --findings .*/\1/p' "$1" | tail -1)
+  [ -n "$file" ] || fail "the steer $1 carries no respond command"
+  cat "$file"
+}
+
+# The PR 2711 lint round replayed with live supervision: the worker passed its
+# own paraphrase as the fix instructions, which the merge guard only finds at
+# merge; the same comparison now wakes firstmate as soon as the round is stored.
+test_relay_dropped_replay_wakes_while_the_run_is_live() {
+  local case_dir out
+  case_dir=$(make_case nm-2711-relay-dropped-wake)
+  write_nm_lint_2711 "$case_dir" "$NM_2711_PARAPHRASE"
+  write_nm_lint_2711_gate_line "$case_dir" 1794228202
+  mkdir -p "$case_dir/state/task-x1.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\nat=2026-11-09T12:45:13Z\n--\n%s' "$NM_2711_STEER" \
+    > "$case_dir/state/task-x1.inbox/handled/002.msg"
+  printf 'resolved [key=%s] [at=1794228313]: answered: %s [truncated]\n' \
+    "$NM_2711_KEY" "$(printf '%s' "$NM_2711_STEER" | tr '\n' ' ' | cut -c1-140)" >> "$case_dir/state/task-x1.status"
+  out=$(run_watch_tick "$case_dir" relay_dropped_tick) || fail "nm-2711-relay-dropped-wake: the relayed-ruling read failed"
+  assert_equals "check: relay-dropped task-x1: run $NM_RUN_2711 step lint round 1 instructions lack the relayed ruling" "$out" \
+    "nm-2711-relay-dropped-wake: the paraphrased round must wake firstmate, naming its run, step and round"
+  assert_grep "relay-dropped task-x1: run $NM_RUN_2711 step lint round 1" "$case_dir/state/.wake-queue" \
+    "nm-2711-relay-dropped-wake: the notice was not queued durably"
+  out=$(run_watch_tick "$case_dir" relay_dropped_tick) || fail "nm-2711-relay-dropped-wake: the second read failed"
+  assert_equals "" "$out" "nm-2711-relay-dropped-wake: the same round woke firstmate twice"
+  pass "a fix round stored with instructions lacking the relayed ruling wakes firstmate once while the run is live"
+}
+
+# The same gate answered through fm-send, the worker-only stop rule passed as a
+# worker note, and the worker running the respond command the steer ends with:
+# no notice fires and the merge needs no --accept-relay.
+test_printed_respond_command_passes_the_merge_guard() {
+  local case_dir out ruling
+  ruling=${NM_2711_STEER%; if the pipeline cannot take that TMPDIR, report blocked with the exact failure.}.
+  case_dir=$(make_case nm-2711-printed-command)
+  add_gh_mocks "$case_dir" 6565656565656565656565656565656565656565
+  write_nm_lint_2711_gate_line "$case_dir" "$(date +%s)"
+  send_gate_ruling "$case_dir" --resolve-key "$NM_2711_KEY" \
+    --worker-note 'If the pipeline cannot take that TMPDIR, report blocked with the exact failure.' "$ruling"
+  write_nm_lint_2711 "$case_dir" "$(printed_command_instructions "$case_dir/state/task-x1.inbox/001.msg")"
+  out=$(run_watch_tick "$case_dir" relay_dropped_tick) || fail "nm-2711-printed-command: the relayed-ruling read failed"
+  assert_equals "" "$out" "nm-2711-printed-command: a round fixed with the saved ruling must raise no notice"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-2711-printed-command: the printed command must pass the merge guard with no --accept-relay: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 70 example/repo --squash "$SQUASH_MESSAGE_FLAGS"
+
+  # The PR 2749 shape: the worker re-escalates the round, firstmate re-closes
+  # it with a rerun-only answer, and the worker still passes the first ruling.
+  case_dir=$(make_case nm-2749-reclose)
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  write_nm_lint_2711_gate_line "$case_dir" "$(date +%s)"
+  send_gate_ruling "$case_dir" --resolve-key "$NM_2711_KEY" "$ruling"
+  write_nm_lint_2711_gate_line "$case_dir" "$(date +%s)"
+  send_gate_ruling "$case_dir" --resolve-key "$NM_2711_KEY" 'Rerun only, no code change, as already sent.'
+  write_nm_lint_2711 "$case_dir" "$(printed_command_instructions "$case_dir/state/task-x1.inbox/002.msg")"
+  run_nm_merge "$case_dir"
+  expect_code 0 "$NM_MERGE_RC" "nm-2749-reclose: a re-close must not replace the ruling the round is held to: $(cat "$case_dir/stderr")"
+  pass "a worker that runs the respond command a gate ruling ends with passes the merge guard with no --accept-relay"
+}
+
 test_accept_relay_clears_exactly_its_round() {
   local case_dir
   case_dir=$(make_case nm-1752-relay-accepted)
@@ -5913,7 +6014,8 @@ run_watch_tick() {
   local case_dir=$1 tick=$2
   (
     export FM_STATE_OVERRIDE="$case_dir/state" FM_ROOT_OVERRIDE="$ROOT" NM_HOME="$case_dir/nm"
-    export FM_COVERAGE_PARK_INTERVAL=0 FM_SAME_THEME_INTERVAL=0
+    export FM_COVERAGE_PARK_INTERVAL=0 FM_SAME_THEME_INTERVAL=0 FM_RELAY_DROPPED_INTERVAL=0
+    export FM_HOME="$case_dir/home"
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
     # shellcheck disable=SC2329 # Invoked by the tick in place of the watcher's own wake.
@@ -6503,6 +6605,8 @@ test_relayed_ruling_missing_the_steer_refuses_merge
 test_relay_check_reads_either_instructions_key
 test_relay_check_pairs_only_the_line_that_closed_the_round
 test_accept_relay_clears_exactly_its_round
+test_relay_dropped_replay_wakes_while_the_run_is_live
+test_printed_respond_command_passes_the_merge_guard
 test_accept_relay_repeats_one_round_each
 test_relay_only_refusal_while_away_holds_for_return
 test_approved_round_refuses_every_unnamed_finding_whatever_its_action

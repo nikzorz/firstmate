@@ -466,7 +466,9 @@ Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
-  When the decision comes back, feed it to the gate with \`no-mistakes axi respond\`, passing the ruling message's body verbatim as \`--instructions\` whenever it answers fix (\`--instructions "\$(sed '1,/^--\$/d' <the ruling's message file in your steering inbox>)"\`), and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
+  When the decision comes back, feed it to the gate with \`no-mistakes axi respond\`, passing the ruling verbatim as the instructions whenever you answer fix, and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
+  A ruling ends with a block marked for the worker only: follow its notes, and answer fix with the exact respond command it ends with, filling in only the two finding lists, because that command reads the ruling firstmate saved for the round, which the merge holds the round's instructions to.
+  A ruling without that block is the message body whole (\`--instructions "\$(sed '1,/^--\$/d' <the ruling's message file in your steering inbox>)"\`).
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
 

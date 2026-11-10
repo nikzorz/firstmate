@@ -120,10 +120,10 @@
 # line that would name all of its refused ids, so one attempt shows everything
 # still owed and the shape that clears it.
 # The same task is also refused over a round a person answered with fix whose
-# stored instructions lack, verbatim, the body of the steer that answered its
-# gate, because a worker that rewords a ruling it relays can drop the clause
-# that carried the ruling; bin/fm-nm-rulings-lib.sh owns how a steer binds to a
-# round, and the refusal names the round and both texts. The fix round already
+# stored instructions lack, verbatim, the ruling relayed for its gate, because
+# a worker that rewords a ruling it relays can drop the clause that carried the
+# ruling; bin/fm-nm-rulings-lib.sh owns how a ruling binds to a round and which
+# body counts, and the refusal names the round and both texts. The fix round already
 # ran, so no appended line clears it: an attended --accept-relay
 # <run>:<step>:<round> records firstmate's judgment that the merged code meets
 # the whole ruling anyway. It may be repeated, each value clears exactly its
@@ -1920,7 +1920,7 @@ collect_unruled_finding_refusals() {
   UNRULED_FINDING_REFUSALS=$FM_NM_RULINGS_OWED
   UNRULED_FINDING_CLEARING_LINES=$FM_NM_RULINGS_CLEARING
   local round
-  fm_nm_relay_mismatches "$ID" "$STATE" "$(printf '%s\n' ${ACCEPT_RELAY[@]+"${ACCEPT_RELAY[@]}"})"
+  fm_nm_relay_mismatches "$ID" "$STATE" "$MERGE_DATA" "$(printf '%s\n' ${ACCEPT_RELAY[@]+"${ACCEPT_RELAY[@]}"})"
   UNRULED_FINDING_REFUSALS=$UNRULED_FINDING_REFUSALS$FM_NM_RELAY_MISMATCHES
   [ "${#ACCEPT_RELAY[@]}" -gt 0 ] || return 0
   for round in "${ACCEPT_RELAY[@]}"; do

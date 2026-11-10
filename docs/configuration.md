@@ -2579,6 +2579,7 @@ FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls
 FM_MERGE_READY_INTERVAL=30   # seconds between the watcher's reads of yolo=on no-mistakes tasks' ci step for a `check: merge-ready` wake; non-numeric becomes 30
 FM_COVERAGE_PARK_INTERVAL=30   # seconds between the watcher's reads of no-mistakes tasks' review rounds for a `check: coverage-park` wake on a coverage park still owed a ruling; non-numeric becomes 30
 FM_SAME_THEME_INTERVAL=30   # seconds between the watcher's reads of no-mistakes tasks' fix rounds for a `check: same-theme-unreported` wake on a round that selects again a finding id an earlier round of its run and step selected; non-numeric becomes 30
+FM_RELAY_DROPPED_INTERVAL=30   # seconds between the watcher's reads of no-mistakes tasks' fix rounds for a `check: relay-dropped` wake on a round whose instructions lack the ruling relayed for it; non-numeric becomes 30
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle pane; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_TASK_INBOX_BUSY_MAX=2      # consecutive busy-deferred due polls before a stuck-busy stale wake; 1..999999999, at most 9 decimal digits, otherwise 2; policy: bin/fm-task-inbox-lib.sh
