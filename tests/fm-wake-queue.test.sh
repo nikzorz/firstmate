@@ -2767,6 +2767,8 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
   local queue_holder presentation_holder ack_holder i start elapsed rc advisory_count
   # Each holder sleeps 30s, so an undeadlined drain blocks about 30s while the 1s
   # deadline finishes in about 1s; a 15s bound separates the two on a loaded host.
+  # The bound sits above the drain's 10s default deadline, so the advisory's
+  # "after 1s;" text is what proves the 1s override was honored.
   local deadline_bound=15
   dir=$(make_case presentation-lock-deadline)
   state="$dir/state"
@@ -2807,7 +2809,7 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
   [ "$elapsed" -le "$deadline_bound" ] \
     || { kill "$queue_holder" 2>/dev/null || true; fail "queue lock delayed the drain for ${elapsed}s"; }
   advisory_count=$(grep -Fc \
-    "WAKE DRAIN SKIPPED: queue lock remains held by live pid $queue_holder" \
+    "WAKE DRAIN SKIPPED: queue lock remains held by live pid $queue_holder after 1s;" \
     "$queue_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$queue_holder" 2>/dev/null || true; fail "queue deadline did not emit exactly one holder advisory"; }
@@ -2847,7 +2849,7 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
   [ "$elapsed" -le "$deadline_bound" ] \
     || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation lock delayed the drain for ${elapsed}s"; }
   advisory_count=$(grep -Fc \
-    "STATUS PRESENTATION SKIPPED: lock remains held by live pid $presentation_holder" \
+    "STATUS PRESENTATION SKIPPED: lock remains held by live pid $presentation_holder after 1s;" \
     "$first_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation deadline did not emit exactly one holder advisory"; }
