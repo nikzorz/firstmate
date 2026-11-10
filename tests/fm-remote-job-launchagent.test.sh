@@ -328,6 +328,19 @@ MISS=$(
   || fail "the readiness wait did not name the failing identity check: $MISS"
 pass 'a readiness timeout names the check that never passed'
 
+QUARANTINE_STATE="$TMP_ROOT/quarantine-state"
+mkdir -p "$QUARANTINE_STATE/worker.lock/quarantine"
+: > "$QUARANTINE_STATE/worker.ready"
+MISS=$(
+  sleep() { :; }
+  FM_REMOTE_JOB_STATE_ROOT="$QUARANTINE_STATE"
+  fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" && exit 1
+  printf '%s' "$FM_REMOTE_JOB_PROBE_MISS"
+) || fail 'the readiness wait accepted a quarantined worker lock'
+[ "$MISS" = 'worker ownership is quarantined' ] \
+  || fail "a quarantined lock with a fresh heartbeat was not named as quarantined: $MISS"
+pass 'a readiness timeout names quarantine even while the heartbeat is fresh'
+
 # --- a verified owner launchd no longer tracks is replaced identity-safely -----
 
 # launchd lost the worker while it kept the lock, then code changed under it.
