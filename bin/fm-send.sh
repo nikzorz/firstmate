@@ -734,18 +734,22 @@ fi
 # names no step to bin/fm-nm-rulings-lib.sh, which reads the whole text after
 # the run as the step, so its round would still read unruled at merge. Prints
 # the plain nm-<run>-<step> key such a key stands for, splitting the run the
-# way that library does and taking the step as the text up to the next dash;
-# returns 1 for a plain key or one of the step-less same-theme, stale-intent,
-# and empty keys.
+# way that library does and taking the step as the text up to the next dash,
+# or same-theme, whose rounds= the library honours only under its plain key;
+# returns 1 for a plain key or a stale-intent key, which names no findings.
 fm_send_plain_gate_key() { # <decision-key>
   local run rest
   case "$1" in nm-?*-?*) ;; *) return 1 ;; esac
   run=${1#nm-}
   rest=${run#*-}
   run=${run%%-*}
-  case "$rest" in *-*) ;; *) return 1 ;; esac
-  case "$rest" in same-theme | same-theme-* | stale-intent | stale-intent-*) return 1 ;; esac
-  printf 'nm-%s-%s' "$run" "${rest%%-*}"
+  case "$rest" in
+  same-theme | stale-intent | stale-intent-*) return 1 ;;
+  same-theme-*) rest=same-theme ;;
+  *-*) rest=${rest%%-*} ;;
+  *) return 1 ;;
+  esac
+  printf 'nm-%s-%s' "$run" "$rest"
 }
 
 # The last needs-decision line of the answered task's status log carrying
