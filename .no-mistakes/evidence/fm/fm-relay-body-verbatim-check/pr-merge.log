@@ -1,0 +1,4 @@
+ok - a fix round stored with instructions lacking the relayed ruling wakes firstmate once while the run is live
+exit 0
+ok - a worker that runs the respond command a gate ruling ends with passes the merge guard with no --accept-relay
+exit 0
