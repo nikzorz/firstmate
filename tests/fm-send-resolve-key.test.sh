@@ -1098,6 +1098,40 @@ test_suffixed_same_theme_ruling_clears_the_merge_guard_round() {
   pass "fm-send --resolve-key: a ruling on a round-suffixed same-theme key leaves the merge guard nothing owed for that round"
 }
 
+# An earlier round escalated under the plain key is its own open question; a
+# ruling on a later round's suffixed key must not close it unanswered.
+test_suffixed_key_refuses_while_its_plain_key_is_open() {
+  local dir fb log home rc err run=01M52KCB3JD1D4AVBY40ZG9EPY
+  dir="$TMP_ROOT/suffixed-plain-open"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/err"
+  home=$(setup_home suffixed-plain-open)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "branch=fm/t1"
+  printf 'needs-decision [at=1] [key=nm-%s-review]: ask-user round=1 findings=rev-a\nneeds-decision [at=2] [key=nm-%s-review-r2]: ask-user round=2 findings=rev-b\n' "$run" "$run" \
+    > "$home/state/t1.status"
+
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key "nm-$run-review-r2" "approve: accepted as is" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a suffixed key whose plain key is open and unnamed should refuse"
+  assert_contains "$(cat "$err")" "--resolve-key nm-$run-review " "the refusal should print the plain key to name"
+  assert_contains "$(cat "$err")" "nothing was sent" "the refusal should state nothing was sent"
+  [ ! -s "$log" ] || fail "a refused answer still typed text: $(cat "$log")"
+  [ ! -d "$home/state/t1.inbox" ] || fail "a refused answer still enqueued an inbox record"
+  if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
+    fail "a refused answer still closed something: $(cat "$home/state/t1.status")"
+  fi
+  drain_out "$home" | grep -F "[key=nm-$run-review]" >/dev/null \
+    || fail "the round-1 plain-key decision no longer reads open"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-review" --resolve-key "nm-$run-review-r2" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "naming both the plain and the suffixed key should succeed"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "naming both keys left a decision open:"$'\n'"$(cat "$home/state/t1.status")"
+  fi
+  pass "fm-send --resolve-key: a suffixed key refuses while its plain key holds an open decision, and naming both answers both"
+}
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_separate_resolve_key_answers_do_not_rewake
@@ -1127,3 +1161,4 @@ test_remote_reserved_pending_reply_key_closes_locally
 test_decision_answer_partition_relocates_under_the_record
 test_suffixed_gate_key_ruling_clears_the_merge_guard_round
 test_suffixed_same_theme_ruling_clears_the_merge_guard_round
+test_suffixed_key_refuses_while_its_plain_key_is_open

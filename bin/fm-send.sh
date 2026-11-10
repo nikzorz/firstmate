@@ -166,7 +166,8 @@
 # exiting 0 on a silent no-op. A gate key carrying a suffix past its step
 # (nm-<run>-<step>-r<n>) also gets its needs-decision line copied under the
 # plain nm-<run>-<step> key and closed, because bin/fm-nm-rulings-lib.sh reads
-# only that key's step. After a delivered close it also
+# only that key's step; if that plain key holds its own open decision the send
+# must name it too, or it refuses before sending. After a delivered close it also
 # re-folds and fails loudly if the named key is still open. On the inbox plane
 # the close happens at ENQUEUE time, because enqueue is durable delivery to
 # the task's record; the worker reading the answer late is covered by the
@@ -642,6 +643,28 @@ if [ -n "$FIRE_AND_FORGET_ID" ]; then
     }
 fi
 
+# A gate decision recorded under a round-suffixed key (nm-<run>-<step>-r<n>)
+# names no step to bin/fm-nm-rulings-lib.sh, which reads the whole text after
+# the run as the step, so its round would still read unruled at merge. Prints
+# the plain nm-<run>-<step> key such a key stands for, splitting the run the
+# way that library does and taking the step as the text up to the next dash,
+# or same-theme, whose rounds= the library honours only under its plain key;
+# returns 1 for a plain key or a stale-intent key, which names no findings.
+fm_send_plain_gate_key() { # <decision-key>
+  local run rest
+  case "$1" in nm-?*-?*) ;; *) return 1 ;; esac
+  run=${1#nm-}
+  rest=${run#*-}
+  run=${run%%-*}
+  case "$rest" in
+  same-theme | stale-intent | stale-intent-*) return 1 ;;
+  same-theme-*) rest=same-theme ;;
+  *-*) rest=${rest%%-*} ;;
+  *) return 1 ;;
+  esac
+  printf 'nm-%s-%s' "$run" "$rest"
+}
+
 if [ -n "$RESOLVE_KEYS" ]; then
   if [ -z "$TARGET_SELECTOR" ] || [ -z "$TARGET_META" ]; then
     echo "error: --resolve-key needs a task selector resolved through this home's metadata; an explicit backend target has no decision ledger here" >&2
@@ -690,6 +713,16 @@ if [ -n "$RESOLVE_KEYS" ]; then
     echo "error: --resolve-key '$k': no open decision or blocker with that key in $RESOLVE_STATUS_FILE, and no captain-held task '$k' or '$RESOLVE_TASK_ID-decision-$k' still open (already closed or mistyped). Re-check the OPEN DECISIONS listing, then resend without that key or with the right one; nothing was sent." >&2
     exit 1
   done
+  for k in $RESOLVE_STATUS_KEYS; do
+    plain=$(fm_send_plain_gate_key "$k") || continue
+    case " $RESOLVE_KEYS " in *" $plain "*) continue ;; esac
+    case "$resolve_open_set" in
+    "$plain"$'\t'* | *$'\n'"$plain"$'\t'*)
+      echo "error: --resolve-key '$k' would also close the plain gate key '$plain', which holds its own open decision. Name both in one send (--resolve-key $plain --resolve-key $k) so that decision is answered too; nothing was sent." >&2
+      exit 1
+      ;;
+    esac
+  done
   # The decision-answer partition (the header's "Answering a decision"
   # contract): a key that is an open needs-decision, or already a captain-held
   # task, is a decision, and answering one is main-owned while attended. A
@@ -729,28 +762,6 @@ if [ -n "$RESOLVE_KEYS" ]; then
     fi
   done
 fi
-
-# A gate decision recorded under a round-suffixed key (nm-<run>-<step>-r<n>)
-# names no step to bin/fm-nm-rulings-lib.sh, which reads the whole text after
-# the run as the step, so its round would still read unruled at merge. Prints
-# the plain nm-<run>-<step> key such a key stands for, splitting the run the
-# way that library does and taking the step as the text up to the next dash,
-# or same-theme, whose rounds= the library honours only under its plain key;
-# returns 1 for a plain key or a stale-intent key, which names no findings.
-fm_send_plain_gate_key() { # <decision-key>
-  local run rest
-  case "$1" in nm-?*-?*) ;; *) return 1 ;; esac
-  run=${1#nm-}
-  rest=${run#*-}
-  run=${run%%-*}
-  case "$rest" in
-  same-theme | stale-intent | stale-intent-*) return 1 ;;
-  same-theme-*) rest=same-theme ;;
-  *-*) rest=${rest%%-*} ;;
-  *) return 1 ;;
-  esac
-  printf 'nm-%s-%s' "$run" "$rest"
-}
 
 # The last needs-decision line of the answered task's status log carrying
 # <key>, the gate escalation a plain-key copy repeats so its round= and
