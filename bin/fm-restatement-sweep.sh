@@ -40,10 +40,12 @@
 # of that claim elsewhere then shares too few words to resemble the new text.
 # So a removed sentence whose closest added sentence holds most of its words
 # is a rewrite, and each three-word phrase of the removed sentence that holds
-# a word no added sentence of the rewrite's diff hunk (or a hunk beside it past only blank or comment-marker lines) kept is grepped for across every tracked text file at
-# HEAD, test paths included, over each file's words joined across lines so a
-# phrase a comment wraps is still found; a hit is reported at the line of its
-# first word, and is not listed when the diff added any of the phrase's lines. This grep does not catch a claim falsified
+# a word no added sentence of the rewrite's diff hunk (or a hunk beside it past
+# only blank or comment-marker lines) kept is grepped for across every tracked
+# text file at HEAD, test paths included, over each file's words joined across
+# lines so a phrase a comment wraps is still found; a hit is reported at the
+# line of its first word, and is not listed when the diff added any of the
+# phrase's lines. This grep does not catch a claim falsified
 # with no sentence removed, nor stale lines a later pipeline fix round
 # creates, because the sweep runs before validation.
 #
