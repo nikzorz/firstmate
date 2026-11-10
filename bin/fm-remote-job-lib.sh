@@ -1165,12 +1165,17 @@ fm_remote_job_worker_alive() { # <account-home>
   kill -0 "$pid" 2>/dev/null
 }
 
+# FM_REMOTE_JOB_PROBE_MISS names the probe check that failed, so a startup
+# timeout can point the operator at quarantine or state setup, not only the heartbeat.
 fm_remote_job_probe() { # <account-home>; require a fresh heartbeat outside an active job
   local account_home=$1 ready lock mtime now
   [ "${FM_REMOTE_JOB_ACTIVE:-}" = 1 ] && return 0
+  FM_REMOTE_JOB_PROBE_MISS="remote job state could not be prepared"
   fm_remote_job_prepare_state "$account_home" || return 1
+  FM_REMOTE_JOB_PROBE_MISS="worker ownership is quarantined"
   lock=$(fm_remote_job_worker_lock_path)
   [ ! -e "$lock/quarantine" ] && [ ! -L "$lock/quarantine" ] || return 1
+  FM_REMOTE_JOB_PROBE_MISS="no fresh ready heartbeat"
   ready=$(fm_remote_job_worker_ready_path)
   [ -f "$ready" ] && [ ! -L "$ready" ] || return 1
   mtime=$(fm_remote_job_path_mtime "$ready" 2>/dev/null || true)
@@ -1181,8 +1186,12 @@ fm_remote_job_probe() { # <account-home>; require a fresh heartbeat outside an a
 
 fm_remote_job_wait_for_probe() { # <remote-root> <account-home>
   local root=$1 account_home=$2 i=0
+  FM_REMOTE_JOB_PROBE_MISS=
   while [ "$i" -lt 200 ]; do
-    fm_remote_job_probe "$account_home" && fm_remote_job_worker_identity_matches "$root" "$account_home" && return 0
+    if fm_remote_job_probe "$account_home"; then
+      fm_remote_job_worker_identity_matches "$root" "$account_home" && return 0
+      FM_REMOTE_JOB_PROBE_MISS="worker identity did not match the configured code root"
+    fi
     i=$((i + 1))
     sleep 0.1
   done
@@ -1383,7 +1392,7 @@ fm_remote_job_repair_launchagent() { # <remote-root> <account-home> <uid>
   FM_REMOTE_JOB_REPAIRED=1
   fm_remote_job_wait_for_probe "$root" "$account_home" && return 0
   # shellcheck disable=SC2034 # Sourceable API consumed by the entrypoint and remote doctor.
-  FM_REMOTE_JOB_ERROR="remote job worker did not report ready after startup"
+  FM_REMOTE_JOB_ERROR="remote job worker did not report ready after startup (last failing check: ${FM_REMOTE_JOB_PROBE_MISS:-unknown})"
   return 1
 }
 
@@ -1480,6 +1489,6 @@ fm_remote_job_ensure_worker() { # <remote-root> <account-home>
   FM_REMOTE_JOB_REPAIRED=1
   fm_remote_job_wait_for_probe "$root" "$account_home" && return 0
   # shellcheck disable=SC2034 # Sourceable API consumed by the entrypoint and remote doctor.
-  FM_REMOTE_JOB_ERROR="remote job worker did not report ready after startup"
+  FM_REMOTE_JOB_ERROR="remote job worker did not report ready after startup (last failing check: ${FM_REMOTE_JOB_PROBE_MISS:-unknown})"
   return 1
 }
