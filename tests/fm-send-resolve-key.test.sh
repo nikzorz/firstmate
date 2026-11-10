@@ -1195,6 +1195,28 @@ test_gate_reclose_keeps_saved_ruling() {
   pass "fm-send --resolve-key nm-*: a re-close keeps the round's saved ruling and a later fix ruling replaces it"
 }
 
+# A ruling file that cannot be written must not also strand the decision: the
+# answer is already delivered, so the key still closes and the send exits
+# nonzero naming the unsaved ruling.
+test_failed_ruling_save_still_closes_key() {
+  local dir fb log home rc err
+  dir="$TMP_ROOT/gate-save-fail"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home gate-save-fail)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [at=1] [key=nm-RUNB-lint]: ask-user round=2 findings=lint-1 file=/x\n' > "$home/state/t1.status"
+  mkdir -p "$home/data"; : > "$home/data/t1"
+  : > "$log"
+  err=$(env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-RUNB-lint "Rerun the lint step." 2>&1 >/dev/null); rc=$?
+  [ "$rc" -ne 0 ] || fail "a send whose ruling could not be saved must exit nonzero"
+  assert_contains "$err" "could not be saved" "the failed save must be reported"
+  [ -e "$home/state/t1.inbox/001.msg" ] || fail "the answer should have been delivered before the save"
+  grep -qE '^resolved \[key=nm-RUNB-lint\].*: answered: Rerun the lint step\.$' "$home/state/t1.status" \
+    || fail "a failed ruling save must still close the answered key: $(cat "$home/state/t1.status")"
+  pass "fm-send --resolve-key nm-*: a failed ruling save still closes the answered key"
+}
+
 test_worker_note_needs_a_saved_ruling() {
   local dir fb log home rc
   dir="$TMP_ROOT/worker-note"; mkdir -p "$dir"
@@ -1241,3 +1263,4 @@ test_suffixed_key_refuses_while_its_plain_key_is_open
 test_gate_answer_saves_ruling_and_appends_respond_command
 test_gate_reclose_keeps_saved_ruling
 test_worker_note_needs_a_saved_ruling
+test_failed_ruling_save_still_closes_key

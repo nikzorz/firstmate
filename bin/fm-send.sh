@@ -946,6 +946,16 @@ fm_send_feed_resolved_holds() { # <answer-text>
   fi
 }
 
+# Each record is independent, so one failing never skips the others: a lost
+# ruling file must not also leave the decision open or its captain hold unfed.
+fm_send_record_answer() { # <answer-text>
+  local rc=0
+  fm_send_save_rulings "$1" || rc=1
+  fm_send_close_resolved_keys "$1" || rc=1
+  fm_send_feed_resolved_holds "$1" || rc=1
+  return "$rc"
+}
+
 # Resolve the target's harness from its meta (recorded by fm-spawn), used only to
 # scope the codex `$<skill>` popup-settle below. A task selector carries
 # meta; an explicit backend-target escape hatch has none, so its harness is
@@ -1201,9 +1211,7 @@ else
       fi
     fi
     if [ -n "$RESOLVE_KEYS" ]; then
-      fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
+      fm_send_record_answer "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
     exit 0
   fi
@@ -1279,9 +1287,7 @@ else
     # The answer is durably sent: close each answered decision at enqueue time
     # (answerer-closes; see the header contract).
     if [ -n "$RESOLVE_KEYS" ]; then
-      fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
+      fm_send_record_answer "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
     # Ring the doorbell, best-effort: no ring outcome changes the exit status,
     # because the watcher owns loss detection from here, either through its
@@ -1405,9 +1411,7 @@ else
   # Delivery is fully confirmed: close each answered decision in this home's
   # ledger (answerer-closes; see the header contract).
   if [ -n "$RESOLVE_KEYS" ]; then
-    fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
-    fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-    fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
+    fm_send_record_answer "$RESOLVE_ANSWER_TEXT" || exit 1
   fi
   # Submit landed with exact empty. Confirmation only proves the text was
   # accepted; the harness still needs a beat to spin up the
