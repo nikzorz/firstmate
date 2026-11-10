@@ -1435,9 +1435,6 @@ fm_lock_acquire_wait_bounded() {
     # successor has claimed the lock without yet writing its pid. One more try
     # takes a lock the handover left free, and a successor still mid-acquire
     # is contention rather than an unsafe lock.
-    if _fm_lock_bounded_contended "$lockdir"; then
-      return 124
-    fi
     if fm_lock_try_acquire "$lockdir"; then
       return 0
     fi
