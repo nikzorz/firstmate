@@ -317,6 +317,17 @@ fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" \
   || fail 'the same worker did not recover readiness after refresh resumed'
 pass 'stale readiness logs the named condition without reloading a verified launchd-tracked live owner'
 
+MISS=$(
+  sleep() { :; }
+  fm_remote_job_probe() { return 0; }
+  fm_remote_job_worker_identity_matches() { return 1; }
+  fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" && exit 1
+  printf '%s' "$FM_REMOTE_JOB_PROBE_MISS"
+) || fail 'the readiness wait accepted a worker whose identity never matched'
+[ "$MISS" = 'worker identity did not match the configured code root' ] \
+  || fail "the readiness wait did not name the failing identity check: $MISS"
+pass 'a readiness timeout names the check that never passed'
+
 # --- a verified owner launchd no longer tracks is replaced identity-safely -----
 
 # launchd lost the worker while it kept the lock, then code changed under it.
