@@ -775,7 +775,7 @@ fm_send_open_ask_line() { # <decision-key>
 # or a worker line the fold read but never listed, leave the watcher's wake
 # path untouched.
 fm_send_close_resolved_keys() { # <answer-text>
-  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() i=0 plain asked
+  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() own_close_lines=() i=0 plain asked
   note=$(printf '%s' "$note" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
   for k in $RESOLVE_STATUS_KEYS; do
     close_note=$(fm_send_resolve_close_note "$k" "$note")
@@ -787,6 +787,7 @@ fm_send_close_resolved_keys() { # <answer-text>
     fi
     fm_cap_line_var "resolved [key=$k]: $close_note" "$RESOLVE_CLOSE_MAX"
     close_lines+=("$FM_LINE_CAP_LINE")
+    own_close_lines+=("$FM_LINE_CAP_LINE")
   done
   [ "${#close_lines[@]}" -gt 0 ] || return 0
   append_rc=0
@@ -801,7 +802,7 @@ fm_send_close_resolved_keys() { # <answer-text>
   for k in $RESOLVE_STATUS_KEYS; do
     case "$still" in
     "$k"$'\t'* | *$'\n'"$k"$'\t'*)
-      printf -v manual_close_cmd "printf '%%s\\n' %q >> %q" "${close_lines[$i]}" "$RESOLVE_STATUS_FILE"
+      printf -v manual_close_cmd "printf '%%s\\n' %q >> %q" "${own_close_lines[$i]}" "$RESOLVE_STATUS_FILE"
       echo "error: the answer was delivered to $T, but decision key '$k' is still open in $RESOLVE_STATUS_FILE; it may have been reopened concurrently or the fold did not accept the close. Close it manually with: $manual_close_cmd - do not resend the answer." >&2
       return 1
       ;;
