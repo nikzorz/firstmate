@@ -163,7 +163,10 @@
 # transition and is never written for those keys. If this send cannot produce
 # a note the guard will accept, or the structural key would be lost to the
 # status-line cap, it refuses before sending and names the cause rather than
-# exiting 0 on a silent no-op. After a delivered close it also
+# exiting 0 on a silent no-op. A gate key carrying a suffix past its step
+# (nm-<run>-<step>-r<n>) also gets its needs-decision line copied under the
+# plain nm-<run>-<step> key and closed, because bin/fm-nm-rulings-lib.sh reads
+# only that key's step. After a delivered close it also
 # re-folds and fails loudly if the named key is still open. On the inbox plane
 # the close happens at ENQUEUE time, because enqueue is durable delivery to
 # the task's record; the worker reading the answer late is covered by the
@@ -727,6 +730,38 @@ if [ -n "$RESOLVE_KEYS" ]; then
   done
 fi
 
+# A gate decision recorded under a round-suffixed key (nm-<run>-<step>-r<n>)
+# names no step to bin/fm-nm-rulings-lib.sh, which reads the whole text after
+# the run as the step, so its round would still read unruled at merge. Prints
+# the plain nm-<run>-<step> key such a key stands for, splitting the run the
+# way that library does and taking the step as the text up to the next dash;
+# returns 1 for a plain key or one of the step-less same-theme, stale-intent,
+# and empty keys.
+fm_send_plain_gate_key() { # <decision-key>
+  local run rest
+  case "$1" in nm-?*-?*) ;; *) return 1 ;; esac
+  run=${1#nm-}
+  rest=${run#*-}
+  run=${run%%-*}
+  case "$rest" in *-*) ;; *) return 1 ;; esac
+  case "$rest" in same-theme | same-theme-* | stale-intent | stale-intent-*) return 1 ;; esac
+  printf 'nm-%s-%s' "$run" "${rest%%-*}"
+}
+
+# The last needs-decision line of the answered task's status log carrying
+# <key>, the gate escalation a plain-key copy repeats so its round= and
+# findings= reach the merge guard unchanged.
+fm_send_open_ask_line() { # <decision-key>
+  local line found=''
+  [ -f "$RESOLVE_STATUS_FILE" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$(status_line_verb "$line")" = needs-decision ] || continue
+    [ "$(_fm_decision_key "$line" 2>/dev/null)" = "$1" ] && found=$line
+  done <"$RESOLVE_STATUS_FILE"
+  [ -n "$found" ] || return 1
+  printf '%s' "$found"
+}
+
 # Close each answered decision in this home's ledger, only after the answer is
 # durably sent: enqueued on the inbox plane, submit-confirmed on the typed
 # plane. An append failure exits nonzero with the manual close
@@ -740,10 +775,16 @@ fi
 # or a worker line the fold read but never listed, leave the watcher's wake
 # path untouched.
 fm_send_close_resolved_keys() { # <answer-text>
-  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() i=0
+  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() i=0 plain asked
   note=$(printf '%s' "$note" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
   for k in $RESOLVE_STATUS_KEYS; do
     close_note=$(fm_send_resolve_close_note "$k" "$note")
+    if plain=$(fm_send_plain_gate_key "$k") &&
+      asked=$(fm_send_open_ask_line "$k"); then
+      close_lines+=("${asked/"[key=$k]"/"[key=$plain]"}")
+      fm_cap_line_var "resolved [key=$plain]: $(fm_send_resolve_close_note "$plain" "$note")" "$RESOLVE_CLOSE_MAX"
+      close_lines+=("$FM_LINE_CAP_LINE")
+    fi
     fm_cap_line_var "resolved [key=$k]: $close_note" "$RESOLVE_CLOSE_MAX"
     close_lines+=("$FM_LINE_CAP_LINE")
   done

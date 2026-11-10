@@ -36,6 +36,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-marker-lib.sh"
+# shellcheck source=tests/nm-state-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/nm-state-helpers.sh"
 
 SEND="$ROOT/bin/fm-send.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -1022,6 +1024,46 @@ test_decision_answer_partition_relocates_under_the_record() {
   pass "fm-send --resolve-key: a decision answer refuses the attended branch before sending, a blocked: key stays steering, and the away-posture record relocates the answer"
 }
 
+# A gate escalated under a round-suffixed key names no step to the merge
+# guard's rulings judge, so the ruling must also leave a plain-key pair for
+# that round; the judge then owes nothing for it.
+test_suffixed_gate_key_ruling_clears_the_merge_guard_round() {
+  local dir fb log home rc out run=01M52KCB3JD1D4AVBY40ZG9EPW
+  dir="$TMP_ROOT/suffixed-gate"; mkdir -p "$dir/nm" "$dir/project" "$dir/data"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home suffixed-gate)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "mode=no-mistakes" \
+    "branch=fm/t1" "project=$dir/project"
+  nm_state_fixture "$dir/nm/state.sqlite" "$dir/project" fm/t1 "$(jq -nc --arg run "$run" '
+    {run: $run, steps: [{name: "lint", order: 5, rounds: [
+      {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "auto-fix"]]},
+      {round: 2, source: "user_declined", findings: [["lint-2", "ask-user"]]}]}]}')" \
+    || fail "could not write the no-mistakes fixture"
+  printf 'needs-decision [at=1] [key=nm-%s-lint-r2]: ask-user round=2 findings=lint-2 file=x\n' "$run" \
+    > "$home/state/t1.status"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 1 "$rc" "precondition: the suffixed key alone should leave round 2 owed: $out"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-lint-r2" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "the ruling on a suffixed gate key should succeed"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t1.status" | grep -qF "needs-decision [key=nm-$run-lint]: ask-user round=2 findings=lint-2 file=x" \
+    || fail "the plain-key escalation copy is missing:"$'\n'"$(cat "$home/state/t1.status")"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t1.status" | grep -qF "resolved [key=nm-$run-lint]: answered: approve: accepted as is" \
+    || fail "the plain-key close is missing"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 0 "$rc" "the merge guard's judge still owes the ruled round: $out"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the ruling left a decision open"
+  fi
+  pass "fm-send --resolve-key: a ruling on a round-suffixed gate key leaves the merge guard nothing owed for that round"
+}
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_separate_resolve_key_answers_do_not_rewake
@@ -1049,3 +1091,4 @@ test_stamped_close_line_stays_within_the_status_line_cap
 test_failed_close_recovery_command_is_shell_safe
 test_remote_reserved_pending_reply_key_closes_locally
 test_decision_answer_partition_relocates_under_the_record
+test_suffixed_gate_key_ruling_clears_the_merge_guard_round
