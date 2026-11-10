@@ -40,10 +40,12 @@
 # of that claim elsewhere then shares too few words to resemble the new text.
 # So a removed sentence whose closest added sentence holds most of its words
 # is a rewrite, and each three-word phrase of the removed sentence that holds
-# a word no added sentence of the rewrite's diff hunk kept is grepped for across every tracked text file at
-# HEAD, test paths included, over each file's words joined across lines so a
-# phrase a comment wraps is still found; a hit is reported at the line of its
-# first word, and is not listed when the diff added any of the phrase's lines. This grep does not catch a claim falsified
+# a word no added sentence of the rewrite's diff hunk (or a hunk beside it past
+# only blank or comment-marker lines) kept is grepped for across every tracked
+# text file at HEAD, test paths included, over each file's words joined across
+# lines so a phrase a comment wraps is still found; a hit is reported at the
+# line of its first word, and is not listed when the diff added any of the
+# phrase's lines. This grep does not catch a claim falsified
 # with no sentence removed, nor stale lines a later pipeline fix round
 # creates, because the sweep runs before validation.
 #
@@ -134,6 +136,7 @@ LEAD = re.compile(r"^\s*(?:#+|//+|/\*+|\*+|--|;+|>+)?\s*(?:[-*+]\s+|\d+[.)]\s+)?
 CODE_CHARS = re.compile(r"[(){}\[\]=<>$|&;\"\\]")
 SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-Z`(\[\"'*_])")
 COMMENT = re.compile(r"^\s*(#|//|/\*|\*|--|;)")
+BARE_LINE = re.compile(r"\s*(?:#+|//+|/\*+|\*+/?|--|;+|<!--|-->)?\s*")
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 INTERPRETER = re.compile(
     r"\b(python[0-9.]*|node|perl|ruby|jq|awk|gawk|sed|sqlite3|bash|sh|zsh|osascript|deno|bun|tsx|psql|mysql)\b")
@@ -354,8 +357,23 @@ def main():
             touched = any(n in lines_added for n in range(first, last + 1))
             corpus.append((path, first, last, sentence, words_of(sentence), touched))
 
+    # Under -U0 one unchanged blank or lone comment-marker line between the
+    # halves of a split rewrite starts a new hunk, so such hunks share a group.
+    hunk_groups = {}
+    for path, ranges in hunks.items():
+        lines = tree.get(path, "").split("\n")
+        group, end, groups = -1, None, []
+        for lines_added in ranges:
+            if lines_added:
+                gap = lines[end - 1: lines_added.start - 1] if end is not None else None
+                if gap is None or not all(BARE_LINE.fullmatch(line) for line in gap):
+                    group += 1
+                end = lines_added.stop
+            groups.append(max(group, 0))
+        hunk_groups[path] = groups
+
     def hunks_touched(path, first, last):
-        return frozenset(i for i, lines in enumerate(hunks.get(path, ()))
+        return frozenset(hunk_groups[path][i] for i, lines in enumerate(hunks.get(path, ()))
                          if any(n in lines for n in range(first, last + 1)))
 
     probes = [(c[0], c[1], c[3], c[4], "+", hunks_touched(c[0], c[1], c[2])) for c in corpus if c[5]]
@@ -460,7 +478,7 @@ def dropped_phrase_hits(probes, tree, added):
 
     A removed sentence is rewritten when an added sentence holds most of its
     words; each run of three of its words that holds a word no added
-    sentence of the rewrite's diff hunk kept, and that none of them repeats, is a
+    sentence of the rewrite's hunk group kept, and that none of them repeats, is a
     phrase whose other copies may still state the old claim.
     """
     removed_probes = [p for p in probes if p[4] == "-"]
