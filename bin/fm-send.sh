@@ -212,8 +212,10 @@
 # the ruling alone. --worker-note is refused unless the send saves or points at
 # such a ruling, so a note can never silently ride inside a ruling. The file is
 # written only after delivery, next
-# to the close; a write that fails exits nonzero naming the path, and the
-# worker's command then fails on the missing file rather than passing nothing.
+# to the close; a write that fails exits nonzero naming the path. A failed
+# first save leaves the worker's command failing on the missing file rather
+# than passing nothing, while a failed replacement leaves it passing the earlier
+# ruling still saved there, so the error names which of the two happened.
 # The steps the worker-side decision keys nm-<run>-same-theme,
 # nm-<run>-stale-intent and nm-<run>-empty name are not pipeline steps, so those
 # keys get no saved ruling, and a remote target, which cannot read this home's
@@ -714,7 +716,11 @@ fm_send_save_rulings() { # <answer-text>
       continue
     fi
     [ -z "${tmp:-}" ] || rm -f "$tmp"
-    echo "error: the answer was delivered to $T, but the ruling for run $run step $step round $round could not be saved to $file, so the respond command it carries will fail on the missing file. Write the ruling there by hand - do not resend the answer." >&2
+    if [ -e "$file" ]; then
+      echo "error: the answer was delivered to $T, but the ruling for run $run step $step round $round could not replace $file, so the respond command it carries will pass the earlier ruling still saved there. Write the new ruling there by hand - do not resend the answer." >&2
+    else
+      echo "error: the answer was delivered to $T, but the ruling for run $run step $step round $round could not be saved to $file, so the respond command it carries will fail on the missing file. Write the ruling there by hand - do not resend the answer." >&2
+    fi
     return 1
   done <<<"$RULING_PLAN"
 }
