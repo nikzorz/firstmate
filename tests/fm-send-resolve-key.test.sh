@@ -36,6 +36,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-marker-lib.sh"
+# shellcheck source=tests/nm-state-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/nm-state-helpers.sh"
 
 SEND="$ROOT/bin/fm-send.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -1022,6 +1024,114 @@ test_decision_answer_partition_relocates_under_the_record() {
   pass "fm-send --resolve-key: a decision answer refuses the attended branch before sending, a blocked: key stays steering, and the away-posture record relocates the answer"
 }
 
+# A gate escalated under a round-suffixed key names no step to the merge
+# guard's rulings judge, so the ruling must also leave a plain-key pair for
+# that round; the judge then owes nothing for it.
+test_suffixed_gate_key_ruling_clears_the_merge_guard_round() {
+  local dir fb log home rc out run=01M52KCB3JD1D4AVBY40ZG9EPW
+  dir="$TMP_ROOT/suffixed-gate"; mkdir -p "$dir/nm" "$dir/project" "$dir/data"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home suffixed-gate)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "mode=no-mistakes" \
+    "branch=fm/t1" "project=$dir/project"
+  nm_state_fixture "$dir/nm/state.sqlite" "$dir/project" fm/t1 "$(jq -nc --arg run "$run" '
+    {run: $run, steps: [{name: "lint", order: 5, rounds: [
+      {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "auto-fix"]]},
+      {round: 2, source: "user_declined", findings: [["lint-2", "ask-user"]]}]}]}')" \
+    || fail "could not write the no-mistakes fixture"
+  printf 'needs-decision [at=1] [key=nm-%s-lint-r2]: ask-user round=2 findings=lint-2 file=x\n' "$run" \
+    > "$home/state/t1.status"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 1 "$rc" "precondition: the suffixed key alone should leave round 2 owed: $out"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-lint-r2" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "the ruling on a suffixed gate key should succeed"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t1.status" | grep -qF "needs-decision [key=nm-$run-lint]: ask-user round=2 findings=lint-2 file=x" \
+    || fail "the plain-key escalation copy is missing:"$'\n'"$(cat "$home/state/t1.status")"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t1.status" | grep -qF "resolved [key=nm-$run-lint]: answered: approve: accepted as is" \
+    || fail "the plain-key close is missing"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 0 "$rc" "the merge guard's judge still owes the ruled round: $out"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the ruling left a decision open"
+  fi
+  pass "fm-send --resolve-key: a ruling on a round-suffixed gate key leaves the merge guard nothing owed for that round"
+}
+
+# A same-theme escalation binds to every step only under its plain key, so a
+# round-suffixed same-theme ruling must leave a plain same-theme pair.
+test_suffixed_same_theme_ruling_clears_the_merge_guard_round() {
+  local dir fb log home rc out run=01M52KCB3JD1D4AVBY40ZG9EPX
+  dir="$TMP_ROOT/suffixed-same-theme"; mkdir -p "$dir/nm" "$dir/project" "$dir/data"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home suffixed-same-theme)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "mode=no-mistakes" \
+    "branch=fm/t1" "project=$dir/project"
+  nm_state_fixture "$dir/nm/state.sqlite" "$dir/project" fm/t1 "$(jq -nc --arg run "$run" '
+    {run: $run, steps: [{name: "review", order: 5, rounds: [
+      {round: 1, source: "user", selected: ["rev-a"], findings: [["rev-a", "auto-fix"]]},
+      {round: 2, source: "user_declined", findings: [["rev-a", "ask-user"]]}]}]}')" \
+    || fail "could not write the no-mistakes fixture"
+  printf 'needs-decision [at=1] [key=nm-%s-same-theme-r2]: same theme fixed again round=2 findings=rev-a rounds=1\n' "$run" \
+    > "$home/state/t1.status"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 1 "$rc" "precondition: the suffixed same-theme key alone should leave round 2 owed: $out"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-same-theme-r2" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "the ruling on a suffixed same-theme key should succeed"
+  sed -E 's/ \[at=[0-9]+\]//' "$home/state/t1.status" | grep -qF "resolved [key=nm-$run-same-theme]: answered: approve: accepted as is" \
+    || fail "the plain same-theme close is missing:"$'\n'"$(cat "$home/state/t1.status")"
+
+  rc=0
+  out=$(NM_HOME="$dir/nm" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$ROOT/bin/fm-nm-rulings-owed.sh" t1) || rc=$?
+  expect_code 0 "$rc" "the merge guard's judge still owes the ruled same-theme round: $out"
+  pass "fm-send --resolve-key: a ruling on a round-suffixed same-theme key leaves the merge guard nothing owed for that round"
+}
+
+# An earlier round escalated under the plain key is its own open question; a
+# ruling on a later round's suffixed key must not close it unanswered.
+test_suffixed_key_refuses_while_its_plain_key_is_open() {
+  local dir fb log home rc err run=01M52KCB3JD1D4AVBY40ZG9EPY
+  dir="$TMP_ROOT/suffixed-plain-open"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/err"
+  home=$(setup_home suffixed-plain-open)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "branch=fm/t1"
+  printf 'needs-decision [at=1] [key=nm-%s-review]: ask-user round=1 findings=rev-a\nneeds-decision [at=2] [key=nm-%s-review-r2]: ask-user round=2 findings=rev-b\n' "$run" "$run" \
+    > "$home/state/t1.status"
+
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key "nm-$run-review-r2" "approve: accepted as is" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a suffixed key whose plain key is open and unnamed should refuse"
+  assert_contains "$(cat "$err")" "--resolve-key nm-$run-review " "the refusal should print the plain key to name"
+  assert_contains "$(cat "$err")" "nothing was sent" "the refusal should state nothing was sent"
+  [ ! -s "$log" ] || fail "a refused answer still typed text: $(cat "$log")"
+  [ ! -d "$home/state/t1.inbox" ] || fail "a refused answer still enqueued an inbox record"
+  if grep -F 'resolved' "$home/state/t1.status" >/dev/null; then
+    fail "a refused answer still closed something: $(cat "$home/state/t1.status")"
+  fi
+  drain_out "$home" | grep -F "[key=nm-$run-review]" >/dev/null \
+    || fail "the round-1 plain-key decision no longer reads open"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-review" --resolve-key "nm-$run-review-r2" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "naming both the plain and the suffixed key should succeed"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "naming both keys left a decision open:"$'\n'"$(cat "$home/state/t1.status")"
+  fi
+  pass "fm-send --resolve-key: a suffixed key refuses while its plain key holds an open decision, and naming both answers both"
+}
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_separate_resolve_key_answers_do_not_rewake
@@ -1049,3 +1159,6 @@ test_stamped_close_line_stays_within_the_status_line_cap
 test_failed_close_recovery_command_is_shell_safe
 test_remote_reserved_pending_reply_key_closes_locally
 test_decision_answer_partition_relocates_under_the_record
+test_suffixed_gate_key_ruling_clears_the_merge_guard_round
+test_suffixed_same_theme_ruling_clears_the_merge_guard_round
+test_suffixed_key_refuses_while_its_plain_key_is_open
