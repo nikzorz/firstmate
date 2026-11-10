@@ -1,0 +1,4 @@
+not ok - a line keeping a claim the split rewrite still states past a blank line was listed: restatement sweep: 3 changed sentences in 1 files since main (6057ab2110eb); 1 candidate restatements
+style.md:1: Any phrase repeated that often is stock wording.
+  resembles - a.sh:2: Hits on added lines are skipped, and a phrase on more than three lines is stock wording.
+removed-phrase grep: 1 rewritten sentences; 2 stale? lines
