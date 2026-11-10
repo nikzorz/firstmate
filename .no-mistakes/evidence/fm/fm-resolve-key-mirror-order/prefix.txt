@@ -1,0 +1,8 @@
+ok - fm-send --resolve-key: the close never re-wakes its own home, later lines still do
+not ok - round 1's ask is followed under its key by a non-answer line: needs-decision [at=2] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review]: ask-user round=2 findings=rev-b
+needs-decision [at=1] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review]: ask-user round=1 findings=rev-a
+needs-decision [at=2] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review-r2]: ask-user round=2 findings=rev-b
+needs-decision [at=2] [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review]: ask-user round=2 findings=rev-b
+resolved [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review] [at=1794335236]: answered: approve: accepted as is
+resolved [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review-r2] [at=1794335236]: answered: approve: accepted as is
+resolved [key=nm-01M52KCB3JD1D4AVBY40ZG9EPZ-review] [at=1794335236]: answered: approve: accepted as is
