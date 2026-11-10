@@ -2976,7 +2976,7 @@ test_bounded_deadline_during_handover_reports_contention() {
     tries=0
     # The parent tries once before the timed helper and once after it; the
     # previous holder exits after that second try fails, and the successor
-    # claims the lock only after the owner read has seen the dead pid.
+    # claims the lock just before the third try.
     fm_lock_try_acquire() {
       tries=$((tries + 1))
       if [ "$tries" -eq 3 ]; then
