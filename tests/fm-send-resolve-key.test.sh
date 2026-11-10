@@ -1255,6 +1255,35 @@ test_failed_ruling_save_still_closes_key() {
   pass "fm-send --resolve-key nm-*: a failed ruling save still closes the answered key"
 }
 
+# A replacement that cannot be written leaves the earlier ruling in place, so
+# the error must say the respond command will pass that stale ruling.
+test_failed_ruling_replace_names_stale_ruling() {
+  local dir fb log home rc err file old
+  dir="$TMP_ROOT/gate-replace-fail"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home gate-replace-fail)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [at=1] [key=nm-RUNC-lint]: ask-user round=2 findings=lint-1 file=/x\n' > "$home/state/t1.status"
+  file="$home/data/t1/nm-RUNC-lint-round2-ruling.txt"
+  old='Earlier ruling: rerun the lint step.'
+  mkdir -p "$home/data/t1"; printf '%s\n' "$old" > "$file"
+  chmod 555 "$home/data/t1"
+  if touch "$home/data/t1/.probe" 2>/dev/null; then
+    rm -f "$home/data/t1/.probe"; chmod 755 "$home/data/t1"
+    pass "fm-send --resolve-key nm-*: failed replacement skipped (directory permissions not enforced)"
+    return
+  fi
+  : > "$log"
+  err=$(env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-RUNC-lint $'Ruling for lint round 2: fix lint-1.\nProperty: every caller; derive them from the code.\nDependents: none - nothing is edited.' 2>&1 >/dev/null); rc=$?
+  chmod 755 "$home/data/t1"
+  [ "$rc" -ne 0 ] || fail "a send whose ruling could not replace the saved one must exit nonzero"
+  assert_equals "$old" "$(cat "$file")" "the earlier ruling stays in place"
+  assert_contains "$err" "will pass the earlier ruling still saved there" "the failed replacement must name the stale ruling"
+  case "$err" in *"missing file"*) fail "a failed replacement must not claim the file is missing: $err" ;; esac
+  pass "fm-send --resolve-key nm-*: a failed ruling replacement names the stale ruling left in place"
+}
+
 test_worker_note_needs_a_saved_ruling() {
   local dir fb log home rc
   dir="$TMP_ROOT/worker-note"; mkdir -p "$dir"
@@ -1328,3 +1357,4 @@ test_gate_reclose_keeps_saved_ruling
 test_worker_note_needs_a_saved_ruling
 test_suffixed_key_saves_under_plain_step
 test_failed_ruling_save_still_closes_key
+test_failed_ruling_replace_names_stale_ruling
