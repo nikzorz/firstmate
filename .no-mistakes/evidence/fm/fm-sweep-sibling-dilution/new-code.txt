@@ -1,0 +1,3 @@
+ok - the default base is origin's default branch, else the local main
+ok - --help prints usage and an unknown flag is a usage error
+all fm-restatement-sweep tests passed

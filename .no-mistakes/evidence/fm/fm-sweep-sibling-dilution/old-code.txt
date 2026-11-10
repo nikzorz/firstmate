@@ -1,0 +1,8 @@
+ok - a removed '-- ' comment line does not drop later hunks of its file
+ok - test paths and interpreter here-documents are skipped, prose here-documents are swept
+ok - a rewritten sentence lists the lines that keep the phrases it dropped
+ok - a dropped phrase is listed across a comment wrap and on however many lines keep it
+ok - a phrase reaching onto a line the diff added is not listed
+ok - a split rewrite lists only words that left its hunk, not words moved to its other sentence
+not ok - a dropped word was masked by an unrelated added sentence in another hunk: restatement sweep: 3 changed sentences in 1 files since main (7a86bffba05f); 0 candidate restatements
+removed-phrase grep: 0 rewritten sentences; 0 stale? lines
