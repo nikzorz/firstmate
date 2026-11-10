@@ -411,7 +411,7 @@ test_gate_fix_ruling_requires_property_line() {
   [ "$rc" -ne 0 ] || fail "an approve that mentions a fix should refuse without a Property: line"
   run_send "$fb" "$home" "$log" t1 --resolve-key nm-x-ff \
     $'Ruling: approve review-1; do not fix, filed #12.\nProperty: none; this rules no finding fix.'; rc=$?
-  expect_code 0 "$rc" "an approve that mentions a fix should send with a Property: line saying it rules none"
+  expect_code 0 "$rc" "an approve that mentions a fix should send with the line Property: none"
 
   printf 'needs-decision [key=nm-x-fr]: ask-user round=1 findings=review-1 file=f\n' >> "$home/state/t1.status"
   env PATH="$fb:$PATH" \
