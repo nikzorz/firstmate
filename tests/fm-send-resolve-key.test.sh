@@ -1170,7 +1170,7 @@ test_gate_answer_saves_ruling_and_appends_respond_command() {
 # ("rerun only, as already sent") and points the worker back at the saved
 # ruling; a later fix ruling replaces it.
 test_gate_reclose_keeps_saved_ruling() {
-  local dir fb log home rc file first fix
+  local dir fb log home rc file first fix rerun
   dir="$TMP_ROOT/gate-reclose"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home gate-reclose)
@@ -1187,12 +1187,24 @@ test_gate_reclose_keeps_saved_ruling() {
   sed '1,/^--$/d' "$home/state/t1.inbox/002.msg" | grep -qF -- "--instructions-file $file" \
     || fail "the re-close must point the worker back at the saved ruling"
 
+  printf 'needs-decision [at=2] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review \
+    $'Rerun only, as already sent to the fix round.\nProperty: none - rules no new fix.'; rc=$?
+  expect_code 0 "$rc" "a re-close that mentions the fix round should send"
+  assert_equals "$first" "$(cat "$file")" "a re-close that mentions fix but names no property must not replace the saved ruling"
+
+  rerun=$'Corrected ruling for round 4: rerun the review step on the current head.\nProperty: the review covers every changed file; derive them from the diff.\nDependents: none - nothing is edited.'
+  printf 'needs-decision [at=2] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "$rerun"; rc=$?
+  expect_code 0 "$rc" "a corrected rerun ruling should send"
+  assert_equals "$rerun" "$(cat "$file")" "a corrected ruling naming a property must replace the saved one even without the word fix"
+
   fix=$'Corrected ruling for round 4: fix review-2 and review-3.\nProperty: every slot reader; derive them from the code.\nDependents: the mutant table.'
   printf 'needs-decision [at=3] [key=nm-RUNA-review]: ask-user round=4 findings=review-2,review-3 file=/x\n' >> "$home/state/t1.status"
   run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "$fix"; rc=$?
   expect_code 0 "$rc" "the corrected fix ruling should send"
   assert_equals "$fix" "$(cat "$file")" "a later fix ruling for the round must replace the saved one"
-  pass "fm-send --resolve-key nm-*: a re-close keeps the round's saved ruling and a later fix ruling replaces it"
+  pass "fm-send --resolve-key nm-*: a re-close keeps the round's saved ruling and a later ruling naming a property replaces it"
 }
 
 # A ruling file that cannot be written must not also strand the decision: the

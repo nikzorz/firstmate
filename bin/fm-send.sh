@@ -200,9 +200,10 @@
 # holds that round's stored instructions to). The first answer to a round is
 # always saved, since a rerun ruling sends the gate to a fix round without
 # ruling any finding fix. A later answer to the same round replaces it only
-# when it rules fix, as defined above; any other later answer only re-closes
-# the key, such as "rerun only, as already sent", and the worker is pointed
-# back at the ruling already saved.
+# when it carries a Property: line naming a property other than none; any
+# other later answer only re-closes the key, such as "rerun only, as already
+# sent to the fix round", and the worker is pointed back at the ruling already
+# saved.
 # The delivered steer then ends with a block for the worker that is not part
 # of the ruling: each --worker-note text (stop rules, report-blocked
 # conditions, anything the fix round must not read), then the exact
@@ -655,6 +656,13 @@ fm_send_rules_fix() { # <answer-text>
   printf '%s' "$1" | grep -Eiq '(^|[^[:alnum:]_-])fix([^[:alnum:]_-]|$)'
 }
 
+fm_send_names_property() { # <answer-text>
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
+    /^[[:space:]]*Property:[[:space:]]*[^[:space:]]/ { found = 1 }
+    END { exit !found }'
+}
+
 # Saved rulings this send owns, one "<run>\t<step>\t<round>\t<file>\t<save>"
 # line per answered pipeline-gate key, where <save> is 1 when this send writes
 # the file and 0 when it only points at the ruling already saved there.
@@ -678,7 +686,7 @@ fm_send_plan_rulings() { # <answer-text>
     [ -n "$round" ] || continue
     file=$(fm_nm_ruling_file "$data" "$RESOLVE_TASK_ID" "$run" "$step" "$round")
     save=1
-    [ ! -f "$file" ] || fm_send_rules_fix "$text" || save=0
+    [ ! -f "$file" ] || fm_send_names_property "$text" || save=0
     RULING_PLAN="${RULING_PLAN}${run}"$'\t'"${step}"$'\t'"${round}"$'\t'"${file}"$'\t'"${save}"$'\n'
   done
 }
