@@ -918,7 +918,7 @@ fm_send_close_resolved_keys() { # <answer-text>
   # The relay check pairs an earlier round's plain-key ask with the first later
   # line under that key, so a mirrored ask must follow the plain key's own
   # answered close whatever order the keys were named in.
-  close_lines+=("${mirror_lines[@]}")
+  close_lines+=(${mirror_lines[@]+"${mirror_lines[@]}"})
   [ "${#close_lines[@]}" -gt 0 ] || return 0
   append_rc=0
   fm_wake_status_append_self_announced "$STATE" "$RESOLVE_STATUS_FILE" "${close_lines[@]}" || append_rc=$?
