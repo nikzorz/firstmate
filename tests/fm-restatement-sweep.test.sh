@@ -213,6 +213,21 @@ test_split_rewrite_keeps_words_moved_to_its_other_sentence() {
   pass "a split rewrite lists only words that left its hunk, not words moved to its other sentence"
 }
 
+test_split_rewrite_across_a_blank_line_keeps_moved_words() {
+  local repo="$TMP_ROOT/split-blank" out
+  new_repo "$repo"
+  printf '#!/bin/sh\n# Hits on added lines are skipped, and a phrase on more than three lines is stock wording.\n\n' >"$repo/a.sh"
+  printf 'Note that hits on added lines are skipped here.\n' >"$repo/notes.md"
+  commit_all "$repo" 'one sentence'
+  git -C "$repo" branch -f main
+  printf '#!/bin/sh\n# Hits on added lines are skipped.\n\n# A phrase on more than three added lines is house wording.\n' >"$repo/a.sh"
+  commit_all "$repo" 'split sentence across a blank line'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a split rewrite: $out"
+  printf '%s\n' "$out" | grep -q '^stale? notes.md:' \
+    && fail "a line keeping a claim the split rewrite still states past a blank line was listed: $out"
+  pass "a split rewrite whose halves a blank line separates keeps the words moved to its other half"
+}
+
 test_dirty_worktree_is_refused() {
   local repo="$TMP_ROOT/dirty" out rc
   new_repo "$repo"
@@ -300,6 +315,7 @@ test_rewrite_lists_lines_keeping_its_dropped_phrases
 test_dropped_phrase_is_found_across_a_wrap_and_on_every_line
 test_phrase_wrapping_onto_an_added_line_is_skipped
 test_split_rewrite_keeps_words_moved_to_its_other_sentence
+test_split_rewrite_across_a_blank_line_keeps_moved_words
 test_unrelated_added_sentence_does_not_keep_a_dropped_word
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
