@@ -207,10 +207,10 @@ test_split_rewrite_keeps_words_moved_to_its_other_sentence() {
   printf '%s\n' "$out" | grep -q '^stale? notes.md:' \
     && fail "a line keeping a claim the split rewrite still states was listed: $out"
   printf '%s\n' "$out" | grep -qF 'stale? style.md:1: Any phrase repeated that often is stock wording.' \
-    || fail "a line keeping a word the split rewrite dropped from its file was not listed: $out"
+    || fail "a line keeping a word the split rewrite dropped from its hunk was not listed: $out"
   printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 1 stale? lines' \
     || fail "the removed-phrase summary was wrong: $out"
-  pass "a split rewrite lists only words that left its file, not words moved to its other sentence"
+  pass "a split rewrite lists only words that left its hunk, not words moved to its other sentence"
 }
 
 test_dirty_worktree_is_refused() {
@@ -275,6 +275,21 @@ test_help_and_usage() {
   [ "$rc" -eq 2 ] || fail "an unknown flag exited $rc, not 2"
   pass "--help prints usage and an unknown flag is a usage error"
 }
+test_unrelated_added_sentence_does_not_keep_a_dropped_word() {
+  local repo="$TMP_ROOT/unrelated-sibling" out
+  new_repo "$repo"
+  printf '#!/bin/sh\n# Hits on added lines are skipped, and a phrase on more than three lines is stock wording.\n# Keep one.\n# Keep two.\n# Keep three.\n' >"$repo/a.sh"
+  printf 'Any phrase repeated that often is stock wording.\n' >"$repo/style.md"
+  commit_all "$repo" 'one sentence'
+  git -C "$repo" branch -f main
+  printf '#!/bin/sh\n# Hits on added lines are skipped, and a phrase on more than three lines is house wording.\n# Keep one.\n# Keep two.\n# Keep three.\n# The stock ledger is reconciled weekly.\n' >"$repo/a.sh"
+  commit_all "$repo" 'rewrite plus an unrelated sentence'
+  out=$(sweep "$repo" --base main) || fail "sweep exited $? on a rewrite: $out"
+  printf '%s\n' "$out" | grep -qF 'stale? style.md:1: Any phrase repeated that often is stock wording.' \
+    || fail "a dropped word was masked by an unrelated added sentence in another hunk: $out"
+  pass "an added sentence in another hunk of the rewrite's file does not keep a dropped word"
+}
+
 
 test_changed_owner_lists_stale_restatement
 test_move_is_not_a_restatement
@@ -285,6 +300,7 @@ test_rewrite_lists_lines_keeping_its_dropped_phrases
 test_dropped_phrase_is_found_across_a_wrap_and_on_every_line
 test_phrase_wrapping_onto_an_added_line_is_skipped
 test_split_rewrite_keeps_words_moved_to_its_other_sentence
+test_unrelated_added_sentence_does_not_keep_a_dropped_word
 test_dirty_worktree_is_refused
 test_owner_path_and_cwd_do_not_hide_a_change
 test_default_base_resolution

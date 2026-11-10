@@ -40,7 +40,7 @@
 # of that claim elsewhere then shares too few words to resemble the new text.
 # So a removed sentence whose closest added sentence holds most of its words
 # is a rewrite, and each three-word phrase of the removed sentence that holds
-# a word no added sentence of the rewrite's file kept is grepped for across every tracked text file at
+# a word no added sentence of the rewrite's diff hunk kept is grepped for across every tracked text file at
 # HEAD, test paths included, over each file's words joined across lines so a
 # phrase a comment wraps is still found; a hit is reported at the line of its
 # first word, and is not listed when the diff added any of the phrase's lines. This grep does not catch a claim falsified
@@ -282,6 +282,7 @@ def header_path(field, prefix):
 
 def changed_lines(diff_text):
     removed, added = collections.defaultdict(set), collections.defaultdict(set)
+    hunks = collections.defaultdict(list)  # new path -> [range of its added lines], one per hunk
     old = new = None
     # Under -U0 a removed "-- " comment or an added "++ " line looks like a
     # header, so ---/+++ are headers only before a file's first hunk.
@@ -305,7 +306,8 @@ def changed_lines(diff_text):
                 removed[old].update(range(old_start, old_start + old_count))
             if new:
                 added[new].update(range(new_start, new_start + new_count))
-    return removed, added
+                hunks[new].append(range(new_start, new_start + new_count))
+    return removed, added, hunks
 
 
 def read_blobs(rev, paths):
@@ -340,7 +342,7 @@ def main():
     sys.stdout.reconfigure(errors="backslashreplace")
     diff = git("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative", "-M",
                "--src-prefix=a/", "--dst-prefix=b/", MERGE_BASE, HEAD).decode("utf-8", "surrogateescape")
-    removed, added = changed_lines(diff)
+    removed, added, hunks = changed_lines(diff)
 
     tree = read_blobs(HEAD, None)
     corpus = []  # (path, first, last, text, words, added_here)
@@ -352,13 +354,17 @@ def main():
             touched = any(n in lines_added for n in range(first, last + 1))
             corpus.append((path, first, last, sentence, words_of(sentence), touched))
 
-    probes = [(c[0], c[1], c[3], c[4], "+") for c in corpus if c[5]]
+    def hunks_touched(path, first, last):
+        return frozenset(i for i, lines in enumerate(hunks.get(path, ()))
+                         if any(n in lines for n in range(first, last + 1)))
+
+    probes = [(c[0], c[1], c[3], c[4], "+", hunks_touched(c[0], c[1], c[2])) for c in corpus if c[5]]
     for path, text in read_blobs(MERGE_BASE, sorted(removed)).items():
         if TEST_PATH.search(path):
             continue
         for first, last, sentence in sentences(path, text):
             if any(n in removed[path] for n in range(first, last + 1)):
-                probes.append((path, first, sentence, words_of(sentence), "-"))
+                probes.append((path, first, sentence, words_of(sentence), "-", frozenset()))
 
     total = len(corpus) or 1
     frequency = collections.Counter()
@@ -375,7 +381,7 @@ def main():
 
     best = {}  # corpus index -> (score, probe)
     for probe in probes:
-        path, _, _, words, side = probe
+        path, _, _, words, side, _ = probe
         if len(words) < MIN_SHARED_WORDS:
             continue
         probe_weight = weight(words)
@@ -454,7 +460,7 @@ def dropped_phrase_hits(probes, tree, added):
 
     A removed sentence is rewritten when an added sentence holds most of its
     words; each run of three of its words that holds a word no added
-    sentence of the rewrite's file kept, and that none of them repeats, is a
+    sentence of the rewrite's diff hunk kept, and that none of them repeats, is a
     phrase whose other copies may still state the old claim.
     """
     removed_probes = [p for p in probes if p[4] == "-"]
@@ -480,9 +486,10 @@ def dropped_phrase_hits(probes, tree, added):
         rewrite = added_probes[index]
         if count / len(words) <= REWRITE_SHARE:
             continue
-        # A rewrite that splits a sentence moves words into its file's other
-        # added sentences, so those words are kept, not dropped.
-        siblings = [p for p in added_probes if p[0] == rewrite[0]]
+        # A rewrite that splits a sentence moves words into the added sentences
+        # beside it, so those words are kept, not dropped; an added sentence
+        # elsewhere in the file says something else and keeps none of them.
+        siblings = [p for p in added_probes if p[0] == rewrite[0] and p[5] & rewrite[5]]
         dropped = words.difference(*(p[3] for p in siblings))
         if not dropped:
             continue
