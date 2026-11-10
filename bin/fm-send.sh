@@ -186,9 +186,9 @@
 # outcome. A message rules fix when the word fix stands alone in it, "fix
 # round" included, since sending a finding to a fix round rules it fix; a
 # message that only mentions a fix may carry the line "Property: none",
-# optionally followed by punctuation and a reason. Each other Property: line must be followed by a `Dependents:` line
-# naming what reads or depends on the value it changes, or `Dependents: none -
-# <reason>`. That check is a heuristic: it proves the dependents question was
+# optionally followed by punctuation and a reason. Each other Property: line
+# must be followed by a `Dependents:` line naming what reads or depends on the
+# value it changes, or `Dependents: none - <reason>`. That check is a heuristic: it proves the dependents question was
 # answered, not that the list is complete.
 #
 # A worker that retypes a ruling it relays to its gate can drop the clause
