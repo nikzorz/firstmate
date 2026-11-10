@@ -1132,6 +1132,82 @@ test_suffixed_key_refuses_while_its_plain_key_is_open() {
   pass "fm-send --resolve-key: a suffixed key refuses while its plain key holds an open decision, and naming both answers both"
 }
 
+# A pipeline-gate answer saves the ruling for its round, exactly as given, and
+# the steer the worker reads ends, outside the ruling, with the worker notes
+# and the respond command that passes that saved file as the instructions.
+test_gate_answer_saves_ruling_and_appends_respond_command() {
+  local dir fb log home rc file body ruling cmd
+  dir="$TMP_ROOT/gate-ruling"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home gate-ruling)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [at=1794228202] [key=nm-01M704XG1PZE7MZXGRAYRBETNR-lint]: ask-user round=1 findings=lint-1 file=/x\n' \
+    > "$home/state/t1.status"
+  ruling=$'Property: this ruling rules no code change.\nDependents: none - nothing is edited.\nlint-1 is environmental, not a code finding. Rerun the lint step.'
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-01M704XG1PZE7MZXGRAYRBETNR-lint \
+    --worker-note 'If the rerun fails for space again, report blocked with the exact failure.' "$ruling"; rc=$?
+  expect_code 0 "$rc" "a gate answer with a worker note should send"
+  file="$home/data/t1/nm-01M704XG1PZE7MZXGRAYRBETNR-lint-round1-ruling.txt"
+  [ -f "$file" ] || fail "the ruling for round 1 was not saved at $file"
+  assert_equals "$ruling" "$(cat "$file")" "the saved ruling must be the message exactly as given"
+  body=$(sed '1,/^--$/d' "$home/state/t1.inbox/001.msg")
+  case "$body" in "$ruling"$'\n\n'*) ;; *) fail "the delivered steer must open with the ruling: $body" ;; esac
+  assert_contains "$body" "If the rerun fails for space again, report blocked" "the worker note did not reach the worker"
+  cmd=$(printf '%s\n' "$body" | grep '^no-mistakes axi respond ')
+  assert_equals "no-mistakes axi respond --run 01M704XG1PZE7MZXGRAYRBETNR --step lint --action fix --instructions-file $file --findings <ids to fix> --ignore <ids to decline>" \
+    "$cmd" "the steer must end with the respond command that reads the saved ruling"
+  assert_equals "$cmd" "$(printf '%s\n' "$body" | tail -1)" "the respond command must end the steer"
+  if grep -qF 'report blocked' "$file"; then
+    fail "the worker note leaked into the saved ruling"
+  fi
+  if grep -F 'resolved [key=nm-01M704XG1PZE7MZXGRAYRBETNR-lint]' "$home/state/t1.status" | grep -qF 'for the worker only'; then
+    fail "the close excerpt must hold the ruling alone"
+  fi
+  pass "fm-send --resolve-key nm-*: the ruling is saved per round and the steer ends with notes and the respond command outside it"
+}
+
+# A later answer to the same round that rules no fix only re-closes the key
+# ("rerun only, as already sent") and points the worker back at the saved
+# ruling; a later fix ruling replaces it.
+test_gate_reclose_keeps_saved_ruling() {
+  local dir fb log home rc file first fix
+  dir="$TMP_ROOT/gate-reclose"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home gate-reclose)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  first=$'Ruling for review round 4: fix review-2.\nProperty: every caller of slot_for reads the new slot; derive them from the code.\nDependents: the mutant table.'
+  printf 'needs-decision [at=1] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' > "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "$first"; rc=$?
+  expect_code 0 "$rc" "the round-4 fix ruling should send"
+  file="$home/data/t1/nm-RUNA-review-round4-ruling.txt"
+  printf 'needs-decision [at=2] [key=nm-RUNA-review]: ask-user round=4 findings=review-2 file=/x\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "Rerun only, no code change, as already sent."; rc=$?
+  expect_code 0 "$rc" "the re-close should send"
+  assert_equals "$first" "$(cat "$file")" "a re-close must not replace the ruling saved for that round"
+  sed '1,/^--$/d' "$home/state/t1.inbox/002.msg" | grep -qF -- "--instructions-file $file" \
+    || fail "the re-close must point the worker back at the saved ruling"
+
+  fix=$'Corrected ruling for round 4: fix review-2 and review-3.\nProperty: every slot reader; derive them from the code.\nDependents: the mutant table.'
+  printf 'needs-decision [at=3] [key=nm-RUNA-review]: ask-user round=4 findings=review-2,review-3 file=/x\n' >> "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNA-review "$fix"; rc=$?
+  expect_code 0 "$rc" "the corrected fix ruling should send"
+  assert_equals "$fix" "$(cat "$file")" "a later fix ruling for the round must replace the saved one"
+  pass "fm-send --resolve-key nm-*: a re-close keeps the round's saved ruling and a later fix ruling replaces it"
+}
+
+test_worker_note_needs_a_saved_ruling() {
+  local dir fb log home rc
+  dir="$TMP_ROOT/worker-note"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home worker-note)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key api-shape --worker-note 'then stop' "go with REST"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a worker note with no gate ruling to keep it out of must refuse"
+  [ ! -e "$home/state/t1.inbox/001.msg" ] || fail "a refused worker note still sent the message"
+  pass "fm-send --worker-note refuses unless the send answers a gate whose ruling it keeps the note out of"
+}
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_separate_resolve_key_answers_do_not_rewake
@@ -1162,3 +1238,6 @@ test_decision_answer_partition_relocates_under_the_record
 test_suffixed_gate_key_ruling_clears_the_merge_guard_round
 test_suffixed_same_theme_ruling_clears_the_merge_guard_round
 test_suffixed_key_refuses_while_its_plain_key_is_open
+test_gate_answer_saves_ruling_and_appends_respond_command
+test_gate_reclose_keeps_saved_ruling
+test_worker_note_needs_a_saved_ruling

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+# Usage: fm-send.sh <target> [--resolve-key <key>]... [--worker-note <text>]... [--fire-and-forget <delivery-id>] <text...>
 #   <target> may be an exact task id, a legacy fm-<id> task label resolved
 #   through this home's state/<id>.meta, or an explicit well-formed backend
 #   target. fm-send refuses unresolved guesses rather than falling back to a
@@ -191,6 +191,33 @@
 # <reason>`. That check is a heuristic: it proves the dependents question was
 # answered, not that the list is complete.
 #
+# A worker that retypes a ruling it relays to its gate can drop the clause
+# that carried it, so a local send answering an open
+# `needs-decision [key=nm-<run>-<step>] ... round=<n>` line saves the ruling
+# for that round and hands the worker a respond command that reads it. The
+# ruling is the message text exactly as given, saved to the round's ruling
+# file (fm_nm_ruling_file in bin/fm-nm-rulings-lib.sh, which the merge guard
+# holds that round's stored instructions to). The first answer to a round is
+# always saved, since a rerun ruling sends the gate to a fix round without
+# ruling any finding fix. A later answer to the same round replaces it only
+# when it rules fix, as defined above; any other later answer only re-closes
+# the key, such as "rerun only, as already sent", and the worker is pointed
+# back at the ruling already saved.
+# The delivered steer then ends with a block for the worker that is not part
+# of the ruling: each --worker-note text (stop rules, report-blocked
+# conditions, anything the fix round must not read), then the exact
+# `no-mistakes axi respond` command that passes that file as the instructions,
+# with only the finding lists left to fill. The excerpt the close records is
+# the ruling alone. --worker-note is refused unless the send saves or points at
+# such a ruling, so a note can never silently ride inside a ruling. The file is
+# written only after delivery, next
+# to the close; a write that fails exits nonzero naming the path, and the
+# worker's command then fails on the missing file rather than passing nothing.
+# The steps the worker-side decision keys nm-<run>-same-theme,
+# nm-<run>-stale-intent and nm-<run>-empty name are not pipeline steps, so those
+# keys get no saved ruling, and a remote target, which cannot read this home's
+# files, gets none either.
+#
 # Answering a decision is the gate-answer path and is main-owned while
 # attended: when any named key is an open needs-decision or a captain-held task
 # (a blocked: key is ordinary steering and stays lease-guarded only), the Pi
@@ -287,6 +314,8 @@ fi
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-nm-rulings-lib.sh
+. "$SCRIPT_DIR/fm-nm-rulings-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 
@@ -495,6 +524,7 @@ fi
 # message exactly as before, so ordinary sends are byte-identical.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
+WORKER_NOTES=
 fm_send_add_resolve_key() { # <key>
   local k=$1
   case "$k" in
@@ -524,6 +554,14 @@ while :; do
   --resolve-key=*)
     fm_send_add_resolve_key "${1#--resolve-key=}" || exit 1
     shift
+    ;;
+  --worker-note)
+    [ $# -ge 2 ] && [ -n "${2//[[:space:]]/}" ] || {
+      echo "error: --worker-note requires a nonempty text" >&2
+      exit 1
+    }
+    WORKER_NOTES="${WORKER_NOTES}$2"$'\n'
+    shift 2
     ;;
   --fire-and-forget)
     [ $# -ge 2 ] || {
@@ -613,6 +651,65 @@ fm_send_hold_resolved_id() { # <task-id> <decision-key>
   return 1
 }
 
+fm_send_rules_fix() { # <answer-text>
+  printf '%s' "$1" | grep -Eiq '(^|[^[:alnum:]_-])fix([^[:alnum:]_-]|$)'
+}
+
+# Saved rulings this send owns, one "<run>\t<step>\t<round>\t<file>\t<save>"
+# line per answered pipeline-gate key, where <save> is 1 when this send writes
+# the file and 0 when it only points at the ruling already saved there.
+RULING_PLAN=
+fm_send_plan_rulings() { # <answer-text>
+  local text=$1 data k rest run step line round file save
+  [ "$TARGET_BACKEND" != remote ] || return 0
+  data="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+  for k in $RESOLVE_STATUS_KEYS; do
+    case "$k" in nm-*-*) ;; *) continue ;; esac
+    [ "$(_fm_open_set_verb "$resolve_open_set" "$k")" = needs-decision ] || continue
+    rest=${k#nm-}
+    run=${rest%%-*}
+    step=${rest#"$run"-}
+    case "$step" in same-theme | stale-intent | empty) continue ;; esac
+    round=
+    while IFS= read -r line; do
+      [ "$(_fm_decision_key "$line" '')" = "$k" ] || continue
+      round=$(printf '%s\n' "${line#*:}" | grep -oE '(^|[[:space:]])round=[0-9]+([[:space:]]|$)' | tail -1 | tr -dc '0-9')
+    done < <(grep '^needs-decision' "$RESOLVE_STATUS_FILE" 2>/dev/null || true)
+    [ -n "$round" ] || continue
+    file=$(fm_nm_ruling_file "$data" "$RESOLVE_TASK_ID" "$run" "$step" "$round")
+    save=1
+    [ ! -f "$file" ] || fm_send_rules_fix "$text" || save=0
+    RULING_PLAN="${RULING_PLAN}${run}"$'\t'"${step}"$'\t'"${round}"$'\t'"${file}"$'\t'"${save}"$'\n'
+  done
+}
+
+# The block for the worker that ends the delivered steer, outside the ruling.
+fm_send_ruling_trailer() {
+  local run step round file save quoted
+  printf '\n\n----- for the worker only, not part of the ruling -----\n'
+  printf '%s' "$WORKER_NOTES"
+  while IFS=$'\t' read -r run step round file save; do
+    [ -n "$run" ] || continue
+    printf -v quoted '%q' "$file"
+    printf 'When you answer run %s step %s round %s with fix, pass the saved ruling this way, filling in only the two finding lists:\n' "$run" "$step" "$round"
+    printf 'no-mistakes axi respond --run %s --step %s --action fix --instructions-file %s --findings <ids to fix> --ignore <ids to decline>\n' "$run" "$step" "$quoted"
+  done <<<"$RULING_PLAN"
+}
+
+fm_send_save_rulings() { # <answer-text>
+  local text=$1 run step round file save tmp
+  while IFS=$'\t' read -r run step round file save; do
+    [ "$save" = 1 ] || continue
+    if mkdir -p "${file%/*}" && tmp=$(mktemp "$file.XXXXXX") &&
+      printf '%s\n' "$text" >"$tmp" && mv -f "$tmp" "$file"; then
+      continue
+    fi
+    [ -z "${tmp:-}" ] || rm -f "$tmp"
+    echo "error: the answer was delivered to $T, but the ruling for run $run step $step round $round could not be saved to $file, so the respond command it carries will fail on the missing file. Write the ruling there by hand - do not resend the answer." >&2
+    return 1
+  done <<<"$RULING_PLAN"
+}
+
 # Close-note body for --resolve-key. Ordinary keys keep answered: <excerpt>.
 # A pending-reply-* key uses the owning library's vocabulary so the reserved-key
 # fold actually closes it (fm_pending_reply_close_note_for_key).
@@ -680,7 +777,7 @@ if [ -n "$RESOLVE_KEYS" ]; then
   fi
   for k in $RESOLVE_KEYS; do
     case "$k" in nm-*) ;; *) continue ;; esac
-    printf '%s' "$*" | grep -Eiq '(^|[^[:alnum:]_-])fix([^[:alnum:]_-]|$)' || continue
+    fm_send_rules_fix "$*" || continue
     printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' || {
       echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent." >&2
       exit 1
@@ -761,6 +858,11 @@ if [ -n "$RESOLVE_KEYS" ]; then
       exit 1
     fi
   done
+  fm_send_plan_rulings "$*"
+fi
+if [ -n "$WORKER_NOTES" ] && [ -z "$RULING_PLAN" ]; then
+  echo "error: --worker-note only accompanies an answer to a pipeline gate that has a saved ruling, where it is kept out of the ruling; this send has none, so put the text in the message. Nothing was sent." >&2
+  exit 1
 fi
 
 # The last needs-decision line of the answered task's status log carrying
@@ -907,6 +1009,7 @@ else
   # The pre-marker answer text, kept for the closing resolved note so the
   # durable ledger records the plain answer without marker or corr bytes.
   RESOLVE_ANSWER_TEXT=$MESSAGE
+  [ -z "$RULING_PLAN" ] || MESSAGE="$MESSAGE$(fm_send_ruling_trailer)"
   if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
     MESSAGE="${FM_FROMFIRST_MARK}delivery=${FIRE_AND_FORGET_ID} ${MESSAGE#"$FM_FROMFIRST_MARK"}"
@@ -1098,6 +1201,7 @@ else
       fi
     fi
     if [ -n "$RESOLVE_KEYS" ]; then
+      fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
@@ -1175,6 +1279,7 @@ else
     # The answer is durably sent: close each answered decision at enqueue time
     # (answerer-closes; see the header contract).
     if [ -n "$RESOLVE_KEYS" ]; then
+      fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
@@ -1300,6 +1405,7 @@ else
   # Delivery is fully confirmed: close each answered decision in this home's
   # ledger (answerer-closes; see the header contract).
   if [ -n "$RESOLVE_KEYS" ]; then
+    fm_send_save_rulings "$RESOLVE_ANSWER_TEXT" || exit 1
     fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
     fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
   fi

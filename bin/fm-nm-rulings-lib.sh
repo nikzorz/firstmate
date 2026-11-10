@@ -56,7 +56,11 @@
 # fm_nm_rulings_clearing_text <status-file>
 #   Prints, after a list of owed rulings, the lines that clear them; prints
 #   nothing when none are owed.
-# fm_nm_relay_mismatches <task-id> <state-dir> [<accepted rounds>]
+# fm_nm_ruling_file <data-dir> <task-id> <run> <step> <round>
+#   Prints the path of the ruling body bin/fm-send.sh relayed for that round,
+#   which it writes and which the comparison below prefers over the inbox
+#   record. Reads nothing.
+# fm_nm_relay_mismatches <task-id> <state-dir> <data-dir> [<accepted rounds>]
 #   Sets FM_NM_RELAY_MISMATCHES to one "  - ..." line per user-selected round
 #   whose stored respond instructions lack the body of the steer that answered
 #   its gate, naming the round and both texts, FM_NM_RELAY_ROUNDS to one
@@ -68,7 +72,11 @@
 #   `resolved [key=<that key>] ...: answered: <excerpt>` close bin/fm-send.sh
 #   wrote for it, and the task inbox record (pending or handled) whose body,
 #   flattened the way that close flattens it, starts with the excerpt, the
-#   latest such record when several do. Every finding the round selected must
+#   latest such record when several do. The body that round is held to is its
+#   ruling file (fm_nm_ruling_file) when one exists, since the inbox record
+#   also carries lines meant only for the worker and a later steer that only
+#   re-closes the key may be the bound one; otherwise it is that record's body.
+#   Every finding the round selected must
 #   carry instructions that contain that body, trimmed, verbatim. A round with
 #   no bound steer was answered on the worker's own judgment and is not judged;
 #   nothing here reports what cannot be read, which fm_nm_rulings_owed already
@@ -265,6 +273,10 @@ fm_nm_rulings_clearing_text() {  # <status-file>
   printf '%s' "$FM_NM_RULINGS_CLEARING"
 }
 
+fm_nm_ruling_file() {  # <data-dir> <task-id> <run> <step> <round>
+  printf '%s/%s/nm-%s-%s-round%s-ruling.txt\n' "$1" "$2" "$3" "$4" "$5"
+}
+
 # shellcheck disable=SC2034 # Read by the sourcing callers.
 FM_NM_RELAY_MISMATCHES=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
@@ -272,8 +284,8 @@ FM_NM_RELAY_ROUNDS=
 # shellcheck disable=SC2034 # Read by the sourcing callers.
 FM_NM_RELAY_ACCEPTED=false
 # shellcheck disable=SC2034 # FM_NM_RELAY_MISMATCHES, FM_NM_RELAY_ROUNDS and FM_NM_RELAY_ACCEPTED are read by the sourcing callers.
-fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<accepted rounds>]
-  local id=$1 state=$2 accept=${3:-} meta mode branch project db rounds out
+fm_nm_relay_mismatches() {  # <task-id> <state-dir> <data-dir> [<accepted rounds>]
+  local id=$1 state=$2 data=$3 accept=${4:-} meta mode branch project db rounds out ruling
   FM_NM_RELAY_MISMATCHES=
   FM_NM_RELAY_ROUNDS=
   FM_NM_RELAY_ACCEPTED=
@@ -285,6 +297,7 @@ fm_nm_relay_mismatches() {  # <task-id> <state-dir> [<accepted rounds>]
   [ "$mode" = no-mistakes ] && [ -n "$branch" ] && [ -n "$project" ] || return 0
   db="${NM_HOME:-${HOME:-}/.no-mistakes}/state.sqlite"
   rounds=$(fm_nm_rounds "$db" --branch "$project" "$branch" 2>/dev/null) || return 0
+  ruling=$(fm_nm_ruling_file "$data" "$id" '{run}' '{step}' '{round}')
   out=$(printf '%s\n' "$rounds" | python3 -I -c '
 import calendar
 import glob
@@ -294,7 +307,7 @@ import re
 import sys
 import time
 
-status_path, inbox, accept = sys.argv[1:]
+status_path, inbox, accept, ruling = sys.argv[1:]
 ASK = re.compile(r"^needs-decision\b[^:]*\[key=(nm-([^]\s-]+)-([^]\s]+))\][^:]*:(.*)$")
 # The answered close bin/fm-send.sh appends through status_stamp_line. Every
 # other keyed line (a re-escalation, a captain-held transfer from
@@ -367,8 +380,16 @@ for i, line in enumerate(lines):
     # same second after it also passes at <= close; match the excerpt first.
     answers = [text for _, at, text in records
                if at <= int(close.group(1)) and flat(text).startswith(excerpt)]
-    if excerpt and answers:
-        bound[(run, step, int(round_no.group(1)))] = answers[-1].strip()
+    if not (excerpt and answers):
+        continue
+    steer = answers[-1]
+    path = ruling.replace("{run}", run).replace("{step}", step).replace("{round}", round_no.group(1))
+    try:
+        with open(path, encoding="utf-8", errors="replace") as saved:
+            steer = saved.read()
+    except OSError:
+        pass
+    bound[(run, step, int(round_no.group(1)))] = steer.strip()
 
 accept = set(accept.split("\n")) - {""}
 for line in sys.stdin:
@@ -388,7 +409,7 @@ for line in sys.stdin:
     print("refused=%s:%s:%s" % (r["run"], r["step"], r["round"]))
     print("  - no-mistakes run %s step %s round %s was fixed with instructions that lack the body of the steer that answered its gate; steer: %s; instructions: %s"
           % (r["run"], r["step"], r["round"], json.dumps(steer), json.dumps(lacking[0] or "")))
-' "$state/$id.status" "$state/$id.inbox" "$accept" 2>/dev/null) || return 0
+' "$state/$id.status" "$state/$id.inbox" "$accept" "$ruling" 2>/dev/null) || return 0
   FM_NM_RELAY_ROUNDS=$(printf '%s\n' "$out" | sed -n 's/^refused=//p')
   FM_NM_RELAY_ACCEPTED=$(printf '%s\n' "$out" | sed -n 's/^accepted=//p')
   out=$(printf '%s\n' "$out" | grep -v '^refused=\|^accepted=' || true)
