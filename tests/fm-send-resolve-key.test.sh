@@ -1268,8 +1268,33 @@ test_worker_note_needs_a_saved_ruling() {
   pass "fm-send --worker-note refuses unless the send answers a gate whose ruling it keeps the note out of"
 }
 
+# Naming the suffixed key first must still put the plain key's own close
+# ahead of the mirrored ask, so round 1's ask pairs with an answered close.
+test_suffixed_key_first_keeps_plain_close_ahead_of_mirror() {
+  local dir fb log home rc run=01M52KCB3JD1D4AVBY40ZG9EPZ next
+  dir="$TMP_ROOT/suffixed-first-order"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home suffixed-first-order)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "branch=fm/t1"
+  printf 'needs-decision [at=1] [key=nm-%s-review]: ask-user round=1 findings=rev-a\nneeds-decision [at=2] [key=nm-%s-review-r2]: ask-user round=2 findings=rev-b\n' "$run" "$run" \
+    > "$home/state/t1.status"
+
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-review-r2" --resolve-key "nm-$run-review" "approve: accepted as is"; rc=$?
+  expect_code 0 "$rc" "naming the suffixed key first should succeed"
+  next=$(tail -n +2 "$home/state/t1.status" | grep -F "[key=nm-$run-review]" | head -n 1)
+  case "$next" in
+  'resolved '*'answered:'*) ;;
+  *) fail "round 1's ask is followed under its key by a non-answer line: $next"$'\n'"$(cat "$home/state/t1.status")" ;;
+  esac
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "naming both keys left a decision open:"$'\n'"$(cat "$home/state/t1.status")"
+  fi
+  pass "fm-send --resolve-key: naming the suffixed key first still closes the plain key before mirroring the later round"
+}
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
+test_suffixed_key_first_keeps_plain_close_ahead_of_mirror
 test_separate_resolve_key_answers_do_not_rewake
 test_colon_first_key_position_is_answerable
 test_answer_starts_work_never_orphans

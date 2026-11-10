@@ -901,20 +901,24 @@ fm_send_open_ask_line() { # <decision-key>
 # or a worker line the fold read but never listed, leave the watcher's wake
 # path untouched.
 fm_send_close_resolved_keys() { # <answer-text>
-  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() own_close_lines=() i=0 plain asked
+  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() own_close_lines=() mirror_lines=() i=0 plain asked
   note=$(printf '%s' "$note" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
   for k in $RESOLVE_STATUS_KEYS; do
     close_note=$(fm_send_resolve_close_note "$k" "$note")
     if plain=$(fm_send_plain_gate_key "$k") &&
       asked=$(fm_send_open_ask_line "$k"); then
-      close_lines+=("${asked/"[key=$k]"/"[key=$plain]"}")
+      mirror_lines+=("${asked/"[key=$k]"/"[key=$plain]"}")
       fm_cap_line_var "resolved [key=$plain]: $(fm_send_resolve_close_note "$plain" "$note")" "$RESOLVE_CLOSE_MAX"
-      close_lines+=("$FM_LINE_CAP_LINE")
+      mirror_lines+=("$FM_LINE_CAP_LINE")
     fi
     fm_cap_line_var "resolved [key=$k]: $close_note" "$RESOLVE_CLOSE_MAX"
     close_lines+=("$FM_LINE_CAP_LINE")
     own_close_lines+=("$FM_LINE_CAP_LINE")
   done
+  # The relay check pairs an earlier round's plain-key ask with the first later
+  # line under that key, so a mirrored ask must follow the plain key's own
+  # answered close whatever order the keys were named in.
+  close_lines+=("${mirror_lines[@]}")
   [ "${#close_lines[@]}" -gt 0 ] || return 0
   append_rc=0
   fm_wake_status_append_self_announced "$STATE" "$RESOLVE_STATUS_FILE" "${close_lines[@]}" || append_rc=$?
