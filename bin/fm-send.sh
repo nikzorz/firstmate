@@ -185,10 +185,10 @@
 # list as a closed edit set leaves a member the list missed no legitimate
 # outcome. A message rules fix when the word fix stands alone in it, "fix
 # round" included, since sending a finding to a fix round rules it fix; a
-# message that only mentions a fix may carry a Property: line saying it rules
-# none. Each other Property: line must be followed by a `Dependents:` line
-# naming what reads or depends on the value it changes, or `Dependents: none -
-# <reason>`. That check is a heuristic: it proves the dependents question was
+# message that only mentions a fix may carry the line "Property: none",
+# optionally followed by punctuation and a reason. Each other Property: line
+# must be followed by a `Dependents:` line naming what reads or depends on the
+# value it changes, or `Dependents: none - <reason>`. That check is a heuristic: it proves the dependents question was
 # answered, not that the list is complete.
 #
 # A worker that retypes a ruling it relays to its gate can drop the clause
@@ -660,7 +660,7 @@ fm_send_rules_fix() { # <answer-text>
 
 fm_send_names_property() { # <answer-text>
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
+    /^[[:space:]]*Property:[[:space:]]*[Nn][Oo][Nn][Ee][[:space:]]*([^[:alnum:]_[:space:]]|$)/ { next }
     /^[[:space:]]*Property:[[:space:]]*[^[:space:]]/ { found = 1 }
     END { exit !found }'
 }
@@ -794,12 +794,12 @@ if [ -n "$RESOLVE_KEYS" ]; then
     case "$k" in nm-*) ;; *) continue ;; esac
     fm_send_rules_fix "$*" || continue
     printf '%s\n' "$*" | grep -Eq '^[[:space:]]*Property:[[:space:]]*[^[:space:]]' || {
-      echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry a Property: line saying it rules none. Nothing was sent." >&2
+      echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling that has no line beginning \"Property:\"; state the set the fix must hold and tell the fix round to derive its members from the code, with any list from the finding only as examples (ask-user-authority step 5); a message that only mentions a fix may instead carry the line \"Property: none\", optionally followed by punctuation and a reason, such as \"Property: none - rules no new fix\". Nothing was sent." >&2
       exit 1
     }
     printf '%s\n' "$*" | awk '
       awaiting { if ($0 !~ /^[[:space:]]*$/) { if ($0 !~ /^[[:space:]]*Dependents:[[:space:]]*[^[:space:]]/ || tolower($0) ~ /^[[:space:]]*dependents:[[:space:]]*none[^[:alnum:]]*$/) exit 1; awaiting = 0 } next }
-      /^[[:space:]]*Property:[[:space:]]*none[[:space:]]*([;,.:-]|$)/ { next }
+      /^[[:space:]]*Property:[[:space:]]*[Nn][Oo][Nn][Ee][[:space:]]*([^[:alnum:]_[:space:]]|$)/ { next }
       /^[[:space:]]*Property:/ { awaiting = 1 }
       END { if (awaiting) exit 1 }' && continue
     echo "error: --resolve-key '$k' answers a pipeline gate with a fix ruling whose Property: line is not followed by a line beginning \"Dependents:\"; name what reads or depends on the value the property changes, or write \"Dependents: none - <reason>\" (ask-user-authority step 5). Nothing was sent." >&2
