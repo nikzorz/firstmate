@@ -1207,6 +1207,32 @@ test_gate_reclose_keeps_saved_ruling() {
   pass "fm-send --resolve-key nm-*: a re-close keeps the round's saved ruling and a later ruling naming a property replaces it"
 }
 
+# A round-suffixed gate key binds its round through the plain key, so the
+# ruling file and the printed step must be the plain ones.
+test_suffixed_key_saves_under_plain_step() {
+  local dir fb log home rc msg file run=01M52KCB3JD1D4AVBY40ZG9EPW
+  dir="$TMP_ROOT/gate-suffixed"; mkdir -p "$dir/nm" "$dir/project"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home gate-suffixed)
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "mode=no-mistakes" \
+    "branch=fm/t1" "project=$dir/project"
+  nm_state_fixture "$dir/nm/state.sqlite" "$dir/project" fm/t1 "$(jq -nc --arg run "$run" '
+    {run: $run, steps: [{name: "lint", order: 5, rounds: [
+      {round: 1, source: "user", selected: ["lint-1"], findings: [["lint-1", "auto-fix"]]},
+      {round: 2, source: "user_declined", findings: [["lint-2", "ask-user"]]}]}]}')" \
+    || fail "could not write the no-mistakes fixture"
+  msg=$'Ruling for lint round 2: fix lint-2.\nProperty: every caller; derive them from the code.\nDependents: none - nothing is edited.'
+  printf 'needs-decision [at=1] [key=nm-%s-lint-r2]: ask-user round=2 findings=lint-2 file=x\n' "$run" > "$home/state/t1.status"
+  run_send "$fb" "$home" "$log" t1 --resolve-key "nm-$run-lint-r2" "$msg"; rc=$?
+  expect_code 0 "$rc" "a suffixed-key fix ruling should send"
+  file="$home/data/t1/nm-$run-lint-round2-ruling.txt"
+  [ -f "$file" ] || fail "the ruling must be saved under the plain step: $(ls "$home/data/t1" 2>&1)"
+  assert_equals "$msg" "$(cat "$file")" "the saved ruling body"
+  sed '1,/^--$/d' "$home/state/t1.inbox/001.msg" | grep -qF -- "--step lint --action fix" \
+    || fail "the printed respond command must name the plain step"
+  pass "fm-send --resolve-key nm-*-rN: the ruling is saved and printed under the plain step"
+}
+
 # A ruling file that cannot be written must not also strand the decision: the
 # answer is already delivered, so the key still closes and the send exits
 # nonzero naming the unsaved ruling.
@@ -1275,4 +1301,5 @@ test_suffixed_key_refuses_while_its_plain_key_is_open
 test_gate_answer_saves_ruling_and_appends_respond_command
 test_gate_reclose_keeps_saved_ruling
 test_worker_note_needs_a_saved_ruling
+test_suffixed_key_saves_under_plain_step
 test_failed_ruling_save_still_closes_key

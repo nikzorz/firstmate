@@ -668,13 +668,14 @@ fm_send_names_property() { # <answer-text>
 # the file and 0 when it only points at the ruling already saved there.
 RULING_PLAN=
 fm_send_plan_rulings() { # <answer-text>
-  local text=$1 data k rest run step line round file save
+  local text=$1 data k rest plain run step line round file save
   [ "$TARGET_BACKEND" != remote ] || return 0
   data="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
   for k in $RESOLVE_STATUS_KEYS; do
     case "$k" in nm-*-*) ;; *) continue ;; esac
     [ "$(_fm_open_set_verb "$resolve_open_set" "$k")" = needs-decision ] || continue
     rest=${k#nm-}
+    ! plain=$(fm_send_plain_gate_key "$k") || rest=${plain#nm-}
     run=${rest%%-*}
     step=${rest#"$run"-}
     case "$step" in same-theme | stale-intent | empty) continue ;; esac
