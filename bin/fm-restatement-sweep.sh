@@ -476,7 +476,7 @@ def dropped_phrase_hits(probes, tree, added):
 
     A removed sentence is rewritten when an added sentence holds most of its
     words; each run of three of its words that holds a word no added
-    sentence of the rewrite's diff hunk kept, and that none of them repeats, is a
+    sentence of the rewrite's hunk group kept, and that none of them repeats, is a
     phrase whose other copies may still state the old claim.
     """
     removed_probes = [p for p in probes if p[4] == "-"]

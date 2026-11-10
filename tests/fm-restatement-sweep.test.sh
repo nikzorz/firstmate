@@ -218,6 +218,7 @@ test_split_rewrite_across_a_blank_line_keeps_moved_words() {
   new_repo "$repo"
   printf '#!/bin/sh\n# Hits on added lines are skipped, and a phrase on more than three lines is stock wording.\n\n' >"$repo/a.sh"
   printf 'Note that hits on added lines are skipped here.\n' >"$repo/notes.md"
+  printf 'Any phrase repeated that often is stock wording.\n' >"$repo/style.md"
   commit_all "$repo" 'one sentence'
   git -C "$repo" branch -f main
   printf '#!/bin/sh\n# Hits on added lines are skipped.\n\n# A phrase on more than three added lines is house wording.\n' >"$repo/a.sh"
@@ -225,6 +226,10 @@ test_split_rewrite_across_a_blank_line_keeps_moved_words() {
   out=$(sweep "$repo" --base main) || fail "sweep exited $? on a split rewrite: $out"
   printf '%s\n' "$out" | grep -q '^stale? notes.md:' \
     && fail "a line keeping a claim the split rewrite still states past a blank line was listed: $out"
+  printf '%s\n' "$out" | grep -qF 'stale? style.md:1: Any phrase repeated that often is stock wording.' \
+    || fail "a line keeping a word the split rewrite dropped from its hunk group was not listed: $out"
+  printf '%s\n' "$out" | grep -qxF 'removed-phrase grep: 1 rewritten sentences; 1 stale? lines' \
+    || fail "the removed-phrase summary was wrong: $out"
   pass "a split rewrite whose halves a blank line separates keeps the words moved to its other half"
 }
 
