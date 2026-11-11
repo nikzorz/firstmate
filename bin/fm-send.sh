@@ -190,6 +190,18 @@
 # must be followed by a `Dependents:` line naming what reads or depends on the
 # value it changes, or `Dependents: none - <reason>`. That check is a heuristic: it proves the dependents question was
 # answered, not that the list is complete.
+# A repeat round's fix ruling, one whose send also names a same-theme key
+# (nm-<run>-same-theme beside its nm-<run>-<step> key, or
+# nm-<run>-<step>-same-theme) and whose Property: is not none, must also carry,
+# for each earlier saved ruling of that run and step (fm_nm_ruling_file) whose
+# Property: is not none, a line `Holds with: round <N> - <how both properties
+# hold from what the record carries>` or `Holds with: round <N> superseded -
+# <the captain answer that replaced it>`; one without it refuses before
+# sending, because a later round's property can silently contradict an earlier
+# one. That check is a heuristic too: it proves the comparison was written, not
+# that it is true; it does not see a property stated only in a captain answer
+# and never saved as a ruling file; it fires only after the captain answered;
+# and it reads the earlier rounds from the same-theme escalation's round=.
 #
 # A worker that retypes a ruling it relays to its gate can drop the clause
 # that carried it, so a local send answering an open
@@ -777,6 +789,63 @@ fm_send_plain_gate_key() { # <decision-key>
   printf 'nm-%s-%s' "$run" "$rest"
 }
 
+# The round= of the last needs-decision line in the answered task's status log
+# carrying <key>, or nothing.
+fm_send_ask_round() { # <decision-key>
+  local line round=''
+  while IFS= read -r line; do
+    [ "$(_fm_decision_key "$line" '')" = "$1" ] || continue
+    round=$(printf '%s\n' "${line#*:}" | grep -oE '(^|[[:space:]])round=[0-9]+([[:space:]]|$)' | tail -1 | tr -dc '0-9')
+  done < <(grep '^needs-decision' "$RESOLVE_STATUS_FILE" 2>/dev/null || true)
+  printf '%s' "$round"
+}
+
+# The header's repeat-round contract: a fix ruling with a property, answering a
+# same-theme key, names a Holds with: line for each earlier saved ruling of that
+# run and step that stated a property. The step comes from the key itself
+# (nm-<run>-<step>-same-theme) or from the send's own gate keys for that run
+# beside a step-less nm-<run>-same-theme.
+fm_send_check_holds_with() { # <answer-text>
+  local text=$1 data k rest run tail steps g gtail plain step round r file missing=''
+  fm_send_rules_fix "$text" && fm_send_names_property "$text" || return 0
+  data="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+  for k in $RESOLVE_KEYS; do
+    case "$k" in nm-?*-same-theme | nm-?*-same-theme-*) ;; *) continue ;; esac
+    rest=${k#nm-}
+    run=${rest%%-*}
+    tail=${rest#"$run"-}
+    case "$tail" in
+    same-theme | same-theme-*)
+      steps=
+      for g in $RESOLVE_KEYS; do
+        case "$g" in nm-"$run"-?*) ;; *) continue ;; esac
+        gtail=${g#nm-"$run"-}
+        case "$gtail" in same-theme | same-theme-* | *-same-theme | stale-intent | stale-intent-* | empty) continue ;; esac
+        if plain=$(fm_send_plain_gate_key "$g"); then gtail=${plain#nm-"$run"-}; fi
+        steps="$steps $gtail"
+      done
+      ;;
+    *) steps=${tail%%-same-theme*} ;;
+    esac
+    round=$(fm_send_ask_round "$k")
+    [ -n "$round" ] || continue
+    for step in $steps; do
+      r=1
+      while [ "$r" -lt "$round" ]; do
+        file=$(fm_nm_ruling_file "$data" "$RESOLVE_TASK_ID" "$run" "$step" "$r")
+        if [ -f "$file" ] && fm_send_names_property "$(cat "$file")" &&
+          ! printf '%s\n' "$text" | grep -Eiq "^[[:space:]]*Holds with:[[:space:]]*round[[:space:]]+$r([[:space:]]+superseded)?[[:space:]]+-[[:space:]]*[^[:space:]]"; then
+          missing="$missing"$'\n'"  - round $r (run $run step $step), saved at $file"
+        fi
+        r=$((r + 1))
+      done
+    done
+  done
+  [ -n "$missing" ] || return 0
+  echo "error: --resolve-key answers a repeat round with a fix ruling that states a property but does not say how it holds with each earlier ruled property of the same run and step. For each round below add a line \"Holds with: round <N> - <how both properties hold from what the record carries>\", or \"Holds with: round <N> superseded - <the captain answer that replaced it>\" (ask-user-authority step 5):$missing"$'\n'"Nothing was sent." >&2
+  return 1
+}
+
 if [ -n "$RESOLVE_KEYS" ]; then
   if [ -z "$TARGET_SELECTOR" ] || [ -z "$TARGET_META" ]; then
     echo "error: --resolve-key needs a task selector resolved through this home's metadata; an explicit backend target has no decision ledger here" >&2
@@ -873,6 +942,7 @@ if [ -n "$RESOLVE_KEYS" ]; then
       exit 1
     fi
   done
+  fm_send_check_holds_with "$*" || exit 1
   fm_send_plan_rulings "$*"
 fi
 if [ -n "$WORKER_NOTES" ] && [ -z "$RULING_PLAN" ]; then

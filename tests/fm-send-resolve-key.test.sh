@@ -1337,9 +1337,78 @@ test_colon_first_key_position_is_answerable
 test_answer_starts_work_never_orphans
 test_routine_steer_never_closes
 test_keyed_request_before_done_stays_answerable
+# A repeat-round fix ruling with a property must say how it holds with every
+# earlier saved ruling of that run and step that stated one; a first-round
+# ruling and a Property: none re-close pass unchanged.
+holds_home() {  # <name> <round> -> echoes a home with open review and same-theme asks at <round>
+  local home run=RUNH
+  home=$(setup_home "$1")
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  {
+    printf 'needs-decision [at=1] [key=nm-%s-same-theme]: same theme fixed again round=%s findings=rev-a rounds=1 file=/x\n' "$run" "$2"
+    printf 'needs-decision [at=2] [key=nm-%s-review]: ask-user round=%s findings=rev-a file=/x\n' "$run" "$2"
+  } > "$home/state/t1.status"
+  mkdir -p "$home/data/t1"
+  printf '%s\n' "$home"
+}
+
+test_repeat_round_fix_ruling_requires_holds_with() {
+  local dir fb log home rc err base msg
+  dir="$TMP_ROOT/holds-with"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/err"
+  base=$'Ruling for review round 3: fix rev-a.\nProperty: one owner computes the count from inputs every peer holds; derive the paths from the code.\nDependents: the count test.'
+
+  home=$(holds_home holds-missing 3)
+  printf 'Ruling round 1.\nProperty: every peer shows the same count.\nDependents: none - nothing reads it.\n' > "$home/data/t1/nm-RUNH-review-round1-ruling.txt"
+  printf 'Ruling round 2.\nProperty: none - rules no new code change.\n' > "$home/data/t1/nm-RUNH-review-round2-ruling.txt"
+  : > "$log"
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-same-theme "$base" 2>"$err" >/dev/null; rc=$?
+  [ "$rc" -ne 0 ] || fail "a repeat-round fix ruling without Holds with: should refuse"
+  assert_contains "$(cat "$err")" "round 1 (run RUNH step review)" "the refusal should name the earlier ruled round"
+  if grep -qF "round 2 (run" "$err"; then fail "a Property: none earlier ruling needs no Holds with: line"; fi
+  [ ! -e "$home/state/t1.inbox/001.msg" ] || fail "a refused ruling must send nothing"
+  grep -q '^resolved' "$home/state/t1.status" && fail "a refused ruling must close nothing"
+
+  for msg in \
+    "$base"$'\nHolds with: round 1 - one owner is what makes every peer agree.' \
+    "$base"$'\nHolds with: round 1 superseded - the owner chose a single count owner in Q2.'; do
+    home=$(holds_home holds-present 3)
+    printf 'Ruling round 1.\nProperty: every peer shows the same count.\nDependents: none - nothing reads it.\n' > "$home/data/t1/nm-RUNH-review-round1-ruling.txt"
+    run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-same-theme "$msg"; rc=$?
+    expect_code 0 "$rc" "a repeat-round fix ruling with its Holds with: line should send: $msg"
+  done
+
+  home=$(holds_home holds-stepkey 2)
+  printf 'Ruling round 1.\nProperty: every peer shows the same count.\nDependents: none - nothing reads it.\n' > "$home/data/t1/nm-RUNH-review-round1-ruling.txt"
+  printf 'needs-decision [at=3] [key=nm-RUNH-review-same-theme]: same theme fixed again round=2 findings=rev-a rounds=1\n' >> "$home/state/t1.status"
+  : > "$log"
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-review-same-theme "$base" 2>"$err" >/dev/null; rc=$?
+  [ "$rc" -ne 0 ] || fail "a nm-<run>-<step>-same-theme fix ruling without Holds with: should refuse"
+  assert_contains "$(cat "$err")" "round 1 (run RUNH step review)" "the step-named same-theme key should read its own step"
+
+  home=$(holds_home holds-first 1)
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-same-theme "$base"; rc=$?
+  expect_code 0 "$rc" "a first-round fix ruling with no earlier ruling file should send unchanged"
+
+  home=$(holds_home holds-none 3)
+  printf 'Ruling round 1.\nProperty: every peer shows the same count.\nDependents: none - nothing reads it.\n' > "$home/data/t1/nm-RUNH-review-round1-ruling.txt"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-same-theme \
+    $'Re-close for round 3: rerun only, as already sent to the fix round.\nProperty: none - rules no new fix.'; rc=$?
+  expect_code 0 "$rc" "a Property: none re-close on a repeat round should send unchanged"
+
+  home=$(holds_home holds-plain 3)
+  printf 'Ruling round 1.\nProperty: every peer shows the same count.\nDependents: none - nothing reads it.\n' > "$home/data/t1/nm-RUNH-review-round1-ruling.txt"
+  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-review "$base"; rc=$?
+  expect_code 0 "$rc" "a fix ruling without a same-theme key is not a repeat round"
+  pass "fm-send --resolve-key same-theme: a repeat-round fix ruling must say how it holds with each earlier ruled property"
+}
+
 test_not_open_key_refuses_before_send
 test_gate_fix_ruling_requires_property_line
 test_gate_fix_ruling_requires_dependents_line
+test_repeat_round_fix_ruling_requires_holds_with
 test_failed_ring_still_closes_at_enqueue
 test_failed_enqueue_does_not_close
 test_multiple_keys_close_together
