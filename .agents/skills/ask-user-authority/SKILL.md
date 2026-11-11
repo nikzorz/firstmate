@@ -46,13 +46,13 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    A ruling whose fix would revert the change to its base or replace it with different work is never a Fix: it invalidates the work as `validation-supervision` describes.
    A Fix ruling never says change nothing else.
    It says: change nothing outside the property, except the smallest adjacent edits a named change needs to keep the project's checks green; name each in the fix summary; and if no green form exists, leave the finding unresolved and say why.
-   When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names, such as every script a power fight runs) and tell the fix round to derive the members from the code and name that derivation in the check.
+   When a Fix ruling's instructions scope a check, state the property the check must hold and tell the fix round to derive the members from the code and name that derivation in the check.
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
    A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
-   It reads any standalone word fix, "fix round" included, as a Fix ruling, so a ruling that only mentions a fix carries the line `Property: none`, optionally followed by punctuation and a reason.
-   A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example (for example, ...) only when every premise it rests on is checked against the code or record, and otherwise leave it out, so the fix round tests it against the property rather than building it.
+   It reads any standalone word fix as a Fix ruling, so a ruling that only mentions a fix carries the line `Property: none`, optionally followed by punctuation and a reason.
+   A finding's remedy and its example are one case of the property, never the property and never an order beside it: give the remedy as an example only when every premise it rests on is checked against the code or record, and otherwise leave it out, so the fix round tests it against the property rather than building it.
    Before writing the ruling, read the run's earlier findings on the same code with `bin/fm-nm-findings.sh <run>`, which prints them whole where the gate cuts them short.
-   Then state the invariant the finding's root breaks as a rule over every case, and name its mirror case, such as the other direction of the same comparison; a property that changes a value or claim also covers every claim whose truth depends on it (counts, negations, sameness, attribution, and for a size or position the grid and support it must keep), so follow each `Property:` line with a `Dependents:` line naming them, or `Dependents: none - <reason>`, which `bin/fm-send.sh` requires.
+   Then state the invariant the finding's root breaks over every input the code varies it by, derived from the code rather than from the axes the finding discusses, name its mirror case, and ask for any test over that same whole set, never one axis; a property that changes a value or claim also covers every claim whose truth depends on it (counts, negations, sameness, attribution, and for a size or position the grid and support it must keep), so follow each `Property:` line with a `Dependents:` line naming them, or `Dependents: none - <reason>`, which `bin/fm-send.sh` requires.
    When the property bans names from the output, state it over the reference forms the data carries (a `<kind>/<id>` label, an id field of a known kind), never over free text, and name what must survive unchanged as the mirror case.
 6. Escalate only a blocking finding that is genuinely ambiguous:
    - its only fix would materially expand the contract in one of the ways step 3 lists
@@ -68,7 +68,7 @@ State all five of these elements in one concise, evidence-first escalation:
 
 1. The original requirement or accepted task criterion.
 2. The proposed product or engineering contract expansion.
-3. The smallest alternative that complies with the accepted contract without the expansion; recommend a remedy option only when every premise it rests on is checked against the code or record, and otherwise leave it out.
+3. The smallest alternative complying with the accepted contract without the expansion, recommending a remedy only on premises the code or record confirms; on repeat rounds, name the earlier properties any option adding one must keep.
 4. The concrete consequences of accepting and declining the expansion.
 5. A recommendation with the reason it best serves the accepted intent.
 
