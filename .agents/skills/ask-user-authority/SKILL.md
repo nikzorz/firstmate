@@ -46,7 +46,7 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    A ruling whose fix would revert the change to its base or replace it with different work is never a Fix: it invalidates the work as `validation-supervision` describes.
    A Fix ruling never says change nothing else.
    It says: change nothing outside the property, except the smallest adjacent edits a named change needs to keep the project's checks green; name each in the fix summary; and if no green form exists, leave the finding unresolved and say why.
-   When a Fix ruling's instructions scope a check, state the property the check must hold (the set its claim names) and tell the fix round to derive the members from the code and name that derivation in the check.
+   When a Fix ruling's instructions scope a check, state the property the check must hold and tell the fix round to derive the members from the code and name that derivation in the check.
    Never paste a list from a finding: a reviewer's survey says where it looked, not what the claim covers.
    A Fix ruling sent with `fm-send --resolve-key nm-*` carries that property on a line beginning `Property:`, and a list from the finding may follow it only as examples; `bin/fm-send.sh` refuses a Fix ruling without that line.
    It reads any standalone word fix as a Fix ruling, so a ruling that only mentions a fix carries the line `Property: none`, optionally followed by punctuation and a reason.
