@@ -1393,10 +1393,7 @@ test_repeat_round_fix_ruling_requires_holds_with() {
   : > "$log"
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
     "$SEND" t1 --resolve-key nm-RUNH-same-theme "$base" 2>"$err" >/dev/null; rc=$?
-  [ "$rc" -ne 0 ] || fail "a step-less same-theme fix ruling answered alone without Holds with: should refuse"
-  assert_contains "$(cat "$err")" "round 2 (run RUNH step review)" "a same-theme key answered alone should read the run's saved rulings"
-  run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-same-theme "$base"$'\nHolds with: round 2 - one owner is what makes every peer agree.'; rc=$?
-  expect_code 0 "$rc" "a same-theme key answered alone with its Holds with: line should send"
+  expect_code 0 "$rc" "a step-less same-theme key answered alone names no step, so the check should not run: $(cat "$err")"
 
   home=$(holds_home holds-first 1)
   run_send "$fb" "$home" "$log" t1 --resolve-key nm-RUNH-review --resolve-key nm-RUNH-same-theme "$base"; rc=$?

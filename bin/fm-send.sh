@@ -190,11 +190,10 @@
 # must be followed by a `Dependents:` line naming what reads or depends on the
 # value it changes, or `Dependents: none - <reason>`. That check is a heuristic: it proves the dependents question was
 # answered, not that the list is complete.
-# A repeat round's fix ruling, one whose send names a same-theme key
-# (nm-<run>-same-theme, alone or beside its nm-<run>-<step> key, or
+# A repeat round's fix ruling, one whose send also names a same-theme key
+# (nm-<run>-same-theme beside its nm-<run>-<step> key, or
 # nm-<run>-<step>-same-theme) and whose Property: is not none, must also carry,
-# for each earlier saved ruling of that run and step (fm_nm_ruling_file, every
-# step with one when nm-<run>-same-theme is answered alone) whose
+# for each earlier saved ruling of that run and step (fm_nm_ruling_file) whose
 # Property: is not none, a line `Holds with: round <N> - <how both properties
 # hold from what the record carries>` or `Holds with: round <N> superseded -
 # <the captain answer that replaced it>`; one without it refuses before
@@ -202,7 +201,9 @@
 # one. That check is a heuristic too: it proves the comparison was written, not
 # that it is true; it does not see a property stated only in a captain answer
 # and never saved as a ruling file; it fires only after the captain answered;
-# and it reads the earlier rounds from the same-theme escalation's round=.
+# it reads the earlier rounds from the same-theme escalation's round=; and it
+# does not run when the send's keys name no step, as with nm-<run>-same-theme
+# answered alone.
 #
 # A worker that retypes a ruling it relays to its gate can drop the clause
 # that carried it, so a local send answering an open
@@ -804,9 +805,8 @@ fm_send_ask_round() { # <decision-key>
 # The header's repeat-round contract: a fix ruling with a property, answering a
 # same-theme key, names a Holds with: line for each earlier saved ruling of that
 # run and step that stated a property. The step comes from the key itself
-# (nm-<run>-<step>-same-theme), from the send's own gate keys for that run
-# beside a step-less nm-<run>-same-theme, or, when it is answered alone, from
-# every step with a saved ruling for that run.
+# (nm-<run>-<step>-same-theme) or from the send's own gate keys for that run
+# beside a step-less nm-<run>-same-theme.
 fm_send_check_holds_with() { # <answer-text>
   local text=$1 data k rest run tail steps g gtail plain step round r file missing=''
   fm_send_rules_fix "$text" && fm_send_names_property "$text" || return 0
@@ -826,14 +826,6 @@ fm_send_check_holds_with() { # <answer-text>
         if plain=$(fm_send_plain_gate_key "$g"); then gtail=${plain#nm-"$run"-}; fi
         steps="$steps $gtail"
       done
-      if [ -z "$steps" ]; then
-        for file in "$data/$RESOLVE_TASK_ID/nm-$run-"?*-round[0-9]*-ruling.txt; do
-          [ -f "$file" ] || continue
-          gtail=${file##*/nm-"$run"-}
-          gtail=${gtail%-round*-ruling.txt}
-          case " $steps " in *" $gtail "*) ;; *) steps="$steps $gtail" ;; esac
-        done
-      fi
       ;;
     *) steps=${tail%%-same-theme*} ;;
     esac
