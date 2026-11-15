@@ -684,7 +684,7 @@ fm_send_names_property() { # <answer-text>
 # the file and 0 when it only points at the ruling already saved there.
 RULING_PLAN=
 fm_send_plan_rulings() { # <answer-text>
-  local text=$1 data k rest plain run step line round file save
+  local text=$1 data k rest plain run step round file save
   [ "$TARGET_BACKEND" != remote ] || return 0
   data="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
   for k in $RESOLVE_STATUS_KEYS; do
@@ -695,11 +695,7 @@ fm_send_plan_rulings() { # <answer-text>
     run=${rest%%-*}
     step=${rest#"$run"-}
     case "$step" in same-theme | stale-intent | empty) continue ;; esac
-    round=
-    while IFS= read -r line; do
-      [ "$(_fm_decision_key "$line" '')" = "$k" ] || continue
-      round=$(printf '%s\n' "${line#*:}" | grep -oE '(^|[[:space:]])round=[0-9]+([[:space:]]|$)' | tail -1 | tr -dc '0-9')
-    done < <(grep '^needs-decision' "$RESOLVE_STATUS_FILE" 2>/dev/null || true)
+    round=$(fm_send_ask_round "$k")
     [ -n "$round" ] || continue
     file=$(fm_nm_ruling_file "$data" "$RESOLVE_TASK_ID" "$run" "$step" "$round")
     save=1
