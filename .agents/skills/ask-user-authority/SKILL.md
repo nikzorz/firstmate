@@ -68,7 +68,7 @@ State all five of these elements in one concise, evidence-first escalation:
 
 1. The original requirement or accepted task criterion.
 2. The proposed product or engineering contract expansion.
-3. The smallest alternative complying with the accepted contract without the expansion, recommending a remedy only on premises the code or record confirms; on repeat rounds, name the earlier properties any option adding one must keep.
+3. The smallest alternative complying with the accepted contract without the expansion, recommending a remedy only when code or record confirms every premise; on repeat rounds, name the earlier properties any option adding one must keep.
 4. The concrete consequences of accepting and declining the expansion.
 5. A recommendation with the reason it best serves the accepted intent.
 
